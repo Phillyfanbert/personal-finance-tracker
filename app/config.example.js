@@ -1,0 +1,20 @@
+// ============================================================================
+// Supabase connection config.
+// Fill these in with YOUR project values (SETUP.md §4):
+//   Supabase Dashboard → Project Settings → Data API / API Keys
+//
+// SAFE to expose publicly: the anon key is designed for browsers and is
+// powerless without RLS-passing auth. NEVER put the service_role key here.
+// ============================================================================
+window.APP_CONFIG = {
+  SUPABASE_URL: "https://YOUR-PROJECT-REF.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_YOUR_KEY_HERE",
+
+  // Phase 3 — Gemma natural-language parsing (OPTIONAL, README §3.6).
+  // Leave GEMMA_ENDPOINT empty to keep the app on keyword parsing only.
+  // For local testing: run tools/mock-gemma-server.js and use
+  //   "http://localhost:11434/api/generate"
+  // In production: your Cloudflare Tunnel HTTPS URL in front of Ollama.
+  GEMMA_ENDPOINT: "",
+  GEMMA_MODEL: "gemma",
+};

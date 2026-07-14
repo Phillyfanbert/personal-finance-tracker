@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Expenses" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <title>Expense Tracker</title>
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #1e293b; --panel-2: #273449;
+      --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --accent-2: #0ea5e9;
+      --ok: #34d399; --err: #f87171; --border: #334155;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0; font-family: -apple-system, system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      padding: env(safe-area-inset-top) 0 calc(72px + env(safe-area-inset-bottom));
+    }
+    .wrap { max-width: 560px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 20px; margin: 8px 0 16px; }
+    .muted { color: var(--muted); }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+    input, select, button, textarea {
+      font: inherit; width: 100%; padding: 13px 14px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+    }
+    input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+    button { background: var(--accent-2); border: none; color: #002233; font-weight: 700; cursor: pointer; }
+    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 500; }
+    .row { display: flex; gap: 10px; }
+    .row > * { flex: 1; }
+    .hidden { display: none !important; }
+    .quickadd input { font-size: 18px; padding: 16px; }
+    .toast { position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%);
+      background: var(--panel-2); border: 1px solid var(--border); padding: 12px 18px;
+      border-radius: 10px; opacity: 0; transition: opacity .2s; z-index: 60; max-width: 90%; }
+    .toast.show { opacity: 1; }
+    .exp { display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 0; border-bottom: 1px solid var(--border); gap: 10px; cursor: pointer; }
+    .exp:last-child { border-bottom: none; }
+    .exp .meta { font-size: 13px; color: var(--muted); }
+    .exp .amt { font-weight: 700; white-space: nowrap; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); margin: 2px 0; }
+    .pill .x { color: var(--err); cursor: pointer; font-weight: 700; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .totals { display: flex; gap: 12px; margin-bottom: 14px; }
+    .totals .card { flex: 1; text-align: center; margin: 0; }
+    .totals .big { font-size: 22px; font-weight: 800; }
+    .chartbox { position: relative; height: 240px; }
+    .chartbox.short { height: 200px; }
+    /* Bottom nav */
+    .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+      display: flex; background: var(--panel); border-top: 1px solid var(--border);
+      padding-bottom: env(safe-area-inset-bottom); }
+    .nav button { flex: 1; background: transparent; border: none; color: var(--muted);
+      font-weight: 600; padding: 16px 0; border-radius: 0; }
+    .nav button.active { color: var(--accent); }
+    /* Modal */
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 70;
+      display: flex; align-items: flex-end; justify-content: center; }
+    .modal .sheet { background: var(--panel); width: 100%; max-width: 560px;
+      border-radius: 16px 16px 0 0; border: 1px solid var(--border); padding: 18px;
+      max-height: 90vh; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- ============ AUTH VIEW ============ -->
+    <div id="authView">
+      <h1>💸 Expense Tracker</h1>
+      <div class="card">
+        <p class="muted">Sign in with a magic link — no password. Check your email and tap the link.</p>
+        <label for="email">Email</label>
+        <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
+        <div style="height:10px"></div>
+        <button id="signInBtn">Send magic link</button>
+        <p id="authMsg" class="muted" style="margin-top:12px"></p>
+      </div>
+      <p class="muted" style="font-size:12px">First time on iPhone? After signing in, tap Share → “Add to Home Screen” to install.</p>
+    </div>
+
+    <!-- ============ APP: LOG VIEW ============ -->
+    <div id="logView" class="hidden">
+      <div class="topbar">
+        <h1 style="margin:0">💸 Expenses</h1>
+        <div style="display:flex;gap:8px">
+          <button class="secondary" id="profileBtn" style="width:auto;padding:8px 12px">👤 Profile</button>
+          <button class="secondary" id="signOutBtn" style="width:auto;padding:8px 12px">Sign out</button>
+        </div>
+      </div>
+
+      <div class="totals">
+        <div class="card"><div class="muted" style="font-size:12px">This month</div><div class="big" id="monthTotal">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Entries</div><div class="big" id="monthCount">0</div></div>
+      </div>
+
+      <!-- Subscriptions dashboard tile (README §3.7) -->
+      <div class="card" id="subsTile" style="cursor:pointer">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>📆 Subscriptions</strong>
+          <span class="muted" style="font-size:12px">tap to manage →</span>
+        </div>
+        <div class="row" style="gap:16px">
+          <div><div class="muted" style="font-size:12px">Monthly</div><div class="big" id="subsMonthly" style="font-size:20px;font-weight:800">$0</div></div>
+          <div><div class="muted" style="font-size:12px">Next renewal</div><div id="subsNext" style="font-size:14px;margin-top:4px">—</div></div>
+        </div>
+      </div>
+
+      <!-- Quick add -->
+      <div class="card quickadd">
+        <label for="quick">Quick add</label>
+        <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" />
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Type free text: amount, merchant & payment type are auto-detected. Confirm below.</p>
+
+        <div id="confirm" class="hidden" style="margin-top:12px">
+          <div id="parseStatus" class="muted" style="font-size:12px;min-height:16px;margin-bottom:6px"></div>
+          <div class="row">
+            <div><label>Amount</label><input id="fAmount" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label>Payment</label>
+              <select id="fPayment">
+                <option value="">—</option><option>debit</option><option>credit</option><option>cash</option>
+              </select>
+            </div>
+          </div>
+          <label>Description / merchant</label>
+          <input id="fDesc" />
+          <div class="row">
+            <div><label>Category</label><select id="fCategory"></select></div>
+            <div><label>Account</label><select id="fAccount"></select></div>
+          </div>
+          <label>Date</label>
+          <input id="fDate" type="date" />
+          <div style="height:12px"></div>
+          <div class="row">
+            <button id="saveBtn">Save expense</button>
+            <button class="secondary" id="cancelBtn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accounts -->
+      <div class="card">
+        <div class="topbar" style="margin-bottom:8px">
+          <strong>Accounts</strong>
+          <button class="secondary" id="addAcctBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
+        </div>
+        <div id="acctList" class="muted" style="font-size:13px">No accounts yet.</div>
+        <div id="acctForm" class="hidden" style="margin-top:10px">
+          <div class="row">
+            <input id="acctName" placeholder="Chase checking" />
+            <select id="acctType">
+              <option value="checking">checking</option><option value="credit">credit</option>
+              <option value="debit">debit</option><option value="cash">cash</option><option value="other">other</option>
+            </select>
+          </div>
+          <div style="height:8px"></div>
+          <button id="saveAcctBtn">Save account</button>
+        </div>
+      </div>
+
+      <!-- Expense list -->
+      <div class="card">
+        <strong>Recent</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
+        <div id="expList" style="margin-top:8px"><p class="muted">Loading…</p></div>
+      </div>
+    </div>
+
+    <!-- ============ APP: REPORTS VIEW ============ -->
+    <div id="reportsView" class="hidden">
+      <div class="topbar">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="secondary" id="backFromReports" style="width:auto;padding:8px 10px">←</button>
+          <h1 style="margin:0">📊 Reports</h1>
+        </div>
+        <select id="monthSel" style="width:auto"></select>
+      </div>
+
+      <div class="totals">
+        <div class="card"><div class="muted" style="font-size:12px">Selected month</div><div class="big" id="rptTotal">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Subscriptions</div><div class="big" id="rptSubs">$0</div></div>
+      </div>
+
+      <div class="card">
+        <strong>By category</strong>
+        <div class="chartbox"><canvas id="catChart"></canvas></div>
+      </div>
+
+      <div class="card">
+        <strong>By account</strong>
+        <div class="chartbox short"><canvas id="acctChart"></canvas></div>
+      </div>
+
+      <div class="card">
+        <strong>By payment type</strong>
+        <div class="chartbox short"><canvas id="payChart"></canvas></div>
+      </div>
+
+      <div class="card">
+        <strong>Last 6 months</strong>
+        <div class="chartbox short"><canvas id="trendChart"></canvas></div>
+      </div>
+
+      <div id="rptEmpty" class="card hidden"><p class="muted" style="margin:0">No expenses in this month yet.</p></div>
+    </div>
+
+    <!-- ============ APP: SUBSCRIPTIONS VIEW ============ -->
+    <div id="subsView" class="hidden">
+      <div class="topbar">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="secondary" id="backFromSubs" style="width:auto;padding:8px 10px">←</button>
+          <h1 style="margin:0">📆 Subscriptions</h1>
+        </div>
+        <button class="secondary" id="addSubBtn" style="width:auto;padding:8px 12px">+ Add</button>
+      </div>
+
+      <div class="totals">
+        <div class="card"><div class="muted" style="font-size:12px">Monthly total</div><div class="big" id="subsTotalMonthly">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Yearly</div><div class="big" id="subsTotalYearly">$0</div></div>
+      </div>
+
+      <!-- Savings / discount discovery (README §3.7 F6) -->
+      <div class="card" id="dealsCard">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>💰 Savings found</strong>
+          <span class="muted" style="font-size:12px" id="dealsTotal"></span>
+        </div>
+        <div id="dealsList"><p class="muted" style="font-size:13px">Add subscriptions to see cheaper eligible plans.</p></div>
+      </div>
+
+      <!-- Add / edit form (hidden until used) -->
+      <div class="card hidden" id="subForm">
+        <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription</strong></div>
+        <label>Service name</label>
+        <input id="sName" placeholder="Spotify" />
+        <div class="row">
+          <div><label>Amount</label><input id="sAmount" type="number" step="0.01" inputmode="decimal" /></div>
+          <div><label>Billing cycle</label>
+            <select id="sCycle"><option value="monthly">monthly</option><option value="annual">annual</option><option value="other">other</option></select>
+          </div>
+        </div>
+        <div class="row">
+          <div><label>Next renewal</label><input id="sRenewal" type="date" /></div>
+          <div><label>Account</label><select id="sAccount"></select></div>
+        </div>
+        <label><input type="checkbox" id="sActive" style="width:auto;margin-right:8px" checked />Active</label>
+        <label>Notes</label>
+        <input id="sNotes" placeholder="e.g. shared family plan" />
+        <div style="height:12px"></div>
+        <div class="row">
+          <button id="saveSubBtn">Save</button>
+          <button class="secondary" id="cancelSubBtn">Cancel</button>
+        </div>
+        <div style="height:8px"></div>
+        <button class="secondary hidden" id="deleteSubBtn" style="color:var(--err)">Delete subscription</button>
+      </div>
+
+      <div class="card">
+        <strong>Upcoming renewals (30 days)</strong>
+        <div id="subUpcoming" style="margin-top:8px"><p class="muted">None in the next 30 days.</p></div>
+      </div>
+
+      <div class="card">
+        <strong>All subscriptions</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
+        <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ EDIT MODAL ============ -->
+  <div id="editModal" class="modal hidden">
+    <div class="sheet">
+      <div class="topbar"><strong>Edit expense</strong><button class="secondary" id="editClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="row">
+        <div><label>Amount</label><input id="eAmount" type="number" step="0.01" inputmode="decimal" /></div>
+        <div><label>Payment</label>
+          <select id="ePayment"><option value="">—</option><option>debit</option><option>credit</option><option>cash</option></select>
+        </div>
+      </div>
+      <label>Description / merchant</label>
+      <input id="eDesc" />
+      <div class="row">
+        <div><label>Category</label><select id="eCategory"></select></div>
+        <div><label>Account</label><select id="eAccount"></select></div>
+      </div>
+      <label>Date</label>
+      <input id="eDate" type="date" />
+      <label style="margin-top:12px"><input type="checkbox" id="eLearn" style="width:auto;margin-right:8px" checked />Remember this category for similar merchants</label>
+      <div style="height:14px"></div>
+      <div class="row">
+        <button id="editSave">Save changes</button>
+        <button class="secondary" id="editDelete" style="color:var(--err)">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROFILE MODAL ============ -->
+  <div id="profileModal" class="modal hidden">
+    <div class="sheet">
+      <div class="topbar"><strong>Your profile</strong><button class="secondary" id="profileClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Used to match you to better subscription deals (e.g. student pricing). Only you can see this.</p>
+      <label>Display name</label>
+      <input id="pName" placeholder="Your name" />
+      <label>Status</label>
+      <select id="pStatus">
+        <option value="working">working</option>
+        <option value="student">student</option>
+        <option value="other">other</option>
+      </select>
+      <div id="pStudentFields" class="hidden">
+        <div class="row">
+          <div><label>School</label><input id="pSchool" placeholder="e.g. NYU" /></div>
+          <div><label>Graduation year</label><input id="pGradYear" type="number" inputmode="numeric" placeholder="2027" /></div>
+        </div>
+      </div>
+      <label>Notes</label>
+      <input id="pNotes" placeholder="anything that helps match deals" />
+      <div style="height:14px"></div>
+      <button id="profileSave">Save profile</button>
+    </div>
+  </div>
+
+  <!-- Bottom nav -->
+  <nav id="nav" class="nav hidden">
+    <button id="navLog" class="active">Log</button>
+    <button id="navSubs">Subscriptions</button>
+    <button id="navReports">Reports</button>
+  </nav>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- Supabase + Chart.js from CDN (no build step) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      let waitingWorker = null;
+
+      navigator.serviceWorker.register("sw.js").then((reg) => {
+        reg.update();
+        setInterval(() => reg.update(), 60 * 1000);
+
+        reg.addEventListener("updatefound", () => {
+          const nw = reg.installing;
+          nw.addEventListener("statechange", () => {
+            if (nw.state === "installed" && navigator.serviceWorker.controller) {
+              // A new version is ready but not yet active — ask, don't force.
+              waitingWorker = nw;
+              showUpdateToast();
+            }
+          });
+        });
+      }).catch(() => {});
+
+      let reloading = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloading) return;
+        reloading = true;
+        window.location.reload();
+      });
+
+      function showUpdateToast() {
+        const t = document.getElementById("toast");
+        t.textContent = "Update available — tap to refresh";
+        t.style.cursor = "pointer";
+        t.classList.add("show");
+        t.onclick = () => {
+          t.classList.remove("show");
+          t.onclick = null;
+          if (waitingWorker) waitingWorker.postMessage("skipWaiting");
+        };
+        // Don't auto-dismiss like the normal toast() in app.js — it should
+        // stay up until tapped or until the next reload.
+      }
+    }
+  </script>
+</body>
+</html>

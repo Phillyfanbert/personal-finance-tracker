@@ -68,8 +68,18 @@ Dashboard → **Connect** (top bar) or **Settings → API Keys**. Copy:
 > privileges, RLS still applies. Older docs saying "copy the `eyJ...` anon key"
 > refer to the legacy scheme.
 
-Open `app/config.js` and paste them in (the config field is still named
-`SUPABASE_ANON_KEY` for compatibility — put the publishable key there):
+`app/config.js` is **gitignored** — it holds your real Supabase URL and key,
+and this repo is public, so a real copy of live credentials should never sit
+in git history. Instead, create your local copy from the committed template:
+
+```bash
+cd app
+cp config.example.js config.js
+```
+
+Open the new `app/config.js` and paste your real values in (the config field
+is still named `SUPABASE_ANON_KEY` for compatibility — put the publishable
+key there):
 
 ```js
 window.APP_CONFIG = {
@@ -77,6 +87,11 @@ window.APP_CONFIG = {
   SUPABASE_ANON_KEY: "sb_publishable_...your-publishable-key...",
 };
 ```
+
+`app/config.js` stays local to your machine from here on — see `SECURITY.md`
+for the full reasoning and for how the Cloudflare Pages deploy generates a
+production copy of this file from environment variables instead of reading
+it from git.
 
 ⚠️ Use the **publishable** key only. Never put a **secret** key
 (`sb_secret_...`, or the legacy `service_role`) in the app — it bypasses RLS

@@ -238,6 +238,17 @@
         <div id="dealsList"><p class="muted" style="font-size:13px">Add subscriptions to see cheaper eligible plans.</p></div>
       </div>
 
+      <!-- Live-found deals (F6 stretch, docs/F6-live-deals-proposal.md) — hidden
+           unless DEAL_FINDINGS_ENABLED is set in config.js. Separate trust tier
+           from the curated card above: machine-found, unverified, never blended in. -->
+      <div class="card hidden" id="dealFindingsCard">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>🌐 Found online</strong>
+          <span class="muted" style="font-size:12px">unverified — tap a link to check the source</span>
+        </div>
+        <div id="dealFindingsList"></div>
+      </div>
+
       <!-- Add / edit form (hidden until used) -->
       <div class="card hidden" id="subForm">
         <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription</strong></div>

@@ -193,14 +193,15 @@ $("saveBtn").onclick = async () => {
   const amount = parseFloat($("fAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const desc = $("fDesc").value.trim();
+  const fullText = $("quick").value.trim();
   const row = {
-    amount, description: desc || null,
+    amount, description: fullText || desc || null,
     merchant: desc.split(/\s+/)[0] || null,
     category: $("fCategory").value || null,
     payment_type: $("fPayment").value || null,
     account_id: $("fAccount").value || null,
     occurred_at: $("fDate").value,
-    raw_input: $("quick").value, source: entrySource,
+    raw_input: fullText, source: entrySource,
   };
   $("saveBtn").disabled = true;
   const { error } = await sb.from("expenses").insert(row);

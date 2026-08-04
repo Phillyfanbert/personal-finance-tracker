@@ -7,6 +7,8 @@ form. Everything here is **$0 and no credit card**. Budget ~30–45 minutes.
 ```
 personal-finance-agent/
 ├── SETUP.md              ← you are here
+├── SECURITY.md           ← credential handling rules — read before step 4
+├── LICENSE.md
 ├── supabase/
 │   ├── 01_schema.sql     ← tables + indexes            (run 1st)
 │   ├── 01b_grants.sql    ← Data API grants             (run 2nd) — needed because auto-expose is off
@@ -14,9 +16,10 @@ personal-finance-agent/
 │   └── 03_seed.sql       ← catalog reference data      (run 4th, optional)
 └── app/
     ├── index.html        ← the PWA UI
-    ├── app.js            ← Supabase queries + UI logic
+    ├── app.js             ← Supabase queries + UI logic
     ├── categorize.js     ← keyword auto-categorization (README §3.5)
-    ├── config.js         ← ⚠️ put your Supabase URL + anon key here
+    ├── config.example.js ← committed template — copy this to config.js (step 4)
+    ├── config.js         ← ⚠️ gitignored; put your real Supabase URL + key here (step 4)
     ├── manifest.json     ← PWA install metadata
     ├── sw.js             ← service worker (installability)
     └── icons/            ← app icons

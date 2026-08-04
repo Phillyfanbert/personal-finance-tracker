@@ -17,4 +17,10 @@ window.APP_CONFIG = {
   // In production: your Cloudflare Tunnel HTTPS URL in front of Ollama.
   GEMMA_ENDPOINT: "",
   GEMMA_MODEL: "gemma",
+
+  // F6 stretch — live deal discovery (docs/F6-live-deals-proposal.md).
+  // Off by default: the deal_findings table stays dormant until you stand up
+  // the home-machine search agent (Phase B/C of the proposal). Flip to true
+  // once you're ready to surface machine-found (unverified) deals in the UI.
+  DEAL_FINDINGS_ENABLED: false,
 };

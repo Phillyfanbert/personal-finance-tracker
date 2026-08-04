@@ -12,10 +12,10 @@ import {
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel,
 } from "./subscriptions.js";
-import { findDeals, studentUpsell } from "./discounts.js";
+import { findDeals, studentUpsell, matchService } from "./discounts.js";
 import { parseWithGemma } from "./gemma.js";
 
-const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL } = window.APP_CONFIG || {};
+const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, DEAL_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR-PROJECT")) {
   alert("Set your Supabase URL and anon key in config.js (see SETUP.md §4).");
 }
@@ -41,6 +41,7 @@ let accounts = [];
 let allExpenses = []; // cache for reports (last ~12 months)
 let subscriptions = []; // cache of the user's subscriptions
 let catalog = [];     // shared subscription_catalog reference data
+let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let editing = null;   // expense row currently in the edit modal
 let editingSub = null; // subscription row currently in the sub form
 let userId = null;    // signed-in user's uuid
@@ -92,13 +93,21 @@ async function init() {
   fillCategorySelect($("fCategory"));
   fillCategorySelect($("eCategory"));
   $("fDate").value = new Date().toISOString().slice(0, 10);
-  await Promise.all([loadRules(), loadAccounts(), loadProfile(), loadCatalog()]);
+  await Promise.all([loadRules(), loadAccounts(), loadProfile(), loadCatalog(), loadDealFindings()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
 }
 
 async function loadCatalog() {
   const { data } = await sb.from("subscription_catalog").select("*");
   catalog = data || [];
+}
+
+// F6 stretch — dormant until DEAL_FINDINGS_ENABLED is flipped on (config.js) and
+// the home-machine search agent starts writing rows (docs/F6-live-deals-proposal.md).
+async function loadDealFindings() {
+  if (!DEAL_FINDINGS_ENABLED) { dealFindings = []; return; }
+  const { data } = await sb.from("deal_findings").select("*").gt("expires_at", new Date().toISOString());
+  dealFindings = data || [];
 }
 function fillCategorySelect(sel) { sel.innerHTML = CATEGORIES.map((c) => `<option>${c}</option>`).join(""); }
 
@@ -341,6 +350,7 @@ async function loadSubscriptions() {
   renderSubscriptions();
   renderSubsTile();
   renderDeals();
+  renderDealFindings();
 }
 
 // ---- DISCOUNT DISCOVERY (README §3.7 / F6) ---------------------------------
@@ -386,6 +396,35 @@ function renderDeals() {
   $("dealsList").innerHTML = parts.join("");
   const up = $("upsellRow");
   if (up) up.onclick = () => $("profileBtn").click();
+}
+
+// Machine-found deals (F6 stretch) — separate, clearly-labeled, unverified.
+// Never blended into the trusted curated numbers above.
+function renderDealFindings() {
+  const card = $("dealFindingsCard");
+  if (!card) return;
+  if (!DEAL_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  const activeNames = subscriptions.filter((s) => s.is_active).map((s) => s.name);
+  const matches = dealFindings.filter((f) => activeNames.some((name) => matchService(name, f.service)));
+
+  if (!matches.length) {
+    $("dealFindingsList").innerHTML = `<p class="muted" style="font-size:13px">No live findings yet for your subscriptions.</p>`;
+    return;
+  }
+  $("dealFindingsList").innerHTML = matches.map((f) => {
+    const link = f.url ? `<a href="${f.url}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
+    const price = f.price != null ? fmt(Number(f.price)) : "?";
+    return `
+      <div class="exp" style="cursor:default">
+        <div>
+          <div>${f.service}${f.plan_type ? " · " + f.plan_type : ""}</div>
+          <div class="meta">${price}${f.eligibility ? " (" + f.eligibility + ")" : ""} ${link}</div>
+        </div>
+        <span class="amt muted" style="font-size:11px">${f.status === "verified" ? "✓ verified" : "unverified"}</span>
+      </div>`;
+  }).join("");
 }
 
 function renderSubsTile() {

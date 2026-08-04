@@ -53,7 +53,7 @@ $("signInBtn").onclick = async () => {
   const email = $("email").value.trim();
   if (!email) return toast("Enter your email");
   $("signInBtn").disabled = true;
-  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
   $("signInBtn").disabled = false;
   $("authMsg").textContent = error ? error.message : "✅ Link sent — check your email.";
 };

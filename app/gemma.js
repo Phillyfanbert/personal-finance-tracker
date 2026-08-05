@@ -91,3 +91,50 @@ export async function parseWithGemma(text, opts = {}) {
     clearTimeout(timer);
   }
 }
+
+// ---- Interactive spending Q&A ----------------------------------------------
+// Separate contract from parseWithGemma above: the answer is free text, not
+// strict JSON, so no format:"json" here — Ollama returns { response: "..." }
+// with a plain-text answer instead of a JSON string to parse.
+
+/** Build the free-text Q&A prompt sent to Gemma. */
+export function buildQaPrompt(question, context) {
+  return [
+    "You are a personal finance assistant. Answer the question using ONLY",
+    "the JSON data below, which is the user's own spending data. If the data",
+    "doesn't contain enough to answer, say so plainly instead of guessing.",
+    "Be concise — a few sentences or a short list. Use $ for dollar amounts.",
+    "",
+    `Data: ${JSON.stringify(context)}`,
+    "",
+    `Question: ${question}`,
+  ].join("\n");
+}
+
+/**
+ * Ask Gemma a free-text question about the given context. Resolves to the
+ * plain-text answer, or throws (caller shows a friendly error).
+ */
+export async function askGemma(question, context, opts = {}) {
+  const { endpoint, model = "gemma", timeoutMs = 20000 } = opts;
+  if (!endpoint) throw new Error("Gemma endpoint not configured");
+  if (!question || !question.trim()) throw new Error("Ask a question first");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, prompt: buildQaPrompt(question, context), stream: false }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
+    const data = await res.json();
+    const text = typeof data.response === "string" ? data.response.trim() : "";
+    if (!text) throw new Error("Gemma returned an empty answer");
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}

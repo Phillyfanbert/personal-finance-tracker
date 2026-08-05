@@ -13,7 +13,8 @@ import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel,
 } from "./subscriptions.js";
 import { findDeals, studentUpsell, matchService } from "./discounts.js";
-import { parseWithGemma } from "./gemma.js";
+import { parseWithGemma, askGemma } from "./gemma.js";
+import { buildQaContext } from "./insights.js";
 
 const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, DEAL_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR-PROJECT")) {
@@ -319,7 +320,42 @@ async function loadReports() {
     sel.onchange = renderReports;
   }
   renderReports();
+  loadInsights();
 }
+
+// Latest monthly report, generated server-side by tools/monthly-report.js.
+// RLS-scoped: only the signed-in user's own rows are ever returned.
+async function loadInsights() {
+  const { data } = await sb.from("spending_insights").select("*").order("created_at", { ascending: false }).limit(1);
+  const row = (data || [])[0];
+  $("insightsBody").textContent = row ? row.report : "No monthly reports yet.";
+  $("insightsBody").classList.toggle("muted", !row);
+}
+
+// ---- INTERACTIVE Q&A (Gemma, optional/best-effort like Phase 3) -----------
+$("qaAskBtn").onclick = async () => {
+  const question = $("qaQuestion").value.trim();
+  if (!question) return toast("Type a question first");
+  if (!GEMMA_ENDPOINT) {
+    $("qaStatus").textContent = "Not configured — set GEMMA_ENDPOINT in config.js (SETUP.md §3.6).";
+    return;
+  }
+  $("qaAskBtn").disabled = true;
+  $("qaAnswer").classList.add("hidden");
+  $("qaStatus").textContent = "🤔 thinking…";
+  try {
+    if (!allExpenses.length) await loadExpenses();
+    const context = buildQaContext(allExpenses, subscriptions);
+    const answer = await askGemma(question, context, { endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL });
+    $("qaAnswer").textContent = answer;
+    $("qaAnswer").classList.remove("hidden");
+    $("qaStatus").textContent = "";
+  } catch (err) {
+    $("qaStatus").textContent = "Couldn't get an answer — is Gemma reachable? (" + err.message + ")";
+  } finally {
+    $("qaAskBtn").disabled = false;
+  }
+};
 
 async function renderReports() {
   const ym = $("monthSel").value || monthKey();

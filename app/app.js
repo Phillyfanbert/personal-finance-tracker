@@ -398,14 +398,20 @@ $("saveDebtBtn").onclick = async () => {
   await loadDebts(); toast("Liability added");
 };
 
+const DEBT_TYPE_LABEL = { credit_card: "Credit", loan: "Loan", mortgage: "Mortgage", other: "Other" };
+
 async function loadDebts() {
   const { data } = await sb.from("liabilities").select("*").order("created_at");
   debts = data || [];
   $("debtsList").innerHTML = debts.length
     ? debts.map((d) => `
       <div class="exp">
-        <div>${d.name}<div class="meta">${d.type}${d.due_date ? " · due " + d.due_date : ""}</div></div>
+        <div>
+          <div class="meta">${DEBT_TYPE_LABEL[d.type] || cap(d.type)}</div>${d.name}
+          ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
+        </div>
         <span class="amt">
+          <button class="secondary" data-add-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">+</button>
           <button class="secondary" data-pay-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:8px">Pay</button>
           ${fmt(d.balance)}<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>
         </span>
@@ -423,6 +429,9 @@ async function loadDebts() {
   });
   document.querySelectorAll("[data-pay-debt]").forEach((el) => {
     el.onclick = (ev) => { ev.stopPropagation(); openPayForm(el.dataset.payDebt); };
+  });
+  document.querySelectorAll("[data-add-debt]").forEach((el) => {
+    el.onclick = (ev) => { ev.stopPropagation(); openAddDebtForm(el.dataset.addDebt); };
   });
   renderNetWorth();
 }
@@ -457,9 +466,9 @@ $("payConfirmBtn").onclick = async () => {
   const debt = debts.find((d) => d.id === payingDebtId);
   const asset = assets.find((a) => a.id === assetId);
   if (!debt || !asset) return toast("Pick a valid liability and asset");
+  if (amount > Number(asset.value)) return toast(`Not enough in ${asset.name} to pay ${fmt(amount)}`);
 
-  let newAssetValue = Math.round((Number(asset.value) - amount) * 100) / 100;
-  if (asset.type === "cash") newAssetValue = Math.max(0, newAssetValue);
+  const newAssetValue = Math.round((Number(asset.value) - amount) * 100) / 100;
   const newBalance = Math.max(0, Math.round((Number(debt.balance) - amount) * 100) / 100);
 
   const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
@@ -470,6 +479,42 @@ $("payConfirmBtn").onclick = async () => {
   $("payForm").classList.add("hidden");
   payingDebtId = null;
   await loadAssets(); await loadDebts(); toast("Payment recorded");
+};
+
+// ---- ADD TO A LIABILITY'S BALANCE (e.g. a new charge, correction) ------
+// Operates directly on the liability row itself, which is already the one
+// linked_liability_id points at from its credit account - no separate
+// linking step needed, it's the same row.
+let addingDebtId = null;
+
+function openAddDebtForm(debtId) {
+  const modal = $("addDebtAmountForm");
+  if (addingDebtId === debtId && !modal.classList.contains("hidden")) {
+    modal.classList.add("hidden");
+    addingDebtId = null;
+    return;
+  }
+  const debt = debts.find((d) => d.id === debtId);
+  if (!debt) return;
+  addingDebtId = debtId;
+  $("addDebtLabel").textContent = debt.name;
+  $("addDebtCurrentBalance").textContent = fmt(debt.balance);
+  $("addDebtAmountInput").value = "";
+  modal.classList.remove("hidden");
+}
+$("addDebtAmountClose").onclick = () => { $("addDebtAmountForm").classList.add("hidden"); addingDebtId = null; };
+
+$("addDebtAmountConfirm").onclick = async () => {
+  const amount = parseFloat($("addDebtAmountInput").value);
+  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  const debt = debts.find((d) => d.id === addingDebtId);
+  if (!debt) return;
+  const newBalance = Math.round((Number(debt.balance) + amount) * 100) / 100;
+  const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
+  if (error) return toast(error.message);
+  $("addDebtAmountForm").classList.add("hidden");
+  addingDebtId = null;
+  await loadDebts(); toast("Added");
 };
 
 // ---- NET WORTH (Log page) ----------------------------------------------
@@ -557,9 +602,19 @@ function scheduleGemma(raw) {
   }, 650);
 }
 
+// A credit expense needs a real credit account to accumulate onto - without
+// one there's nowhere for the liability to go, so block it rather than let
+// it silently vanish. Shared by quick-add and the edit modal.
+function hasCreditAccount() {
+  return accounts.some((a) => a.type === "credit");
+}
+
 $("saveBtn").onclick = async () => {
   const amount = parseFloat($("fAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if ($("fPayment").value === "credit" && !hasCreditAccount()) {
+    return toast("Add a credit account first (Accounts card) before logging a credit expense.");
+  }
   const desc = $("fDesc").value.trim();
   const fullText = $("quick").value.trim();
   const row = {
@@ -631,6 +686,9 @@ $("editSave").onclick = async () => {
   if (!editing) return;
   const amount = parseFloat($("eAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if ($("ePayment").value === "credit" && !hasCreditAccount()) {
+    return toast("Add a credit account first (Accounts card) before logging a credit expense.");
+  }
   const desc = $("eDesc").value.trim();
   const newCategory = $("eCategory").value || null;
   const categoryChanged = newCategory && newCategory !== editing.category;

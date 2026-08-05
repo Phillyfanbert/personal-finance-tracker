@@ -143,30 +143,54 @@ async function loadRules() {
 // absent - there's exactly one Cash account per user, auto-managed by
 // ensureCashAccount(), never created through this form.
 const AUTO_ASSET_TYPE = { checking: "bank", debit: "bank" };
+// Credit accounts link to a Liability (tracked debt) instead of an Asset -
+// a charge should accumulate onto a running balance, not draw down
+// something you own. Auto-created the same way bank assets are.
+const AUTO_LIABILITY_TYPE = { credit: "credit_card" };
 
 $("addAcctBtn").onclick = () => $("acctForm").classList.toggle("hidden");
+$("acctType").onchange = () => {
+  const isCredit = $("acctType").value === "credit";
+  $("acctAssetLink").classList.toggle("hidden", isCredit);
+  $("acctLiabilityLink").classList.toggle("hidden", !isCredit);
+};
+
 $("saveAcctBtn").onclick = async () => {
   const name = $("acctName").value.trim();
   const type = $("acctType").value;
   let linked_asset_id = $("acctAsset").value || null;
+  let linked_liability_id = $("acctLiability").value || null;
   if (!name) return toast("Account name required");
   if (type === "cash") return toast("Cash is automatic - use the Cash account above to add or subtract.");
 
-  let autoLinked = false;
-  if (!linked_asset_id && AUTO_ASSET_TYPE[type]) {
-    const { data: newAsset, error: assetErr } = await sb.from("assets")
-      .insert({ name, type: AUTO_ASSET_TYPE[type], value: 0 })
-      .select().single();
-    if (assetErr) return toast(assetErr.message);
-    linked_asset_id = newAsset.id;
-    autoLinked = true;
+  let autoMsg = null;
+  if (type === "credit") {
+    linked_asset_id = null; // credit never links to an asset
+    if (!linked_liability_id) {
+      const { data: newDebt, error: debtErr } = await sb.from("liabilities")
+        .insert({ name, type: AUTO_LIABILITY_TYPE[type], balance: 0 })
+        .select().single();
+      if (debtErr) return toast(debtErr.message);
+      linked_liability_id = newDebt.id;
+      autoMsg = "Account added - linked to a new $0 balance liability";
+    }
+  } else {
+    linked_liability_id = null; // non-credit never links to a liability
+    if (!linked_asset_id && AUTO_ASSET_TYPE[type]) {
+      const { data: newAsset, error: assetErr } = await sb.from("assets")
+        .insert({ name, type: AUTO_ASSET_TYPE[type], value: 0 })
+        .select().single();
+      if (assetErr) return toast(assetErr.message);
+      linked_asset_id = newAsset.id;
+      autoMsg = "Account added - linked to a new $0 asset, edit its value below";
+    }
   }
 
-  const { error } = await sb.from("accounts").insert({ name, type, linked_asset_id });
+  const { error } = await sb.from("accounts").insert({ name, type, linked_asset_id, linked_liability_id });
   if (error) return toast(error.message);
   $("acctName").value = ""; $("acctForm").classList.add("hidden");
-  await loadAssets(); await loadAccounts();
-  toast(autoLinked ? "Account added - linked to a new $0 asset, edit its value below" : "Account added");
+  await loadAssets(); await loadDebts(); await loadAccounts();
+  toast(autoMsg || "Account added");
 };
 
 const ACCT_COLORS = ["#0ea5e9", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6", "#22d3ee", "#fb923c"];
@@ -231,6 +255,7 @@ async function loadAssets() {
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
   $("acctAsset").innerHTML = `<option value="">No link</option>` + assets.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  $("payFromAsset").innerHTML = assets.map((a) => `<option value="${a.id}">${a.name} (${fmt(a.value)})</option>`).join("");
   document.querySelectorAll("[data-del-asset]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -258,6 +283,23 @@ async function applyAssetDelta(accountId, paymentType, amount, sign) {
   // expense (an over-budget cash purchase should still get logged).
   if (asset.type === "cash") newValue = Math.max(0, newValue);
   await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+}
+
+// Credit expenses accumulate onto the linked liability's running balance -
+// a charge is owed the moment it happens and stays owed regardless of
+// when (or how irregularly) the card actually gets paid off. Sign is the
+// OPPOSITE of applyAssetDelta's: spending *increases* what you owe, so
+// sign: +1 to apply a charge (increase balance), -1 to reverse one
+// (edit/delete). Paying the card down is a separate transfer (see
+// payConfirmBtn below), never routed through this function.
+async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
+  if (paymentType !== "credit" || !accountId) return;
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account || !account.linked_liability_id) return;
+  const debt = debts.find((d) => d.id === account.linked_liability_id);
+  if (!debt) return;
+  const newBalance = Math.max(0, Math.round((Number(debt.balance) + sign * Number(amount)) * 100) / 100);
+  await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
 }
 
 // ---- ADJUST AN ACCOUNT'S LINKED ASSET -----------------------------------
@@ -363,9 +405,13 @@ async function loadDebts() {
     ? debts.map((d) => `
       <div class="exp">
         <div>${d.name}<div class="meta">${d.type}${d.due_date ? " · due " + d.due_date : ""}</div></div>
-        <span class="amt">${fmt(d.balance)}<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span></span>
+        <span class="amt">
+          <button class="secondary" data-pay-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:8px">Pay</button>
+          ${fmt(d.balance)}<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>
+        </span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No other liabilities.</p>`;
+  $("acctLiability").innerHTML = `<option value="">No link</option>` + debts.map((d) => `<option value="${d.id}">${d.name}</option>`).join("");
   document.querySelectorAll("[data-del-debt]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -375,8 +421,47 @@ async function loadDebts() {
       await loadDebts(); toast("Liability deleted"); renderNetWorth();
     };
   });
+  document.querySelectorAll("[data-pay-debt]").forEach((el) => {
+    el.onclick = (ev) => { ev.stopPropagation(); openPayForm(el.dataset.payDebt); };
+  });
   renderNetWorth();
 }
+
+// ---- PAY DOWN A LIABILITY (transfer, not an expense) --------------------
+let payingDebtId = null;
+
+function openPayForm(debtId) {
+  const debt = debts.find((d) => d.id === debtId);
+  if (!debt) return;
+  payingDebtId = debtId;
+  $("payLiabilityLabel").textContent = debt.name;
+  $("payLiabilityBalance").textContent = fmt(debt.balance);
+  $("payAmount").value = "";
+  $("payForm").classList.remove("hidden");
+}
+
+$("payConfirmBtn").onclick = async () => {
+  const amount = parseFloat($("payAmount").value);
+  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  const assetId = $("payFromAsset").value;
+  if (!assetId) return toast("Choose an asset to pay from");
+  const debt = debts.find((d) => d.id === payingDebtId);
+  const asset = assets.find((a) => a.id === assetId);
+  if (!debt || !asset) return toast("Pick a valid liability and asset");
+
+  let newAssetValue = Math.round((Number(asset.value) - amount) * 100) / 100;
+  if (asset.type === "cash") newAssetValue = Math.max(0, newAssetValue);
+  const newBalance = Math.max(0, Math.round((Number(debt.balance) - amount) * 100) / 100);
+
+  const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
+  if (assetErr) return toast(assetErr.message);
+  const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
+  if (debtErr) return toast(debtErr.message);
+
+  $("payForm").classList.add("hidden");
+  payingDebtId = null;
+  await loadAssets(); await loadDebts(); toast("Payment recorded");
+};
 
 // ---- NET WORTH (Log page) ----------------------------------------------
 // Recomputed from already-loaded state - cheap, no extra queries. Call
@@ -482,9 +567,10 @@ $("saveBtn").onclick = async () => {
   $("saveBtn").disabled = false;
   if (error) return toast(error.message);
   await applyAssetDelta(row.account_id, row.payment_type, amount, -1);
+  await applyLiabilityDelta(row.account_id, row.payment_type, amount, +1);
   $("quick").value = ""; $("confirm").classList.add("hidden"); $("parseStatus").textContent = "";
   entrySource = "manual";
-  await loadAssets(); await loadExpenses(); toast("Saved ✓");
+  await loadAssets(); await loadDebts(); await loadExpenses(); toast("Saved ✓");
 };
 
 // ---- EXPENSE LIST ----------------------------------------------------------
@@ -550,11 +636,13 @@ $("editSave").onclick = async () => {
   const { error } = await sb.from("expenses").update(patch).eq("id", editing.id);
   if (error) { $("editSave").disabled = false; return toast(error.message); }
 
-  // Reverse the old asset deduction (if any), then apply the new one -
+  // Reverse the old asset/liability effect (if any), then apply the new one -
   // covers amount/account/payment-type all changing in the same edit.
   await applyAssetDelta(prevAccountId, prevPaymentType, prevAmount, +1);
   await applyAssetDelta(patch.account_id, patch.payment_type, amount, -1);
-  await loadAssets();
+  await applyLiabilityDelta(prevAccountId, prevPaymentType, prevAmount, -1);
+  await applyLiabilityDelta(patch.account_id, patch.payment_type, amount, +1);
+  await loadAssets(); await loadDebts();
 
   // Learning loop (README §3.5): on a category correction, remember keyword->category.
   if (categoryChanged && $("eLearn").checked) {
@@ -578,7 +666,8 @@ $("editDelete").onclick = async () => {
   const { error } = await sb.from("expenses").delete().eq("id", editing.id);
   if (error) return toast(error.message);
   await applyAssetDelta(editing.account_id, editing.payment_type, Number(editing.amount), +1);
-  await loadAssets();
+  await applyLiabilityDelta(editing.account_id, editing.payment_type, Number(editing.amount), -1);
+  await loadAssets(); await loadDebts();
   $("editModal").classList.add("hidden"); editing = null;
   await loadExpenses(); toast("Deleted");
 };

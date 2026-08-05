@@ -176,7 +176,7 @@ async function loadAccounts() {
   accounts = data || [];
   $("acctList").innerHTML = accounts.length
     ? accounts.map((a, i) => `
-      <div class="acct-circle-item" ${a.type === "cash" ? 'data-cash-acct="1" style="cursor:pointer"' : ""}>
+      <div class="acct-circle-item" ${a.linked_asset_id ? `data-adjust-acct="${a.id}" style="cursor:pointer"` : ""}>
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${(a.name.trim()[0] || "?").toUpperCase()}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${a.name}</div>
@@ -200,8 +200,8 @@ async function loadAccounts() {
       await loadAccounts(); await loadExpenses(); toast("Account deleted");
     };
   });
-  document.querySelectorAll("[data-cash-acct]").forEach((el) => {
-    el.onclick = () => openCashAdjust();
+  document.querySelectorAll("[data-adjust-acct]").forEach((el) => {
+    el.onclick = () => openAssetAdjust(el.dataset.adjustAcct);
   });
 }
 
@@ -226,7 +226,7 @@ async function loadAssets() {
   $("assetsList").innerHTML = assets.length
     ? assets.map((a) => `
       <div class="exp">
-        <div>${a.name}<div class="meta">${a.type}</div></div>
+        <div>${a.name}${a.type === "cash" ? "" : `<div class="meta">${cap(a.type)}</div>`}</div>
         <span class="amt">${fmt(a.value)}<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span></span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
@@ -260,47 +260,72 @@ async function applyAssetDelta(accountId, paymentType, amount, sign) {
   await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
 }
 
-// ---- CASH (the one auto-managed account) --------------------------------
-function findCashAsset() {
-  const cashAcct = accounts.find((a) => a.type === "cash");
-  if (!cashAcct || !cashAcct.linked_asset_id) return null;
-  return assets.find((a) => a.id === cashAcct.linked_asset_id) || null;
+// ---- ADJUST AN ACCOUNT'S LINKED ASSET -----------------------------------
+// Tapping any account circle with a linked asset opens this. Bank-linked
+// accounts (checking/debit, typically) get a direct "set the full balance"
+// field, since you can just look up and type the real number. Everything
+// else - Cash included - gets +/- adjustment instead, matching how you'd
+// actually track a value you don't get to look up exactly.
+let adjustingAssetId = null;
+
+function findLinkedAsset(accountId) {
+  const acct = accounts.find((a) => a.id === accountId);
+  if (!acct || !acct.linked_asset_id) return null;
+  return assets.find((a) => a.id === acct.linked_asset_id) || null;
 }
 
-function refreshCashDisplay() {
-  const cash = findCashAsset();
-  $("cashCurrentValue").textContent = fmt(cash ? cash.value : 0);
+function refreshAdjustDisplay() {
+  const asset = assets.find((a) => a.id === adjustingAssetId);
+  if (asset) $("adjustCurrentValue").textContent = fmt(asset.value);
 }
 
-function openCashAdjust() {
-  refreshCashDisplay();
-  $("cashAdjustAmount").value = "";
-  $("cashAdjustForm").classList.toggle("hidden");
+function openAssetAdjust(accountId) {
+  const asset = findLinkedAsset(accountId);
+  if (!asset) return;
+  adjustingAssetId = asset.id;
+  $("adjustAssetLabel").textContent = asset.name;
+  $("adjustCurrentValue").textContent = fmt(asset.value);
+  $("adjustAmount").value = "";
+  $("adjustNewBalance").value = String(asset.value);
+  const isBank = asset.type === "bank";
+  $("adjustDeltaMode").classList.toggle("hidden", isBank);
+  $("adjustBankMode").classList.toggle("hidden", !isBank);
+  $("assetAdjustForm").classList.remove("hidden");
 }
 
-$("cashAddBtn").onclick = async () => {
-  const amount = parseFloat($("cashAdjustAmount").value);
+$("adjustAddBtn").onclick = async () => {
+  const amount = parseFloat($("adjustAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
-  const cash = findCashAsset();
-  if (!cash) return toast("No Cash asset found");
-  const newValue = Math.round((Number(cash.value) + amount) * 100) / 100;
-  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", cash.id);
+  const asset = assets.find((a) => a.id === adjustingAssetId);
+  if (!asset) return;
+  const newValue = Math.round((Number(asset.value) + amount) * 100) / 100;
+  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) return toast(error.message);
-  $("cashAdjustAmount").value = "";
-  await loadAssets(); refreshCashDisplay(); toast("Cash added");
+  $("adjustAmount").value = "";
+  await loadAssets(); refreshAdjustDisplay(); toast("Added");
 };
 
-$("cashSubtractBtn").onclick = async () => {
-  const amount = parseFloat($("cashAdjustAmount").value);
+$("adjustSubtractBtn").onclick = async () => {
+  const amount = parseFloat($("adjustAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
-  const cash = findCashAsset();
-  if (!cash) return toast("No Cash asset found");
-  if (amount > Number(cash.value)) return toast("Not enough cash - cash can't go below $0");
-  const newValue = Math.round((Number(cash.value) - amount) * 100) / 100;
-  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", cash.id);
+  const asset = assets.find((a) => a.id === adjustingAssetId);
+  if (!asset) return;
+  if (amount > Number(asset.value)) return toast("Not enough - value can't go below $0");
+  const newValue = Math.round((Number(asset.value) - amount) * 100) / 100;
+  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) return toast(error.message);
-  $("cashAdjustAmount").value = "";
-  await loadAssets(); refreshCashDisplay(); toast("Cash subtracted");
+  $("adjustAmount").value = "";
+  await loadAssets(); refreshAdjustDisplay(); toast("Subtracted");
+};
+
+$("adjustSetBtn").onclick = async () => {
+  const newValue = parseFloat($("adjustNewBalance").value);
+  if (!Number.isFinite(newValue)) return toast("Enter a valid balance");
+  const asset = assets.find((a) => a.id === adjustingAssetId);
+  if (!asset) return;
+  const { error } = await sb.from("assets").update({ value: Math.round(newValue * 100) / 100 }).eq("id", asset.id);
+  if (error) return toast(error.message);
+  await loadAssets(); refreshAdjustDisplay(); toast("Balance updated");
 };
 
 // ---- LIABILITIES (tracked debts) ---------------------------------------

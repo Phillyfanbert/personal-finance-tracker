@@ -15,6 +15,7 @@ import {
 import { findDeals, studentUpsell, matchService } from "./discounts.js";
 import { parseWithGemma, askGemma } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
+import { computeNetWorth } from "./networth.js";
 
 const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, DEAL_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR-PROJECT")) {
@@ -43,6 +44,8 @@ let allExpenses = []; // cache for reports (last ~12 months)
 let subscriptions = []; // cache of the user's subscriptions
 let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
+let assets = [];      // net-worth assets (Log page)
+let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (Log page)
 let editing = null;   // expense row currently in the edit modal
 let editingSub = null; // subscription row currently in the sub form
 let userId = null;    // signed-in user's uuid
@@ -77,7 +80,6 @@ function renderAuth(session) {
 $("navLog").onclick = () => showView("log");
 $("navSubs").onclick = () => { showView("subs"); loadSubscriptions(); };
 $("navReports").onclick = () => { showView("reports"); loadReports(); };
-$("subsTile").onclick = () => { showView("subs"); loadSubscriptions(); };
 $("backFromSubs").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
 function showView(v) {
@@ -94,7 +96,7 @@ async function init() {
   fillCategorySelect($("fCategory"));
   fillCategorySelect($("eCategory"));
   $("fDate").value = new Date().toISOString().slice(0, 10);
-  await Promise.all([loadRules(), loadAccounts(), loadProfile(), loadCatalog(), loadDealFindings()]);
+  await Promise.all([loadRules(), loadAccounts(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssets(), loadDebts()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
 }
 
@@ -151,6 +153,112 @@ async function loadAccounts() {
       await loadAccounts(); await loadExpenses(); toast("Account deleted");
     };
   });
+}
+
+// ---- ASSETS ------------------------------------------------------------
+$("addAssetBtn").onclick = () => $("assetForm").classList.toggle("hidden");
+$("saveAssetBtn").onclick = async () => {
+  const name = $("assetName").value.trim();
+  const type = $("assetType").value;
+  const value = parseFloat($("assetValue").value);
+  if (!name) return toast("Asset name required");
+  if (!Number.isFinite(value)) return toast("Enter a value");
+  const { error } = await sb.from("assets").insert({ name, type, value });
+  if (error) return toast(error.message);
+  $("assetName").value = ""; $("assetValue").value = ""; $("assetForm").classList.add("hidden");
+  await loadAssets(); toast("Asset added");
+};
+
+async function loadAssets() {
+  const { data } = await sb.from("assets").select("*").order("created_at");
+  assets = data || [];
+  $("assetsList").innerHTML = assets.length
+    ? assets.map((a) => `
+      <div class="exp">
+        <div>${a.name}<div class="meta">${a.type}</div></div>
+        <span class="amt">${fmt(a.value)}<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span></span>
+      </div>`).join("")
+    : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
+  document.querySelectorAll("[data-del-asset]").forEach((el) => {
+    el.onclick = async (ev) => {
+      ev.stopPropagation();
+      if (!confirm("Delete this asset?")) return;
+      const { error } = await sb.from("assets").delete().eq("id", el.dataset.delAsset);
+      if (error) return toast(error.message);
+      await loadAssets(); toast("Asset deleted"); renderNetWorth();
+    };
+  });
+  renderNetWorth();
+}
+
+// ---- LIABILITIES (tracked debts) ---------------------------------------
+$("addDebtBtn").onclick = () => $("debtForm").classList.toggle("hidden");
+$("saveDebtBtn").onclick = async () => {
+  const name = $("debtName").value.trim();
+  const type = $("debtType").value;
+  const balance = parseFloat($("debtBalance").value);
+  if (!name) return toast("Liability name required");
+  if (!Number.isFinite(balance)) return toast("Enter a balance");
+  const row = {
+    name, type, balance,
+    interest_rate: $("debtRate").value ? parseFloat($("debtRate").value) : null,
+    minimum_payment: $("debtMinPay").value ? parseFloat($("debtMinPay").value) : null,
+    due_date: $("debtDue").value || null,
+  };
+  const { error } = await sb.from("liabilities").insert(row);
+  if (error) return toast(error.message);
+  $("debtName").value = ""; $("debtBalance").value = ""; $("debtRate").value = "";
+  $("debtMinPay").value = ""; $("debtDue").value = ""; $("debtForm").classList.add("hidden");
+  await loadDebts(); toast("Liability added");
+};
+
+async function loadDebts() {
+  const { data } = await sb.from("liabilities").select("*").order("created_at");
+  debts = data || [];
+  $("debtsList").innerHTML = debts.length
+    ? debts.map((d) => `
+      <div class="exp">
+        <div>${d.name}<div class="meta">${d.type}${d.due_date ? " · due " + d.due_date : ""}</div></div>
+        <span class="amt">${fmt(d.balance)}<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span></span>
+      </div>`).join("")
+    : `<p class="muted" style="font-size:13px">No other liabilities.</p>`;
+  document.querySelectorAll("[data-del-debt]").forEach((el) => {
+    el.onclick = async (ev) => {
+      ev.stopPropagation();
+      if (!confirm("Delete this liability?")) return;
+      const { error } = await sb.from("liabilities").delete().eq("id", el.dataset.delDebt);
+      if (error) return toast(error.message);
+      await loadDebts(); toast("Liability deleted"); renderNetWorth();
+    };
+  });
+  renderNetWorth();
+}
+
+// ---- NET WORTH (Log page) ----------------------------------------------
+// Recomputed from already-loaded state — cheap, no extra queries. Call
+// after anything that changes assets, debts, subscriptions, or expenses.
+function renderNetWorth() {
+  const ym = monthKey();
+  const monthExpenseTotal = allExpenses
+    .filter((r) => (r.occurred_at || "").startsWith(ym))
+    .reduce((s, r) => s + Number(r.amount), 0);
+
+  const nw = computeNetWorth(assets, debts, subscriptions, monthExpenseTotal);
+
+  $("netWorthTotal").textContent = fmt(nw.netWorth);
+  $("assetsTotal").textContent = fmt(nw.assetsTotal);
+  $("liabilitiesTotal").textContent = fmt(nw.liabilitiesTotal);
+  $("expensesLiabAmount").textContent = fmt(nw.expensesTotal);
+
+  const activeSubs = subscriptions.filter((s) => s.is_active);
+  $("subsLiabList").innerHTML = activeSubs.length
+    ? activeSubs.map((s) => `
+      <div class="exp" style="cursor:pointer">
+        <div>${s.name}</div>
+        <span class="amt">${fmt(monthlyAmount(s))}/mo</span>
+      </div>`).join("")
+    : `<p class="muted" style="font-size:13px">No active subscriptions. Tap to add →</p>`;
+  $("subsLiabList").onclick = () => $("navSubs").click();
 }
 
 // ---- QUICK ADD -------------------------------------------------------------
@@ -236,6 +344,7 @@ async function loadExpenses() {
   const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
   $("monthTotal").textContent = fmt(monthRows.reduce((s, r) => s + Number(r.amount), 0));
   $("monthCount").textContent = monthRows.length;
+  renderNetWorth();
 
   const rows = allExpenses.slice(0, 50);
   if (!rows.length) { $("expList").innerHTML = `<p class="muted">No expenses yet — add one above.</p>`; return; }
@@ -384,9 +493,9 @@ async function loadSubscriptions() {
   if (error) { $("subList").innerHTML = `<p class="muted">${error.message}</p>`; return; }
   subscriptions = data || [];
   renderSubscriptions();
-  renderSubsTile();
   renderDeals();
   renderDealFindings();
+  renderNetWorth();
 }
 
 // ---- DISCOUNT DISCOVERY (README §3.7 / F6) ---------------------------------
@@ -461,15 +570,6 @@ function renderDealFindings() {
         <span class="amt muted" style="font-size:11px">${f.status === "verified" ? "✓ verified" : "unverified"}</span>
       </div>`;
   }).join("");
-}
-
-function renderSubsTile() {
-  const monthly = totalMonthly(subscriptions);
-  $("subsMonthly").textContent = fmt(monthly);
-  const next = upcomingRenewals(subscriptions, 3650)[0];
-  $("subsNext").textContent = next
-    ? `${next.name} · ${next.next_renewal} (${renewalLabel(next.days)})`
-    : "—";
 }
 
 function renderSubscriptions() {

@@ -179,6 +179,9 @@
               <option value="debit">debit</option><option value="cash">cash</option><option value="other">other</option>
             </select>
           </div>
+          <label>Linked asset (optional)</label>
+          <select id="acctAsset"><option value="">No link</option></select>
+          <p class="muted" style="font-size:12px;margin:4px 0 0">If linked, non-credit expenses tagged with this account deduct from that asset's value.</p>
           <div style="height:8px"></div>
           <button id="saveAcctBtn">Save account</button>
         </div>
@@ -223,10 +226,7 @@
         </div>
 
         <div class="muted" style="font-size:12px;margin:14px 0 4px">Expenses (this month)</div>
-        <div class="exp" style="cursor:default">
-          <div>Expenses</div>
-          <span class="amt" id="expensesLiabAmount">$0</span>
-        </div>
+        <div id="expensesLiabList"></div>
 
         <div class="muted" style="font-size:12px;margin:14px 0 4px">Other liabilities</div>
         <div id="debtsList" class="muted" style="font-size:13px">No other liabilities.</div>

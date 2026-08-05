@@ -126,8 +126,9 @@ $("addAcctBtn").onclick = () => $("acctForm").classList.toggle("hidden");
 $("saveAcctBtn").onclick = async () => {
   const name = $("acctName").value.trim();
   const type = $("acctType").value;
+  const linked_asset_id = $("acctAsset").value || null;
   if (!name) return toast("Account name required");
-  const { error } = await sb.from("accounts").insert({ name, type });
+  const { error } = await sb.from("accounts").insert({ name, type, linked_asset_id });
   if (error) return toast(error.message);
   $("acctName").value = ""; $("acctForm").classList.add("hidden");
   await loadAccounts(); toast("Account added");
@@ -188,6 +189,7 @@ async function loadAssets() {
         <span class="amt">${fmt(a.value)}<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span></span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
+  $("acctAsset").innerHTML = `<option value="">No link</option>` + assets.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
   document.querySelectorAll("[data-del-asset]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -198,6 +200,20 @@ async function loadAssets() {
     };
   });
   renderNetWorth();
+}
+
+// Non-credit expenses draw down the linked asset (if the account has one),
+// so assets stay in sync with real spending. Credit-card spending is a
+// liability, not a draw on an asset, so it's deliberately skipped here.
+// sign: -1 to apply an expense (deduct), +1 to reverse one (edit/delete).
+async function applyAssetDelta(accountId, paymentType, amount, sign) {
+  if (paymentType === "credit" || !accountId) return;
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account || !account.linked_asset_id) return;
+  const asset = assets.find((a) => a.id === account.linked_asset_id);
+  if (!asset) return;
+  const newValue = Math.round((Number(asset.value) + sign * Number(amount)) * 100) / 100;
+  await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
 }
 
 // ---- LIABILITIES (tracked debts) ---------------------------------------
@@ -248,16 +264,28 @@ async function loadDebts() {
 // after anything that changes assets, debts, subscriptions, or expenses.
 function renderNetWorth() {
   const ym = monthKey();
-  const monthExpenseTotal = allExpenses
-    .filter((r) => (r.occurred_at || "").startsWith(ym))
-    .reduce((s, r) => s + Number(r.amount), 0);
+  const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  const monthExpenseTotal = monthRows.reduce((s, r) => s + Number(r.amount), 0);
 
   const nw = computeNetWorth(assets, debts, subscriptions, monthExpenseTotal);
 
   $("netWorthTotal").textContent = fmt(nw.netWorth);
   $("assetsTotal").textContent = fmt(nw.assetsTotal);
   $("liabilitiesTotal").textContent = fmt(nw.liabilitiesTotal);
-  $("expensesLiabAmount").textContent = fmt(nw.expensesTotal);
+
+  const creditTotal = monthRows.filter((r) => r.payment_type === "credit").reduce((s, r) => s + Number(r.amount), 0);
+  const debitTotal = monthRows.filter((r) => r.payment_type === "debit").reduce((s, r) => s + Number(r.amount), 0);
+  const otherTotal = Math.round((monthExpenseTotal - creditTotal - debitTotal) * 100) / 100; // cash + unspecified
+  const expenseRow = (label, value) => `
+    <div class="exp" style="cursor:default">
+      <div>${label}</div>
+      <span class="amt">${fmt(value)}</span>
+    </div>`;
+  $("expensesLiabList").innerHTML =
+    expenseRow("Total", monthExpenseTotal) +
+    expenseRow("Credit", creditTotal) +
+    expenseRow("Debit", debitTotal) +
+    (otherTotal > 0 ? expenseRow("Cash / other", otherTotal) : "");
 
   const activeSubs = subscriptions.filter((s) => s.is_active);
   $("subsLiabList").innerHTML = activeSubs.length
@@ -334,9 +362,10 @@ $("saveBtn").onclick = async () => {
   const { error } = await sb.from("expenses").insert(row);
   $("saveBtn").disabled = false;
   if (error) return toast(error.message);
+  await applyAssetDelta(row.account_id, row.payment_type, amount, -1);
   $("quick").value = ""; $("confirm").classList.add("hidden"); $("parseStatus").textContent = "";
   entrySource = "manual";
-  await loadExpenses(); toast("Saved ✓");
+  await loadAssets(); await loadExpenses(); toast("Saved ✓");
 };
 
 // ---- EXPENSE LIST ----------------------------------------------------------
@@ -391,6 +420,7 @@ $("editSave").onclick = async () => {
   const desc = $("eDesc").value.trim();
   const newCategory = $("eCategory").value || null;
   const categoryChanged = newCategory && newCategory !== editing.category;
+  const prevAccountId = editing.account_id, prevPaymentType = editing.payment_type, prevAmount = Number(editing.amount);
 
   const patch = {
     amount, description: desc || null, merchant: desc.split(/\s+/)[0] || editing.merchant,
@@ -400,6 +430,12 @@ $("editSave").onclick = async () => {
   $("editSave").disabled = true;
   const { error } = await sb.from("expenses").update(patch).eq("id", editing.id);
   if (error) { $("editSave").disabled = false; return toast(error.message); }
+
+  // Reverse the old asset deduction (if any), then apply the new one -
+  // covers amount/account/payment-type all changing in the same edit.
+  await applyAssetDelta(prevAccountId, prevPaymentType, prevAmount, +1);
+  await applyAssetDelta(patch.account_id, patch.payment_type, amount, -1);
+  await loadAssets();
 
   // Learning loop (README §3.5): on a category correction, remember keyword->category.
   if (categoryChanged && $("eLearn").checked) {
@@ -422,6 +458,8 @@ $("editDelete").onclick = async () => {
   if (!confirm("Delete this expense?")) return;
   const { error } = await sb.from("expenses").delete().eq("id", editing.id);
   if (error) return toast(error.message);
+  await applyAssetDelta(editing.account_id, editing.payment_type, Number(editing.amount), +1);
+  await loadAssets();
   $("editModal").classList.add("hidden"); editing = null;
   await loadExpenses(); toast("Deleted");
 };

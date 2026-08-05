@@ -97,8 +97,21 @@ async function init() {
   fillCategorySelect($("fCategory"));
   fillCategorySelect($("eCategory"));
   $("fDate").value = new Date().toISOString().slice(0, 10);
+  await ensureCashAccount();
   await Promise.all([loadRules(), loadAccounts(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssets(), loadDebts()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
+}
+
+// Every user gets exactly one Cash account + linked Cash asset, auto-created
+// on first load rather than manually added (accounts_one_cash_per_user in
+// 09_cash_account.sql is the DB-level backstop against duplicates).
+async function ensureCashAccount() {
+  const { data } = await sb.from("accounts").select("id").eq("type", "cash").limit(1);
+  if (data && data.length) return;
+  const { data: asset, error: assetErr } = await sb.from("assets")
+    .insert({ name: "Cash", type: "cash", value: 0 }).select().single();
+  if (assetErr) return; // best-effort - don't block app load on this
+  await sb.from("accounts").insert({ name: "Cash", type: "cash", linked_asset_id: asset.id });
 }
 
 async function loadCatalog() {
@@ -122,16 +135,38 @@ async function loadRules() {
 }
 
 // ---- ACCOUNTS --------------------------------------------------------------
+// Account types that represent real money on hand get a matching Asset
+// auto-created and linked, so they count toward net worth without a manual
+// second step. 'credit' is a liability, not an asset, so it's excluded;
+// 'other' is ambiguous and left to manual linking. A manually chosen link
+// (the picker below) always wins over auto-creation. 'cash' is deliberately
+// absent - there's exactly one Cash account per user, auto-managed by
+// ensureCashAccount(), never created through this form.
+const AUTO_ASSET_TYPE = { checking: "bank", debit: "bank" };
+
 $("addAcctBtn").onclick = () => $("acctForm").classList.toggle("hidden");
 $("saveAcctBtn").onclick = async () => {
   const name = $("acctName").value.trim();
   const type = $("acctType").value;
-  const linked_asset_id = $("acctAsset").value || null;
+  let linked_asset_id = $("acctAsset").value || null;
   if (!name) return toast("Account name required");
+  if (type === "cash") return toast("Cash is automatic - use the Cash account above to add or subtract.");
+
+  let autoLinked = false;
+  if (!linked_asset_id && AUTO_ASSET_TYPE[type]) {
+    const { data: newAsset, error: assetErr } = await sb.from("assets")
+      .insert({ name, type: AUTO_ASSET_TYPE[type], value: 0 })
+      .select().single();
+    if (assetErr) return toast(assetErr.message);
+    linked_asset_id = newAsset.id;
+    autoLinked = true;
+  }
+
   const { error } = await sb.from("accounts").insert({ name, type, linked_asset_id });
   if (error) return toast(error.message);
   $("acctName").value = ""; $("acctForm").classList.add("hidden");
-  await loadAccounts(); toast("Account added");
+  await loadAssets(); await loadAccounts();
+  toast(autoLinked ? "Account added - linked to a new $0 asset, edit its value below" : "Account added");
 };
 
 const ACCT_COLORS = ["#0ea5e9", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6", "#22d3ee", "#fb923c"];
@@ -141,9 +176,9 @@ async function loadAccounts() {
   accounts = data || [];
   $("acctList").innerHTML = accounts.length
     ? accounts.map((a, i) => `
-      <div class="acct-circle-item">
+      <div class="acct-circle-item" ${a.type === "cash" ? 'data-cash-acct="1" style="cursor:pointer"' : ""}>
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${(a.name.trim()[0] || "?").toUpperCase()}</div>
-        <span class="x" data-del-acct="${a.id}">✕</span>
+        ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${a.name}</div>
         <div class="type">${cap(a.type)}</div>
       </div>`).join("")
@@ -154,6 +189,8 @@ async function loadAccounts() {
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
   // delete handlers - expenses keep their history (account_id -> null on delete, per schema)
+  // Cash has no delete affordance - it's auto-managed (ensureCashAccount), use
+  // the +/- adjust form instead of removing it.
   document.querySelectorAll("[data-del-acct]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -162,6 +199,9 @@ async function loadAccounts() {
       if (error) return toast(error.message);
       await loadAccounts(); await loadExpenses(); toast("Account deleted");
     };
+  });
+  document.querySelectorAll("[data-cash-acct]").forEach((el) => {
+    el.onclick = () => openCashAdjust();
   });
 }
 
@@ -212,9 +252,55 @@ async function applyAssetDelta(accountId, paymentType, amount, sign) {
   if (!account || !account.linked_asset_id) return;
   const asset = assets.find((a) => a.id === account.linked_asset_id);
   if (!asset) return;
-  const newValue = Math.round((Number(asset.value) + sign * Number(amount)) * 100) / 100;
+  let newValue = Math.round((Number(asset.value) + sign * Number(amount)) * 100) / 100;
+  // Physical cash can never go negative - floor it rather than block the
+  // expense (an over-budget cash purchase should still get logged).
+  if (asset.type === "cash") newValue = Math.max(0, newValue);
   await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
 }
+
+// ---- CASH (the one auto-managed account) --------------------------------
+function findCashAsset() {
+  const cashAcct = accounts.find((a) => a.type === "cash");
+  if (!cashAcct || !cashAcct.linked_asset_id) return null;
+  return assets.find((a) => a.id === cashAcct.linked_asset_id) || null;
+}
+
+function refreshCashDisplay() {
+  const cash = findCashAsset();
+  $("cashCurrentValue").textContent = fmt(cash ? cash.value : 0);
+}
+
+function openCashAdjust() {
+  refreshCashDisplay();
+  $("cashAdjustAmount").value = "";
+  $("cashAdjustForm").classList.toggle("hidden");
+}
+
+$("cashAddBtn").onclick = async () => {
+  const amount = parseFloat($("cashAdjustAmount").value);
+  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  const cash = findCashAsset();
+  if (!cash) return toast("No Cash asset found");
+  const newValue = Math.round((Number(cash.value) + amount) * 100) / 100;
+  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", cash.id);
+  if (error) return toast(error.message);
+  $("cashAdjustAmount").value = "";
+  await loadAssets(); refreshCashDisplay(); toast("Cash added");
+};
+
+$("cashSubtractBtn").onclick = async () => {
+  const amount = parseFloat($("cashAdjustAmount").value);
+  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  const cash = findCashAsset();
+  if (!cash) return toast("No Cash asset found");
+  if (amount > Number(cash.value)) return toast("Not enough cash - cash can't go below $0");
+  const newValue = Math.round((Number(cash.value) - amount) * 100) / 100;
+  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", cash.id);
+  if (error) return toast(error.message);
+  $("cashAdjustAmount").value = "";
+  await loadAssets(); refreshCashDisplay(); toast("Cash subtracted");
+};
 
 // ---- LIABILITIES (tracked debts) ---------------------------------------
 $("addDebtBtn").onclick = () => $("debtForm").classList.toggle("hidden");

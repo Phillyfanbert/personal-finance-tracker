@@ -99,21 +99,81 @@
         </div>
       </div>
 
+      <!-- Net worth overview -->
+      <div class="card" id="netWorthCard">
+        <div class="muted" style="font-size:12px">Net worth</div>
+        <div class="big" id="netWorthTotal" style="font-size:30px">$0</div>
+      </div>
+
+      <!-- Assets -->
+      <div class="card">
+        <div class="topbar" style="margin-bottom:8px">
+          <strong>💰 Assets</strong>
+          <span class="muted" style="font-size:12px" id="assetsTotal">$0</span>
+        </div>
+        <div id="assetsList" class="muted" style="font-size:13px">No assets yet.</div>
+        <button class="secondary" id="addAssetBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add asset</button>
+        <div id="assetForm" class="hidden" style="margin-top:10px">
+          <div class="row">
+            <input id="assetName" placeholder="Chase Checking" />
+            <select id="assetType">
+              <option value="cash">cash</option><option value="bank">bank</option>
+              <option value="investment">investment</option><option value="property">property</option>
+              <option value="vehicle">vehicle</option><option value="other">other</option>
+            </select>
+          </div>
+          <label>Value</label>
+          <input id="assetValue" type="number" step="0.01" inputmode="decimal" />
+          <div style="height:8px"></div>
+          <button id="saveAssetBtn">Save asset</button>
+        </div>
+      </div>
+
+      <!-- Liabilities: subscriptions (simple) + this month's expenses + tracked debts -->
+      <div class="card">
+        <div class="topbar" style="margin-bottom:8px">
+          <strong>📉 Liabilities</strong>
+          <span class="muted" style="font-size:12px" id="liabilitiesTotal">$0</span>
+        </div>
+
+        <div class="muted" style="font-size:12px;margin:4px 0 4px">Subscriptions</div>
+        <div id="subsLiabList" style="cursor:pointer">
+          <p class="muted" style="font-size:13px">No active subscriptions. Tap to add →</p>
+        </div>
+
+        <div class="muted" style="font-size:12px;margin:14px 0 4px">Expenses (this month)</div>
+        <div class="exp" style="cursor:default">
+          <div>Total spent</div>
+          <span class="amt" id="expensesLiabAmount">$0</span>
+        </div>
+
+        <div class="muted" style="font-size:12px;margin:14px 0 4px">Other liabilities</div>
+        <div id="debtsList" class="muted" style="font-size:13px">No other liabilities.</div>
+        <button class="secondary" id="addDebtBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
+        <div id="debtForm" class="hidden" style="margin-top:10px">
+          <div class="row">
+            <input id="debtName" placeholder="Chase Sapphire" />
+            <select id="debtType">
+              <option value="credit_card">credit card</option><option value="loan">loan</option>
+              <option value="mortgage">mortgage</option><option value="other">other</option>
+            </select>
+          </div>
+          <label>Balance owed</label>
+          <input id="debtBalance" type="number" step="0.01" inputmode="decimal" />
+          <div class="row">
+            <div><label>Interest rate % (optional)</label><input id="debtRate" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label>Min payment (optional)</label><input id="debtMinPay" type="number" step="0.01" inputmode="decimal" /></div>
+          </div>
+          <label>Due date (optional)</label>
+          <input id="debtDue" type="date" />
+          <div style="height:8px"></div>
+          <button id="saveDebtBtn">Save liability</button>
+        </div>
+      </div>
+
       <div class="totals">
         <div class="card"><div class="muted" style="font-size:12px">This month</div><div class="big" id="monthTotal">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Entries</div><div class="big" id="monthCount">0</div></div>
-      </div>
-
-      <!-- Subscriptions dashboard tile (README §3.7) -->
-      <div class="card" id="subsTile" style="cursor:pointer">
-        <div class="topbar" style="margin-bottom:6px">
-          <strong>📆 Subscriptions</strong>
-          <span class="muted" style="font-size:12px">tap to manage →</span>
-        </div>
-        <div class="row" style="gap:16px">
-          <div><div class="muted" style="font-size:12px">Monthly</div><div class="big" id="subsMonthly" style="font-size:20px;font-weight:800">$0</div></div>
-          <div><div class="muted" style="font-size:12px">Next renewal</div><div id="subsNext" style="font-size:14px;margin-top:4px">—</div></div>
-        </div>
       </div>
 
       <!-- Quick add -->

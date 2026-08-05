@@ -1,5 +1,5 @@
 -- ============================================================================
--- Personal Expense Tracker — Phase 0 Row-Level Security  (README §3.3 / §3.4)
+-- Personal Expense Tracker - Phase 0 Row-Level Security  (README §3.3 / §3.4)
 -- Run this SECOND, after 01_schema.sql.
 --
 -- This is THE privacy core. With RLS off, anyone holding your project URL +
@@ -66,9 +66,9 @@ create trigger on_auth_user_created
 
 -- ============================================================================
 -- RLS rules to live by (README §3.3):
---   * The service_role key bypasses RLS entirely — keep it SERVER-SIDE ONLY,
+--   * The service_role key bypasses RLS entirely - keep it SERVER-SIDE ONLY,
 --     never in the PWA. The PWA uses only the anon key.
---   * "using" filters visible rows; "with check" validates inserts/updates —
+--   * "using" filters visible rows; "with check" validates inserts/updates -
 --     both are set above.
 --   * Test with TWO accounts before trusting it (see SETUP.md §6).
 -- ============================================================================

@@ -1,4 +1,4 @@
-// Minimal service worker — enables "Add to Home Screen" install on iOS/Android.
+// Minimal service worker - enables "Add to Home Screen" install on iOS/Android.
 // Caches the app shell only. The server (Supabase) stays the source of truth
 // per README §2.4; we do NOT cache API responses.
 const CACHE = "expense-shell-v7";
@@ -22,14 +22,14 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  // Never intercept Supabase / cross-origin calls — always hit the network.
+  // Never intercept Supabase / cross-origin calls - always hit the network.
   if (url.origin !== self.location.origin) return;
   if (e.request.method !== "GET") return;
 
   // App shell: network-first. Always try to fetch the freshest copy of the
   // file; only serve the cached copy if the network request fails (i.e. the
   // phone is offline). This is what makes code changes (charts.js, app.js,
-  // index.html, ...) show up on next reload without a manual force-refresh —
+  // index.html, ...) show up on next reload without a manual force-refresh -
   // previously this was cache-first, so an edited file kept being served
   // stale until the service worker itself happened to change.
   e.respondWith(

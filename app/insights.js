@@ -1,8 +1,8 @@
 // ============================================================================
-// Interactive spending Q&A — context builder (pure, unit-testable).
+// Interactive spending Q&A - context builder (pure, unit-testable).
 // Builds a compact summary of the signed-in user's own data to hand to
 // Gemma alongside their question. Capped so prompts stay small and fast on
-// a local model — not a privacy boundary, since this only ever goes to the
+// a local model - not a privacy boundary, since this only ever goes to the
 // user's own self-hosted Gemma (app/gemma.js).
 // ============================================================================
 import { lastMonths, monthlyTotals, sumBy } from "./charts.js";

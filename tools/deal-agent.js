@@ -1,29 +1,29 @@
 #!/usr/bin/env node
 // ============================================================================
-// F6 stretch — live deal-search agent (docs/F6-live-deals-proposal.md).
+// F6 stretch - live deal-search agent (docs/F6-live-deals-proposal.md).
 // Runs on the SERVER MACHINE ONLY (the one already running Ollama), alongside
 // SearXNG. Never runs in the browser, never ships in the PWA, and needs the
-// Supabase SERVICE_ROLE key — keep that out of the repo (env var only).
+// Supabase SERVICE_ROLE key - keep that out of the repo (env var only).
 //
 // Deliberately talks to Gemma over localhost, not Tailscale or a public
-// tunnel — running here means no network hop, no new device on any tailnet,
+// tunnel - running here means no network hop, no new device on any tailnet,
 // and the most private option available (nothing about this feature leaves
 // the machine except the final validated findings sent to Supabase).
 //
 // What it does, per active-subscription service:
 //   1. Look up the service's allowlisted domain(s) in service_domains. No
 //      entry -> skip and log (see docs/F6-live-deals-proposal.md's Option C
-//      decision — we never guess a domain).
+//      decision - we never guess a domain).
 //   2. Query SearXNG with a handful of angles (pricing, student, promo,
 //      annual, family) and keep only results on an allowlisted domain.
 //   3. Fetch each surviving page's text and ask Gemma to extract a plan as
 //      strict JSON (same pattern as app/gemma.js's parseWithGemma).
 //   4. Write validated findings to deal_findings via the REST API using the
-//      service_role key (bypasses RLS by design — the PWA can only read).
+//      service_role key (bypasses RLS by design - the PWA can only read).
 //
 // Setup (on the server machine, next to Ollama):
 //   Preferred: copy tools/.env.deal-agent.example to tools/.env.deal-agent,
-//   fill in real values, then run ./tools/run-deal-agent.sh — it brings
+//   fill in real values, then run ./tools/run-deal-agent.sh - it brings
 //   SearXNG up, runs this script, and tears SearXNG back down afterward.
 //
 //   This script can also be run directly with plain env vars:
@@ -31,17 +31,17 @@
 //   export SUPABASE_SERVICE_ROLE_KEY=sb_secret_...   # Dashboard -> API Keys. NEVER commit this.
 //   export SEARXNG_URL=http://localhost:8080
 //   export GEMMA_ENDPOINT=http://localhost:11434/api/generate
-//   export GEMMA_MODEL=gemma3:4b   # exact tag from `ollama list` — "Gemma 4" is not a real tag
+//   export GEMMA_MODEL=gemma3:4b   # exact tag from `ollama list` - "Gemma 4" is not a real tag
 //   node tools/deal-agent.js            # writes findings
 //   DRY_RUN=1 node tools/deal-agent.js  # prints what it would write, no DB writes
 //
 // Note: Ollama's dynamic model unloading means Gemma may need to cold-load
-// on first use after being idle — that's why there's a warm-up call before
+// on first use after being idle - that's why there's a warm-up call before
 // the extraction loop, and why Gemma calls get a longer timeout than the
 // SearXNG/page-fetch calls (see GEMMA_TIMEOUT_MS below).
 //
 // Scheduling (Phase D, not yet wired up): run this weekly via cron/systemd
-// timer, not continuously — see the "always running" discussion in
+// timer, not continuously - see the "always running" discussion in
 // docs/F6-live-deals-proposal.md §8. Prices don't change fast enough to
 // justify the compute, and hammering SearXNG risks getting upstream engines
 // to rate-limit or block it.
@@ -57,7 +57,7 @@ const DRY_RUN = !!process.env.DRY_RUN;
 const RESULTS_PER_QUERY = 3;       // top N allowlisted results kept per query
 const PAGE_TEXT_LIMIT = 4000;      // chars of page text sent to Gemma
 const FETCH_TIMEOUT_MS = 8000;     // SearXNG + page fetches: fast, no model load involved
-const GEMMA_TIMEOUT_MS = 60000;    // Gemma calls: generous — a dynamically-unloaded model
+const GEMMA_TIMEOUT_MS = 60000;    // Gemma calls: generous - a dynamically-unloaded model
                                     // (Ollama keep_alive) can take well past 8s to cold-load
 const REQUEST_DELAY_MS = 1000;     // politeness gap between outbound requests
 
@@ -282,7 +282,7 @@ async function main() {
 
   const watchlist = await loadWatchlist();
   if (!watchlist.length) {
-    console.log("No active subscriptions — nothing to search for. Exiting.");
+    console.log("No active subscriptions - nothing to search for. Exiting.");
     return;
   }
   console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
@@ -294,7 +294,7 @@ async function main() {
   const skipped = watchlist.filter((s) => !domainMap.has(s));
   if (skipped.length) {
     console.log(
-      `Skipping (no service_domains entry — add one to search these): ${skipped.join(", ")}`
+      `Skipping (no service_domains entry - add one to search these): ${skipped.join(", ")}`
     );
   }
 

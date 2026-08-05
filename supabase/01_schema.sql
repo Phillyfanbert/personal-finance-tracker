@@ -1,5 +1,5 @@
 -- ============================================================================
--- Personal Expense Tracker — Phase 0 Schema
+-- Personal Expense Tracker - Phase 0 Schema
 -- Run this FIRST in the Supabase SQL Editor (Dashboard → SQL Editor → New query).
 -- Mirrors README §3.2. Safe to re-run: uses "if not exists" where possible.
 -- ============================================================================

@@ -1,4 +1,4 @@
-# Phase 0 — Foundation Setup
+# Phase 0 - Foundation Setup
 
 This gets the privacy-and-data core running: a Supabase project with the schema
 and Row-Level Security, plus the installable PWA with a working manual-entry
@@ -7,18 +7,18 @@ form. Everything here is **$0 and no credit card**. Budget ~30–45 minutes.
 ```
 personal-finance-agent/
 ├── SETUP.md              ← you are here
-├── SECURITY.md           ← credential handling rules — read before step 4
+├── SECURITY.md           ← credential handling rules - read before step 4
 ├── LICENSE.md
 ├── supabase/
 │   ├── 01_schema.sql     ← tables + indexes            (run 1st)
-│   ├── 01b_grants.sql    ← Data API grants             (run 2nd) — needed because auto-expose is off
+│   ├── 01b_grants.sql    ← Data API grants             (run 2nd) - needed because auto-expose is off
 │   ├── 02_rls.sql        ← RLS + auth trigger          (run 3rd)  ← THE privacy core
 │   └── 03_seed.sql       ← catalog reference data      (run 4th, optional)
 └── app/
     ├── index.html        ← the PWA UI
     ├── app.js             ← Supabase queries + UI logic
     ├── categorize.js     ← keyword auto-categorization (README §3.5)
-    ├── config.example.js ← committed template — copy this to config.js (step 4)
+    ├── config.example.js ← committed template - copy this to config.js (step 4)
     ├── config.js         ← ⚠️ gitignored; put your real Supabase URL + key here (step 4)
     ├── manifest.json     ← PWA install metadata
     ├── sw.js             ← service worker (installability)
@@ -46,10 +46,10 @@ the public API until explicitly granted. But it means the app would hit
 
 New query → paste `supabase/01b_grants.sql` → **Run**.
 
-> If you instead left auto-expose **ON**, skip this step — the tables are already
+> If you instead left auto-expose **ON**, skip this step - the tables are already
 > reachable, and RLS (next) still enforces per-user isolation either way.
 
-## 3. Run RLS (do not skip — this is what keeps users' data private)
+## 3. Run RLS (do not skip - this is what keeps users' data private)
 
 New query → paste `supabase/02_rls.sql` → **Run**.
 
@@ -71,7 +71,7 @@ Dashboard → **Connect** (top bar) or **Settings → API Keys**. Copy:
 > privileges, RLS still applies. Older docs saying "copy the `eyJ...` anon key"
 > refer to the legacy scheme.
 
-`app/config.js` is **gitignored** — it holds your real Supabase URL and key,
+`app/config.js` is **gitignored** - it holds your real Supabase URL and key,
 and this repo is public, so a real copy of live credentials should never sit
 in git history. Instead, create your local copy from the committed template:
 
@@ -81,7 +81,7 @@ cp config.example.js config.js
 ```
 
 Open the new `app/config.js` and paste your real values in (the config field
-is still named `SUPABASE_ANON_KEY` for compatibility — put the publishable
+is still named `SUPABASE_ANON_KEY` for compatibility - put the publishable
 key there):
 
 ```js
@@ -91,13 +91,13 @@ window.APP_CONFIG = {
 };
 ```
 
-`app/config.js` stays local to your machine from here on — see `SECURITY.md`
+`app/config.js` stays local to your machine from here on - see `SECURITY.md`
 for the full reasoning and for how the Cloudflare Pages deploy generates a
 production copy of this file from environment variables instead of reading
 it from git.
 
 ⚠️ Use the **publishable** key only. Never put a **secret** key
-(`sb_secret_...`, or the legacy `service_role`) in the app — it bypasses RLS
+(`sb_secret_...`, or the legacy `service_role`) in the app - it bypasses RLS
 entirely (README §3.3).
 
 ## 5. Configure auth (magic links, free)
@@ -105,7 +105,7 @@ entirely (README §3.3).
 Dashboard → **Authentication → Providers → Email**: make sure **Email** is
 enabled. Magic links work out of the box on the free tier.
 
-- **Do NOT** enable Phone/SMS auth — sending texts costs money (README §3.4).
+- **Do NOT** enable Phone/SMS auth - sending texts costs money (README §3.4).
 - Dashboard → **Authentication → URL Configuration**: add your app's URL(s) to
   **Redirect URLs** so the magic link returns to the app. For local testing add
   `http://localhost:8000`; after deploy (step 7) add your Cloudflare Pages URL.
@@ -127,7 +127,7 @@ add an account and an expense.
 1. Sign in as user A, add an expense.
 2. Sign out, sign in as user B (a second email), add a different expense.
 3. Confirm B sees only B's expense, and A sees only A's. If either user can see
-   the other's rows, RLS is misconfigured — recheck step 3.
+   the other's rows, RLS is misconfigured - recheck step 3.
 
 ## 7. Deploy free to Cloudflare Pages (no card)
 
@@ -142,18 +142,18 @@ add an account and an expense.
 
 Open the `pages.dev` URL in **Safari** → **Share** → **Add to Home Screen**.
 It launches full-screen like a native app. (iOS has no auto-install prompt, so
-this manual step is expected — README §2.4.)
+this manual step is expected - README §2.4.)
 
 ## 9. Keep it from pausing (Cloudflare Worker cron)
 
-Supabase free projects **pause after 7 days of inactivity** (README §3.9) — where
+Supabase free projects **pause after 7 days of inactivity** (README §3.9) - where
 "activity" means any API request hitting the project, not whether you logged an
 expense. A paused project stops responding until you manually **Restore** it from
-the dashboard (no data is lost — pausing ≠ deletion). To avoid that, run a tiny
+the dashboard (no data is lost - pausing ≠ deletion). To avoid that, run a tiny
 scheduled ping that keeps the 7-day timer from ever elapsing.
 
 **Why a Cloudflare Worker (not GitHub Actions):** GitHub disables scheduled
-workflows after ~60 days with no commits — fatal for a commit-and-forget repo.
+workflows after ~60 days with no commits - fatal for a commit-and-forget repo.
 A Cloudflare Worker Cron Trigger has no such behavior, runs on infrastructure you
 already use for Pages, and is $0 / no card.
 
@@ -165,7 +165,7 @@ already use for Pages, and is $0 / no card.
 
 ```js
 // Pings the Supabase REST API on a schedule so the project never idles out.
-// A request that returns [] (blocked by RLS) still counts as activity — the
+// A request that returns [] (blocked by RLS) still counts as activity - the
 // point is to touch the database, not to read data.
 export default {
   async scheduled(event, env, ctx) {
@@ -185,7 +185,7 @@ Worker → **Settings → Variables and Secrets** → add two:
 - `SUPABASE_URL` = `https://<your-ref>.supabase.co`
 - `SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_...`
 
-(The publishable key is safe to store here — it's public by design and RLS-bound.)
+(The publishable key is safe to store here - it's public by design and RLS-bound.)
 
 ### 9c. Add the cron trigger
 
@@ -200,7 +200,7 @@ Save. You can confirm it fired under the Worker's **Logs / Observability** tab
 (look for the `keep-alive ping: 200` line), or just watch that your Supabase
 project never shows "Paused."
 
-> **Honest caveat:** no keep-alive is 100% guaranteed — if you ever need
+> **Honest caveat:** no keep-alive is 100% guaranteed - if you ever need
 > ironclad uptime, Supabase Pro never pauses (but costs money + a card, so it's
 > off the table here). For a personal 2-user app, the Worker cron is plenty.
 
@@ -217,7 +217,7 @@ project never shows "Paused."
 The app now also has: **tap-to-edit** expenses, a **category-correction
 learning loop** (correcting a category upserts a `keyword → category` rule so
 similar future entries auto-categorize), **account deletion** (expenses stay,
-just become unassigned), and a **Reports** tab with Chart.js charts — spend by
+just become unassigned), and a **Reports** tab with Chart.js charts - spend by
 category, by account, and a 6-month trend, with a month picker.
 
 > **Schema note (important if you already ran 01_schema.sql):** the `user_id`
@@ -244,7 +244,7 @@ for totals. Logic lives in `app/subscriptions.js` (unit-tested).
 ## Profiles UI is included (README §1.2)
 
 The **👤 Profile** button (Log header) opens an editor for your display name,
-status (working / student / other), and — when you're a student — school and
+status (working / student / other), and - when you're a student - school and
 graduation year, plus free-text notes. This data is private (RLS-scoped to you)
 and feeds the Phase 4 discount matcher. The `profiles` row is auto-created on
 sign-up by the DB trigger; the editor upserts changes to it.
@@ -255,7 +255,7 @@ The Subscriptions tab now shows a **💰 Savings found** card. For each active
 subscription it matches the seeded `subscription_catalog` for the same service,
 keeps only plans you're **eligible** for (student plans require student status;
 individual/annual/family are open to anyone), and surfaces the cheapest plan
-that beats what you pay today — with monthly + yearly savings and a link. If
+that beats what you pay today - with monthly + yearly savings and a link. If
 you're not marked as a student, a gentle **"Are you a student?"** upsell lists
 the student-only deals you'd unlock, and tapping it opens your profile. Saving
 the profile re-runs the match live. Logic lives in `app/discounts.js`
@@ -264,10 +264,10 @@ the profile re-runs the match live. Logic lives in `app/discounts.js`
 > Keep `subscription_catalog` prices current (see the note atop `03_seed.sql`);
 > the quality of these suggestions is only as good as that reference data.
 
-## Phase 3 is included (README §3.6) — Gemma natural-language parsing
+## Phase 3 is included (README §3.6) - Gemma natural-language parsing
 
 The quick-add box now does **two-layer parsing**: an instant keyword pass fills
-the fields immediately, and — if a Gemma endpoint is configured — a debounced
+the fields immediately, and - if a Gemma endpoint is configured - a debounced
 background call enriches them (amount, merchant, category, payment, date) with
 a "✨ parsed by Gemma" badge. It's fully **best-effort**: a timeout, an error,
 or an unconfigured endpoint just leaves the keyword guess in place, so the app
@@ -289,7 +289,7 @@ GEMMA_ENDPOINT: "http://localhost:11434/api/generate",
 
 Reload the app, type `$14 lunch chipotle debit`, and watch the fields fill with
 the "✨ parsed by Gemma" badge. (Note: browsers block plain-HTTP calls from an
-HTTPS page — use the mock only against a locally-served `http://localhost` app,
+HTTPS page - use the mock only against a locally-served `http://localhost` app,
 or a real HTTPS tunnel in production.)
 
 ### Real setup on your home machine (README §3.6)
@@ -308,6 +308,6 @@ Ollama's `{ response: "<json>" }`, so it works against a stock Ollama server.
 
 ## What's next (README §3.1)
 
-- **F6 stretch (later)** — a live web-search agent for real-time deals, once the
+- **F6 stretch (later)** - a live web-search agent for real-time deals, once the
   curated-catalog version has proven useful. The only remaining roadmap item.
-- **Phase 4** — discount discovery against `subscription_catalog` + profile.
+- **Phase 4** - discount discovery against `subscription_catalog` + profile.

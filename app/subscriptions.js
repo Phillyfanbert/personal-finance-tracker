@@ -9,7 +9,7 @@ export function monthlyAmount(sub) {
   switch (sub.billing_cycle) {
     case "annual": return amt / 12;
     case "monthly": return amt;
-    default: return amt; // 'other' — treat the stored amount as monthly
+    default: return amt; // 'other' - treat the stored amount as monthly
   }
 }
 

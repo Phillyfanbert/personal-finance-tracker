@@ -1,12 +1,12 @@
-# F6 Stretch Goal — Live Deal Discovery: Feasibility & Design Proposal
+# F6 Stretch Goal - Live Deal Discovery: Feasibility & Design Proposal
 
 *Status: Phases A–C built. `deal_findings` + `service_domains` are live in
 Supabase, the "found online" UI is wired up behind `DEAL_FINDINGS_ENABLED`,
 and `tools/deal-agent.js` + `tools/run-deal-agent.sh` + `tools/searxng/` are
 in the repo. Phase D (weekly scheduling) and Phase E (review/promote UI) are
-still open — see §9. One design deviation from the original text below: the
+still open - see §9. One design deviation from the original text below: the
 agent's watchlist is the user's actual active subscriptions, not the full
-catalog, to cut wasted queries — see the git history / conversation for why.*
+catalog, to cut wasted queries - see the git history / conversation for why.*
 
 ## 1. The question
 
@@ -16,13 +16,13 @@ F6 v1 (already shipped) matches a user's subscriptions and profile against a
 of relying on hand-entered catalog data. The README explicitly warns this is the
 hard part: "live discount data is scattered and unreliable, and doing it robustly
 at scale can require paid APIs." That last clause collides head-on with the
-project's two hard constraints — **$0 total cost** and **no credit card anywhere**
-— so the first job of this exploration is to establish what is even possible
+project's two hard constraints - **$0 total cost** and **no credit card anywhere**
+- so the first job of this exploration is to establish what is even possible
 under those constraints before designing anything.
 
 ## 2. Feasibility verdict
 
-**It is feasible at $0 with no card — but only via a self-hosted search engine on
+**It is feasible at $0 with no card - but only via a self-hosted search engine on
 the home machine, not a managed search API.** The managed APIs that would be the
 obvious choice have, as of 2026, moved behind a credit card or closed to new
 signups. The path that survives the constraints is running **SearXNG** (a free,
@@ -34,12 +34,12 @@ to be the most privacy-preserving option, which matters for a finance app.
 
 | Approach | $0? | No card? | Reliability | Verdict |
 |---|---|---|---|---|
-| **SearXNG (self-hosted metasearch)** | Yes — runs on your hardware | Yes | Medium (depends on upstream engines; you control it) | **Recommended.** No key, no quota, JSON API, private. |
-| DuckDuckGo unofficial HTML endpoint | Yes | Yes | Low — unofficial, ~10 results, CAPTCHAs / blocks under automation, page-structure fragile | Fallback only. |
+| **SearXNG (self-hosted metasearch)** | Yes - runs on your hardware | Yes | Medium (depends on upstream engines; you control it) | **Recommended.** No key, no quota, JSON API, private. |
+| DuckDuckGo unofficial HTML endpoint | Yes | Yes | Low - unofficial, ~10 results, CAPTCHAs / blocks under automation, page-structure fragile | Fallback only. |
 | Curated catalog + manual updates (F6 v1, today) | Yes | Yes | High (you verify it) | Keep as the trusted baseline. |
-| Google Programmable Search / Custom Search JSON API | Free 100/day, no billing needed | Historically yes | High | **Unavailable** — closed to new customers; existing users must migrate by Jan 1 2027. |
-| Brave Search API | No longer free | **No — card now required** | High | **Rejected** — violates the no-card rule. |
-| Other metered APIs (Serp/Firecrawl/Tavily/etc.) | Small free tiers, then metered | Usually card-gated | High | Rejected — cost/card risk. |
+| Google Programmable Search / Custom Search JSON API | Free 100/day, no billing needed | Historically yes | High | **Unavailable** - closed to new customers; existing users must migrate by Jan 1 2027. |
+| Brave Search API | No longer free | **No - card now required** | High | **Rejected** - violates the no-card rule. |
+| Other metered APIs (Serp/Firecrawl/Tavily/etc.) | Small free tiers, then metered | Usually card-gated | High | Rejected - cost/card risk. |
 
 The takeaway from the current landscape: **every managed option is now either
 card-gated or being retired**, and the only "free-forever, no-key" options are
@@ -51,11 +51,11 @@ runs beside the infrastructure you already stood up for Phase 3.
 
 You already run a home machine with **Ollama + Gemma** exposed through a
 **Cloudflare Tunnel** (Phase 3). Adding SearXNG is one more container on that same
-box — no new hosting bill, no new account, no card. It exposes
+box - no new hosting bill, no new account, no card. It exposes
 `/search?q=...&format=json` returning `{title, url, content, engine}` per result
 once the JSON format is enabled in `settings.yaml`. Because the search runs on
 your own machine, **no query about the user's subscriptions is ever sent to a
-third-party API tied to their identity** — consistent with the privacy posture of
+third-party API tied to their identity** - consistent with the privacy posture of
 the rest of the app.
 
 ## 5. Architecture
@@ -82,7 +82,7 @@ the rest of the app.
 ```
 
 The agent loops over a **watchlist of service names** (drawn from
-`subscription_catalog`, which is generic reference data — not user rows — so the
+`subscription_catalog`, which is generic reference data - not user rows - so the
 agent never needs to read anyone's personal subscriptions). For each service it
 queries SearXNG, fetches a small number of likely-official result pages, and asks
 Gemma to extract a structured deal as strict JSON (the exact pattern already built
@@ -90,9 +90,9 @@ and tested in `app/gemma.js`). Validated results are written to a new
 `deal_findings` table using the **`service_role`** key, which is confined to the
 home machine and never ships in the PWA. The app reads `deal_findings` with the
 anon key under RLS and shows them in a **separate, clearly-labeled** part of the
-Savings card — never mixed into the trusted curated results.
+Savings card - never mixed into the trusted curated results.
 
-## 6. Data model — `deal_findings` (separate trust tier)
+## 6. Data model - `deal_findings` (separate trust tier)
 
 Per the decision to keep `subscription_catalog` hand-verified, machine-found deals
 go in their own table. This preserves a clean trust boundary: curated = trusted;
@@ -131,19 +131,19 @@ Notes on the design choices:
   personal data, so the table is shared reference like `subscription_catalog`.
   Matching to a user still happens client-side against their own subscriptions,
   so nothing personal leaves the device to obtain a finding.
-- **`expires_at`** enforces staleness — prices drift, so findings self-expire and
+- **`expires_at`** enforces staleness - prices drift, so findings self-expire and
   the agent refreshes them on a schedule. A cleanup query (or a `where expires_at
   > now()` filter in the app) hides stale rows.
 - **`status`** gives a promotion path: a human can review a `candidate`, mark it
   `verified`, and optionally copy it into `subscription_catalog` as trusted data.
 - **`raw_snippet` + `url`** keep provenance so a suggestion can always be traced
-  back and manually checked — essential given the "unreliable data" warning.
+  back and manually checked - essential given the "unreliable data" warning.
 
 ## 7. How the app would surface findings
 
 The existing `discounts.js` matcher stays the source of trusted savings. Live
-findings appear in a visually distinct block under the Savings card — e.g.
-"🌐 Found online (unverified — tap to check source)" — each linking to its source
+findings appear in a visually distinct block under the Savings card - e.g.
+"🌐 Found online (unverified - tap to check source)" - each linking to its source
 URL and showing the snippet. They are **never** auto-applied or blended into the
 curated numbers. A future review screen lets the user promote a good finding into
 the curated catalog, at which point it becomes a normal trusted deal.
@@ -162,7 +162,7 @@ The README's core worry is reliability; these are the levers that make it tolera
   of pages, respect `robots.txt`, and prefer official pricing pages for personal
   use. Avoid heavy scraping and anything a site's ToS forbids.
 - **Off by default, opt-in**: the whole feature is dormant unless the home agent
-  is configured — mirroring how Phase 3 Gemma is optional and non-blocking.
+  is configured - mirroring how Phase 3 Gemma is optional and non-blocking.
 
 ## 9. Phased plan
 
@@ -178,24 +178,24 @@ The README's core worry is reliability; these are the levers that make it tolera
 
 | Component | Free tier | Credit card? |
 |---|---|---|
-| SearXNG (self-hosted metasearch) | Yes — your hardware | No |
-| Gemma via Ollama (extraction) | Yes — your hardware | No |
+| SearXNG (self-hosted metasearch) | Yes - your hardware | No |
+| Gemma via Ollama (extraction) | Yes - your hardware | No |
 | Cloudflare Tunnel (already up) | Yes | No |
 | Supabase `deal_findings` | Yes (within existing project) | No |
-| Managed search APIs (Brave/Google/etc.) | — | **Would require a card / unavailable — deliberately NOT used** |
+| Managed search APIs (Brave/Google/etc.) | - | **Would require a card / unavailable - deliberately NOT used** |
 
 **Conclusion:** the stretch goal is achievable within the project's hard
 constraints *only* by self-hosting search on the home machine. It should remain a
 later, opt-in phase layered on top of the solid curated-catalog F6 that already
-ships — exactly the sequencing the README recommends.
+ships - exactly the sequencing the README recommends.
 
 ---
 
 ## Sources
 
-- [Brave Search API — free tier removed, card now required (implicator.ai)](https://www.implicator.ai/brave-drops-free-search-api-tier-puts-all-developers-on-metered-billing/)
+- [Brave Search API - free tier removed, card now required (implicator.ai)](https://www.implicator.ai/brave-drops-free-search-api-tier-puts-all-developers-on-metered-billing/)
 - [Brave Search API official](https://brave.com/search/api/)
-- [Google Custom Search JSON API overview — 100 queries/day free, not available for new customers](https://developers.google.com/custom-search/v1/overview)
+- [Google Custom Search JSON API overview - 100 queries/day free, not available for new customers](https://developers.google.com/custom-search/v1/overview)
 - [SearXNG Search API documentation (JSON format)](https://docs.searxng.org/dev/search_api.html)
-- [SearXNG project (GitHub) — free, no API key, self-hosted](https://github.com/searxng/searxng)
+- [SearXNG project (GitHub) - free, no API key, self-hosted](https://github.com/searxng/searxng)
 - [How to use SearXNG as a private search API](https://nolowiz.com/how-to-use-searxng-as-a-private-search-api-step-by-step-guide/)

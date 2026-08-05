@@ -79,7 +79,7 @@ export function findDeals(subscriptions, catalog, profile) {
 
 /**
  * If the user is NOT marked as a student, find student-only plans they'd unlock
- * by setting that status — a gentle upsell (README §1.2 profile → F6).
+ * by setting that status - a gentle upsell (README §1.2 profile → F6).
  * @returns list of { service, studentMonthly, currentMonthly, potentialYearly }
  */
 export function studentUpsell(subscriptions, catalog, profile) {

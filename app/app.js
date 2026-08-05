@@ -177,7 +177,7 @@ async function loadAccounts() {
   $("acctList").innerHTML = accounts.length
     ? accounts.map((a, i) => `
       <div class="acct-circle-item" ${a.linked_asset_id ? `data-adjust-acct="${a.id}" style="cursor:pointer"` : ""}>
-        <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${(a.name.trim()[0] || "?").toUpperCase()}</div>
+        <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : (a.name.trim()[0] || "?").toUpperCase()}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${a.name}</div>
         <div class="type">${cap(a.type)}</div>
@@ -226,7 +226,7 @@ async function loadAssets() {
   $("assetsList").innerHTML = assets.length
     ? assets.map((a) => `
       <div class="exp">
-        <div>${a.name}${a.type === "cash" ? "" : `<div class="meta">${cap(a.type)}</div>`}</div>
+        <div>${a.type === "cash" ? "" : `<div class="meta">${cap(a.type)}</div>`}${a.name}</div>
         <span class="amt">${fmt(a.value)}<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span></span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
@@ -282,6 +282,13 @@ function refreshAdjustDisplay() {
 function openAssetAdjust(accountId) {
   const asset = findLinkedAsset(accountId);
   if (!asset) return;
+  const panel = $("assetAdjustForm");
+  // Tapping the same account again while its panel is already open closes it.
+  if (adjustingAssetId === asset.id && !panel.classList.contains("hidden")) {
+    panel.classList.add("hidden");
+    adjustingAssetId = null;
+    return;
+  }
   adjustingAssetId = asset.id;
   $("adjustAssetLabel").textContent = asset.name;
   $("adjustCurrentValue").textContent = fmt(asset.value);
@@ -290,7 +297,7 @@ function openAssetAdjust(accountId) {
   const isBank = asset.type === "bank";
   $("adjustDeltaMode").classList.toggle("hidden", isBank);
   $("adjustBankMode").classList.toggle("hidden", !isBank);
-  $("assetAdjustForm").classList.remove("hidden");
+  panel.classList.remove("hidden");
 }
 
 $("adjustAddBtn").onclick = async () => {

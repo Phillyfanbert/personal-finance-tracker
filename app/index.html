@@ -176,7 +176,7 @@
             <input id="acctName" placeholder="Chase checking" />
             <select id="acctType">
               <option value="checking">checking</option><option value="credit">credit</option>
-              <option value="debit">debit</option><option value="cash">cash</option><option value="other">other</option>
+              <option value="debit">debit</option><option value="other">other</option>
             </select>
           </div>
           <label>Linked asset (optional)</label>
@@ -184,6 +184,17 @@
           <p class="muted" style="font-size:12px;margin:4px 0 0">If linked, non-credit expenses tagged with this account deduct from that asset's value.</p>
           <div style="height:8px"></div>
           <button id="saveAcctBtn">Save account</button>
+        </div>
+
+        <!-- Cash: exactly one per user, auto-created (app.js ensureCashAccount).
+             Tapping the Cash circle above opens this instead of a delete option. -->
+        <div id="cashAdjustForm" class="hidden" style="margin-top:10px">
+          <div class="muted" style="font-size:12px;margin-bottom:6px">Cash on hand: <strong id="cashCurrentValue">$0</strong></div>
+          <input id="cashAdjustAmount" type="number" step="0.01" inputmode="decimal" placeholder="Amount" />
+          <div class="row" style="margin-top:8px">
+            <button id="cashAddBtn">+ Add cash</button>
+            <button class="secondary" id="cashSubtractBtn">- Subtract cash</button>
+          </div>
         </div>
       </div>
 

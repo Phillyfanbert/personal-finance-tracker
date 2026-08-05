@@ -458,6 +458,21 @@
     </div>
   </div>
 
+  <!-- ============ ADD TO LIABILITY MODAL ============ -->
+  <!-- Directly increases a liability's balance (a new charge, a correction)
+       - no asset involved, unlike Pay. Operates on the same row a linked
+       credit account already points at. -->
+  <div id="addDebtAmountForm" class="modal hidden">
+    <div class="sheet">
+      <div class="topbar"><strong>Add to <span id="addDebtLabel"></span></strong><button class="secondary" id="addDebtAmountClose" style="width:auto;padding:6px 12px">✕</button></div>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Currently owes <strong id="addDebtCurrentBalance">$0</strong></p>
+      <label>Amount to add</label>
+      <input id="addDebtAmountInput" type="number" step="0.01" inputmode="decimal" />
+      <div style="height:12px"></div>
+      <button id="addDebtAmountConfirm">Add</button>
+    </div>
+  </div>
+
   <!-- ============ PROFILE MODAL ============ -->
   <div id="profileModal" class="modal hidden">
     <div class="sheet">

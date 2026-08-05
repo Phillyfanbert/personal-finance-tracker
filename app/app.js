@@ -431,14 +431,23 @@ async function loadDebts() {
 let payingDebtId = null;
 
 function openPayForm(debtId) {
+  const modal = $("payForm");
+  // Tapping "Pay" on the same liability again while its modal is open closes
+  // it; tapping a different liability's "Pay" switches to that one instead.
+  if (payingDebtId === debtId && !modal.classList.contains("hidden")) {
+    modal.classList.add("hidden");
+    payingDebtId = null;
+    return;
+  }
   const debt = debts.find((d) => d.id === debtId);
   if (!debt) return;
   payingDebtId = debtId;
   $("payLiabilityLabel").textContent = debt.name;
   $("payLiabilityBalance").textContent = fmt(debt.balance);
   $("payAmount").value = "";
-  $("payForm").classList.remove("hidden");
+  modal.classList.remove("hidden");
 }
+$("payClose").onclick = () => { $("payForm").classList.add("hidden"); payingDebtId = null; };
 
 $("payConfirmBtn").onclick = async () => {
   const amount = parseFloat($("payAmount").value);

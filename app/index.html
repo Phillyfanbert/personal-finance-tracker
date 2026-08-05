@@ -281,18 +281,6 @@
           <div style="height:8px"></div>
           <button id="saveDebtBtn">Save liability</button>
         </div>
-
-        <!-- Paying a liability is a transfer (asset down, liability down),
-             never a new expense - tapping a debt row's "Pay" opens this. -->
-        <div id="payForm" class="hidden" style="margin-top:10px">
-          <div class="muted" style="font-size:12px;margin-bottom:6px">Paying: <strong id="payLiabilityLabel"></strong> (owes <span id="payLiabilityBalance">$0</span>)</div>
-          <label>From asset</label>
-          <select id="payFromAsset"></select>
-          <label>Amount</label>
-          <input id="payAmount" type="number" step="0.01" inputmode="decimal" />
-          <div style="height:8px"></div>
-          <button id="payConfirmBtn">Pay</button>
-        </div>
       </div>
     </div>
 
@@ -451,6 +439,22 @@
         <button id="editSave">Save changes</button>
         <button class="secondary" id="editDelete" style="color:var(--err)">Delete</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ============ PAY LIABILITY MODAL ============ -->
+  <!-- Paying a liability is a transfer (asset down, liability down), never
+       a new expense - tapping a debt row's "Pay" opens this. -->
+  <div id="payForm" class="modal hidden">
+    <div class="sheet">
+      <div class="topbar"><strong>Pay <span id="payLiabilityLabel"></span></strong><button class="secondary" id="payClose" style="width:auto;padding:6px 12px">✕</button></div>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Owes <strong id="payLiabilityBalance">$0</strong></p>
+      <label>From asset</label>
+      <select id="payFromAsset"></select>
+      <label>Amount</label>
+      <input id="payAmount" type="number" step="0.01" inputmode="decimal" />
+      <div style="height:12px"></div>
+      <button id="payConfirmBtn">Pay</button>
     </div>
   </div>
 

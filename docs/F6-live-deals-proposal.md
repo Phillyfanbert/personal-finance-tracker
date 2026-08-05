@@ -1,7 +1,12 @@
 # F6 Stretch Goal — Live Deal Discovery: Feasibility & Design Proposal
 
-*Status: exploration / design only. No app changes are made by this document —
-it proposes a schema and architecture for a future phase.*
+*Status: Phases A–C built. `deal_findings` + `service_domains` are live in
+Supabase, the "found online" UI is wired up behind `DEAL_FINDINGS_ENABLED`,
+and `tools/deal-agent.js` + `tools/run-deal-agent.sh` + `tools/searxng/` are
+in the repo. Phase D (weekly scheduling) and Phase E (review/promote UI) are
+still open — see §9. One design deviation from the original text below: the
+agent's watchlist is the user's actual active subscriptions, not the full
+catalog, to cut wasted queries — see the git history / conversation for why.*
 
 ## 1. The question
 

@@ -743,11 +743,12 @@ function renderSubscriptions() {
   $("subsTotalMonthly").textContent = fmt(monthly);
   $("subsTotalYearly").textContent = fmt(monthly * 12);
 
-  // Upcoming renewals (next 30 days)
+  // Upcoming renewals (next 30 days) - display only, not editable here;
+  // edit from the full list below instead.
   const up = upcomingRenewals(subscriptions, 30);
   $("subUpcoming").innerHTML = up.length
     ? up.map((s) => `
-      <div class="exp" data-sub="${s.id}">
+      <div class="exp" style="cursor:default">
         <div><div>${s.name}</div><div class="meta">${s.next_renewal} · ${renewalLabel(s.days)}${acctName(s.account_id) ? " · " + acctName(s.account_id) : ""}</div></div>
         <span class="amt">${fmt(s.amount)}${s.billing_cycle === "annual" ? "/yr" : "/mo"}</span>
       </div>`).join("")
@@ -766,7 +767,8 @@ function renderSubscriptions() {
       </div>`).join("")
     : `<p class="muted">No subscriptions yet - add one above.</p>`;
 
-  document.querySelectorAll("[data-sub]").forEach((el) => {
+  // Scoped to #subList only - the upcoming-renewals block above is display-only.
+  document.querySelectorAll("#subList [data-sub]").forEach((el) => {
     el.onclick = () => {
       const sub = subscriptions.find((x) => x.id === el.dataset.sub);
       if (sub) openSubForm(sub);

@@ -129,13 +129,45 @@ Roughly in the order they came up, not necessarily priority:
    Explicitly deferred to a later session by the user.
 3. **F6 Phase D** (weekly cron/systemd for `deal-agent.js`) and **Phase E**
    (review/promote a `deal_findings` candidate into the trusted catalog).
-4. Possible follow-up raised but not requested: extending click-to-adjust
-   to a credit account's circle directly (currently only reachable via the
-   Liabilities card's Pay/+ buttons, not by tapping the account itself).
-5. Leaked-password-protection advisor warning: confirmed **not applicable**
+4. Leaked-password-protection advisor warning: confirmed **not applicable**
    (Pro-plan-only feature, and the app uses magic-link auth exclusively —
    no password field exists to protect). Don't re-investigate this unless
    auth methods change.
+
+## Known bugs to fix next session
+
+Reported by the user right after the credit-liability work shipped —
+none of these are fixed yet, start here before new features:
+
+1. **Clicking a credit account's icon (in the Accounts card) doesn't open
+   anything.** Click-to-adjust currently only checks `linked_asset_id`
+   (see `openAssetAdjust`/`data-adjust-acct` in `app.js`), so credit
+   accounts — which link to a *liability*, not an asset — never get the
+   `cursor:pointer`/click handler at all. Right now a credit liability's
+   balance is only reachable via the Pay/+ buttons on its row in the
+   Liabilities card, not by tapping the account itself the way every other
+   linked account works. Needs its own click path (probably opening the
+   Pay or Add-to-balance modal directly, keyed off `linked_liability_id`
+   instead of `linked_asset_id`).
+2. **Pay appears to always zero out the liability balance, not subtract
+   just the amount entered.** The intended behavior (and what the isolated
+   math simulation confirmed during development) is a partial reduction —
+   `balance - amount`, floored at 0 — so paying $50 on a $380 balance
+   should leave $330, not $0. Live behavior reportedly doesn't match that.
+   Needs to be reproduced and root-caused in `payConfirmBtn` (`app.js`) —
+   possibly `payingDebtId`/`debt` going stale after the toggle-close
+   change, or the amount field not being read correctly at click time.
+3. **Credit-expense blocking is too loose.** `hasCreditAccount()` only
+   checks whether *any* credit account exists anywhere, not whether the
+   *specific* account selected for this expense is actually a credit
+   account. Concretely: with a "Discover" credit account already set up,
+   the user should be able to log Discover expenses (which is what
+   creating that account already enables, via its linked liability) — but
+   trying to log a "Chase" credit expense should be blocked when no
+   "Chase" credit account exists, even though the Discover one does. The
+   fix needs to validate the *selected* `account_id` is itself a
+   credit-type account (not just "some credit account exists somewhere"),
+   in both the quick-add save and the edit-modal save.
 
 ## Things NOT to redo
 

@@ -51,6 +51,16 @@
     .exp .amt { font-weight: 700; white-space: nowrap; }
     .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); margin: 2px 0; }
     .pill .x { color: var(--err); cursor: pointer; font-weight: 700; }
+    /* Accounts: bigger circular badges so every payment method is visible at a glance */
+    .acct-circles { display: flex; flex-wrap: wrap; gap: 18px; }
+    .acct-circle-item { position: relative; display: flex; flex-direction: column; align-items: center; width: 76px; text-align: center; }
+    .acct-circle { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 22px; color: #fff; }
+    .acct-circle-item .name { font-size: 12px; margin-top: 6px; color: var(--text); word-break: break-word; }
+    .acct-circle-item .type { font-size: 11px; color: var(--muted); }
+    .acct-circle-item .x { position: absolute; top: -2px; right: 2px; background: var(--err); color: #fff;
+      width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; cursor: pointer; border: 2px solid var(--panel); }
     .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     .totals { display: flex; gap: 12px; margin-bottom: 14px; }
     .totals .card { flex: 1; text-align: center; margin: 0; }
@@ -99,18 +109,82 @@
         </div>
       </div>
 
+      <div class="totals">
+        <div class="card"><div class="muted" style="font-size:12px">This month</div><div class="big" id="monthTotal">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Entries</div><div class="big" id="monthCount">0</div></div>
+      </div>
+
+      <!-- Quick add -->
+      <div class="card quickadd">
+        <label for="quick">Quick add</label>
+        <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" />
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Type free text: amount, merchant & payment type are auto-detected. Confirm below.</p>
+
+        <div id="confirm" class="hidden" style="margin-top:12px">
+          <div id="parseStatus" class="muted" style="font-size:12px;min-height:16px;margin-bottom:6px"></div>
+          <div class="row">
+            <div><label>Amount</label><input id="fAmount" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label>Payment</label>
+              <select id="fPayment">
+                <option value="">—</option><option>debit</option><option>credit</option><option>cash</option>
+              </select>
+            </div>
+          </div>
+          <label>Description / merchant</label>
+          <input id="fDesc" />
+          <div class="row">
+            <div><label>Category</label><select id="fCategory"></select></div>
+            <div><label>Account</label><select id="fAccount"></select></div>
+          </div>
+          <label>Date</label>
+          <input id="fDate" type="date" />
+          <div style="height:12px"></div>
+          <div class="row">
+            <button id="saveBtn">Save expense</button>
+            <button class="secondary" id="cancelBtn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accounts = payment methods, used to tag expenses. NOT counted in net
+           worth — see Assets below for that. Kept visually + conceptually
+           separate from Assets/Liabilities per that distinction. -->
+      <div class="card">
+        <div class="topbar" style="margin-bottom:4px">
+          <strong>💳 Accounts</strong>
+          <button class="secondary" id="addAcctBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin:0 0 10px">Payment methods for tagging expenses — not counted in net worth (see Assets below).</p>
+        <div id="acctList" class="acct-circles">
+          <p class="muted" style="font-size:13px">No accounts yet.</p>
+        </div>
+        <div id="acctForm" class="hidden" style="margin-top:10px">
+          <div class="row">
+            <input id="acctName" placeholder="Chase checking" />
+            <select id="acctType">
+              <option value="checking">checking</option><option value="credit">credit</option>
+              <option value="debit">debit</option><option value="cash">cash</option><option value="other">other</option>
+            </select>
+          </div>
+          <div style="height:8px"></div>
+          <button id="saveAcctBtn">Save account</button>
+        </div>
+      </div>
+
       <!-- Net worth overview -->
       <div class="card" id="netWorthCard">
         <div class="muted" style="font-size:12px">Net worth</div>
         <div class="big" id="netWorthTotal" style="font-size:30px">$0</div>
       </div>
 
-      <!-- Assets -->
+      <!-- Assets = what you own, counted in net worth. Separate from Accounts
+           above (payment methods) even if a bank account appears in both. -->
       <div class="card">
-        <div class="topbar" style="margin-bottom:8px">
+        <div class="topbar" style="margin-bottom:4px">
           <strong>💰 Assets</strong>
           <span class="muted" style="font-size:12px" id="assetsTotal">$0</span>
         </div>
+        <p class="muted" style="font-size:12px;margin:0 0 10px">What you own — balances, investments, property. Counted in net worth.</p>
         <div id="assetsList" class="muted" style="font-size:13px">No assets yet.</div>
         <button class="secondary" id="addAssetBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add asset</button>
         <div id="assetForm" class="hidden" style="margin-top:10px">
@@ -168,63 +242,6 @@
           <input id="debtDue" type="date" />
           <div style="height:8px"></div>
           <button id="saveDebtBtn">Save liability</button>
-        </div>
-      </div>
-
-      <div class="totals">
-        <div class="card"><div class="muted" style="font-size:12px">This month</div><div class="big" id="monthTotal">$0</div></div>
-        <div class="card"><div class="muted" style="font-size:12px">Entries</div><div class="big" id="monthCount">0</div></div>
-      </div>
-
-      <!-- Quick add -->
-      <div class="card quickadd">
-        <label for="quick">Quick add</label>
-        <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" />
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Type free text: amount, merchant & payment type are auto-detected. Confirm below.</p>
-
-        <div id="confirm" class="hidden" style="margin-top:12px">
-          <div id="parseStatus" class="muted" style="font-size:12px;min-height:16px;margin-bottom:6px"></div>
-          <div class="row">
-            <div><label>Amount</label><input id="fAmount" type="number" step="0.01" inputmode="decimal" /></div>
-            <div><label>Payment</label>
-              <select id="fPayment">
-                <option value="">—</option><option>debit</option><option>credit</option><option>cash</option>
-              </select>
-            </div>
-          </div>
-          <label>Description / merchant</label>
-          <input id="fDesc" />
-          <div class="row">
-            <div><label>Category</label><select id="fCategory"></select></div>
-            <div><label>Account</label><select id="fAccount"></select></div>
-          </div>
-          <label>Date</label>
-          <input id="fDate" type="date" />
-          <div style="height:12px"></div>
-          <div class="row">
-            <button id="saveBtn">Save expense</button>
-            <button class="secondary" id="cancelBtn">Cancel</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Accounts -->
-      <div class="card">
-        <div class="topbar" style="margin-bottom:8px">
-          <strong>Accounts</strong>
-          <button class="secondary" id="addAcctBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
-        </div>
-        <div id="acctList" class="muted" style="font-size:13px">No accounts yet.</div>
-        <div id="acctForm" class="hidden" style="margin-top:10px">
-          <div class="row">
-            <input id="acctName" placeholder="Chase checking" />
-            <select id="acctType">
-              <option value="checking">checking</option><option value="credit">credit</option>
-              <option value="debit">debit</option><option value="cash">cash</option><option value="other">other</option>
-            </select>
-          </div>
-          <div style="height:8px"></div>
-          <button id="saveAcctBtn">Save account</button>
         </div>
       </div>
 

@@ -132,12 +132,20 @@ $("saveAcctBtn").onclick = async () => {
   await loadAccounts(); toast("Account added");
 };
 
+const ACCT_COLORS = ["#0ea5e9", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6", "#22d3ee", "#fb923c"];
+
 async function loadAccounts() {
   const { data } = await sb.from("accounts").select("*").order("created_at");
   accounts = data || [];
   $("acctList").innerHTML = accounts.length
-    ? accounts.map((a) => `<span class="pill">${a.name} · ${a.type}<span class="x" data-del-acct="${a.id}">✕</span></span>`).join(" ")
-    : "No accounts yet.";
+    ? accounts.map((a, i) => `
+      <div class="acct-circle-item">
+        <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${(a.name.trim()[0] || "?").toUpperCase()}</div>
+        <span class="x" data-del-acct="${a.id}">✕</span>
+        <div class="name">${a.name}</div>
+        <div class="type">${a.type}</div>
+      </div>`).join("")
+    : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
   // account selects (add + edit)
   const opts = `<option value="">—</option>` + accounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
   $("fAccount").innerHTML = opts;

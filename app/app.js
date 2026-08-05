@@ -213,6 +213,7 @@ $("saveAssetBtn").onclick = async () => {
   const value = parseFloat($("assetValue").value);
   if (!name) return toast("Asset name required");
   if (!Number.isFinite(value)) return toast("Enter a value");
+  if (type === "cash") return toast("Cash is automatic - use the Cash account's +/- panel instead.");
   const { error } = await sb.from("assets").insert({ name, type, value });
   if (error) return toast(error.message);
   $("assetName").value = ""; $("assetValue").value = ""; $("assetForm").classList.add("hidden");

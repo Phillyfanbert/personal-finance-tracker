@@ -89,7 +89,7 @@
     <div id="authView">
       <h1>💸 Expense Tracker</h1>
       <div class="card">
-        <p class="muted">Sign in with a magic link — no password. Check your email and tap the link.</p>
+        <p class="muted">Sign in with a magic link - no password. Check your email and tap the link.</p>
         <label for="email">Email</label>
         <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
         <div style="height:10px"></div>
@@ -126,7 +126,7 @@
             <div><label>Amount</label><input id="fAmount" type="number" step="0.01" inputmode="decimal" /></div>
             <div><label>Payment</label>
               <select id="fPayment">
-                <option value="">—</option><option>debit</option><option>credit</option><option>cash</option>
+                <option value="">None</option><option>debit</option><option>credit</option><option>cash</option>
               </select>
             </div>
           </div>
@@ -146,15 +146,28 @@
         </div>
       </div>
 
+      <!-- Expense list -->
+      <div class="card">
+        <strong>Recent</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
+        <div id="expList" style="margin-top:8px"><p class="muted">Loading…</p></div>
+      </div>
+
+      <!-- Net worth overview -->
+      <div class="card" id="netWorthCard">
+        <div class="muted" style="font-size:12px">Net worth</div>
+        <div class="big" id="netWorthTotal" style="font-size:30px">$0</div>
+      </div>
+
       <!-- Accounts = payment methods, used to tag expenses. NOT counted in net
-           worth — see Assets below for that. Kept visually + conceptually
+           worth - see Assets below for that. Kept visually + conceptually
            separate from Assets/Liabilities per that distinction. -->
       <div class="card">
         <div class="topbar" style="margin-bottom:4px">
           <strong>💳 Accounts</strong>
           <button class="secondary" id="addAcctBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
         </div>
-        <p class="muted" style="font-size:12px;margin:0 0 10px">Payment methods for tagging expenses — not counted in net worth (see Assets below).</p>
+        <p class="muted" style="font-size:12px;margin:0 0 10px">Payment methods for tagging expenses - not counted in net worth (see Assets below).</p>
         <div id="acctList" class="acct-circles">
           <p class="muted" style="font-size:13px">No accounts yet.</p>
         </div>
@@ -171,12 +184,6 @@
         </div>
       </div>
 
-      <!-- Net worth overview -->
-      <div class="card" id="netWorthCard">
-        <div class="muted" style="font-size:12px">Net worth</div>
-        <div class="big" id="netWorthTotal" style="font-size:30px">$0</div>
-      </div>
-
       <!-- Assets = what you own, counted in net worth. Separate from Accounts
            above (payment methods) even if a bank account appears in both. -->
       <div class="card">
@@ -184,7 +191,7 @@
           <strong>💰 Assets</strong>
           <span class="muted" style="font-size:12px" id="assetsTotal">$0</span>
         </div>
-        <p class="muted" style="font-size:12px;margin:0 0 10px">What you own — balances, investments, property. Counted in net worth.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 10px">What you own - balances, investments, property. Counted in net worth.</p>
         <div id="assetsList" class="muted" style="font-size:13px">No assets yet.</div>
         <button class="secondary" id="addAssetBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add asset</button>
         <div id="assetForm" class="hidden" style="margin-top:10px">
@@ -217,7 +224,7 @@
 
         <div class="muted" style="font-size:12px;margin:14px 0 4px">Expenses (this month)</div>
         <div class="exp" style="cursor:default">
-          <div>Total spent</div>
+          <div>Expenses</div>
           <span class="amt" id="expensesLiabAmount">$0</span>
         </div>
 
@@ -243,13 +250,6 @@
           <div style="height:8px"></div>
           <button id="saveDebtBtn">Save liability</button>
         </div>
-      </div>
-
-      <!-- Expense list -->
-      <div class="card">
-        <strong>Recent</strong>
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
-        <div id="expList" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
     </div>
 
@@ -332,13 +332,13 @@
         <div id="dealsList"><p class="muted" style="font-size:13px">Add subscriptions to see cheaper eligible plans.</p></div>
       </div>
 
-      <!-- Live-found deals (F6 stretch, docs/F6-live-deals-proposal.md) — hidden
+      <!-- Live-found deals (F6 stretch, docs/F6-live-deals-proposal.md) - hidden
            unless DEAL_FINDINGS_ENABLED is set in config.js. Separate trust tier
            from the curated card above: machine-found, unverified, never blended in. -->
       <div class="card hidden" id="dealFindingsCard">
         <div class="topbar" style="margin-bottom:6px">
           <strong>🌐 Found online</strong>
-          <span class="muted" style="font-size:12px">unverified — tap a link to check the source</span>
+          <span class="muted" style="font-size:12px">unverified - tap a link to check the source</span>
         </div>
         <div id="dealFindingsList"></div>
       </div>
@@ -391,7 +391,7 @@
       <div class="row">
         <div><label>Amount</label><input id="eAmount" type="number" step="0.01" inputmode="decimal" /></div>
         <div><label>Payment</label>
-          <select id="ePayment"><option value="">—</option><option>debit</option><option>credit</option><option>cash</option></select>
+          <select id="ePayment"><option value="">None</option><option>debit</option><option>credit</option><option>cash</option></select>
         </div>
       </div>
       <label>Description / merchant</label>
@@ -463,7 +463,7 @@
           const nw = reg.installing;
           nw.addEventListener("statechange", () => {
             if (nw.state === "installed" && navigator.serviceWorker.controller) {
-              // A new version is ready but not yet active — ask, don't force.
+              // A new version is ready but not yet active - ask, don't force.
               waitingWorker = nw;
               showUpdateToast();
             }
@@ -480,7 +480,7 @@
 
       function showUpdateToast() {
         const t = document.getElementById("toast");
-        t.textContent = "Update available — tap to refresh";
+        t.textContent = "Update available - tap to refresh";
         t.style.cursor = "pointer";
         t.classList.add("show");
         t.onclick = () => {
@@ -488,7 +488,7 @@
           t.onclick = null;
           if (waitingWorker) waitingWorker.postMessage("skipWaiting");
         };
-        // Don't auto-dismiss like the normal toast() in app.js — it should
+        // Don't auto-dismiss like the normal toast() in app.js - it should
         // stay up until tapped or until the next reload.
       }
     }

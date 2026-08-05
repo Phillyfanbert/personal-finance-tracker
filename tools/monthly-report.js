@@ -5,19 +5,19 @@
 //
 // Unlike deal-agent.js, this reads REAL personal financial data (per user),
 // which is exactly why it has to run self-hosted rather than against any
-// third-party API — see the privacy discussion in the project history.
+// third-party API - see the privacy discussion in the project history.
 //
 // What it does, per distinct user with any expenses:
 //   1. Pull last month's + prior month's expenses and active subscriptions
 //      for that user_id (service_role bypasses RLS, so we filter explicitly
-//      per user — never read across users into one prompt).
+//      per user - never read across users into one prompt).
 //   2. Aggregate into category totals + a month-over-month comparison.
 //   3. Ask Gemma to write a short natural-language report from that summary.
 //   4. Upsert one row per (user_id, period) into spending_insights.
 //
 // Setup: same tools/.env.deal-agent file as deal-agent.js (same env var
-// names — SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMMA_ENDPOINT,
-// GEMMA_MODEL). SearXNG is not needed here, so no docker-compose wrapper —
+// names - SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMMA_ENDPOINT,
+// GEMMA_MODEL). SearXNG is not needed here, so no docker-compose wrapper -
 // just run it directly:
 //   node tools/monthly-report.js
 //   DRY_RUN=1 node tools/monthly-report.js   # prints report text, no writes
@@ -34,7 +34,7 @@ const GEMMA_MODEL = process.env.GEMMA_MODEL || "gemma";
 const DRY_RUN = !!process.env.DRY_RUN;
 
 const FETCH_TIMEOUT_MS = 10000;
-const GEMMA_TIMEOUT_MS = 60000; // generous — Gemma may need to cold-load, same as deal-agent.js
+const GEMMA_TIMEOUT_MS = 60000; // generous - Gemma may need to cold-load, same as deal-agent.js
 
 function requireEnv() {
   const missing = ["SUPABASE_URL", "GEMMA_ENDPOINT"].filter((k) => !process.env[k]);
@@ -149,7 +149,7 @@ function buildReportPrompt(summary, subsMonthlyTotal) {
     `period ${summary.period}, based ONLY on the data below. Mention the`,
     "total, the biggest category, how it compares to the prior month, and",
     "subscription costs. If something stands out (a spike, a cheap win),",
-    "offer one brief, concrete suggestion — otherwise skip suggestions",
+    "offer one brief, concrete suggestion - otherwise skip suggestions",
     "rather than inventing one. Be friendly and concise, no fluff.",
     "",
     `Data: ${JSON.stringify({ ...summary, subscriptions_monthly_total: subsMonthlyTotal })}`,
@@ -198,7 +198,7 @@ async function main() {
 
   const userIds = await loadUserIds();
   if (!userIds.length) {
-    console.log("No users with expenses — nothing to report.");
+    console.log("No users with expenses - nothing to report.");
     return;
   }
   console.log(`Users with expenses: ${userIds.length}`);
@@ -212,7 +212,7 @@ async function main() {
       ]);
       const summary = summarize(expenses, period, prevPeriod);
       if (summary.total === 0) {
-        console.log(`[${userId}] no expenses in ${period} — skipping`);
+        console.log(`[${userId}] no expenses in ${period} - skipping`);
         continue;
       }
       const subsMonthlyTotal = Math.round(subs.reduce((s, sub) => s + monthlyAmount(sub), 0) * 100) / 100;

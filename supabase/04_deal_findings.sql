@@ -1,10 +1,10 @@
 -- ============================================================================
--- F6 stretch — live deal discovery (docs/F6-live-deals-proposal.md §6).
+-- F6 stretch - live deal discovery (docs/F6-live-deals-proposal.md §6).
 -- Run this after 01-03. Optional: the app works fine with this table empty
 -- or unapplied until the home-machine search agent exists (Phase B/C).
 --
 -- Separate trust tier from subscription_catalog: machine-found, not curated.
--- No user_id — a deal ("Spotify student = $5.99") is a public fact, matched
+-- No user_id - a deal ("Spotify student = $5.99") is a public fact, matched
 -- to the user client-side against their own subscriptions.
 -- ============================================================================
 create table if not exists deal_findings (
@@ -33,4 +33,4 @@ create policy "read deal_findings" on deal_findings
   for select using (auth.role() = 'authenticated' and status <> 'rejected');
 -- No insert/update/delete policy → the anon/PWA client can never write.
 -- Only the home-machine agent, using the service_role key (never shipped in
--- the PWA), can write findings — bypasses RLS by design, server-side only.
+-- the PWA), can write findings - bypasses RLS by design, server-side only.

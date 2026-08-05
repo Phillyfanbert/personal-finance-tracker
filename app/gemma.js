@@ -94,7 +94,7 @@ export async function parseWithGemma(text, opts = {}) {
 
 // ---- Interactive spending Q&A ----------------------------------------------
 // Separate contract from parseWithGemma above: the answer is free text, not
-// strict JSON, so no format:"json" here — Ollama returns { response: "..." }
+// strict JSON, so no format:"json" here - Ollama returns { response: "..." }
 // with a plain-text answer instead of a JSON string to parse.
 
 /** Build the free-text Q&A prompt sent to Gemma. */
@@ -103,7 +103,7 @@ export function buildQaPrompt(question, context) {
     "You are a personal finance assistant. Answer the question using ONLY",
     "the JSON data below, which is the user's own spending data. If the data",
     "doesn't contain enough to answer, say so plainly instead of guessing.",
-    "Be concise — a few sentences or a short list. Use $ for dollar amounts.",
+    "Be concise - a few sentences or a short list. Use $ for dollar amounts.",
     "",
     `Data: ${JSON.stringify(context)}`,
     "",

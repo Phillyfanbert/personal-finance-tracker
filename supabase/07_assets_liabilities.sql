@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Assets + liabilities (net-worth overview on the Log page).
--- Standard per-user RLS, same pattern as accounts/expenses/subscriptions —
+-- Standard per-user RLS, same pattern as accounts/expenses/subscriptions -
 -- this is personal financial data, owned and readable only by its user.
 -- ============================================================================
 create table if not exists assets (
@@ -14,7 +14,7 @@ create table if not exists assets (
   updated_at  timestamptz default now()
 );
 
--- "liabilities" here means tracked debts (credit cards, loans, mortgages) —
+-- "liabilities" here means tracked debts (credit cards, loans, mortgages) -
 -- the OTHER kind of liability, distinct from subscriptions/expenses which
 -- are computed live from their own tables on the Log page, not stored here.
 create table if not exists liabilities (

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
-# F6 stretch — brings SearXNG up, runs the deal-search agent, tears SearXNG
+# F6 stretch - brings SearXNG up, runs the deal-search agent, tears SearXNG
 # back down. Run on the SERVER MACHINE only. This is the script to point a
-# weekly cron/systemd timer at (Phase D) — not the raw node command — so
+# weekly cron/systemd timer at (Phase D) - not the raw node command - so
 # SearXNG never sits resident between runs.
 #
 # Usage:
@@ -22,7 +22,7 @@ if [ -f "$ENV_FILE" ]; then
   source "$ENV_FILE"
   set +a
 else
-  echo "Missing $ENV_FILE — copy .env.deal-agent.example and fill in real values." >&2
+  echo "Missing $ENV_FILE - copy .env.deal-agent.example and fill in real values." >&2
   exit 1
 fi
 

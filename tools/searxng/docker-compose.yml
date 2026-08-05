@@ -1,9 +1,9 @@
 # ============================================================================
-# SearXNG — F6 stretch (docs/F6-live-deals-proposal.md Phase B).
+# SearXNG - F6 stretch (docs/F6-live-deals-proposal.md Phase B).
 # Deliberately NOT set to restart automatically: this stays stopped between
 # runs. tools/run-deal-agent.sh brings it up right before a run and tears it
 # down right after, so it never sits resident consuming RAM between the
-# weekly agent runs (see the RAM/compute discussion — steady-state cost
+# weekly agent runs (see the RAM/compute discussion - steady-state cost
 # should be ~0, not a background service).
 #
 # First-time setup (run once, from this directory):

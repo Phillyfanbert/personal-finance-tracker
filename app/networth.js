@@ -2,7 +2,7 @@
 // Net worth overview (Log page). Pure, unit-testable.
 // "Liabilities" here is the broader, practical sense the user asked for:
 // subscriptions (monthly-equivalent) + this month's expenses + tracked debts
-// (the `liabilities` table) — not just textbook debt.
+// (the `liabilities` table) - not just textbook debt.
 // ============================================================================
 import { totalMonthly } from "./subscriptions.js";
 

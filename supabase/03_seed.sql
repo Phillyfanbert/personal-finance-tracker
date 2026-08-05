@@ -1,5 +1,5 @@
 -- ============================================================================
--- Personal Expense Tracker — Phase 0 Seed Data (optional, README §3.7 / F6)
+-- Personal Expense Tracker - Phase 0 Seed Data (optional, README §3.7 / F6)
 -- Run this THIRD. Populates subscription_catalog with common plans so the
 -- discount-discovery feature (Phase 4) has reference data to match against.
 --

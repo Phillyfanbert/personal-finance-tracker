@@ -10,7 +10,7 @@ window.APP_CONFIG = {
   SUPABASE_URL: "https://YOUR-PROJECT-REF.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_YOUR_KEY_HERE",
 
-  // Phase 3 — Gemma natural-language parsing (OPTIONAL, README §3.6).
+  // Phase 3 - Gemma natural-language parsing (OPTIONAL, README §3.6).
   // Leave GEMMA_ENDPOINT empty to keep the app on keyword parsing only.
   // For local testing: run tools/mock-gemma-server.js and use
   //   "http://localhost:11434/api/generate"
@@ -18,7 +18,7 @@ window.APP_CONFIG = {
   GEMMA_ENDPOINT: "",
   GEMMA_MODEL: "gemma",
 
-  // F6 stretch — live deal discovery (docs/F6-live-deals-proposal.md).
+  // F6 stretch - live deal discovery (docs/F6-live-deals-proposal.md).
   // Off by default: the deal_findings table stays dormant until you stand up
   // the home-machine search agent (Phase B/C of the proposal). Flip to true
   // once you're ready to surface machine-found (unverified) deals in the UI.

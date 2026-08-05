@@ -1,12 +1,12 @@
-# Personal Expense Tracker — Project Spec & Design Proposal
+# Personal Expense Tracker - Project Spec & Design Proposal
 
 > A private, multi-user expense tracker with natural-language entry, automatic
-> categorization, subscription monitoring, and monthly reports — built and
+> categorization, subscription monitoring, and monthly reports - built and
 > deployed for **$0 with no credit card required anywhere**.
 
 ---
 
-## Part 1 — Project Specifications
+## Part 1 - Project Specifications
 
 ### 1.1 Goals (what the product does)
 
@@ -17,7 +17,7 @@
 | F3 | Auto-categorization | Assign a category (Food, Transport, Subscriptions, etc.) as the expense is entered. |
 | F4 | Payment tracking | Record whether each expense is credit / debit / cash, and **which** account it came from (e.g. "Chase checking"). |
 | F5 | Subscription monitoring | Track active subscriptions as a first-class category with renewal dates and amounts. |
-| F6 | Discount discovery | Proactively surface cheaper subscription options — student plans, annual pricing, family plans — matched to the user's profile. |
+| F6 | Discount discovery | Proactively surface cheaper subscription options - student plans, annual pricing, family plans - matched to the user's profile. |
 | F7 | Monthly reports | Generate visualizations and a summary of the past month's spending. |
 
 ### 1.2 Users & privacy
@@ -36,7 +36,7 @@
 
 - **$0 total cost** during building *and* deployment.
 - **No credit card** connected to any service at any point.
-- Local **Gemma** model (planned) will run on a separate machine and be integrated later — the product must be fully functional before that integration lands.
+- Local **Gemma** model (planned) will run on a separate machine and be integrated later - the product must be fully functional before that integration lands.
 
 ### 1.5 Explicit non-goals (for v1)
 
@@ -46,7 +46,7 @@
 
 ---
 
-## Part 2 — Design Proposal
+## Part 2 - Design Proposal
 
 ### 2.1 Architecture at a glance
 
@@ -108,24 +108,24 @@ profiles ──────────── accounts ────────�
                                                      │
                                                      └── category_rules  (learned keyword → category)
 subscriptions (name, amount, cycle, next_renewal, account_id, is_active)
-subscription_catalog  (reference: known plans, student/annual pricing) — powers F6
+subscription_catalog  (reference: known plans, student/annual pricing) - powers F6
 ```
 
 Every user-owned table carries a `user_id uuid` column and an RLS policy tying rows to `auth.uid()`.
 
 ---
 
-## Part 3 — Implementation Guide
+## Part 3 - Implementation Guide
 
 ### 3.1 Recommended build order (phased)
 
 Build in this order so you have something usable within a weekend, not a half-finished everything:
 
-- [ ] **Phase 0 — Foundation.** Supabase project, auth (email magic link / Google OAuth), schema + RLS, a dead-simple manual entry form. *This is the whole privacy-and-data core.*
-- [ ] **Phase 1 — Usable app.** Accounts management, keyword auto-categorization, expense list/edit, monthly charts. Ship it, use it daily.
-- [ ] **Phase 2 — Subscriptions.** Subscriptions table, renewal tracking, subscriptions category, dashboard tile.
-- [ ] **Phase 3 — Natural language.** Wire in Gemma (Ollama + tunnel) for free-text parsing, with the keyword rules as fallback.
-- [ ] **Phase 4 — Discount discovery.** Match subscriptions + profile against the catalog table; surface savings. (Live web-search agent is a later stretch goal.)
+- [ ] **Phase 0 - Foundation.** Supabase project, auth (email magic link / Google OAuth), schema + RLS, a dead-simple manual entry form. *This is the whole privacy-and-data core.*
+- [ ] **Phase 1 - Usable app.** Accounts management, keyword auto-categorization, expense list/edit, monthly charts. Ship it, use it daily.
+- [ ] **Phase 2 - Subscriptions.** Subscriptions table, renewal tracking, subscriptions category, dashboard tile.
+- [ ] **Phase 3 - Natural language.** Wire in Gemma (Ollama + tunnel) for free-text parsing, with the keyword rules as fallback.
+- [ ] **Phase 4 - Discount discovery.** Match subscriptions + profile against the catalog table; surface savings. (Live web-search agent is a later stretch goal.)
 
 ### 3.2 Database schema (SQL)
 
@@ -252,13 +252,13 @@ create policy "read catalog" on subscription_catalog
 ```
 
 **RLS rules to live by**
-- The `service_role` / **secret** key bypasses RLS entirely — keep it server-side only, never in the PWA.
+- The `service_role` / **secret** key bypasses RLS entirely - keep it server-side only, never in the PWA.
 - The PWA uses only the **publishable** key (`sb_publishable_...`, the drop-in replacement for the legacy anon key); the user's JWT scopes every query automatically.
-- `using` filters which existing rows are visible; `with check` validates inserts/updates — set both.
+- `using` filters which existing rows are visible; `with check` validates inserts/updates - set both.
 
 ### 3.4 Authentication (avoid the cost trap)
 
-- Use **email magic links** or **Google OAuth** — both free in Supabase.
+- Use **email magic links** or **Google OAuth** - both free in Supabase.
 - **Do NOT** use SMS / phone OTP: sending the text message costs money and would break the $0 rule.
 - On first sign-in, create the matching `profiles` row (via a Postgres trigger on `auth.users`, or on first app load).
 
@@ -287,8 +287,8 @@ Two layers, so the app is always responsive:
 ### 3.7 Subscriptions & discount discovery (F5 / F6)
 
 - **F5 (monitoring):** store each subscription with amount, cycle, and `next_renewal`; show a dashboard tile of monthly subscription spend and upcoming renewals. Optionally auto-detect subscriptions from recurring expenses.
-- **F6 (discounts) — scoped for v1:** maintain a curated `subscription_catalog` (Spotify, Adobe, YouTube, etc. with their student/annual/family pricing). Match a user's active subscriptions **and** their profile status against the catalog, then surface the gap ("You pay $11.99/mo for Spotify Individual; as a student you're eligible for $5.99/mo"). This delivers ~90% of the value with ~10% of the effort.
-- **F6 stretch goal (later):** a Gemma + web-search agent that hunts live deals. Do this only after the core app is solid — live discount data is scattered and unreliable, and doing it robustly at scale can require paid APIs.
+- **F6 (discounts) - scoped for v1:** maintain a curated `subscription_catalog` (Spotify, Adobe, YouTube, etc. with their student/annual/family pricing). Match a user's active subscriptions **and** their profile status against the catalog, then surface the gap ("You pay $11.99/mo for Spotify Individual; as a student you're eligible for $5.99/mo"). This delivers ~90% of the value with ~10% of the effort.
+- **F6 stretch goal (later):** a Gemma + web-search agent that hunts live deals. Do this only after the core app is solid - live discount data is scattered and unreliable, and doing it robustly at scale can require paid APIs.
 
 ### 3.8 Reports (F7)
 
@@ -297,7 +297,7 @@ Two layers, so the app is always responsive:
 
 ### 3.9 Operational notes for staying at $0
 
-- **Keep-alive:** add a free scheduled ping so the Supabase project doesn't pause after 7 days idle. Use a **Cloudflare Worker Cron Trigger** (not GitHub Actions — GitHub disables scheduled workflows after ~60 days of no commits, which breaks a commit-and-forget repo). The Worker hits a tiny Supabase REST query every few days; setup is in SETUP.md §9.
+- **Keep-alive:** add a free scheduled ping so the Supabase project doesn't pause after 7 days idle. Use a **Cloudflare Worker Cron Trigger** (not GitHub Actions - GitHub disables scheduled workflows after ~60 days of no commits, which breaks a commit-and-forget repo). The Worker hits a tiny Supabase REST query every few days; setup is in SETUP.md §9.
 - **Bandwidth discipline:** paginate expense lists and cache on the client to stay well under the 5 GB egress limit.
 - **Two-project limit:** one Supabase project is enough; keep a second slot free for a staging copy if desired.
 
@@ -309,13 +309,13 @@ Two layers, so the app is always responsive:
 | Cloudflare Pages (hosting) | Yes | No |
 | Cloudflare Tunnel (Gemma access) | Yes | No |
 | Ollama + Gemma (local) | Yes (your hardware) | No |
-| PWA (vs native app) | Yes | No — avoids Apple's $99/yr |
-| Auth via email/OAuth (not SMS) | Yes | No — SMS would cost money |
+| PWA (vs native app) | Yes | No - avoids Apple's $99/yr |
+| Auth via email/OAuth (not SMS) | Yes | No - SMS would cost money |
 | Cloudflare Worker cron (keep-alive) | Yes | No |
 
 ---
 
-## Part 4 — Risks & Watch-Items
+## Part 4 - Risks & Watch-Items
 
 | Risk | Impact | Mitigation |
 |------|--------|-----------|
@@ -328,7 +328,7 @@ Two layers, so the app is always responsive:
 
 ---
 
-## Appendix — Open Decisions
+## Appendix - Open Decisions
 
 - **Frontend framework:** Next.js (rich ecosystem) vs SvelteKit (lighter) vs plain HTML/JS (simplest). Any works with Supabase.
 - **Where the keyword pass runs:** in the PWA (simplest) vs a Supabase Edge Function (shareable across devices).

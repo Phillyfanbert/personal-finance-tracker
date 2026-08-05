@@ -4,7 +4,7 @@
 // app/config.js is gitignored (SETUP.md §4), so the GitHub-connected deploy
 // has no config.js to serve until this runs. Set SUPABASE_URL and
 // SUPABASE_ANON_KEY as env vars on the Cloudflare Pages/Workers project
-// (Settings → Variables) — same values as your local app/config.js.
+// (Settings → Variables) - same values as your local app/config.js.
 //
 // Run as the project's Build command: node tools/generate-config.js
 // ============================================================================

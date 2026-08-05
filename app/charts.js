@@ -34,7 +34,7 @@ export function sumBy(expenses, field, ym, accountName = () => "") {
     let key;
     if (field === "category") key = e.category || "Uncategorized";
     else if (field === "account") key = accountName(e.account_id) || "Unassigned";
-    else key = e[field] || "—";
+    else key = e[field] || "Unspecified";
     totals[key] = (totals[key] || 0) + Number(e.amount || 0);
   }
   // Return sorted desc by amount.
@@ -67,14 +67,14 @@ function destroy(id) { if (_charts[id]) { _charts[id].destroy(); delete _charts[
 /**
  * Horizontal bar chart for any label/value breakdown (category, account,
  * account type, ...). Dollar amounts are baked into each row's label so
- * they're visible at a glance — no hover needed, and length-of-bar is far
+ * they're visible at a glance - no hover needed, and length-of-bar is far
  * easier to compare by eye than pie/doughnut wedge area.
  * `canvas` must have a unique `id` (used as the internal chart registry key
  * so multiple bar charts on one page don't clobber each other on redraw).
  */
 export function renderBreakdownBar(canvas, data) {
   destroy(canvas.id);
-  const labels = data.map((d) => `${d.label} — $${d.value.toFixed(2)}`);
+  const labels = data.map((d) => `${d.label} - $${d.value.toFixed(2)}`);
   _charts[canvas.id] = new Chart(canvas, {
     type: "bar",
     data: {

@@ -1,5 +1,5 @@
 // ============================================================================
-// Expense Tracker — Phase 1 app logic (plain ES modules, no build step).
+// Expense Tracker - Phase 1 app logic (plain ES modules, no build step).
 // Adds: editable expenses, category-correction learning loop (README §3.5),
 // richer account management, and monthly charts (README §3.8).
 // RLS scopes every query to the signed-in user.
@@ -31,6 +31,7 @@ function toast(msg) {
   setTimeout(() => t.classList.remove("show"), 2200);
 }
 const acctName = (id) => (accounts.find((a) => a.id === id) || {}).name || "";
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 // A stable keyword to learn from (first meaningful token of merchant/description).
 function learnKeyword(row) {
   const src = (row.merchant || row.description || "").toLowerCase().trim();
@@ -50,7 +51,7 @@ let editing = null;   // expense row currently in the edit modal
 let editingSub = null; // subscription row currently in the sub form
 let userId = null;    // signed-in user's uuid
 let profile = null;   // the user's profiles row
-let entrySource = "manual"; // 'manual' | 'parsed' — set to 'parsed' when Gemma fills fields
+let entrySource = "manual"; // 'manual' | 'parsed' - set to 'parsed' when Gemma fills fields
 let gemmaTimer = null;      // debounce handle for background parsing
 
 // ---- AUTH ------------------------------------------------------------------
@@ -60,7 +61,7 @@ $("signInBtn").onclick = async () => {
   $("signInBtn").disabled = true;
   const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
   $("signInBtn").disabled = false;
-  $("authMsg").textContent = error ? error.message : "✅ Link sent — check your email.";
+  $("authMsg").textContent = error ? error.message : "✅ Link sent - check your email.";
 };
 $("signOutBtn").onclick = async () => { await sb.auth.signOut(); location.reload(); };
 
@@ -105,7 +106,7 @@ async function loadCatalog() {
   catalog = data || [];
 }
 
-// F6 stretch — dormant until DEAL_FINDINGS_ENABLED is flipped on (config.js) and
+// F6 stretch - dormant until DEAL_FINDINGS_ENABLED is flipped on (config.js) and
 // the home-machine search agent starts writing rows (docs/F6-live-deals-proposal.md).
 async function loadDealFindings() {
   if (!DEAL_FINDINGS_ENABLED) { dealFindings = []; return; }
@@ -143,15 +144,15 @@ async function loadAccounts() {
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${(a.name.trim()[0] || "?").toUpperCase()}</div>
         <span class="x" data-del-acct="${a.id}">✕</span>
         <div class="name">${a.name}</div>
-        <div class="type">${a.type}</div>
+        <div class="type">${cap(a.type)}</div>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
   // account selects (add + edit)
-  const opts = `<option value="">—</option>` + accounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  const opts = `<option value="">None</option>` + accounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
-  // delete handlers — expenses keep their history (account_id -> null on delete, per schema)
+  // delete handlers - expenses keep their history (account_id -> null on delete, per schema)
   document.querySelectorAll("[data-del-acct]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -243,7 +244,7 @@ async function loadDebts() {
 }
 
 // ---- NET WORTH (Log page) ----------------------------------------------
-// Recomputed from already-loaded state — cheap, no extra queries. Call
+// Recomputed from already-loaded state - cheap, no extra queries. Call
 // after anything that changes assets, debts, subscriptions, or expenses.
 function renderNetWorth() {
   const ym = monthKey();
@@ -307,10 +308,10 @@ function scheduleGemma(raw) {
       if (g.category) $("fCategory").value = g.category;
       if (g.occurred_at) $("fDate").value = g.occurred_at;
       entrySource = "parsed";
-      $("parseStatus").textContent = "✨ parsed by Gemma — confirm & save";
+      $("parseStatus").textContent = "✨ parsed by Gemma - confirm & save";
     } catch (err) {
-      // Home machine asleep / unreachable — keep the keyword guess.
-      $("parseStatus").textContent = "Gemma unavailable — using quick parse";
+      // Home machine asleep / unreachable - keep the keyword guess.
+      $("parseStatus").textContent = "Gemma unavailable - using quick parse";
     }
   }, 650);
 }
@@ -355,7 +356,7 @@ async function loadExpenses() {
   renderNetWorth();
 
   const rows = allExpenses.slice(0, 50);
-  if (!rows.length) { $("expList").innerHTML = `<p class="muted">No expenses yet — add one above.</p>`; return; }
+  if (!rows.length) { $("expList").innerHTML = `<p class="muted">No expenses yet - add one above.</p>`; return; }
   $("expList").innerHTML = rows.map((r, i) => `
     <div class="exp" data-idx="${i}">
       <div>
@@ -413,7 +414,7 @@ $("editSave").onclick = async () => {
   }
   $("editSave").disabled = false;
   $("editModal").classList.add("hidden"); editing = null;
-  await loadExpenses(); toast(categoryChanged ? "Saved — I'll remember that" : "Saved ✓");
+  await loadExpenses(); toast(categoryChanged ? "Saved - I'll remember that" : "Saved ✓");
 };
 
 $("editDelete").onclick = async () => {
@@ -454,7 +455,7 @@ $("qaAskBtn").onclick = async () => {
   const question = $("qaQuestion").value.trim();
   if (!question) return toast("Type a question first");
   if (!GEMMA_ENDPOINT) {
-    $("qaStatus").textContent = "Not configured — set GEMMA_ENDPOINT in config.js (SETUP.md §3.6).";
+    $("qaStatus").textContent = "Not configured - set GEMMA_ENDPOINT in config.js (SETUP.md §3.6).";
     return;
   }
   $("qaAskBtn").disabled = true;
@@ -468,7 +469,7 @@ $("qaAskBtn").onclick = async () => {
     $("qaAnswer").classList.remove("hidden");
     $("qaStatus").textContent = "";
   } catch (err) {
-    $("qaStatus").textContent = "Couldn't get an answer — is Gemma reachable? (" + err.message + ")";
+    $("qaStatus").textContent = "Couldn't get an answer - is Gemma reachable? (" + err.message + ")";
   } finally {
     $("qaAskBtn").disabled = false;
   }
@@ -551,7 +552,7 @@ function renderDeals() {
   if (up) up.onclick = () => $("profileBtn").click();
 }
 
-// Machine-found deals (F6 stretch) — separate, clearly-labeled, unverified.
+// Machine-found deals (F6 stretch) - separate, clearly-labeled, unverified.
 // Never blended into the trusted curated numbers above.
 function renderDealFindings() {
   const card = $("dealFindingsCard");
@@ -606,7 +607,7 @@ function renderSubscriptions() {
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")
-    : `<p class="muted">No subscriptions yet — add one above.</p>`;
+    : `<p class="muted">No subscriptions yet - add one above.</p>`;
 
   document.querySelectorAll("[data-sub]").forEach((el) => {
     el.onclick = () => {

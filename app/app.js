@@ -30,7 +30,13 @@ function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
   setTimeout(() => t.classList.remove("show"), 2200);
 }
-const acctName = (id) => (accounts.find((a) => a.id === id) || {}).name || "";
+// account.name alone is now often generic (Checking, Credit) - bank_name
+// is what actually distinguishes two accounts of the same type at
+// different banks, so anywhere an account is displayed by itself (not
+// already grouped under its bank, like the Accounts card circles are)
+// needs both. Cash has no bank_name, so it's unaffected.
+const acctLabel = (a) => (a ? (a.bank_name ? `${a.bank_name} ${a.name}` : a.name) : "");
+const acctName = (id) => acctLabel(accounts.find((a) => a.id === id));
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 // A stable keyword to learn from (first meaningful token of merchant/description).
 function learnKeyword(row) {
@@ -142,78 +148,61 @@ async function loadRules() {
 // ---- ACCOUNTS --------------------------------------------------------------
 // Account types that represent real money on hand get a matching Asset
 // auto-created and linked, so they count toward net worth without a manual
-// second step. 'credit' is a liability, not an asset, so it's excluded;
-// 'other' is ambiguous and left to manual linking. A manually chosen link
-// (the picker below) always wins over auto-creation. 'cash' is deliberately
-// absent - there's exactly one Cash account per user, auto-managed by
-// ensureCashAccount(), never created through this form.
+// second step. 'credit' is a liability, not an asset, so it's excluded.
+// 'cash' is deliberately absent - there's exactly one Cash account per
+// user, auto-managed by ensureCashAccount(), never created through this
+// form, and the only type exempt from needing a bank (accounts_bank_name_
+// required, 14_account_bank_name.sql).
 const AUTO_ASSET_TYPE = { debit: "bank" };
 // Credit accounts link to a Liability (tracked debt) instead of an Asset -
 // a charge should accumulate onto a running balance, not draw down
 // something you own. Auto-created the same way bank assets are.
 const AUTO_LIABILITY_TYPE = { credit: "credit_card" };
-// Display-only label override - the underlying type stays 'debit' (so
-// existing accounts/data keep working unchanged), but the "Debit" and
-// "Checking" account types were functionally identical (same auto-linked
-// bank asset) and confusing as separate options, so the form now only
-// offers this one, labeled "Checking".
-const ACCOUNT_TYPE_LABEL = { debit: "Checking", credit: "Credit", cash: "Cash", other: "Other" };
 
 $("addAcctBtn").onclick = () => $("acctForm").classList.toggle("hidden");
 $("acctType").onchange = () => {
   const isCredit = $("acctType").value === "credit";
   $("acctAssetLink").classList.toggle("hidden", isCredit);
   $("acctLiabilityLink").classList.toggle("hidden", !isCredit);
-  updateAcctAssetPlaceholder();
 };
 
-// The empty option in the linked-asset picker means something different
-// depending on type: for Checking (AUTO_ASSET_TYPE) it means "auto-create
-// one for me", so it's guaranteed to end up linked either way - never
-// truly unlinked. For 'other' it genuinely means no link, since there's
-// no auto-create fallback for that type. Mislabeling this as "No link"
-// for Checking is what let an account get created with linked_asset_id
-// left null in practice - relabel it so the picker can't be misread as
-// "leave this unlinked" for that type.
-function updateAcctAssetPlaceholder() {
-  const placeholder = $("acctAsset").querySelector('option[value=""]');
-  if (!placeholder) return;
-  placeholder.textContent = AUTO_ASSET_TYPE[$("acctType").value] ? "Auto-create new bank" : "No link";
-}
-
+// bank_name is separate from linked_asset_id/linked_liability_id - it's
+// which institution the account is at (Chase, Discover), purely a
+// display/grouping label; the linked asset/liability is what tracks the
+// actual dollar value. There's no picker to reuse an existing asset/
+// liability anymore (there was, briefly) - every account now always gets
+// its own fresh one, named after the bank, since two accounts at the same
+// bank (a Checking and a Savings, say) still need separate balances.
 $("saveAcctBtn").onclick = async () => {
   const name = $("acctName").value.trim();
+  const bank_name = $("acctBank").value.trim();
   const type = $("acctType").value;
-  let linked_asset_id = $("acctAsset").value || null;
-  // Unlike linked_asset_id, there's no frontend picker for this - a credit
-  // account always gets a fresh liability created for it here, backend-only.
-  let linked_liability_id = null;
   if (!name) return toast("Account name required");
   if (type === "cash") return toast("Cash is automatic - use the Cash account above to add or subtract.");
+  if (!bank_name) return toast("Bank name required");
 
+  let linked_asset_id = null;
+  let linked_liability_id = null;
   let autoMsg = null;
   if (type === "credit") {
-    linked_asset_id = null; // credit never links to an asset
     const { data: newDebt, error: debtErr } = await sb.from("liabilities")
-      .insert({ name, type: AUTO_LIABILITY_TYPE[type], balance: 0 })
+      .insert({ name: bank_name, type: AUTO_LIABILITY_TYPE[type], balance: 0 })
       .select().single();
     if (debtErr) return toast(debtErr.message);
     linked_liability_id = newDebt.id;
     autoMsg = "Account added - linked to a new $0 balance liability";
-  } else {
-    if (!linked_asset_id && AUTO_ASSET_TYPE[type]) {
-      const { data: newAsset, error: assetErr } = await sb.from("assets")
-        .insert({ name, type: AUTO_ASSET_TYPE[type], value: 0 })
-        .select().single();
-      if (assetErr) return toast(assetErr.message);
-      linked_asset_id = newAsset.id;
-      autoMsg = "Account added - linked to a new $0 asset, edit its value below";
-    }
+  } else if (AUTO_ASSET_TYPE[type]) {
+    const { data: newAsset, error: assetErr } = await sb.from("assets")
+      .insert({ name: bank_name, type: AUTO_ASSET_TYPE[type], value: 0 })
+      .select().single();
+    if (assetErr) return toast(assetErr.message);
+    linked_asset_id = newAsset.id;
+    autoMsg = "Account added - linked to a new $0 asset, edit its value below";
   }
 
-  const { error } = await sb.from("accounts").insert({ name, type, linked_asset_id, linked_liability_id });
+  const { error } = await sb.from("accounts").insert({ name, bank_name, type, linked_asset_id, linked_liability_id });
   if (error) return toast(error.message);
-  $("acctName").value = ""; $("acctForm").classList.add("hidden");
+  $("acctName").value = ""; $("acctBank").value = ""; $("acctForm").classList.add("hidden");
   // loadAccounts first - loadDebts reads `accounts` to know which
   // liabilities are now account-linked (hides their delete button).
   await loadAccounts(); await loadAssets(); await loadDebts();
@@ -227,8 +216,17 @@ const ACCT_COLORS = ["#0ea5e9", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f4
 // line depends on whichever one of assets/debts is linked to it, and those
 // load in parallel with accounts (see init()), not strictly after it.
 function renderAccountsList() {
-  $("acctList").innerHTML = accounts.length
-    ? accounts.map((a, i) => {
+  // Grouped by bank so a Checking and a Savings at the same bank sit next
+  // to each other, rather than wherever creation order happened to put
+  // them. Cash has no bank_name, so it's pinned first explicitly instead
+  // of relying on null/empty-string sorting first.
+  const sorted = [...accounts].sort((a, b) => {
+    if (a.type === "cash") return -1;
+    if (b.type === "cash") return 1;
+    return (a.bank_name || "").localeCompare(b.bank_name || "") || a.name.localeCompare(b.name);
+  });
+  $("acctList").innerHTML = sorted.length
+    ? sorted.map((a, i) => {
         // Bank/cash-type accounts link to an asset (tap opens the asset-adjust
         // panel); credit accounts link to a liability instead (tap opens the
         // Owed/Paying-balance tabs - see openDebtBalanceForm below). 'other'
@@ -247,12 +245,15 @@ function renderAccountsList() {
           : a.linked_liability_id
           ? debts.find((x) => x.id === a.linked_liability_id)?.balance
           : null;
+        // Cash has no bank_name, so it plays both roles (matches its
+        // existing "Cash" / "Cash" double line, unchanged).
+        const bankLabel = a.bank_name || a.name;
         return `
       <div class="acct-circle-item" ${clickAttr ? `${clickAttr} style="cursor:pointer"` : ""}>
-        <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : (a.name.trim()[0] || "?").toUpperCase()}</div>
+        <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : (bankLabel.trim()[0] || "?").toUpperCase()}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
-        <div class="name">${a.name}</div>
-        <div class="type">${ACCOUNT_TYPE_LABEL[a.type] || cap(a.type)}</div>
+        <div class="name">${bankLabel}</div>
+        <div class="type">${a.name}</div>
         ${balance != null ? `<div class="balance">${a.type === "credit" ? "Owed " : ""}${fmt(balance)}</div>` : ""}
       </div>`;
       }).join("")
@@ -294,7 +295,7 @@ async function loadAccounts() {
   accounts = data || [];
   renderAccountsList();
   // account selects (add + edit)
-  const opts = `<option value="">None</option>` + accounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  const opts = `<option value="">None</option>` + accounts.map((a) => `<option value="${a.id}">${acctLabel(a)}</option>`).join("");
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
@@ -334,13 +335,6 @@ async function loadAssets() {
         <span class="amt">${fmt(a.value)}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
-  // Checking is the only type this picker is shown for (acctType.onchange
-  // hides acctAssetLink for credit; Cash never reaches this form at all -
-  // see saveAcctBtn), so only Bank-type assets belong here. Cash's own
-  // asset, and anything non-bank (investment/property/etc.), would create
-  // a nonsensical link if picked.
-  $("acctAsset").innerHTML = `<option value="">No link</option>` + assets.filter((a) => a.type === "bank").map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
-  updateAcctAssetPlaceholder();
   $("payFromAsset").innerHTML = assets.map((a) => `<option value="${a.id}">${a.name} (${fmt(a.value)})</option>`).join("");
   document.querySelectorAll("[data-del-asset]").forEach((el) => {
     el.onclick = async (ev) => {

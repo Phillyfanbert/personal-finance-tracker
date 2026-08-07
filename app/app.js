@@ -184,23 +184,22 @@ $("saveAcctBtn").onclick = async () => {
   const name = $("acctName").value.trim();
   const type = $("acctType").value;
   let linked_asset_id = $("acctAsset").value || null;
-  let linked_liability_id = $("acctLiability").value || null;
+  // Unlike linked_asset_id, there's no frontend picker for this - a credit
+  // account always gets a fresh liability created for it here, backend-only.
+  let linked_liability_id = null;
   if (!name) return toast("Account name required");
   if (type === "cash") return toast("Cash is automatic - use the Cash account above to add or subtract.");
 
   let autoMsg = null;
   if (type === "credit") {
     linked_asset_id = null; // credit never links to an asset
-    if (!linked_liability_id) {
-      const { data: newDebt, error: debtErr } = await sb.from("liabilities")
-        .insert({ name, type: AUTO_LIABILITY_TYPE[type], balance: 0 })
-        .select().single();
-      if (debtErr) return toast(debtErr.message);
-      linked_liability_id = newDebt.id;
-      autoMsg = "Account added - linked to a new $0 balance liability";
-    }
+    const { data: newDebt, error: debtErr } = await sb.from("liabilities")
+      .insert({ name, type: AUTO_LIABILITY_TYPE[type], balance: 0 })
+      .select().single();
+    if (debtErr) return toast(debtErr.message);
+    linked_liability_id = newDebt.id;
+    autoMsg = "Account added - linked to a new $0 balance liability";
   } else {
-    linked_liability_id = null; // non-credit never links to a liability
     if (!linked_asset_id && AUTO_ASSET_TYPE[type]) {
       const { data: newAsset, error: assetErr } = await sb.from("assets")
         .insert({ name, type: AUTO_ASSET_TYPE[type], value: 0 })
@@ -468,7 +467,6 @@ async function loadDebts() {
         </span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No other liabilities.</p>`;
-  $("acctLiability").innerHTML = `<option value="">Auto-create new liability</option>` + debts.map((d) => `<option value="${d.id}">${d.name}</option>`).join("");
   document.querySelectorAll("[data-del-debt]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();

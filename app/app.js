@@ -255,12 +255,18 @@ async function loadAccounts() {
   document.querySelectorAll("[data-del-acct]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
-      if (!confirm("Delete this account? Existing expenses stay but become unassigned.")) return;
+      const acct = accounts.find((a) => a.id === el.dataset.delAcct);
+      // A credit account's linked liability is deleted with it (DB trigger,
+      // 12_delete_liability_with_account.sql) - warn about that up front
+      // since it's not obvious from "delete this account" alone.
+      const msg = acct?.linked_liability_id
+        ? "Delete this account? Existing expenses stay but become unassigned. Its linked liability and tracked balance are deleted too."
+        : "Delete this account? Existing expenses stay but become unassigned.";
+      if (!confirm(msg)) return;
       const { error } = await sb.from("accounts").delete().eq("id", el.dataset.delAcct);
       if (error) return toast(error.message);
-      // loadAccounts first - a deleted credit account's liability becomes
-      // unlinked (on delete set null), so loadDebts needs the fresh
-      // `accounts` to bring back that liability's delete button.
+      // loadDebts refreshes so the deleted liability disappears from the
+      // Liabilities card too, not just the account from its own card.
       await loadAccounts(); await loadExpenses(); await loadDebts(); toast("Account deleted");
     };
   });

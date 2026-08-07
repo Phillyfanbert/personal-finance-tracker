@@ -118,26 +118,20 @@
       <div class="card quickadd">
         <label for="quick">Quick add</label>
         <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" />
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Type free text: amount, merchant & payment type are auto-detected. Confirm below.</p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Type free text: amount & merchant are auto-detected, and a matching account if you name one (e.g. "debit"). Confirm below.</p>
 
         <div id="confirm" class="hidden" style="margin-top:12px">
           <div id="parseStatus" class="muted" style="font-size:12px;min-height:16px;margin-bottom:6px"></div>
           <div class="row">
             <div><label>Amount</label><input id="fAmount" type="number" step="0.01" inputmode="decimal" /></div>
-            <div><label>Payment</label>
-              <select id="fPayment">
-                <option value="">None</option><option>debit</option><option>credit</option><option>cash</option>
-              </select>
-            </div>
+            <div><label>Account</label><select id="fAccount"></select></div>
           </div>
           <label>Description / merchant</label>
           <input id="fDesc" />
           <div class="row">
             <div><label>Category</label><select id="fCategory"></select></div>
-            <div><label>Account</label><select id="fAccount"></select></div>
+            <div><label>Date</label><input id="fDate" type="date" /></div>
           </div>
-          <label>Date</label>
-          <input id="fDate" type="date" />
           <div style="height:12px"></div>
           <div class="row">
             <button id="saveBtn">Save expense</button>

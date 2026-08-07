@@ -146,11 +146,17 @@ async function loadRules() {
 // (the picker below) always wins over auto-creation. 'cash' is deliberately
 // absent - there's exactly one Cash account per user, auto-managed by
 // ensureCashAccount(), never created through this form.
-const AUTO_ASSET_TYPE = { checking: "bank", debit: "bank" };
+const AUTO_ASSET_TYPE = { debit: "bank" };
 // Credit accounts link to a Liability (tracked debt) instead of an Asset -
 // a charge should accumulate onto a running balance, not draw down
 // something you own. Auto-created the same way bank assets are.
 const AUTO_LIABILITY_TYPE = { credit: "credit_card" };
+// Display-only label override - the underlying type stays 'debit' (so
+// existing accounts/data keep working unchanged), but the "Debit" and
+// "Checking" account types were functionally identical (same auto-linked
+// bank asset) and confusing as separate options, so the form now only
+// offers this one, labeled "Checking".
+const ACCOUNT_TYPE_LABEL = { debit: "Checking", credit: "Credit", cash: "Cash", other: "Other" };
 
 $("addAcctBtn").onclick = () => $("acctForm").classList.toggle("hidden");
 $("acctType").onchange = () => {
@@ -161,13 +167,13 @@ $("acctType").onchange = () => {
 };
 
 // The empty option in the linked-asset picker means something different
-// depending on type: for checking/debit (AUTO_ASSET_TYPE) it means "auto-
-// create one for me", so it's guaranteed to end up linked either way -
-// never truly unlinked. For 'other' it genuinely means no link, since
-// there's no auto-create fallback for that type. Mislabeling this as
-// "No link" for checking/debit is what let an account get created with
-// linked_asset_id left null in practice - relabel it so the picker can't
-// be misread as "leave this unlinked" for those types.
+// depending on type: for Checking (AUTO_ASSET_TYPE) it means "auto-create
+// one for me", so it's guaranteed to end up linked either way - never
+// truly unlinked. For 'other' it genuinely means no link, since there's
+// no auto-create fallback for that type. Mislabeling this as "No link"
+// for Checking is what let an account get created with linked_asset_id
+// left null in practice - relabel it so the picker can't be misread as
+// "leave this unlinked" for that type.
 function updateAcctAssetPlaceholder() {
   const placeholder = $("acctAsset").querySelector('option[value=""]');
   if (!placeholder) return;
@@ -235,7 +241,7 @@ async function loadAccounts() {
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : (a.name.trim()[0] || "?").toUpperCase()}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${a.name}</div>
-        <div class="type">${cap(a.type)}</div>
+        <div class="type">${ACCOUNT_TYPE_LABEL[a.type] || cap(a.type)}</div>
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
@@ -343,7 +349,7 @@ async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
 
 // ---- ADJUST AN ACCOUNT'S LINKED ASSET -----------------------------------
 // Tapping any account circle with a linked asset opens this. Bank-linked
-// accounts (checking/debit, typically) get a direct "set the full balance"
+// accounts (Checking, typically) get a direct "set the full balance"
 // field, since you can just look up and type the real number. Everything
 // else - Cash included - gets +/- adjustment instead, matching how you'd
 // actually track a value you don't get to look up exactly.

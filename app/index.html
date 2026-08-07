@@ -236,11 +236,19 @@
         </div>
       </div>
 
-      <!-- Liabilities: subscriptions (simple) + this month's expenses + tracked debts -->
+      <!-- Liabilities: subscriptions (simple) + this month's expenses + tracked debts.
+           Total and Monthly are two different kinds of number (a balance vs a
+           recurring rate) shown deliberately apart, Total bigger/on top since
+           it's the one that feeds net worth - see networth.js. -->
       <div class="card">
-        <div class="topbar" style="margin-bottom:8px">
+        <div class="topbar" style="margin-bottom:8px;align-items:flex-start">
           <strong>📉 Liabilities</strong>
-          <span class="muted" style="font-size:12px" id="liabilitiesTotal">$0</span>
+          <div style="text-align:right">
+            <div class="muted" style="font-size:11px">Total liabilities</div>
+            <div style="font-size:20px;font-weight:800" id="liabilitiesTotal">$0</div>
+            <div class="muted" style="font-size:11px;margin-top:4px">Monthly liabilities</div>
+            <div style="font-size:13px;font-weight:700" id="liabilitiesMonthly">$0</div>
+          </div>
         </div>
 
         <div class="muted" style="font-size:12px;margin:4px 0 4px">Subscriptions</div>

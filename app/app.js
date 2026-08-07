@@ -598,6 +598,7 @@ function openDebtBalanceForm(debtId, tab) {
   activeDebtId = debtId;
   $("debtBalanceLabel").textContent = debt.name;
   $("debtBalanceCurrent").textContent = fmt(debt.balance);
+  $("debtOwedSet").value = String(debt.balance);
   $("debtOwedAmount").value = "";
   $("payAmount").value = "";
   setDebtTab(tab);
@@ -606,6 +607,22 @@ function openDebtBalanceForm(debtId, tab) {
 $("debtTabOwed").onclick = () => setDebtTab("owed");
 $("debtTabPaying").onclick = () => setDebtTab("paying");
 $("debtBalanceClose").onclick = () => { $("debtBalanceForm").classList.add("hidden"); activeDebtId = null; };
+
+// Directly overwrites the balance - for fixing a wrong number (typo, a
+// charge that was missed or double-logged), not for a new charge (that's
+// debtOwedConfirm below, which adds instead of replacing).
+$("debtOwedSetConfirm").onclick = async () => {
+  const newBalance = parseFloat($("debtOwedSet").value);
+  if (!Number.isFinite(newBalance)) return toast("Enter a valid amount");
+  if (newBalance < 0) return toast("Amount owed can't be negative");
+  const debt = debts.find((d) => d.id === activeDebtId);
+  if (!debt) return;
+  const { error } = await sb.from("liabilities").update({ balance: Math.round(newBalance * 100) / 100 }).eq("id", debt.id);
+  if (error) return toast(error.message);
+  await loadDebts();
+  $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
+  toast("Amount owed updated");
+};
 
 $("debtOwedConfirm").onclick = async () => {
   const amount = parseFloat($("debtOwedAmount").value);

@@ -533,9 +533,17 @@
         });
       }).catch(() => {});
 
+      // Only reload once the user has actually tapped the toast below - a
+      // controllerchange can also fire on the very first-ever page load
+      // (going from no service worker to one), and reloading unconditionally
+      // there (or on any background update) meant the page could silently
+      // reload itself mid-interaction - e.g. wiping out an in-progress
+      // Pay-liability form - with no visible cause. "Ask, don't force"
+      // (see the comment below) only holds if the reload itself waits too.
       let reloading = false;
+      let updateApproved = false;
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (reloading) return;
+        if (reloading || !updateApproved) return;
         reloading = true;
         window.location.reload();
       });
@@ -548,6 +556,7 @@
         t.onclick = () => {
           t.classList.remove("show");
           t.onclick = null;
+          updateApproved = true;
           if (waitingWorker) waitingWorker.postMessage("skipWaiting");
         };
         // Don't auto-dismiss like the normal toast() in app.js - it should

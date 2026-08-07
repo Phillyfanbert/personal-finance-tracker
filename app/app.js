@@ -252,7 +252,7 @@ function renderAccountsList() {
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${a.name}</div>
         <div class="type">${ACCOUNT_TYPE_LABEL[a.type] || cap(a.type)}</div>
-        ${balance != null ? `<div class="balance">${fmt(balance)}</div>` : ""}
+        ${balance != null ? `<div class="balance">${a.type === "credit" ? "Owed " : ""}${fmt(balance)}</div>` : ""}
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;

@@ -16,6 +16,7 @@ import { findDeals, studentUpsell, matchService } from "./discounts.js";
 import { parseWithGemma, askGemma } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
+import { BANK_NAMES } from "./bankNames.js";
 
 const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, DEAL_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR-PROJECT")) {
@@ -164,18 +165,29 @@ const AUTO_LIABILITY_TYPE = { credit: "credit_card" };
 // type anyway (Checking, Savings, Credit), so the account's name is
 // derived from whichever type button is selected instead of typed twice.
 const ACCOUNT_TYPE_NAME = { debit: "Checking", savings: "Savings", credit: "Credit" };
-// Seed suggestions for the Bank field's search-as-you-type list - just a
-// starting point for common US banks, not an enum. Combined in
-// loadAccounts() with every bank_name already used, since bank_name is
-// still free text underneath (a bank not on this list is still typeable).
-const COMMON_BANKS = [
-  "Chase", "Bank of America", "Wells Fargo", "Citibank", "Capital One",
-  "U.S. Bank", "PNC Bank", "TD Bank", "Truist", "Fifth Third Bank",
-  "Regions Bank", "KeyBank", "Citizens Bank", "M&T Bank", "Huntington Bank",
-  "Discover", "American Express", "Ally Bank", "Charles Schwab Bank",
-  "Navy Federal Credit Union", "USAA", "SoFi", "Marcus by Goldman Sachs",
-  "Synchrony Bank", "Barclays",
-];
+// BANK_NAMES (bankNames.js) is ~3,750 real FDIC-insured banks plus a few
+// well-known credit unions/brands FDIC doesn't cover - not a hardcoded
+// seed list anymore. isKnownBank() is what actually enforces "type a real
+// bank" (saveAcctBtn below); the datalist (loadAccounts()) is just this
+// same source made pickable instead of typed blind.
+//
+// Matching is deliberately loose, not exact-equals: official FDIC names
+// are legal-entity names ("JPMorgan Chase Bank, National Association"),
+// not brand names ("Chase") - a strict match would reject the name
+// everyone actually uses. One direction only, though - "does a real
+// bank's name contain what was typed" (catches "Chase" inside the legal
+// name, and the full legal name typed verbatim, since a string contains
+// itself). The reverse ("does what was typed contain a real bank's
+// name") looked equally reasonable but isn't safe: FDIC's data includes
+// an institution literally named "BANK", so it matched *any* gibberish
+// that happened to contain the word "bank" - which is most made-up bank
+// names. Caught by testing actual gibberish input before shipping this,
+// not just the happy path.
+function isKnownBank(name) {
+  const typed = name.trim().toLowerCase();
+  if (typed.length < 3) return false; // too short to mean anything either way
+  return BANK_NAMES.some((b) => b.toLowerCase().includes(typed));
+}
 
 let selectedAcctType = "debit";
 function setAcctType(type) {
@@ -207,6 +219,7 @@ $("saveAcctBtn").onclick = async () => {
   const type = selectedAcctType;
   const name = ACCOUNT_TYPE_NAME[type];
   if (!bank_name) return toast("Bank name required");
+  if (!isKnownBank(bank_name)) return toast("Enter a real bank name, or pick one from the list.");
 
   let linked_asset_id = null;
   let linked_liability_id = null;
@@ -326,7 +339,7 @@ async function loadAccounts() {
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
-  const bankNames = [...new Set([...COMMON_BANKS, ...accounts.map((a) => a.bank_name).filter(Boolean)])].sort();
+  const bankNames = [...new Set([...BANK_NAMES, ...accounts.map((a) => a.bank_name).filter(Boolean)])].sort();
   $("bankSuggestions").innerHTML = bankNames.map((b) => `<option value="${b}"></option>`).join("");
 }
 

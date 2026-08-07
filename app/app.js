@@ -178,7 +178,7 @@ $("acctType").onchange = () => {
 function updateAcctAssetPlaceholder() {
   const placeholder = $("acctAsset").querySelector('option[value=""]');
   if (!placeholder) return;
-  placeholder.textContent = AUTO_ASSET_TYPE[$("acctType").value] ? "Auto-create new asset" : "No link";
+  placeholder.textContent = AUTO_ASSET_TYPE[$("acctType").value] ? "Auto-create new bank" : "No link";
 }
 
 $("saveAcctBtn").onclick = async () => {
@@ -334,7 +334,12 @@ async function loadAssets() {
         <span class="amt">${fmt(a.value)}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
-  $("acctAsset").innerHTML = `<option value="">No link</option>` + assets.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  // Checking is the only type this picker is shown for (acctType.onchange
+  // hides acctAssetLink for credit; Cash never reaches this form at all -
+  // see saveAcctBtn), so only Bank-type assets belong here. Cash's own
+  // asset, and anything non-bank (investment/property/etc.), would create
+  // a nonsensical link if picked.
+  $("acctAsset").innerHTML = `<option value="">No link</option>` + assets.filter((a) => a.type === "bank").map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
   updateAcctAssetPlaceholder();
   $("payFromAsset").innerHTML = assets.map((a) => `<option value="${a.id}">${a.name} (${fmt(a.value)})</option>`).join("");
   document.querySelectorAll("[data-del-asset]").forEach((el) => {

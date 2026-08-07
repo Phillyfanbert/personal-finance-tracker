@@ -11,7 +11,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <title>Expense Tracker</title>
+  <title>Personal Finance Tracker</title>
   <style>
     :root {
       --bg: #0f172a; --panel: #1e293b; --panel-2: #273449;
@@ -88,7 +88,7 @@
 
     <!-- ============ AUTH VIEW ============ -->
     <div id="authView">
-      <h1>💸 Expense Tracker</h1>
+      <h1>💸 Personal Finance Tracker</h1>
       <div class="card">
         <p class="muted">Sign in with a magic link - no password. Check your email and tap the link.</p>
         <label for="email">Email</label>
@@ -102,8 +102,12 @@
 
     <!-- ============ APP: LOG VIEW ============ -->
     <div id="logView" class="hidden">
-      <div class="topbar">
-        <h1 style="margin:0">💸 Expenses</h1>
+      <!-- flex-wrap here (not on .topbar generally, used by every card
+           header) - the longer title needs to drop to its own line above
+           the buttons on narrow screens rather than fighting them for
+           space in a single row. -->
+      <div class="topbar" style="flex-wrap:wrap;gap:8px">
+        <h1 style="margin:0;font-size:17px">💸 Personal Finance Tracker</h1>
         <div style="display:flex;gap:8px">
           <button class="secondary" id="profileBtn" style="width:auto;padding:8px 12px">👤 Profile</button>
           <button class="secondary" id="signOutBtn" style="width:auto;padding:8px 12px">Sign out</button>

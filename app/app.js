@@ -256,18 +256,21 @@ async function loadAccounts() {
     el.onclick = async (ev) => {
       ev.stopPropagation();
       const acct = accounts.find((a) => a.id === el.dataset.delAcct);
-      // A credit account's linked liability is deleted with it (DB trigger,
-      // 12_delete_liability_with_account.sql) - warn about that up front
-      // since it's not obvious from "delete this account" alone.
+      // A linked liability or asset is deleted along with its account (DB
+      // triggers, 12_delete_liability_with_account.sql and 13_delete_asset_
+      // with_account.sql) - warn about that up front since it's not obvious
+      // from "delete this account" alone.
       const msg = acct?.linked_liability_id
         ? "Delete this account? Existing expenses stay but become unassigned. Its linked liability and tracked balance are deleted too."
+        : acct?.linked_asset_id
+        ? "Delete this account? Existing expenses stay but become unassigned. Its linked asset and balance are deleted too."
         : "Delete this account? Existing expenses stay but become unassigned.";
       if (!confirm(msg)) return;
       const { error } = await sb.from("accounts").delete().eq("id", el.dataset.delAcct);
       if (error) return toast(error.message);
-      // loadDebts refreshes so the deleted liability disappears from the
-      // Liabilities card too, not just the account from its own card.
-      await loadAccounts(); await loadExpenses(); await loadDebts(); toast("Account deleted");
+      // loadAssets/loadDebts refresh so a deleted linked asset or liability
+      // disappears from its own card too, not just the account from its own.
+      await loadAccounts(); await loadExpenses(); await loadAssets(); await loadDebts(); toast("Account deleted");
     };
   });
   document.querySelectorAll("[data-adjust-acct]").forEach((el) => {
@@ -296,11 +299,19 @@ $("saveAssetBtn").onclick = async () => {
 async function loadAssets() {
   const { data } = await sb.from("assets").select("*").order("created_at");
   assets = data || [];
+  // An asset a Checking/Cash account points at (linked_asset_id) only
+  // exists to track that account's balance - deleting it here would orphan
+  // the account (linked_asset_id -> null on delete, per schema), the exact
+  // "icon does nothing" bug already fixed once for accounts pointing
+  // nowhere. Deleting the account (DB trigger, 13_delete_asset_with_
+  // account.sql) is the only way to remove it now; a standalone asset
+  // with no account (investment, property, manually added) still can.
+  const linkedAssetIds = new Set(accounts.map((a) => a.linked_asset_id).filter(Boolean));
   $("assetsList").innerHTML = assets.length
     ? assets.map((a) => `
       <div class="exp">
         <div>${a.type === "cash" ? "" : `<div class="meta">${cap(a.type)}</div>`}${a.name}</div>
-        <span class="amt">${fmt(a.value)}<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span></span>
+        <span class="amt">${fmt(a.value)}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
   $("acctAsset").innerHTML = `<option value="">No link</option>` + assets.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");

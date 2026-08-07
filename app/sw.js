@@ -10,7 +10,15 @@ const SHELL = [
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}));
-  self.skipWaiting();
+  // Deliberately no self.skipWaiting() here - index.html's "Update available,
+  // tap to refresh" toast is the only thing that should promote a waiting
+  // worker (via the postMessage("skipWaiting") handler below). Calling it
+  // unconditionally on every install - including the very first one, before
+  // any tab is "old" - made every page load force a silent, unprompted
+  // location.reload() a few hundred ms after startup (clients.claim() below
+  // fires controllerchange as soon as this worker activates), which could
+  // land mid-interaction (e.g. wiping out an in-progress Pay-liability
+  // submission) with no way for the user to see it happen.
 });
 
 self.addEventListener("activate", (e) => {

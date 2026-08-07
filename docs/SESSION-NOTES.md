@@ -134,40 +134,47 @@ Roughly in the order they came up, not necessarily priority:
    no password field exists to protect). Don't re-investigate this unless
    auth methods change.
 
-## Known bugs to fix next session
+## Known bugs - fixed this session
 
-Reported by the user right after the credit-liability work shipped —
-none of these are fixed yet, start here before new features:
+Reported right after the credit-liability work shipped. All three were
+reproduced live (not just read statically) via a throwaway Playwright +
+mocked-Supabase harness in scratch space, then fixed in `app.js`/`sw.js`/
+`index.html`:
 
-1. **Clicking a credit account's icon (in the Accounts card) doesn't open
-   anything.** Click-to-adjust currently only checks `linked_asset_id`
-   (see `openAssetAdjust`/`data-adjust-acct` in `app.js`), so credit
-   accounts — which link to a *liability*, not an asset — never get the
-   `cursor:pointer`/click handler at all. Right now a credit liability's
-   balance is only reachable via the Pay/+ buttons on its row in the
-   Liabilities card, not by tapping the account itself the way every other
-   linked account works. Needs its own click path (probably opening the
-   Pay or Add-to-balance modal directly, keyed off `linked_liability_id`
-   instead of `linked_asset_id`).
-2. **Pay appears to always zero out the liability balance, not subtract
-   just the amount entered.** The intended behavior (and what the isolated
-   math simulation confirmed during development) is a partial reduction —
-   `balance - amount`, floored at 0 — so paying $50 on a $380 balance
-   should leave $330, not $0. Live behavior reportedly doesn't match that.
-   Needs to be reproduced and root-caused in `payConfirmBtn` (`app.js`) —
-   possibly `payingDebtId`/`debt` going stale after the toggle-close
-   change, or the amount field not being read correctly at click time.
-3. **Credit-expense blocking is too loose.** `hasCreditAccount()` only
-   checks whether *any* credit account exists anywhere, not whether the
-   *specific* account selected for this expense is actually a credit
-   account. Concretely: with a "Discover" credit account already set up,
-   the user should be able to log Discover expenses (which is what
-   creating that account already enables, via its linked liability) — but
-   trying to log a "Chase" credit expense should be blocked when no
-   "Chase" credit account exists, even though the Discover one does. The
-   fix needs to validate the *selected* `account_id` is itself a
-   credit-type account (not just "some credit account exists somewhere"),
-   in both the quick-add save and the edit-modal save.
+1. **Clicking a credit account's icon didn't open anything - fixed.**
+   `loadAccounts()` (`app.js`) only ever set `data-adjust-acct` (keyed off
+   `linked_asset_id`), so credit accounts - which link to a *liability* -
+   never got a click handler. Now accounts without a linked asset but with
+   a `linked_liability_id` get `data-adjust-liability` instead, wired to
+   `openPayForm()`. Tapping a credit account's circle now opens the Pay
+   modal directly, same as tapping a bank/cash circle opens asset-adjust.
+2. **"Pay always zeroes out the liability balance" - root-caused, but not
+   where expected.** The `payConfirmBtn` math itself (`balance - amount`,
+   floored at 0) was already correct and reproduced correctly in isolation
+   (paying $50 on a $380 balance left $330, verified live). The real bug:
+   `sw.js`'s `install` handler called `self.skipWaiting()`
+   unconditionally, and combined with `clients.claim()` in `activate`,
+   that fires `controllerchange` (which `index.html` responded to with an
+   unconditional `location.reload()`) within roughly 150-300ms of *every*
+   page load - reproduced live, no user interaction needed. This also
+   fires again on any later deploy while a tab is open. A reload landing
+   mid-interaction (e.g. between the two sequential `await`s in
+   `payConfirmBtn`, or just wiping the typed amount before submit) would
+   produce exactly this symptom, and the timing (reported right after
+   several back-to-back pushes/auto-deploys) fits. Fixed by removing the
+   unconditional `skipWaiting()` and only reloading after the user
+   actually taps the existing "Update available" toast (`index.html`) -
+   matches what that code's own comments already said the intent was
+   ("ask, don't force"). If this *specific* symptom somehow still
+   reproduces after this fix, treat it as a new bug, not this one - the
+   math and click-handling were independently verified correct.
+3. **Credit-expense blocking was too loose - fixed.** `hasCreditAccount()`
+   checked whether *any* credit account existed anywhere; replaced with
+   `isCreditAccount(accountId)`, which validates the *selected* account
+   itself is credit-type. Applied in both quick-add save and edit-modal
+   save. Verified live: a Checking-account credit expense is now blocked
+   with "Select a credit account...", while a Discover-account credit
+   expense still goes through and correctly adds to its liability balance.
 
 ## Things NOT to redo
 

@@ -161,11 +161,22 @@ const AUTO_ASSET_TYPE = { debit: "bank", savings: "savings" };
 // something you own. Auto-created the same way bank assets are.
 const AUTO_LIABILITY_TYPE = { credit: "credit_card" };
 
-$("addAcctBtn").onclick = () => $("acctForm").classList.toggle("hidden");
-$("acctType").onchange = () => {
-  const isCredit = $("acctType").value === "credit";
+let selectedAcctType = "debit";
+function setAcctType(type) {
+  selectedAcctType = type;
+  document.querySelectorAll("#acctTypeToggle [data-acct-type]").forEach((el) => {
+    el.classList.toggle("secondary", el.dataset.acctType !== type);
+  });
+  const isCredit = type === "credit";
   $("acctAssetLink").classList.toggle("hidden", isCredit);
   $("acctLiabilityLink").classList.toggle("hidden", !isCredit);
+}
+document.querySelectorAll("#acctTypeToggle [data-acct-type]").forEach((el) => {
+  el.onclick = () => setAcctType(el.dataset.acctType);
+});
+$("addAcctBtn").onclick = () => {
+  $("acctForm").classList.toggle("hidden");
+  setAcctType("debit"); // every fresh open starts from the same visible state
 };
 
 // bank_name is separate from linked_asset_id/linked_liability_id - it's
@@ -178,9 +189,8 @@ $("acctType").onchange = () => {
 $("saveAcctBtn").onclick = async () => {
   const name = $("acctName").value.trim();
   const bank_name = $("acctBank").value.trim();
-  const type = $("acctType").value;
+  const type = selectedAcctType;
   if (!name) return toast("Account name required");
-  if (type === "cash") return toast("Cash is automatic - use the Cash account above to add or subtract.");
   if (!bank_name) return toast("Bank name required");
 
   let linked_asset_id = null;

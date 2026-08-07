@@ -38,7 +38,12 @@ export function totalDebts(debts) {
  * balance, in debtsTotal, is the real "what you owe" figure, correct
  * regardless of how irregularly a card gets paid off. expensesTotal is
  * still returned for the informational Credit/Debit/Cash breakdown
- * display, it just doesn't feed net worth.
+ * display (and, combined with subsTotal in app.js's renderNetWorth, the
+ * "Monthly liabilities" figure) - it just never feeds net worth itself.
+ * Total and Monthly are two different lenses on the same activity, not
+ * a split of one number into exclusive parts - a credit purchase this
+ * month deliberately shows up in both, once as this month's activity and
+ * once as part of the running balance in Total.
  * @param {object[]} assets
  * @param {object[]} debts - rows from the `liabilities` table
  * @param {object[]} subscriptions

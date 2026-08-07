@@ -190,27 +190,29 @@
           <button id="saveAcctBtn">Save account</button>
         </div>
 
-        <!-- Tapping any account circle with a linked asset opens this. Bank-
-             linked accounts get a direct "set the full balance" field (you
-             can just look up and type the real number); everything else
-             (Cash included) gets +/- adjustment instead. Cash is also the
-             only account with no delete option - it's auto-managed
-             (app.js ensureCashAccount). -->
+        <!-- Tapping any account circle with a linked asset opens this. Every
+             account type gets both ways to adjust its value: a direct "set
+             the full balance" field (look up and type the real number), and
+             +/- for when you just know the change, not the total. Cash is
+             also the only account with no delete option - it's auto-managed
+             (app.js ensureCashAccount). Balances never go negative - every
+             action here is blocked with an error instead. -->
         <div id="assetAdjustForm" class="hidden" style="margin-top:10px">
           <div class="muted" style="font-size:12px;margin-bottom:6px"><span id="adjustAssetLabel">Value</span>: <strong id="adjustCurrentValue">$0</strong></div>
 
+          <div id="adjustBankMode">
+            <input id="adjustNewBalance" type="number" step="0.01" inputmode="decimal" placeholder="New balance" />
+            <div style="height:8px"></div>
+            <button id="adjustSetBtn">Save balance</button>
+          </div>
+
+          <div class="muted" style="font-size:12px;margin:12px 0 6px">Or adjust by an amount</div>
           <div id="adjustDeltaMode">
             <input id="adjustAmount" type="number" step="0.01" inputmode="decimal" placeholder="Amount" />
             <div class="row" style="margin-top:8px">
               <button id="adjustAddBtn">+ Add</button>
               <button class="secondary" id="adjustSubtractBtn">- Subtract</button>
             </div>
-          </div>
-
-          <div id="adjustBankMode" class="hidden">
-            <input id="adjustNewBalance" type="number" step="0.01" inputmode="decimal" placeholder="New balance" />
-            <div style="height:8px"></div>
-            <button id="adjustSetBtn">Save balance</button>
           </div>
         </div>
       </div>

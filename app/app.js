@@ -104,6 +104,7 @@ async function init() {
   await loadAccounts();
   await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssets(), loadDebts()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
+  await autoLogDueSubscriptions();
 }
 
 // Every user gets exactly one Cash account + linked Cash asset, auto-created
@@ -969,6 +970,78 @@ async function loadSubscriptions() {
   renderDeals();
   renderDealFindings();
   renderNetWorth();
+}
+
+// A subscription's next_renewal reaching today means the real-world charge
+// already happened, so - unlike the manual markPaidBtn below, which this
+// shares its logic with - this runs unprompted on every app load and logs
+// it automatically: same expense insert, same applyAssetDelta/
+// applyLiabilityDelta, same assetDeltaError negative-balance guard. Catches
+// up on however many cycles were missed since the app was last opened
+// (capped at 36, so a stale date can't loop forever), stopping a given
+// subscription's catch-up the moment a cycle would push its account
+// negative rather than logging a charge with nowhere to come from - the
+// remaining missed cycles wait for the next load, a top-up, or manual
+// "Mark as paid". Only 'monthly'/'annual' (advanceRenewal has no defined
+// interval for 'other') with a linked account are eligible; everything
+// else is unchanged here, same as before this existed.
+//
+// assetDeltaError/applyAssetDelta read the live assets/debts arrays, which
+// a DB write alone doesn't update - so after each successful cycle, the
+// affected asset's value or liability's balance is also patched in place
+// here, mirroring the same math, purely so the *next* cycle in this loop
+// (or another subscription sharing the same account) sees an accurate
+// balance without a full reload per iteration. loadAssets/loadDebts at the
+// end resync everything for real.
+async function autoLogDueSubscriptions() {
+  const today = new Date().toISOString().slice(0, 10);
+  let loggedCount = 0;
+  const blockedNames = new Set();
+
+  for (const sub of subscriptions) {
+    if (!sub.is_active || !sub.next_renewal || !sub.account_id) continue;
+    if (sub.billing_cycle !== "monthly" && sub.billing_cycle !== "annual") continue;
+    const account = accounts.find((a) => a.id === sub.account_id);
+    if (!account) continue;
+    const paymentType = account.type;
+    const amount = Number(sub.amount);
+
+    let renewal = sub.next_renewal;
+    let cycles = 0;
+    while (renewal <= today && cycles < 36) {
+      const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
+      if (assetErr) { blockedNames.add(sub.name); break; }
+
+      const { error } = await sb.from("expenses").insert({
+        amount, description: sub.name, merchant: sub.name,
+        category: "Subscriptions", payment_type: paymentType,
+        account_id: sub.account_id, occurred_at: renewal, source: "manual",
+      });
+      if (error) break; // don't loop forever against a persistent write error
+      await applyAssetDelta(sub.account_id, paymentType, amount, -1);
+      await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
+      if (paymentType === "credit") {
+        const debt = debts.find((d) => d.id === account.linked_liability_id);
+        if (debt) debt.balance = Math.max(0, Math.round((Number(debt.balance) + amount) * 100) / 100);
+      } else {
+        const asset = assets.find((a) => a.id === account.linked_asset_id);
+        if (asset) asset.value = Math.round((Number(asset.value) - amount) * 100) / 100;
+      }
+      loggedCount++;
+      renewal = advanceRenewal(renewal, sub.billing_cycle);
+      cycles++;
+    }
+    if (renewal !== sub.next_renewal) {
+      await sb.from("subscriptions").update({ next_renewal: renewal }).eq("id", sub.id);
+    }
+  }
+
+  if (loggedCount) { await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions(); }
+  if (blockedNames.size) {
+    toast(`Logged ${loggedCount} charge${loggedCount === 1 ? "" : "s"} - couldn't cover ${[...blockedNames].join(", ")}`);
+  } else if (loggedCount) {
+    toast(`Logged ${loggedCount} subscription charge${loggedCount === 1 ? "" : "s"} automatically`);
+  }
 }
 
 // ---- DISCOUNT DISCOVERY (README §3.7 / F6) ---------------------------------

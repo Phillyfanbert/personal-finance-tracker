@@ -153,7 +153,9 @@ async function loadRules() {
 // user, auto-managed by ensureCashAccount(), never created through this
 // form, and the only type exempt from needing a bank (accounts_bank_name_
 // required, 14_account_bank_name.sql).
-const AUTO_ASSET_TYPE = { debit: "bank" };
+// Savings gets its own asset type (not "bank") so the Assets card can tell
+// a Checking-linked balance apart from a Savings-linked one at a glance.
+const AUTO_ASSET_TYPE = { debit: "bank", savings: "savings" };
 // Credit accounts link to a Liability (tracked debt) instead of an Asset -
 // a charge should accumulate onto a running balance, not draw down
 // something you own. Auto-created the same way bank assets are.
@@ -650,7 +652,8 @@ function renderNetWorth() {
 
   const creditTotal = monthRows.filter((r) => r.payment_type === "credit").reduce((s, r) => s + Number(r.amount), 0);
   const debitTotal = monthRows.filter((r) => r.payment_type === "debit").reduce((s, r) => s + Number(r.amount), 0);
-  const otherTotal = Math.round((monthExpenseTotal - creditTotal - debitTotal) * 100) / 100; // cash + unspecified
+  const savingsTotal = monthRows.filter((r) => r.payment_type === "savings").reduce((s, r) => s + Number(r.amount), 0);
+  const otherTotal = Math.round((monthExpenseTotal - creditTotal - debitTotal - savingsTotal) * 100) / 100; // cash + unspecified
   const expenseRow = (label, value) => `
     <div class="exp" style="cursor:default">
       <div>${label}</div>
@@ -660,6 +663,7 @@ function renderNetWorth() {
     expenseRow("Total", monthExpenseTotal) +
     expenseRow("Credit", creditTotal) +
     expenseRow("Debit", debitTotal) +
+    (savingsTotal > 0 ? expenseRow("Savings", savingsTotal) : "") +
     (otherTotal > 0 ? expenseRow("Cash / other", otherTotal) : "");
 
   const activeSubs = subscriptions.filter((s) => s.is_active);

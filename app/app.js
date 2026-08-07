@@ -153,7 +153,22 @@ $("acctType").onchange = () => {
   const isCredit = $("acctType").value === "credit";
   $("acctAssetLink").classList.toggle("hidden", isCredit);
   $("acctLiabilityLink").classList.toggle("hidden", !isCredit);
+  updateAcctAssetPlaceholder();
 };
+
+// The empty option in the linked-asset picker means something different
+// depending on type: for checking/debit (AUTO_ASSET_TYPE) it means "auto-
+// create one for me", so it's guaranteed to end up linked either way -
+// never truly unlinked. For 'other' it genuinely means no link, since
+// there's no auto-create fallback for that type. Mislabeling this as
+// "No link" for checking/debit is what let an account get created with
+// linked_asset_id left null in practice - relabel it so the picker can't
+// be misread as "leave this unlinked" for those types.
+function updateAcctAssetPlaceholder() {
+  const placeholder = $("acctAsset").querySelector('option[value=""]');
+  if (!placeholder) return;
+  placeholder.textContent = AUTO_ASSET_TYPE[$("acctType").value] ? "Auto-create new asset" : "No link";
+}
 
 $("saveAcctBtn").onclick = async () => {
   const name = $("acctName").value.trim();
@@ -269,6 +284,7 @@ async function loadAssets() {
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
   $("acctAsset").innerHTML = `<option value="">No link</option>` + assets.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  updateAcctAssetPlaceholder();
   $("payFromAsset").innerHTML = assets.map((a) => `<option value="${a.id}">${a.name} (${fmt(a.value)})</option>`).join("");
   document.querySelectorAll("[data-del-asset]").forEach((el) => {
     el.onclick = async (ev) => {

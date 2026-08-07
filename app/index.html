@@ -472,24 +472,45 @@
   </div>
 
   <!-- ============ LIABILITY BALANCE MODAL ============ -->
-  <!-- Paying a liability down - a transfer (asset down, liability down),
-       never a new expense. Opened from a credit account's icon or from a
-       debt row's own Pay button. What's OWED, on the other hand, is no
-       longer editable here at all - it moves only through actual credit
-       expenses (quick-add/edit with an account of type credit), so it can
-       never drift from what was actually charged. There used to be an
-       "Owed" tab (direct set + add-a-charge) alongside this; removed by
-       design, not an oversight - don't re-add it. -->
+  <!-- "Paying balance" is a transfer (asset down, liability down), never
+       a new expense - always available. "Owed" (direct set + add-a-
+       charge) only shows for a liability with NO linked credit account -
+       one that credit-account-linked never shows tabs at all, just Pay
+       directly, since its owed amount can only move through actual
+       credit expenses (quick-add/edit, account type credit) from here on.
+       A standalone Loan/Mortgage/Other liability has no purchase trail to
+       reconcile against, so it keeps manual Owed editing - see
+       openDebtBalanceForm (app.js) for the linked/standalone branch. -->
   <div id="debtBalanceForm" class="modal hidden">
     <div class="sheet">
       <div class="topbar"><strong><span id="debtBalanceLabel"></span></strong><button class="secondary" id="debtBalanceClose" style="width:auto;padding:6px 12px">✕</button></div>
       <p class="muted" style="font-size:12px;margin:0 0 8px">Owes <strong id="debtBalanceCurrent">$0</strong></p>
-      <label>From asset</label>
-      <select id="payFromAsset"></select>
-      <label>Amount</label>
-      <input id="payAmount" type="number" step="0.01" inputmode="decimal" />
-      <div style="height:12px"></div>
-      <button id="payConfirmBtn">Pay</button>
+      <div class="row hidden" id="debtTabRow" style="margin-bottom:12px">
+        <button class="secondary" id="debtTabOwed" style="padding:8px 0;font-size:13px">Owed</button>
+        <button class="secondary" id="debtTabPaying" style="padding:8px 0;font-size:13px">Paying balance</button>
+      </div>
+      <div id="debtOwedMode" class="hidden">
+        <!-- Direct set, for fixing a wrong balance (typo, missed charge) -
+             separate from "Amount to add" below, which is for a new charge. -->
+        <label>Set exact amount owed</label>
+        <input id="debtOwedSet" type="number" step="0.01" inputmode="decimal" />
+        <div style="height:8px"></div>
+        <button id="debtOwedSetConfirm">Save amount owed</button>
+
+        <div class="muted" style="font-size:12px;margin:12px 0 6px">Or add a charge</div>
+        <label>Amount to add</label>
+        <input id="debtOwedAmount" type="number" step="0.01" inputmode="decimal" />
+        <div style="height:12px"></div>
+        <button id="debtOwedConfirm">Add to owed</button>
+      </div>
+      <div id="debtPayingMode">
+        <label>From asset</label>
+        <select id="payFromAsset"></select>
+        <label>Amount</label>
+        <input id="payAmount" type="number" step="0.01" inputmode="decimal" />
+        <div style="height:12px"></div>
+        <button id="payConfirmBtn">Pay</button>
+      </div>
     </div>
   </div>
 

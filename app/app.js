@@ -221,9 +221,11 @@ $("saveAcctBtn").onclick = async () => {
 
 const ACCT_COLORS = ["#0ea5e9", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6", "#22d3ee", "#fb923c"];
 
-async function loadAccounts() {
-  const { data } = await sb.from("accounts").select("*").order("created_at");
-  accounts = data || [];
+// Renders the account circles from the current accounts/assets/debts globals
+// (no fetch) - called after any of the three load, since a circle's balance
+// line depends on whichever one of assets/debts is linked to it, and those
+// load in parallel with accounts (see init()), not strictly after it.
+function renderAccountsList() {
   $("acctList").innerHTML = accounts.length
     ? accounts.map((a, i) => {
         // Bank/cash-type accounts link to an asset (tap opens the asset-adjust
@@ -235,20 +237,25 @@ async function loadAccounts() {
           : a.linked_liability_id
           ? `data-adjust-liability="${a.linked_liability_id}"`
           : "";
+        // Credit shows what's owed (the liability balance); Cash/Checking
+        // show what's there (the linked asset's value) - same "amount below
+        // the circle" idea, just sourced from whichever table the account
+        // actually links to.
+        const balance = a.linked_asset_id
+          ? assets.find((x) => x.id === a.linked_asset_id)?.value
+          : a.linked_liability_id
+          ? debts.find((x) => x.id === a.linked_liability_id)?.balance
+          : null;
         return `
       <div class="acct-circle-item" ${clickAttr ? `${clickAttr} style="cursor:pointer"` : ""}>
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : (a.name.trim()[0] || "?").toUpperCase()}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${a.name}</div>
         <div class="type">${ACCOUNT_TYPE_LABEL[a.type] || cap(a.type)}</div>
+        ${balance != null ? `<div class="balance">${fmt(balance)}</div>` : ""}
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
-  // account selects (add + edit)
-  const opts = `<option value="">None</option>` + accounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
-  $("fAccount").innerHTML = opts;
-  $("eAccount").innerHTML = opts;
-  $("sAccount").innerHTML = opts;
   // delete handlers - expenses keep their history (account_id -> null on delete, per schema)
   // Cash has no delete affordance - it's auto-managed (ensureCashAccount), use
   // the +/- adjust form instead of removing it.
@@ -279,6 +286,17 @@ async function loadAccounts() {
   document.querySelectorAll("[data-adjust-liability]").forEach((el) => {
     el.onclick = () => openDebtBalanceForm(el.dataset.adjustLiability, "owed");
   });
+}
+
+async function loadAccounts() {
+  const { data } = await sb.from("accounts").select("*").order("created_at");
+  accounts = data || [];
+  renderAccountsList();
+  // account selects (add + edit)
+  const opts = `<option value="">None</option>` + accounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  $("fAccount").innerHTML = opts;
+  $("eAccount").innerHTML = opts;
+  $("sAccount").innerHTML = opts;
 }
 
 // ---- ASSETS ------------------------------------------------------------
@@ -328,6 +346,7 @@ async function loadAssets() {
     };
   });
   renderNetWorth();
+  renderAccountsList(); // a changed asset value may be a linked account's balance line
 }
 
 // No linked asset (Checking or Cash) may ever go negative, on any path -
@@ -527,6 +546,7 @@ async function loadDebts() {
     el.onclick = (ev) => { ev.stopPropagation(); openDebtBalanceForm(el.dataset.addDebt, "owed"); };
   });
   renderNetWorth();
+  renderAccountsList(); // a changed liability balance may be a linked account's balance line
 }
 
 // ---- ADJUST A LIABILITY'S BALANCE (owed vs. paying it down) -------------

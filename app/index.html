@@ -177,7 +177,16 @@
           <!-- No separate "account name" field - it was always just the
                type in practice (Checking, Savings, Credit), so the name is
                derived from Account type below instead of typed twice. -->
-          <input id="acctBank" placeholder="Chase" />
+          <label>Bank</label>
+          <!-- <datalist>, not a custom dropdown - it's a native, built-in
+               search-as-you-type combobox (typing filters the list to
+               matches) while still taking free text for a bank not in it,
+               which a plain <select> can't do. Options are populated in
+               loadAccounts() (app.js): common banks plus every bank_name
+               already used on this account, so a previously-typed bank is
+               just as easy to re-select as a seeded one. -->
+          <input id="acctBank" placeholder="Start typing a bank..." list="bankSuggestions" autocomplete="off" />
+          <datalist id="bankSuggestions"></datalist>
           <!-- Toggle buttons, not a <select> - a dropdown's current value is
                easy to glance past (a "Credit"-named account got silently
                saved as Checking because the default was never changed);

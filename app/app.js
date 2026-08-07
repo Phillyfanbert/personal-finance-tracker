@@ -164,6 +164,18 @@ const AUTO_LIABILITY_TYPE = { credit: "credit_card" };
 // type anyway (Checking, Savings, Credit), so the account's name is
 // derived from whichever type button is selected instead of typed twice.
 const ACCOUNT_TYPE_NAME = { debit: "Checking", savings: "Savings", credit: "Credit" };
+// Seed suggestions for the Bank field's search-as-you-type list - just a
+// starting point for common US banks, not an enum. Combined in
+// loadAccounts() with every bank_name already used, since bank_name is
+// still free text underneath (a bank not on this list is still typeable).
+const COMMON_BANKS = [
+  "Chase", "Bank of America", "Wells Fargo", "Citibank", "Capital One",
+  "U.S. Bank", "PNC Bank", "TD Bank", "Truist", "Fifth Third Bank",
+  "Regions Bank", "KeyBank", "Citizens Bank", "M&T Bank", "Huntington Bank",
+  "Discover", "American Express", "Ally Bank", "Charles Schwab Bank",
+  "Navy Federal Credit Union", "USAA", "SoFi", "Marcus by Goldman Sachs",
+  "Synchrony Bank", "Barclays",
+];
 
 let selectedAcctType = "debit";
 function setAcctType(type) {
@@ -314,6 +326,8 @@ async function loadAccounts() {
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
+  const bankNames = [...new Set([...COMMON_BANKS, ...accounts.map((a) => a.bank_name).filter(Boolean)])].sort();
+  $("bankSuggestions").innerHTML = bankNames.map((b) => `<option value="${b}"></option>`).join("");
 }
 
 // ---- ASSETS ------------------------------------------------------------

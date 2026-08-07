@@ -622,7 +622,11 @@ function renderNetWorth() {
 
   $("netWorthTotal").textContent = fmt(nw.netWorth);
   $("assetsTotal").textContent = fmt(nw.assetsTotal);
+  // Total (debtsTotal, a balance - feeds net worth) and Monthly (subsTotal,
+  // a recurring rate - informational only) are shown as two distinct
+  // numbers now rather than summed into one, see computeNetWorth's comment.
   $("liabilitiesTotal").textContent = fmt(nw.liabilitiesTotal);
+  $("liabilitiesMonthly").textContent = fmt(nw.subsTotal) + "/mo";
 
   const creditTotal = monthRows.filter((r) => r.payment_type === "credit").reduce((s, r) => s + Number(r.amount), 0);
   const debitTotal = monthRows.filter((r) => r.payment_type === "debit").reduce((s, r) => s + Number(r.amount), 0);

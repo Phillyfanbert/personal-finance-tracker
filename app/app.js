@@ -98,7 +98,11 @@ async function init() {
   fillCategorySelect($("eCategory"));
   $("fDate").value = new Date().toISOString().slice(0, 10);
   await ensureCashAccount();
-  await Promise.all([loadRules(), loadAccounts(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssets(), loadDebts()]);
+  // loadAccounts before loadDebts: the debts list checks accounts for which
+  // liabilities are account-linked (to hide their delete button), so it
+  // needs a populated `accounts` to render correctly on first paint.
+  await loadAccounts();
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssets(), loadDebts()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
 }
 
@@ -204,7 +208,9 @@ $("saveAcctBtn").onclick = async () => {
   const { error } = await sb.from("accounts").insert({ name, type, linked_asset_id, linked_liability_id });
   if (error) return toast(error.message);
   $("acctName").value = ""; $("acctForm").classList.add("hidden");
-  await loadAssets(); await loadDebts(); await loadAccounts();
+  // loadAccounts first - loadDebts reads `accounts` to know which
+  // liabilities are now account-linked (hides their delete button).
+  await loadAccounts(); await loadAssets(); await loadDebts();
   toast(autoMsg || "Account added");
 };
 
@@ -216,9 +222,9 @@ async function loadAccounts() {
   $("acctList").innerHTML = accounts.length
     ? accounts.map((a, i) => {
         // Bank/cash-type accounts link to an asset (tap opens the asset-adjust
-        // panel); credit accounts link to a liability instead (tap should open
-        // the Pay modal for it) - see openPayForm below. 'other' accounts with
-        // no link get no click affordance.
+        // panel); credit accounts link to a liability instead (tap opens the
+        // Owed/Paying-balance tabs - see openDebtBalanceForm below). 'other'
+        // accounts with no link get no click affordance.
         const clickAttr = a.linked_asset_id
           ? `data-adjust-acct="${a.id}"`
           : a.linked_liability_id
@@ -247,14 +253,17 @@ async function loadAccounts() {
       if (!confirm("Delete this account? Existing expenses stay but become unassigned.")) return;
       const { error } = await sb.from("accounts").delete().eq("id", el.dataset.delAcct);
       if (error) return toast(error.message);
-      await loadAccounts(); await loadExpenses(); toast("Account deleted");
+      // loadAccounts first - a deleted credit account's liability becomes
+      // unlinked (on delete set null), so loadDebts needs the fresh
+      // `accounts` to bring back that liability's delete button.
+      await loadAccounts(); await loadExpenses(); await loadDebts(); toast("Account deleted");
     };
   });
   document.querySelectorAll("[data-adjust-acct]").forEach((el) => {
     el.onclick = () => openAssetAdjust(el.dataset.adjustAcct);
   });
   document.querySelectorAll("[data-adjust-liability]").forEach((el) => {
-    el.onclick = () => openPayForm(el.dataset.adjustLiability);
+    el.onclick = () => openDebtBalanceForm(el.dataset.adjustLiability, "owed");
   });
 }
 
@@ -433,6 +442,12 @@ const DEBT_TYPE_LABEL = { credit_card: "Credit", loan: "Loan", mortgage: "Mortga
 async function loadDebts() {
   const { data } = await sb.from("liabilities").select("*").order("created_at");
   debts = data || [];
+  // A liability that a credit account points at (linked_liability_id) is
+  // the same row shown on that account's icon - deleting it here would
+  // orphan the account (linked_liability_id -> null on delete, per schema),
+  // recreating the exact "click does nothing" bug fixed for debit/checking.
+  // So it gets no delete affordance; removing it means deleting the account.
+  const linkedDebtIds = new Set(accounts.map((a) => a.linked_liability_id).filter(Boolean));
   $("debtsList").innerHTML = debts.length
     ? debts.map((d) => `
       <div class="exp">
@@ -443,11 +458,11 @@ async function loadDebts() {
         <span class="amt">
           <button class="secondary" data-add-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">+</button>
           <button class="secondary" data-pay-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:8px">Pay</button>
-          ${fmt(d.balance)}<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>
+          ${fmt(d.balance)}${linkedDebtIds.has(d.id) ? "" : `<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>`}
         </span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No other liabilities.</p>`;
-  $("acctLiability").innerHTML = `<option value="">No link</option>` + debts.map((d) => `<option value="${d.id}">${d.name}</option>`).join("");
+  $("acctLiability").innerHTML = `<option value="">Auto-create new liability</option>` + debts.map((d) => `<option value="${d.id}">${d.name}</option>`).join("");
   document.querySelectorAll("[data-del-debt]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -458,42 +473,77 @@ async function loadDebts() {
     };
   });
   document.querySelectorAll("[data-pay-debt]").forEach((el) => {
-    el.onclick = (ev) => { ev.stopPropagation(); openPayForm(el.dataset.payDebt); };
+    el.onclick = (ev) => { ev.stopPropagation(); openDebtBalanceForm(el.dataset.payDebt, "paying"); };
   });
   document.querySelectorAll("[data-add-debt]").forEach((el) => {
-    el.onclick = (ev) => { ev.stopPropagation(); openAddDebtForm(el.dataset.addDebt); };
+    el.onclick = (ev) => { ev.stopPropagation(); openDebtBalanceForm(el.dataset.addDebt, "owed"); };
   });
   renderNetWorth();
 }
 
-// ---- PAY DOWN A LIABILITY (transfer, not an expense) --------------------
-let payingDebtId = null;
+// ---- ADJUST A LIABILITY'S BALANCE (owed vs. paying it down) -------------
+// Two tabs on one modal, since both act on the same liability row - the
+// same row a linked credit account's icon points at (linked_liability_id).
+// "Owed" directly increases the balance (a new charge, a correction - no
+// asset involved). "Paying balance" is a transfer (asset down, liability
+// down), never a new expense. Opened from a credit account's icon (either
+// tab), or from a debt row's own +/Pay buttons (jumps to the matching tab).
+let activeDebtId = null;
 
-function openPayForm(debtId) {
-  const modal = $("payForm");
-  // Tapping "Pay" on the same liability again while its modal is open closes
-  // it; tapping a different liability's "Pay" switches to that one instead.
-  if (payingDebtId === debtId && !modal.classList.contains("hidden")) {
+function currentDebtTab() {
+  return $("debtOwedMode").classList.contains("hidden") ? "paying" : "owed";
+}
+
+function setDebtTab(tab) {
+  $("debtOwedMode").classList.toggle("hidden", tab !== "owed");
+  $("debtPayingMode").classList.toggle("hidden", tab !== "paying");
+  $("debtTabOwed").classList.toggle("secondary", tab !== "owed");
+  $("debtTabPaying").classList.toggle("secondary", tab !== "paying");
+}
+
+function openDebtBalanceForm(debtId, tab) {
+  const modal = $("debtBalanceForm");
+  // Tapping the same entry point again (same debt, same tab already showing)
+  // while the modal is open closes it; anything else switches to it instead.
+  if (activeDebtId === debtId && tab === currentDebtTab() && !modal.classList.contains("hidden")) {
     modal.classList.add("hidden");
-    payingDebtId = null;
+    activeDebtId = null;
     return;
   }
   const debt = debts.find((d) => d.id === debtId);
   if (!debt) return;
-  payingDebtId = debtId;
-  $("payLiabilityLabel").textContent = debt.name;
-  $("payLiabilityBalance").textContent = fmt(debt.balance);
+  activeDebtId = debtId;
+  $("debtBalanceLabel").textContent = debt.name;
+  $("debtBalanceCurrent").textContent = fmt(debt.balance);
+  $("debtOwedAmount").value = "";
   $("payAmount").value = "";
+  setDebtTab(tab);
   modal.classList.remove("hidden");
 }
-$("payClose").onclick = () => { $("payForm").classList.add("hidden"); payingDebtId = null; };
+$("debtTabOwed").onclick = () => setDebtTab("owed");
+$("debtTabPaying").onclick = () => setDebtTab("paying");
+$("debtBalanceClose").onclick = () => { $("debtBalanceForm").classList.add("hidden"); activeDebtId = null; };
+
+$("debtOwedConfirm").onclick = async () => {
+  const amount = parseFloat($("debtOwedAmount").value);
+  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  const debt = debts.find((d) => d.id === activeDebtId);
+  if (!debt) return;
+  const newBalance = Math.round((Number(debt.balance) + amount) * 100) / 100;
+  const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
+  if (error) return toast(error.message);
+  $("debtOwedAmount").value = "";
+  await loadDebts();
+  $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
+  toast("Added to balance owed");
+};
 
 $("payConfirmBtn").onclick = async () => {
   const amount = parseFloat($("payAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const assetId = $("payFromAsset").value;
   if (!assetId) return toast("Choose an asset to pay from");
-  const debt = debts.find((d) => d.id === payingDebtId);
+  const debt = debts.find((d) => d.id === activeDebtId);
   const asset = assets.find((a) => a.id === assetId);
   if (!debt || !asset) return toast("Pick a valid liability and asset");
   if (amount > Number(asset.value)) return toast(`Not enough in ${asset.name} to pay ${fmt(amount)}`);
@@ -506,45 +556,10 @@ $("payConfirmBtn").onclick = async () => {
   const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
   if (debtErr) return toast(debtErr.message);
 
-  $("payForm").classList.add("hidden");
-  payingDebtId = null;
-  await loadAssets(); await loadDebts(); toast("Payment recorded");
-};
-
-// ---- ADD TO A LIABILITY'S BALANCE (e.g. a new charge, correction) ------
-// Operates directly on the liability row itself, which is already the one
-// linked_liability_id points at from its credit account - no separate
-// linking step needed, it's the same row.
-let addingDebtId = null;
-
-function openAddDebtForm(debtId) {
-  const modal = $("addDebtAmountForm");
-  if (addingDebtId === debtId && !modal.classList.contains("hidden")) {
-    modal.classList.add("hidden");
-    addingDebtId = null;
-    return;
-  }
-  const debt = debts.find((d) => d.id === debtId);
-  if (!debt) return;
-  addingDebtId = debtId;
-  $("addDebtLabel").textContent = debt.name;
-  $("addDebtCurrentBalance").textContent = fmt(debt.balance);
-  $("addDebtAmountInput").value = "";
-  modal.classList.remove("hidden");
-}
-$("addDebtAmountClose").onclick = () => { $("addDebtAmountForm").classList.add("hidden"); addingDebtId = null; };
-
-$("addDebtAmountConfirm").onclick = async () => {
-  const amount = parseFloat($("addDebtAmountInput").value);
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
-  const debt = debts.find((d) => d.id === addingDebtId);
-  if (!debt) return;
-  const newBalance = Math.round((Number(debt.balance) + amount) * 100) / 100;
-  const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-  if (error) return toast(error.message);
-  $("addDebtAmountForm").classList.add("hidden");
-  addingDebtId = null;
-  await loadDebts(); toast("Added");
+  $("payAmount").value = "";
+  await loadAssets(); await loadDebts();
+  $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
+  toast("Payment recorded");
 };
 
 // ---- NET WORTH (Log page) ----------------------------------------------

@@ -394,6 +394,11 @@
         <label>Notes</label>
         <input id="sNotes" placeholder="e.g. shared family plan" />
         <div style="height:12px"></div>
+        <!-- Logs today's charge as a real expense against the linked account
+             (same asset/liability effect as any other expense) and rolls
+             next_renewal forward one cycle - see markPaidBtn in app.js. -->
+        <button class="secondary hidden" id="markPaidBtn">💸 Mark as paid - log this charge</button>
+        <div style="height:8px"></div>
         <div class="row">
           <button id="saveSubBtn">Save</button>
           <button class="secondary" id="cancelSubBtn">Cancel</button>

@@ -48,3 +48,30 @@ export function renewalLabel(days) {
   if (days === 1) return "tomorrow";
   return `in ${days}d`;
 }
+
+/**
+ * Next renewal date after paying, one billing cycle forward from the
+ * subscription's own next_renewal (not from today - paying late shouldn't
+ * shift the schedule). 'other' has no defined interval, so it's left
+ * unchanged rather than guessed; the user updates it manually.
+ *
+ * Built from the y/m/d parts directly rather than Date#setMonth, which
+ * overflows into the following month for day-of-month values that don't
+ * exist in the target month (Jan 31 + 1 month lands on Mar 3, not Feb 28).
+ * Clamping the day to the target month's actual length avoids that -
+ * also needed for annual on leap-day subscriptions (Feb 29 -> Feb 28).
+ */
+export function advanceRenewal(isoDate, billingCycle) {
+  if (!isoDate) return isoDate;
+  if (billingCycle !== "annual" && billingCycle !== "monthly") return isoDate;
+  const [y, m, day] = isoDate.split("-").map(Number);
+  let targetYear = y, targetMonth = m; // targetMonth stays 1-indexed throughout
+  if (billingCycle === "annual") targetYear += 1;
+  else { targetMonth += 1; if (targetMonth > 12) { targetMonth = 1; targetYear += 1; } }
+  // New Date(y, m, 0) is day 0 of 1-indexed month m, i.e. the last day of
+  // the *previous* 0-indexed month - which, since targetMonth is already
+  // 1-indexed, is exactly the last day of targetMonth itself.
+  const lastDayOfTargetMonth = new Date(targetYear, targetMonth, 0).getDate();
+  const clampedDay = Math.min(day, lastDayOfTargetMonth);
+  return `${targetYear}-${String(targetMonth).padStart(2, "0")}-${String(clampedDay).padStart(2, "0")}`;
+}

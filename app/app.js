@@ -10,7 +10,7 @@ import {
   renderBreakdownBar, renderTrendBar,
 } from "./charts.js";
 import {
-  monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel,
+  monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
 } from "./subscriptions.js";
 import { findDeals, studentUpsell, matchService } from "./discounts.js";
 import { parseWithGemma, askGemma } from "./gemma.js";
@@ -1097,6 +1097,8 @@ function openSubForm(sub) {
   $("sActive").checked = sub ? !!sub.is_active : true;
   $("sNotes").value = sub?.notes ?? "";
   $("deleteSubBtn").classList.toggle("hidden", !sub);
+  // Only makes sense for an existing, currently-active subscription.
+  $("markPaidBtn").classList.toggle("hidden", !sub || !sub.is_active);
   $("subForm").classList.remove("hidden");
   $("subForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -1125,6 +1127,45 @@ $("saveSubBtn").onclick = async () => {
   closeSubForm();
   await loadSubscriptions();
   toast(editingSub ? "Subscription updated" : "Subscription added");
+};
+
+// A subscription's amount/cycle is just a forecast (see networth.js) until
+// an actual charge is logged - this is what turns "will cost $X/mo" into a
+// real, dated expense that hits the linked account like any other purchase,
+// through the exact same asset/liability-delta + negative-balance guard as
+// quick-add. Operates on the saved editingSub, not unsaved form edits -
+// Save first if you changed the amount or account.
+$("markPaidBtn").onclick = async () => {
+  if (!editingSub) return;
+  const sub = editingSub;
+  if (!sub.account_id) return toast("Link an account to this subscription first, then save, then mark as paid.");
+  const account = accounts.find((a) => a.id === sub.account_id);
+  if (!account) return toast("Linked account not found - pick one, save, then mark as paid.");
+  const amount = Number(sub.amount);
+  const paymentType = account.type;
+  const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
+  if (assetErr) return toast(assetErr);
+
+  const row = {
+    amount, description: sub.name, merchant: sub.name,
+    category: "Subscriptions", payment_type: paymentType,
+    account_id: sub.account_id, occurred_at: new Date().toISOString().slice(0, 10),
+    source: "manual",
+  };
+  $("markPaidBtn").disabled = true;
+  const { error } = await sb.from("expenses").insert(row);
+  if (error) { $("markPaidBtn").disabled = false; return toast(error.message); }
+  await applyAssetDelta(sub.account_id, paymentType, amount, -1);
+  await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
+
+  const nextRenewal = advanceRenewal(sub.next_renewal, sub.billing_cycle);
+  if (nextRenewal !== sub.next_renewal) {
+    await sb.from("subscriptions").update({ next_renewal: nextRenewal }).eq("id", sub.id);
+  }
+  $("markPaidBtn").disabled = false;
+  closeSubForm();
+  await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions();
+  toast(nextRenewal && nextRenewal !== sub.next_renewal ? `Logged - renews ${nextRenewal}` : "Logged");
 };
 
 $("deleteSubBtn").onclick = async () => {

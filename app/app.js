@@ -650,6 +650,19 @@ function renderNetWorth() {
 }
 
 // ---- QUICK ADD -------------------------------------------------------------
+// There's no separate "Payment" field anymore - an expense's payment type
+// IS whatever type the chosen Account is (cash/debit/credit values match
+// exactly), so there's nothing left to derive it from independently, and
+// no way for the two to disagree. A payment-type word in the free text
+// (e.g. "debit") still auto-picks the matching account, but only when
+// there's exactly one of that type - picking the wrong one silently would
+// be worse than leaving it for the user to choose.
+function selectAccountByType(type) {
+  if (!type) return;
+  const matches = accounts.filter((a) => a.type === type);
+  if (matches.length === 1) $("fAccount").value = matches[0].id;
+}
+
 $("quick").addEventListener("input", (e) => {
   const raw = e.target.value;
   if (!raw.trim()) { $("confirm").classList.add("hidden"); $("parseStatus").textContent = ""; return; }
@@ -657,7 +670,7 @@ $("quick").addEventListener("input", (e) => {
   // Layer 1: instant keyword parse (always on, README §3.5).
   const p = quickParse(raw);
   $("fAmount").value = p.amount ?? "";
-  $("fPayment").value = p.payment_type ?? "";
+  selectAccountByType(p.payment_type);
   $("fDesc").value = p.rest;
   const guessed = categorize(raw, userRules);
   if (guessed) $("fCategory").value = guessed;
@@ -682,7 +695,7 @@ function scheduleGemma(raw) {
       // Only apply if the user hasn't typed something new in the meantime.
       if ($("quick").value !== sent) { $("parseStatus").textContent = ""; return; }
       if (g.amount != null) $("fAmount").value = g.amount;
-      if (g.payment_type) $("fPayment").value = g.payment_type;
+      selectAccountByType(g.payment_type);
       if (g.merchant) $("fDesc").value = g.merchant;
       if (g.category) $("fCategory").value = g.category;
       if (g.occurred_at) $("fDate").value = g.occurred_at;
@@ -700,7 +713,9 @@ function scheduleGemma(raw) {
 // it rather than let it silently vanish. Checking "some credit account
 // exists somewhere" isn't enough: e.g. a Discover credit account existing
 // shouldn't let a Chase credit expense through with no Chase account picked.
-// Shared by quick-add and the edit modal.
+// Only the edit modal needs this now - quick-add derives payment_type from
+// the selected account directly, so the mismatch this guards against can't
+// happen there anymore.
 function isCreditAccount(accountId) {
   const acct = accounts.find((a) => a.id === accountId);
   return !!acct && acct.type === "credit";
@@ -709,11 +724,11 @@ function isCreditAccount(accountId) {
 $("saveBtn").onclick = async () => {
   const amount = parseFloat($("fAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
-  if ($("fPayment").value === "credit" && !isCreditAccount($("fAccount").value)) {
-    return toast("Select a credit account (Accounts card) before logging a credit expense.");
-  }
   const accountId = $("fAccount").value || null;
-  const paymentType = $("fPayment").value || null;
+  if (!accountId) return toast("Select an account");
+  // No separate Payment field - the account IS the payment type, since
+  // account.type and payment_type share the same values (cash/debit/credit).
+  const paymentType = accounts.find((a) => a.id === accountId).type;
   const assetErr = assetDeltaError([{ accountId, paymentType, amount, sign: -1 }]);
   if (assetErr) return toast(assetErr);
   const desc = $("fDesc").value.trim();

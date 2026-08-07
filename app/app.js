@@ -326,7 +326,7 @@ function renderAccountsList() {
     el.onclick = () => openAssetAdjust(el.dataset.adjustAcct);
   });
   document.querySelectorAll("[data-adjust-liability]").forEach((el) => {
-    el.onclick = () => openDebtBalanceForm(el.dataset.adjustLiability);
+    el.onclick = () => openDebtBalanceForm(el.dataset.adjustLiability, "paying");
   });
 }
 
@@ -566,6 +566,7 @@ async function loadDebts() {
           ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
         </div>
         <span class="amt">
+          ${linkedDebtIds.has(d.id) ? "" : `<button class="secondary" data-add-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">+</button>`}
           <button class="secondary" data-pay-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:8px">Pay</button>
           ${fmt(d.balance)}${linkedDebtIds.has(d.id) ? "" : `<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>`}
         </span>
@@ -581,32 +582,44 @@ async function loadDebts() {
     };
   });
   document.querySelectorAll("[data-pay-debt]").forEach((el) => {
-    el.onclick = (ev) => { ev.stopPropagation(); openDebtBalanceForm(el.dataset.payDebt); };
+    el.onclick = (ev) => { ev.stopPropagation(); openDebtBalanceForm(el.dataset.payDebt, "paying"); };
+  });
+  document.querySelectorAll("[data-add-debt]").forEach((el) => {
+    el.onclick = (ev) => { ev.stopPropagation(); openDebtBalanceForm(el.dataset.addDebt, "owed"); };
   });
   renderNetWorth();
   renderAccountsList(); // a changed liability balance may be a linked account's balance line
 }
 
-// ---- PAY DOWN A LIABILITY (transfer, not an expense) --------------------
-// What's owed no longer has any manual editing path at all - by design.
-// It used to (an "Owed" tab: direct set + add-a-charge), removed because
-// a credit card's balance should only ever move via an actual credit
+// ---- ADJUST A LIABILITY'S BALANCE (owed vs. paying it down) -------------
+// "Paying balance" (transfer: asset down, liability down, never a new
+// expense) is always available. "Owed" (direct set + add-a-charge) only
+// shows for a liability with NO linked credit account - one linked to a
+// credit account skips the tabs entirely and opens straight to Paying,
+// since its owed amount can now only move through an actual credit
 // expense (quick-add/edit, account type credit - applyLiabilityDelta),
-// never a number typed into this modal. Don't re-add a manual owed editor
-// here; if the balance is ever wrong, the fix is the underlying expense
-// record (or, for a standalone Loan/Mortgage/Other liability with no
-// linked account, a direct data correction - there's no purchase trail
-// to reconcile against for those).
-// Paying down is a transfer (asset down, liability down) and stays
-// manual - it's real money moving, not something a purchase record
-// implies on its own. Opened from a credit account's icon or a debt
-// row's Pay button.
+// never a typed number. A standalone Loan/Mortgage/Other liability has no
+// purchase trail to reconcile against, so it keeps manual Owed editing.
 let activeDebtId = null;
 
-function openDebtBalanceForm(debtId) {
+function currentDebtTab() {
+  return $("debtOwedMode").classList.contains("hidden") ? "paying" : "owed";
+}
+
+function setDebtTab(tab) {
+  $("debtOwedMode").classList.toggle("hidden", tab !== "owed");
+  $("debtPayingMode").classList.toggle("hidden", tab !== "paying");
+  $("debtTabOwed").classList.toggle("secondary", tab !== "owed");
+  $("debtTabPaying").classList.toggle("secondary", tab !== "paying");
+}
+
+function openDebtBalanceForm(debtId, tab) {
   const modal = $("debtBalanceForm");
-  // Tapping the same entry point again while its modal is open closes it.
-  if (activeDebtId === debtId && !modal.classList.contains("hidden")) {
+  const isCreditLinked = accounts.some((a) => a.linked_liability_id === debtId);
+  const effectiveTab = isCreditLinked ? "paying" : tab;
+  // Tapping the same entry point again (same debt, same tab already showing)
+  // while the modal is open closes it; anything else switches to it instead.
+  if (activeDebtId === debtId && effectiveTab === currentDebtTab() && !modal.classList.contains("hidden")) {
     modal.classList.add("hidden");
     activeDebtId = null;
     return;
@@ -616,10 +629,47 @@ function openDebtBalanceForm(debtId) {
   activeDebtId = debtId;
   $("debtBalanceLabel").textContent = debt.name;
   $("debtBalanceCurrent").textContent = fmt(debt.balance);
+  $("debtTabRow").classList.toggle("hidden", isCreditLinked);
+  $("debtOwedSet").value = String(debt.balance);
+  $("debtOwedAmount").value = "";
   $("payAmount").value = "";
+  setDebtTab(effectiveTab);
   modal.classList.remove("hidden");
 }
+$("debtTabOwed").onclick = () => setDebtTab("owed");
+$("debtTabPaying").onclick = () => setDebtTab("paying");
 $("debtBalanceClose").onclick = () => { $("debtBalanceForm").classList.add("hidden"); activeDebtId = null; };
+
+// Directly overwrites the balance - for fixing a wrong number (typo, a
+// charge that was missed or double-logged), not for a new charge (that's
+// debtOwedConfirm below, which adds instead of replacing). Only reachable
+// for a standalone liability - see openDebtBalanceForm.
+$("debtOwedSetConfirm").onclick = async () => {
+  const newBalance = parseFloat($("debtOwedSet").value);
+  if (!Number.isFinite(newBalance)) return toast("Enter a valid amount");
+  if (newBalance < 0) return toast("Amount owed can't be negative");
+  const debt = debts.find((d) => d.id === activeDebtId);
+  if (!debt) return;
+  const { error } = await sb.from("liabilities").update({ balance: Math.round(newBalance * 100) / 100 }).eq("id", debt.id);
+  if (error) return toast(error.message);
+  await loadDebts();
+  $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
+  toast("Amount owed updated");
+};
+
+$("debtOwedConfirm").onclick = async () => {
+  const amount = parseFloat($("debtOwedAmount").value);
+  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  const debt = debts.find((d) => d.id === activeDebtId);
+  if (!debt) return;
+  const newBalance = Math.round((Number(debt.balance) + amount) * 100) / 100;
+  const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
+  if (error) return toast(error.message);
+  $("debtOwedAmount").value = "";
+  await loadDebts();
+  $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
+  toast("Added to balance owed");
+};
 
 $("payConfirmBtn").onclick = async () => {
   const amount = parseFloat($("payAmount").value);

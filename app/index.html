@@ -171,10 +171,10 @@
           <p class="muted" style="font-size:13px">No accounts yet.</p>
         </div>
         <div id="acctForm" class="hidden" style="margin-top:10px">
-          <div class="row">
-            <input id="acctName" placeholder="Checking" />
-            <input id="acctBank" placeholder="Chase" />
-          </div>
+          <!-- No separate "account name" field - it was always just the
+               type in practice (Checking, Savings, Credit), so the name is
+               derived from Account type below instead of typed twice. -->
+          <input id="acctBank" placeholder="Chase" />
           <!-- Toggle buttons, not a <select> - a dropdown's current value is
                easy to glance past (a "Credit"-named account got silently
                saved as Checking because the default was never changed);

@@ -160,6 +160,10 @@ const AUTO_ASSET_TYPE = { debit: "bank", savings: "savings" };
 // a charge should accumulate onto a running balance, not draw down
 // something you own. Auto-created the same way bank assets are.
 const AUTO_LIABILITY_TYPE = { credit: "credit_card" };
+// No free-text "account name" field - in practice it was always just the
+// type anyway (Checking, Savings, Credit), so the account's name is
+// derived from whichever type button is selected instead of typed twice.
+const ACCOUNT_TYPE_NAME = { debit: "Checking", savings: "Savings", credit: "Credit" };
 
 let selectedAcctType = "debit";
 function setAcctType(type) {
@@ -187,10 +191,9 @@ $("addAcctBtn").onclick = () => {
 // its own fresh one, named after the bank, since two accounts at the same
 // bank (a Checking and a Savings, say) still need separate balances.
 $("saveAcctBtn").onclick = async () => {
-  const name = $("acctName").value.trim();
   const bank_name = $("acctBank").value.trim();
   const type = selectedAcctType;
-  if (!name) return toast("Account name required");
+  const name = ACCOUNT_TYPE_NAME[type];
   if (!bank_name) return toast("Bank name required");
 
   let linked_asset_id = null;
@@ -214,7 +217,7 @@ $("saveAcctBtn").onclick = async () => {
 
   const { error } = await sb.from("accounts").insert({ name, bank_name, type, linked_asset_id, linked_liability_id });
   if (error) return toast(error.message);
-  $("acctName").value = ""; $("acctBank").value = ""; $("acctForm").classList.add("hidden");
+  $("acctBank").value = ""; $("acctForm").classList.add("hidden");
   // loadAccounts first - loadDebts reads `accounts` to know which
   // liabilities are now account-linked (hides their delete button).
   await loadAccounts(); await loadAssets(); await loadDebts();

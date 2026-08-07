@@ -318,20 +318,47 @@ async function loadAssets() {
   renderNetWorth();
 }
 
+// No linked asset (Checking or Cash) may ever go negative, on any path -
+// manual adjust panel (see adjustSubtractBtn/adjustSetBtn above) or expense
+// logging here. Call this BEFORE writing an expense to find out whether its
+// asset-side effect(s) would push a balance below $0; if so, block the
+// whole expense (don't insert it) rather than logging it and flooring the
+// asset, so the user gets an explicit error instead of a silently
+// corrected number. `deltas` lets a caller check multiple effects on the
+// same asset together (editSave reverses one expense and applies another
+// in the same action - they can land on the same asset or different ones).
+function assetDeltaError(deltas) {
+  const netByAsset = new Map(); // assetId -> { asset, net }
+  for (const { accountId, paymentType, amount, sign } of deltas) {
+    if (paymentType === "credit" || !accountId) continue;
+    const account = accounts.find((a) => a.id === accountId);
+    if (!account || !account.linked_asset_id) continue;
+    const asset = assets.find((a) => a.id === account.linked_asset_id);
+    if (!asset) continue;
+    const entry = netByAsset.get(asset.id) || { asset, net: 0 };
+    entry.net += sign * Number(amount);
+    netByAsset.set(asset.id, entry);
+  }
+  for (const { asset, net } of netByAsset.values()) {
+    const newValue = Math.round((Number(asset.value) + net) * 100) / 100;
+    if (newValue < 0) return `${asset.name} can't go below $0 - not enough to cover this.`;
+  }
+  return null;
+}
+
 // Non-credit expenses draw down the linked asset (if the account has one),
 // so assets stay in sync with real spending. Credit-card spending is a
 // liability, not a draw on an asset, so it's deliberately skipped here.
 // sign: -1 to apply an expense (deduct), +1 to reverse one (edit/delete).
+// Callers must run assetDeltaError first and abort on a non-null result -
+// this function trusts that check and just writes the new value.
 async function applyAssetDelta(accountId, paymentType, amount, sign) {
   if (paymentType === "credit" || !accountId) return;
   const account = accounts.find((a) => a.id === accountId);
   if (!account || !account.linked_asset_id) return;
   const asset = assets.find((a) => a.id === account.linked_asset_id);
   if (!asset) return;
-  let newValue = Math.round((Number(asset.value) + sign * Number(amount)) * 100) / 100;
-  // Physical cash can never go negative - floor it rather than block the
-  // expense (an over-budget cash purchase should still get logged).
-  if (asset.type === "cash") newValue = Math.max(0, newValue);
+  const newValue = Math.round((Number(asset.value) + sign * Number(amount)) * 100) / 100;
   await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
 }
 
@@ -673,14 +700,18 @@ $("saveBtn").onclick = async () => {
   if ($("fPayment").value === "credit" && !isCreditAccount($("fAccount").value)) {
     return toast("Select a credit account (Accounts card) before logging a credit expense.");
   }
+  const accountId = $("fAccount").value || null;
+  const paymentType = $("fPayment").value || null;
+  const assetErr = assetDeltaError([{ accountId, paymentType, amount, sign: -1 }]);
+  if (assetErr) return toast(assetErr);
   const desc = $("fDesc").value.trim();
   const fullText = $("quick").value.trim();
   const row = {
     amount, description: fullText || desc || null,
     merchant: desc.split(/\s+/)[0] || null,
     category: $("fCategory").value || null,
-    payment_type: $("fPayment").value || null,
-    account_id: $("fAccount").value || null,
+    payment_type: paymentType,
+    account_id: accountId,
     occurred_at: $("fDate").value,
     raw_input: fullText, source: entrySource,
   };
@@ -757,6 +788,17 @@ $("editSave").onclick = async () => {
     category: newCategory, payment_type: $("ePayment").value || null,
     account_id: $("eAccount").value || null, occurred_at: $("eDate").value,
   };
+
+  // Check both the reversal (old effect undone) and the new effect together -
+  // they can land on the same asset (e.g. only the amount changed) or two
+  // different ones (account changed), assetDeltaError nets each out on its
+  // own asset before deciding.
+  const assetErr = assetDeltaError([
+    { accountId: prevAccountId, paymentType: prevPaymentType, amount: prevAmount, sign: +1 },
+    { accountId: patch.account_id, paymentType: patch.payment_type, amount, sign: -1 },
+  ]);
+  if (assetErr) return toast(assetErr);
+
   $("editSave").disabled = true;
   const { error } = await sb.from("expenses").update(patch).eq("id", editing.id);
   if (error) { $("editSave").disabled = false; return toast(error.message); }

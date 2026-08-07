@@ -199,13 +199,24 @@ async function loadAccounts() {
   const { data } = await sb.from("accounts").select("*").order("created_at");
   accounts = data || [];
   $("acctList").innerHTML = accounts.length
-    ? accounts.map((a, i) => `
-      <div class="acct-circle-item" ${a.linked_asset_id ? `data-adjust-acct="${a.id}" style="cursor:pointer"` : ""}>
+    ? accounts.map((a, i) => {
+        // Bank/cash-type accounts link to an asset (tap opens the asset-adjust
+        // panel); credit accounts link to a liability instead (tap should open
+        // the Pay modal for it) - see openPayForm below. 'other' accounts with
+        // no link get no click affordance.
+        const clickAttr = a.linked_asset_id
+          ? `data-adjust-acct="${a.id}"`
+          : a.linked_liability_id
+          ? `data-adjust-liability="${a.linked_liability_id}"`
+          : "";
+        return `
+      <div class="acct-circle-item" ${clickAttr ? `${clickAttr} style="cursor:pointer"` : ""}>
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : (a.name.trim()[0] || "?").toUpperCase()}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${a.name}</div>
         <div class="type">${cap(a.type)}</div>
-      </div>`).join("")
+      </div>`;
+      }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
   // account selects (add + edit)
   const opts = `<option value="">None</option>` + accounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
@@ -226,6 +237,9 @@ async function loadAccounts() {
   });
   document.querySelectorAll("[data-adjust-acct]").forEach((el) => {
     el.onclick = () => openAssetAdjust(el.dataset.adjustAcct);
+  });
+  document.querySelectorAll("[data-adjust-liability]").forEach((el) => {
+    el.onclick = () => openPayForm(el.dataset.adjustLiability);
   });
 }
 
@@ -602,18 +616,22 @@ function scheduleGemma(raw) {
   }, 650);
 }
 
-// A credit expense needs a real credit account to accumulate onto - without
-// one there's nowhere for the liability to go, so block it rather than let
-// it silently vanish. Shared by quick-add and the edit modal.
-function hasCreditAccount() {
-  return accounts.some((a) => a.type === "credit");
+// A credit expense needs its *selected* account to actually be a credit
+// account - without that there's nowhere for the liability to go, so block
+// it rather than let it silently vanish. Checking "some credit account
+// exists somewhere" isn't enough: e.g. a Discover credit account existing
+// shouldn't let a Chase credit expense through with no Chase account picked.
+// Shared by quick-add and the edit modal.
+function isCreditAccount(accountId) {
+  const acct = accounts.find((a) => a.id === accountId);
+  return !!acct && acct.type === "credit";
 }
 
 $("saveBtn").onclick = async () => {
   const amount = parseFloat($("fAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
-  if ($("fPayment").value === "credit" && !hasCreditAccount()) {
-    return toast("Add a credit account first (Accounts card) before logging a credit expense.");
+  if ($("fPayment").value === "credit" && !isCreditAccount($("fAccount").value)) {
+    return toast("Select a credit account (Accounts card) before logging a credit expense.");
   }
   const desc = $("fDesc").value.trim();
   const fullText = $("quick").value.trim();
@@ -686,8 +704,8 @@ $("editSave").onclick = async () => {
   if (!editing) return;
   const amount = parseFloat($("eAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
-  if ($("ePayment").value === "credit" && !hasCreditAccount()) {
-    return toast("Add a credit account first (Accounts card) before logging a credit expense.");
+  if ($("ePayment").value === "credit" && !isCreditAccount($("eAccount").value)) {
+    return toast("Select a credit account (Accounts card) before logging a credit expense.");
   }
   const desc = $("eDesc").value.trim();
   const newCategory = $("eCategory").value || null;

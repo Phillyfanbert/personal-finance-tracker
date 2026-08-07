@@ -353,11 +353,12 @@ async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
 }
 
 // ---- ADJUST AN ACCOUNT'S LINKED ASSET -----------------------------------
-// Tapping any account circle with a linked asset opens this. Bank-linked
-// accounts (Checking, typically) get a direct "set the full balance"
-// field, since you can just look up and type the real number. Everything
-// else - Cash included - gets +/- adjustment instead, matching how you'd
-// actually track a value you don't get to look up exactly.
+// Tapping any account circle with a linked asset opens this - every type
+// (Checking, Cash) gets both a direct "set the full balance" field (look
+// up and type the real number) and +/- adjustment (when you know the
+// change, not the total). Balances can never go negative here - blocked
+// with an error rather than floored, so the user knows the edit didn't
+// go through.
 let adjustingAssetId = null;
 
 function findLinkedAsset(accountId) {
@@ -386,9 +387,6 @@ function openAssetAdjust(accountId) {
   $("adjustCurrentValue").textContent = fmt(asset.value);
   $("adjustAmount").value = "";
   $("adjustNewBalance").value = String(asset.value);
-  const isBank = asset.type === "bank";
-  $("adjustDeltaMode").classList.toggle("hidden", isBank);
-  $("adjustBankMode").classList.toggle("hidden", !isBank);
   panel.classList.remove("hidden");
 }
 
@@ -409,7 +407,7 @@ $("adjustSubtractBtn").onclick = async () => {
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
-  if (amount > Number(asset.value)) return toast("Not enough - value can't go below $0");
+  if (amount > Number(asset.value)) return toast("Balance can't go negative - not enough in " + asset.name);
   const newValue = Math.round((Number(asset.value) - amount) * 100) / 100;
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) return toast(error.message);
@@ -420,6 +418,7 @@ $("adjustSubtractBtn").onclick = async () => {
 $("adjustSetBtn").onclick = async () => {
   const newValue = parseFloat($("adjustNewBalance").value);
   if (!Number.isFinite(newValue)) return toast("Enter a valid balance");
+  if (newValue < 0) return toast("Balance can't go negative");
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
   const { error } = await sb.from("assets").update({ value: Math.round(newValue * 100) / 100 }).eq("id", asset.id);

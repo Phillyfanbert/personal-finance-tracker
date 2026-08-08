@@ -50,6 +50,9 @@
     .exp { display: flex; justify-content: space-between; align-items: center;
       padding: 12px 0; border-bottom: 1px solid var(--border); gap: 10px; cursor: pointer; }
     .exp:last-child { border-bottom: none; }
+    /* Caps a long expense list instead of letting it push everything below
+       it down the page - Recent Expenses (Log) and the Reports month log. */
+    .scroll-list { max-height: 360px; overflow-y: auto; }
     .exp .meta { font-size: 13px; color: var(--muted); }
     .exp .amt { font-weight: 700; white-space: nowrap; }
     .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); margin: 2px 0; }
@@ -151,9 +154,9 @@
 
       <!-- Expense list -->
       <div class="card">
-        <strong>Recent</strong>
+        <strong>Recent Expenses</strong>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
-        <div id="expList" style="margin-top:8px"><p class="muted">Loading…</p></div>
+        <div id="expList" class="scroll-list" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
 
       <!-- Net worth overview -->
@@ -260,10 +263,14 @@
         </div>
       </div>
 
-      <!-- Liabilities: subscriptions (simple) + this month's expenses + tracked debts.
-           Total and Monthly are two different kinds of number (a balance vs a
-           recurring rate) shown deliberately apart, Total bigger/on top since
-           it's the one that feeds net worth - see networth.js. -->
+      <!-- Liabilities: tracked credit debt only. Subscriptions and a full
+           expense breakdown used to live here too - moved out (Reports has
+           the full expense log + a By-payment-type chart), since neither
+           is actually debt: a subscription is a recurring cost, and debit/
+           cash spending already reduces an asset directly. Total is the
+           full tracked balance (feeds net worth - see networth.js);
+           Monthly is just this month's credit charges, a slice of Total,
+           not a separate pool - see renderNetWorth (app.js). -->
       <div class="card">
         <div class="topbar" style="margin-bottom:8px;align-items:flex-start">
           <strong>📉 Liabilities</strong>
@@ -275,14 +282,13 @@
           </div>
         </div>
 
-        <div class="muted" style="font-size:12px;margin:4px 0 4px">Subscriptions</div>
-        <div id="subsLiabList" style="cursor:pointer">
-          <p class="muted" style="font-size:13px">No active subscriptions. Tap to add →</p>
-        </div>
+        <!-- A credit account's own liability (linked_liability_id) - balance
+             driven only by real credit expenses, Pay only, no delete/add. -->
+        <div class="muted" style="font-size:12px;margin:4px 0 4px">Credit liabilities</div>
+        <div id="creditDebtsList" class="muted" style="font-size:13px">No credit accounts yet.</div>
 
-        <div class="muted" style="font-size:12px;margin:14px 0 4px">Expenses (this month)</div>
-        <div id="expensesLiabList"></div>
-
+        <!-- A standalone Loan/Mortgage/Other with no linked account - the
+             only kind you can add directly below. -->
         <div class="muted" style="font-size:12px;margin:14px 0 4px">Other liabilities</div>
         <div id="debtsList" class="muted" style="font-size:13px">No other liabilities.</div>
         <button class="secondary" id="addDebtBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
@@ -338,6 +344,16 @@
       <div class="card" id="insightsCard">
         <strong>📝 Monthly report</strong>
         <div id="insightsBody" style="margin-top:8px;font-size:14px;white-space:pre-wrap" class="muted">No monthly reports yet.</div>
+      </div>
+
+      <!-- Every expense in the selected month - subscriptions, credit, and
+           debit alike - same row style as the Log page's Recent Expenses,
+           tap to edit. Scrollable so a busy month doesn't push every chart
+           below it far down the page - see renderReports (app.js). -->
+      <div class="card">
+        <strong>🧾 Expense log</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
+        <div id="rptExpList" class="scroll-list" style="margin-top:8px"></div>
       </div>
 
       <div class="card">

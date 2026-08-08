@@ -317,3 +317,15 @@ wanted.
 per the user's explicit ask, it still reads `allExpenses` directly with no
 `account_activity` merge. `renderExpenseList` is shared by both lists;
 what differs is only what each caller passes in.
+
+## Session update - 2026-08-08 (part 3) - in-app confirm modal
+
+Added a generic `confirmModal(message, { title, confirmLabel })` in
+`app.js` (returns a Promise<boolean>, same call shape as `window.confirm()`
+- `if (!(await confirmModal(...))) return;`) backed by a new `#confirmModal`
+sheet in `index.html`, styled like every other modal in the app instead of
+the browser's native dialog. Wired it into account deletion only (the ask
+was specifically about that flow) - other destructive actions (asset/
+liability/subscription/expense delete) still use `window.confirm()` and
+were deliberately left alone rather than churning unrelated code; swapping
+them to `confirmModal()` later is a one-line change each if wanted.

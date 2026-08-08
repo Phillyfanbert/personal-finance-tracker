@@ -138,7 +138,9 @@
             <div><label>Amount</label><input id="fAmount" type="number" step="0.01" inputmode="decimal" /></div>
             <div><label>Account</label><select id="fAccount"></select></div>
           </div>
-          <label>Description / merchant</label>
+          <!-- Amount/Account/Category/Date are all required (see saveBtn,
+               app.js) - Description is the only optional field here. -->
+          <label>Description / merchant (optional)</label>
           <input id="fDesc" />
           <div class="row">
             <div><label>Category</label><select id="fCategory"></select></div>
@@ -548,7 +550,9 @@
            derived from whichever account is selected below (app.js). -->
       <label>Amount</label>
       <input id="eAmount" type="number" step="0.01" inputmode="decimal" />
-      <label>Description / merchant</label>
+      <!-- Amount/Account/Category/Date are all required (see editSave,
+           app.js) - Description is the only optional field here. -->
+      <label>Description / merchant (optional)</label>
       <input id="eDesc" />
       <div class="row">
         <div><label>Category</label><select id="eCategory"></select></div>

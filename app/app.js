@@ -1088,6 +1088,10 @@ $("saveBtn").onclick = async () => {
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const accountId = $("fAccount").value || null;
   if (!accountId) return toast("Select an account");
+  const category = $("fCategory").value || null;
+  if (!category) return toast("Select a category");
+  const occurredAt = $("fDate").value;
+  if (!occurredAt) return toast("Select a date");
   // No separate Payment field - the account IS the payment type, since
   // account.type and payment_type share the same values (cash/debit/credit).
   const paymentType = accounts.find((a) => a.id === accountId).type;
@@ -1098,10 +1102,10 @@ $("saveBtn").onclick = async () => {
   const row = {
     amount, description: fullText || desc || null,
     merchant: desc.split(/\s+/)[0] || null,
-    category: $("fCategory").value || null,
+    category,
     payment_type: paymentType,
     account_id: accountId,
-    occurred_at: $("fDate").value,
+    occurred_at: occurredAt,
     raw_input: fullText, source: entrySource,
   };
   $("saveBtn").disabled = true;
@@ -1233,20 +1237,23 @@ $("editSave").onclick = async () => {
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const accountId = $("eAccount").value;
   if (!accountId) return toast("Select an account");
+  const newCategory = $("eCategory").value || null;
+  if (!newCategory) return toast("Select a category");
+  const occurredAt = $("eDate").value;
+  if (!occurredAt) return toast("Select a date");
   // No separate Payment field - same as quick-add, the account IS the
   // payment type. This also removes the only way payment_type and the
   // selected account could ever disagree, so there's no credit-account
   // mismatch left to guard against here.
   const paymentType = accounts.find((a) => a.id === accountId).type;
   const desc = $("eDesc").value.trim();
-  const newCategory = $("eCategory").value || null;
-  const categoryChanged = newCategory && newCategory !== editing.category;
+  const categoryChanged = newCategory !== editing.category;
   const prevAccountId = editing.account_id, prevPaymentType = editing.payment_type, prevAmount = Number(editing.amount);
 
   const patch = {
     amount, description: desc || null, merchant: desc.split(/\s+/)[0] || editing.merchant,
     category: newCategory, payment_type: paymentType,
-    account_id: accountId, occurred_at: $("eDate").value,
+    account_id: accountId, occurred_at: occurredAt,
   };
 
   // Check both the reversal (old effect undone) and the new effect together -

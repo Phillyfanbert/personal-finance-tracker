@@ -164,19 +164,23 @@
              out of the list under those two filters, and under Kind
              unless "Account activity" is picked there. -->
         <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
-          <select id="txnTypeFilter" style="width:auto;flex:1;min-width:110px;font-size:12px;padding:6px 8px">
+          <select id="txnTypeFilter" style="width:auto;flex:1;min-width:110px;max-width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
             <option value="">All types</option>
           </select>
-          <select id="txnAccountFilter" style="width:auto;flex:1;min-width:110px;font-size:12px;padding:6px 8px">
+          <select id="txnAccountFilter" style="width:auto;flex:1;min-width:110px;max-width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
             <option value="">All accounts</option>
           </select>
-          <select id="txnCategoryFilter" style="width:auto;flex:1;min-width:110px;font-size:12px;padding:6px 8px">
+          <select id="txnCategoryFilter" style="width:auto;flex:1;min-width:110px;max-width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
             <option value="">All categories</option>
           </select>
-          <select id="txnKindFilter" style="width:auto;flex:1;min-width:110px;font-size:12px;padding:6px 8px">
-            <option value="">Expenses + activity</option>
+          <!-- "Expenses + activity" (the original default label) was too
+               long for this box, so the collapsed value overlapped the
+               native dropdown arrow - shortened to match the "All ..."
+               pattern used by the other three filters instead. -->
+          <select id="txnKindFilter" style="width:auto;flex:1;min-width:110px;max-width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+            <option value="">All kinds</option>
             <option value="expense">Expenses only</option>
-            <option value="activity">Account activity only</option>
+            <option value="activity">Activity only</option>
           </select>
         </div>
         <p class="muted" style="font-size:12px;margin:8px 0 0">Tap an expense to edit or recategorize. Account activity (payments, balance adjustments) is shown for reference only.</p>

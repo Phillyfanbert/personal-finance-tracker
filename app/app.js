@@ -31,6 +31,24 @@ function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
   setTimeout(() => t.classList.remove("show"), 2200);
 }
+// Promise-based replacement for window.confirm() on destructive actions -
+// resolves true/false, same call shape as confirm() (await it, act on the
+// result), but rendered as an in-app modal so it matches the rest of the UI
+// instead of the browser's native dialog box.
+let confirmModalResolve = null;
+function confirmModal(message, { title = "Are you sure?", confirmLabel = "Delete" } = {}) {
+  $("confirmModalTitle").textContent = title;
+  $("confirmModalMsg").textContent = message;
+  $("confirmModalOk").textContent = confirmLabel;
+  $("confirmModal").classList.remove("hidden");
+  return new Promise((resolve) => { confirmModalResolve = resolve; });
+}
+function closeConfirmModal(result) {
+  $("confirmModal").classList.add("hidden");
+  if (confirmModalResolve) { confirmModalResolve(result); confirmModalResolve = null; }
+}
+$("confirmModalCancel").onclick = () => closeConfirmModal(false);
+$("confirmModalOk").onclick = () => closeConfirmModal(true);
 // account.name alone is now often generic (Checking, Credit) - bank_name
 // is what actually distinguishes two accounts of the same type at
 // different banks, so anywhere an account is displayed by itself (not
@@ -311,11 +329,11 @@ function renderAccountsList() {
       // with_account.sql) - warn about that up front since it's not obvious
       // from "delete this account" alone.
       const msg = acct?.linked_liability_id
-        ? "Delete this account? Existing expenses stay but become unassigned. Its linked liability and tracked balance are deleted too."
+        ? "Existing expenses stay but become unassigned. Its linked liability and tracked balance are deleted too."
         : acct?.linked_asset_id
-        ? "Delete this account? Existing expenses stay but become unassigned. Its linked asset and balance are deleted too."
-        : "Delete this account? Existing expenses stay but become unassigned.";
-      if (!confirm(msg)) return;
+        ? "Existing expenses stay but become unassigned. Its linked asset and balance are deleted too."
+        : "Existing expenses stay but become unassigned.";
+      if (!(await confirmModal(msg, { title: "Delete this account?" }))) return;
       const { error } = await sb.from("accounts").delete().eq("id", el.dataset.delAcct);
       if (error) return toast(error.message);
       // loadAssets/loadDebts refresh so a deleted linked asset or liability

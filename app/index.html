@@ -462,6 +462,22 @@
 
   </div>
 
+  <!-- ============ CONFIRM MODAL ============ -->
+  <!-- Generic yes/no dialog - replaces window.confirm() for destructive
+       actions (starting with account deletion) so the message and buttons
+       match the rest of the app's look instead of the browser's native
+       confirm() box. See confirmModal() in app.js. -->
+  <div id="confirmModal" class="modal hidden">
+    <div class="sheet">
+      <strong id="confirmModalTitle">Are you sure?</strong>
+      <p id="confirmModalMsg" class="muted" style="font-size:14px;margin:10px 0 18px"></p>
+      <div class="row">
+        <button class="secondary" id="confirmModalCancel">Cancel</button>
+        <button class="secondary" id="confirmModalOk" style="color:var(--err);border-color:var(--err)">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ EDIT MODAL ============ -->
   <div id="editModal" class="modal hidden">
     <div class="sheet">

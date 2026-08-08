@@ -87,7 +87,7 @@ $("signInBtn").onclick = async () => {
   $("signInBtn").disabled = true;
   const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
   $("signInBtn").disabled = false;
-  $("authMsg").textContent = error ? error.message : "✅ Link sent - check your email.";
+  $("authMsg").textContent = error ? error.message : "Link sent - check your email.";
 };
 $("signOutBtn").onclick = async () => { await sb.auth.signOut(); location.reload(); };
 
@@ -1062,7 +1062,7 @@ function scheduleGemma(raw) {
   $("parseStatus").textContent = "";
   gemmaTimer = setTimeout(async () => {
     const sent = raw;
-    $("parseStatus").textContent = "✨ asking Gemma…";
+    $("parseStatus").textContent = "Asking Gemma…";
     try {
       const g = await parseWithGemma(sent, {
         endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, today: $("fDate").value,
@@ -1075,7 +1075,7 @@ function scheduleGemma(raw) {
       if (g.category) $("fCategory").value = g.category;
       if (g.occurred_at) $("fDate").value = g.occurred_at;
       entrySource = "parsed";
-      $("parseStatus").textContent = "✨ parsed by Gemma - confirm & save";
+      $("parseStatus").textContent = "Parsed by Gemma - confirm & save";
     } catch (err) {
       // Home machine asleep / unreachable - keep the keyword guess.
       $("parseStatus").textContent = "Gemma unavailable - using quick parse";
@@ -1340,10 +1340,10 @@ $("qaAskBtn").onclick = async () => {
   }
   $("qaAskBtn").disabled = true;
   $("qaAnswer").classList.add("hidden");
-  $("qaStatus").textContent = "🤔 thinking…";
+  $("qaStatus").textContent = "Thinking…";
   try {
     if (!allExpenses.length) await loadExpenses();
-    const context = buildQaContext(allExpenses, subscriptions);
+    const context = buildQaContext(allExpenses, subscriptions, 6, profile);
     const answer = await askGemma(question, context, { endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL });
     $("qaAnswer").textContent = answer;
     $("qaAnswer").classList.remove("hidden");
@@ -1494,7 +1494,7 @@ function renderDeals() {
     parts.push(`
       <div class="exp" style="cursor:pointer;border-top:1px dashed var(--border)" id="upsellRow">
         <div>
-          <div>🎓 Are you a student?</div>
+          <div>Are you a student?</div>
           <div class="meta">Set your status to Student to unlock deals on: ${svc}. Tap to update your profile.</div>
         </div>
       </div>`);
@@ -1502,7 +1502,7 @@ function renderDeals() {
 
   if (!parts.length) {
     const hint = subscriptions.some((s) => s.is_active)
-      ? "No cheaper eligible plans found for your current subscriptions. 👍"
+      ? "No cheaper eligible plans found for your current subscriptions."
       : "Add subscriptions to see cheaper eligible plans.";
     $("dealsList").innerHTML = `<p class="muted" style="font-size:13px">${hint}</p>`;
     return;
@@ -1691,11 +1691,29 @@ $("profileBtn").onclick = () => {
   $("pStatus").value = profile?.status ?? "other";
   $("pSchool").value = profile?.school ?? "";
   $("pGradYear").value = profile?.graduation_year ?? "";
+  $("pMilitary").checked = !!profile?.is_military;
+  $("pFirstResponder").checked = !!profile?.is_first_responder_healthcare;
+  $("pBirthYear").value = profile?.birth_year ?? "";
+  $("pEmployer").value = profile?.employer ?? "";
+  $("pOccupation").value = profile?.occupation ?? "";
+  $("pHousing").value = profile?.housing_status ?? "";
+  $("pEmployment").value = profile?.employment_status ?? "";
+  $("pHouseholdSize").value = profile?.household_size ?? "";
+  $("pDependents").value = profile?.dependents ?? "";
+  $("pGoals").value = profile?.financial_goals ?? "";
   $("pNotes").value = profile?.notes ?? "";
   toggleStudentFields();
   $("profileModal").classList.remove("hidden");
 };
 $("profileClose").onclick = () => $("profileModal").classList.add("hidden");
+
+// parseInt returns NaN on empty/invalid input - toNullableInt keeps that
+// out of the row entirely (null) rather than writing NaN, same
+// reasoning as the pre-existing graduation_year handling below.
+function toNullableInt(value) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : null;
+}
 
 $("profileSave").onclick = async () => {
   const isStudent = $("pStatus").value === "student";
@@ -1706,6 +1724,16 @@ $("profileSave").onclick = async () => {
     status: $("pStatus").value,
     school: isStudent ? ($("pSchool").value.trim() || null) : null,
     graduation_year: isStudent && Number.isFinite(gradRaw) ? gradRaw : null,
+    is_military: $("pMilitary").checked,
+    is_first_responder_healthcare: $("pFirstResponder").checked,
+    birth_year: toNullableInt($("pBirthYear").value),
+    employer: $("pEmployer").value.trim() || null,
+    occupation: $("pOccupation").value.trim() || null,
+    housing_status: $("pHousing").value || null,
+    employment_status: $("pEmployment").value || null,
+    household_size: toNullableInt($("pHouseholdSize").value),
+    dependents: toNullableInt($("pDependents").value),
+    financial_goals: $("pGoals").value.trim() || null,
     notes: $("pNotes").value.trim() || null,
   };
   $("profileSave").disabled = true;
@@ -1714,6 +1742,6 @@ $("profileSave").onclick = async () => {
   if (error) return toast(error.message);
   profile = row;
   $("profileModal").classList.add("hidden");
-  renderDeals(); // eligibility may have changed (e.g. now a student)
+  renderDeals(); // eligibility may have changed (e.g. now a student, or military)
   toast("Profile saved");
 };

@@ -10,8 +10,20 @@ import { monthlyAmount, totalMonthly } from "./subscriptions.js";
 
 const MAX_TRANSACTIONS = 150;
 
+// Only the fields actually useful for reasoning about spending/saving
+// advice - deal-eligibility flags (military, employer, ...) live in
+// discounts.js instead, since they answer a different question ("what
+// discount am I eligible for") than this one ("should I pay down debt or
+// save?").
+function profileContext(profile) {
+  if (!profile) return null;
+  const { employment_status, housing_status, household_size, dependents, financial_goals } = profile;
+  if (!employment_status && !housing_status && !household_size && !dependents && !financial_goals) return null;
+  return { employment_status, housing_status, household_size, dependents, financial_goals };
+}
+
 /** Build the context object sent to Gemma for a spending question. */
-export function buildQaContext(expenses, subscriptions, months = 6) {
+export function buildQaContext(expenses, subscriptions, months = 6, profile = null) {
   const recentMonths = lastMonths(months);
   const since = recentMonths[0] + "-01";
   const inRange = expenses.filter((e) => (e.occurred_at || "") >= since);
@@ -48,5 +60,6 @@ export function buildQaContext(expenses, subscriptions, months = 6) {
     subscriptions_monthly_total: totalMonthly(subscriptions),
     transactions,
     transactions_truncated: inRange.length > MAX_TRANSACTIONS,
+    profile: profileContext(profile),
   };
 }

@@ -14,12 +14,30 @@ export function catalogMonthly(entry) {
   return entry.plan_type === "annual" ? p / 12 : p;
 }
 
+// Approximate - real "senior discount" ages vary a lot by provider (50 for
+// AARP-linked ones, 55-65 elsewhere). No catalog data uses this plan_type
+// yet; tune this if/when real seeded entries need a specific threshold.
+const SENIOR_AGE = 62;
+
+function age(profile) {
+  return profile?.birth_year ? new Date().getFullYear() - profile.birth_year : null;
+}
+
 /** Is the user eligible for a catalog plan given their profile? */
 export function isEligible(entry, profile) {
   const status = profile?.status;
   switch (entry.plan_type) {
     case "student":
       return status === "student";      // needs verified student status
+    case "military":
+      return !!profile?.is_military;
+    case "first_responder":
+    case "healthcare":
+      return !!profile?.is_first_responder_healthcare;
+    case "senior": {
+      const a = age(profile);
+      return a !== null && a >= SENIOR_AGE;
+    }
     case "individual":
     case "annual":
     case "family":

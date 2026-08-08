@@ -557,20 +557,29 @@ async function loadDebts() {
   // orphan the account (linked_liability_id -> null on delete, per schema),
   // recreating the exact "click does nothing" bug fixed for debit/checking.
   // So it gets no delete affordance; removing it means deleting the account.
+  // Split into the Liabilities card's two sections: a credit account's own
+  // liability (Pay only) vs. a standalone Loan/Mortgage/Other with no
+  // linked account (Pay, +, and delete - the only kind added manually now).
   const linkedDebtIds = new Set(accounts.map((a) => a.linked_liability_id).filter(Boolean));
-  $("debtsList").innerHTML = debts.length
-    ? debts.map((d) => `
-      <div class="exp">
-        <div>
-          <div class="meta">${DEBT_TYPE_LABEL[d.type] || cap(d.type)}</div>${d.name}
-          ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
-        </div>
-        <span class="amt">
-          ${linkedDebtIds.has(d.id) ? "" : `<button class="secondary" data-add-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">+</button>`}
-          <button class="secondary" data-pay-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:8px">Pay</button>
-          ${fmt(d.balance)}${linkedDebtIds.has(d.id) ? "" : `<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>`}
-        </span>
-      </div>`).join("")
+  const rowHtml = (d) => `
+    <div class="exp">
+      <div>
+        <div class="meta">${DEBT_TYPE_LABEL[d.type] || cap(d.type)}</div>${d.name}
+        ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
+      </div>
+      <span class="amt">
+        ${linkedDebtIds.has(d.id) ? "" : `<button class="secondary" data-add-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">+</button>`}
+        <button class="secondary" data-pay-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:8px">Pay</button>
+        ${fmt(d.balance)}${linkedDebtIds.has(d.id) ? "" : `<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>`}
+      </span>
+    </div>`;
+  const creditDebts = debts.filter((d) => linkedDebtIds.has(d.id));
+  const otherDebts = debts.filter((d) => !linkedDebtIds.has(d.id));
+  $("creditDebtsList").innerHTML = creditDebts.length
+    ? creditDebts.map(rowHtml).join("")
+    : `<p class="muted" style="font-size:13px">No credit accounts yet.</p>`;
+  $("debtsList").innerHTML = otherDebts.length
+    ? otherDebts.map(rowHtml).join("")
     : `<p class="muted" style="font-size:13px">No other liabilities.</p>`;
   document.querySelectorAll("[data-del-debt]").forEach((el) => {
     el.onclick = async (ev) => {
@@ -697,51 +706,25 @@ $("payConfirmBtn").onclick = async () => {
 
 // ---- NET WORTH (Log page) ----------------------------------------------
 // Recomputed from already-loaded state - cheap, no extra queries. Call
-// after anything that changes assets, debts, subscriptions, or expenses.
+// after anything that changes assets, debts, or expenses.
 function renderNetWorth() {
-  const ym = monthKey();
-  const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
-  const monthExpenseTotal = monthRows.reduce((s, r) => s + Number(r.amount), 0);
-
-  const nw = computeNetWorth(assets, debts, subscriptions, monthExpenseTotal);
+  const nw = computeNetWorth(assets, debts);
 
   $("netWorthTotal").textContent = fmt(nw.netWorth);
   $("assetsTotal").textContent = fmt(nw.assetsTotal);
-  // Total (debtsTotal, a balance - feeds net worth) and Monthly (this
-  // month's activity - subscriptions + actual expenses, informational
-  // only) are two different lenses on the same underlying obligations,
-  // not a split of one number into two exclusive parts - a credit
-  // purchase this month is deliberately in both: once as this month's
-  // activity, once as part of the running balance in Total. See
-  // computeNetWorth's comment for why Total itself stays debtsTotal alone.
   $("liabilitiesTotal").textContent = fmt(nw.liabilitiesTotal);
-  $("liabilitiesMonthly").textContent = fmt(nw.subsTotal + nw.expensesTotal);
 
-  const creditTotal = monthRows.filter((r) => r.payment_type === "credit").reduce((s, r) => s + Number(r.amount), 0);
-  const debitTotal = monthRows.filter((r) => r.payment_type === "debit").reduce((s, r) => s + Number(r.amount), 0);
-  const savingsTotal = monthRows.filter((r) => r.payment_type === "savings").reduce((s, r) => s + Number(r.amount), 0);
-  const otherTotal = Math.round((monthExpenseTotal - creditTotal - debitTotal - savingsTotal) * 100) / 100; // cash + unspecified
-  const expenseRow = (label, value) => `
-    <div class="exp" style="cursor:default">
-      <div>${label}</div>
-      <span class="amt">${fmt(value)}</span>
-    </div>`;
-  $("expensesLiabList").innerHTML =
-    expenseRow("Total", monthExpenseTotal) +
-    expenseRow("Credit", creditTotal) +
-    expenseRow("Debit", debitTotal) +
-    (savingsTotal > 0 ? expenseRow("Savings", savingsTotal) : "") +
-    (otherTotal > 0 ? expenseRow("Cash / other", otherTotal) : "");
-
-  const activeSubs = subscriptions.filter((s) => s.is_active);
-  $("subsLiabList").innerHTML = activeSubs.length
-    ? activeSubs.map((s) => `
-      <div class="exp" style="cursor:pointer">
-        <div>${s.name}</div>
-        <span class="amt">${fmt(monthlyAmount(s))}/mo</span>
-      </div>`).join("")
-    : `<p class="muted" style="font-size:13px">No active subscriptions. Tap to add →</p>`;
-  $("subsLiabList").onclick = () => $("navSubs").click();
+  // Monthly liabilities is just this month's credit charges - a slice of
+  // Total, not a separate pool (Total already includes every credit
+  // charge ever made, this month's included). Debit/cash spending already
+  // reduces an asset directly (applyAssetDelta), so it's never counted
+  // here; subscriptions are a recurring cost, not debt, so they don't
+  // belong here either - see the Reports page for both of those instead.
+  const ym = monthKey();
+  const creditTotal = allExpenses
+    .filter((r) => (r.occurred_at || "").startsWith(ym) && r.payment_type === "credit")
+    .reduce((s, r) => s + Number(r.amount), 0);
+  $("liabilitiesMonthly").textContent = fmt(creditTotal);
 }
 
 // ---- QUICK ADD -------------------------------------------------------------
@@ -849,6 +832,26 @@ $("saveBtn").onclick = async () => {
 };
 
 // ---- EXPENSE LIST ----------------------------------------------------------
+// Shared row template + click-to-edit wiring for any expense list - the Log
+// page's Recent Expenses (last 50, any month) and the Reports page's
+// per-month expense log both use this, scoped to their own container so
+// the two lists (each with their own `rows` array/index) never cross-wire.
+function renderExpenseList(containerId, rows, emptyMsg) {
+  const el = $(containerId);
+  if (!rows.length) { el.innerHTML = `<p class="muted">${emptyMsg}</p>`; return; }
+  el.innerHTML = rows.map((r, i) => `
+    <div class="exp" data-idx="${i}">
+      <div>
+        <div>${r.description || r.merchant || "(no description)"}</div>
+        <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + r.payment_type : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
+      </div>
+      <span class="amt">${fmt(r.amount)}</span>
+    </div>`).join("");
+  el.querySelectorAll(".exp").forEach((rowEl) => {
+    rowEl.onclick = () => openEdit(rows[Number(rowEl.dataset.idx)]);
+  });
+}
+
 async function loadExpenses() {
   // Pull ~12 months so Reports can aggregate without a second round-trip.
   const since = lastMonths(12)[0] + "-01";
@@ -864,19 +867,7 @@ async function loadExpenses() {
   $("monthCount").textContent = monthRows.length;
   renderNetWorth();
 
-  const rows = allExpenses.slice(0, 50);
-  if (!rows.length) { $("expList").innerHTML = `<p class="muted">No expenses yet - add one above.</p>`; return; }
-  $("expList").innerHTML = rows.map((r, i) => `
-    <div class="exp" data-idx="${i}">
-      <div>
-        <div>${r.description || r.merchant || "(no description)"}</div>
-        <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + r.payment_type : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
-      </div>
-      <span class="amt">${fmt(r.amount)}</span>
-    </div>`).join("");
-  document.querySelectorAll(".exp").forEach((el) => {
-    el.onclick = () => openEdit(rows[Number(el.dataset.idx)]);
-  });
+  renderExpenseList("expList", allExpenses.slice(0, 50), "No expenses yet - add one above.");
 }
 
 // ---- EDIT MODAL + LEARNING LOOP -------------------------------------------
@@ -1023,6 +1014,9 @@ async function renderReports() {
 
   const empty = total === 0;
   $("rptEmpty").classList.toggle("hidden", !empty);
+
+  const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  renderExpenseList("rptExpList", monthRows, "No expenses this month.");
 
   renderBreakdownBar($("catChart"), byCat);
   renderBreakdownBar($("acctChart"), byAcct);

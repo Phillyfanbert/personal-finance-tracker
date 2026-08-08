@@ -1,11 +1,13 @@
 // ============================================================================
 // Net worth overview (Log page). Pure, unit-testable.
-// "Liabilities" here is the broader, practical sense the user asked for:
-// subscriptions (monthly-equivalent) + this month's expenses + tracked debts
-// (the `liabilities` table) - not just textbook debt.
+// "Liabilities" here means tracked debt (the `liabilities` table) only -
+// what you actually owe right now. Subscriptions (a recurring cost, not
+// debt) and general expense totals (debit/cash spending already reduces
+// an asset directly via applyAssetDelta in app.js, so it's never a
+// liability) don't belong in this module - they're display concerns
+// handled in app.js's renderNetWorth, not part of the net-worth balance
+// itself.
 // ============================================================================
-import { totalMonthly } from "./subscriptions.js";
-
 const r2 = (n) => Math.round(n * 100) / 100;
 
 /** Sum of all asset values. */
@@ -20,46 +22,16 @@ export function totalDebts(debts) {
 
 /**
  * Full net-worth breakdown for the Log page.
- *
- * liabilitiesTotal ("Total liabilities") is debtsTotal alone - a balance,
- * what you actually owe right now. It used to also fold in subsTotal
- * (subscriptions' monthly-equivalent cost), but summing a balance with a
- * recurring rate produced a number that was arithmetically correct yet
- * conceptually confusing (two different kinds of quantity added together).
- * subsTotal is now surfaced separately as "Monthly liabilities" - it's
- * informational (what recurs every month), not a balance, so it's never
- * subtracted from net worth.
- *
- * "Expenses (this month)" is deliberately NOT part of liabilitiesTotal
- * either: debit/cash expenses already reduce their linked asset's value
- * (see applyAssetDelta in app.js), so counting them again here would
- * double them against net worth. Credit expenses accumulate onto a linked
- * liability's running balance instead (applyLiabilityDelta) - that
- * balance, in debtsTotal, is the real "what you owe" figure, correct
- * regardless of how irregularly a card gets paid off. expensesTotal is
- * still returned for the informational Credit/Debit/Cash breakdown
- * display (and, combined with subsTotal in app.js's renderNetWorth, the
- * "Monthly liabilities" figure) - it just never feeds net worth itself.
- * Total and Monthly are two different lenses on the same activity, not
- * a split of one number into exclusive parts - a credit purchase this
- * month deliberately shows up in both, once as this month's activity and
- * once as part of the running balance in Total.
  * @param {object[]} assets
  * @param {object[]} debts - rows from the `liabilities` table
- * @param {object[]} subscriptions
- * @param {number} monthExpenseTotal - current month's expense total (display only)
  */
-export function computeNetWorth(assets, debts, subscriptions, monthExpenseTotal) {
+export function computeNetWorth(assets, debts) {
   const assetsTotal = totalAssets(assets);
-  const subsTotal = totalMonthly(subscriptions);
   const debtsTotal = totalDebts(debts);
-  const expensesTotal = r2(Number(monthExpenseTotal || 0));
   const liabilitiesTotal = debtsTotal;
 
   return {
     assetsTotal,
-    subsTotal,
-    expensesTotal,
     debtsTotal,
     liabilitiesTotal,
     netWorth: r2(assetsTotal - liabilitiesTotal),

@@ -54,6 +54,7 @@ let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let assets = [];      // net-worth assets (Log page)
 let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (Log page)
+let accountActivity = []; // non-expense money movements (asset adjust, liability pay) - Recent Transactions
 let editing = null;   // expense row currently in the edit modal
 let editingSub = null; // subscription row currently in the sub form
 let userId = null;    // signed-in user's uuid
@@ -109,7 +110,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssets(), loadDebts()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssets(), loadDebts(), loadAccountActivity()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
   await autoLogDueSubscriptions();
 }
@@ -452,6 +453,34 @@ async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
   await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
 }
 
+// ---- ACCOUNT ACTIVITY (non-expense money movements) ---------------------
+// Expenses already show up in Recent Transactions since they're rows in
+// `expenses`. Everything else that moves money around - a manual asset
+// balance adjustment, paying down a liability - has no row anywhere, so it
+// never appeared there. This is a separate, append-only log just for that,
+// merged with `expenses` client-side for display (see recentTransactions
+// below); the Reports "Monthly Expense Log" deliberately reads `expenses`
+// only and must stay that way. `amount` is always stored positive - the
+// description says what happened, no sign convention to get wrong on merge.
+const ACTIVITY_LABEL = { asset_adjust: "Balance update", liability_payment: "Debt payment" };
+
+async function loadAccountActivity() {
+  const since = lastMonths(12)[0] + "-01";
+  const { data } = await sb.from("account_activity").select("*")
+    .gte("occurred_at", since)
+    .order("occurred_at", { ascending: false }).order("created_at", { ascending: false });
+  accountActivity = data || [];
+}
+
+async function logActivity(kind, description, amount, occurred_at) {
+  const rounded = Math.abs(Math.round(Number(amount) * 100) / 100);
+  if (!rounded) return; // no actual change (e.g. "set" to the same value) - nothing to log
+  const { error } = await sb.from("account_activity").insert({
+    kind, description, amount: rounded, occurred_at: occurred_at || new Date().toISOString().slice(0, 10),
+  });
+  if (!error) await loadAccountActivity();
+}
+
 // ---- ADJUST AN ACCOUNT'S LINKED ASSET -----------------------------------
 // Tapping any account circle with a linked asset opens this - every type
 // (Checking, Cash) gets both a direct "set the full balance" field (look
@@ -499,7 +528,8 @@ $("adjustAddBtn").onclick = async () => {
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) return toast(error.message);
   $("adjustAmount").value = "";
-  await loadAssets(); refreshAdjustDisplay(); toast("Added");
+  await logActivity("asset_adjust", `Added ${fmt(amount)} to ${asset.name}`, amount);
+  await loadAssets(); refreshAdjustDisplay(); renderRecentTransactions(); toast("Added");
 };
 
 $("adjustSubtractBtn").onclick = async () => {
@@ -512,7 +542,8 @@ $("adjustSubtractBtn").onclick = async () => {
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) return toast(error.message);
   $("adjustAmount").value = "";
-  await loadAssets(); refreshAdjustDisplay(); toast("Subtracted");
+  await logActivity("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, amount);
+  await loadAssets(); refreshAdjustDisplay(); renderRecentTransactions(); toast("Subtracted");
 };
 
 $("adjustSetBtn").onclick = async () => {
@@ -521,9 +552,12 @@ $("adjustSetBtn").onclick = async () => {
   if (newValue < 0) return toast("Balance can't go negative");
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
-  const { error } = await sb.from("assets").update({ value: Math.round(newValue * 100) / 100 }).eq("id", asset.id);
+  const rounded = Math.round(newValue * 100) / 100;
+  const oldValue = Number(asset.value);
+  const { error } = await sb.from("assets").update({ value: rounded }).eq("id", asset.id);
   if (error) return toast(error.message);
-  await loadAssets(); refreshAdjustDisplay(); toast("Balance updated");
+  await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, rounded - oldValue);
+  await loadAssets(); refreshAdjustDisplay(); renderRecentTransactions(); toast("Balance updated");
 };
 
 // ---- LIABILITIES (tracked debts) ---------------------------------------
@@ -698,8 +732,9 @@ $("payConfirmBtn").onclick = async () => {
   const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
   if (debtErr) return toast(debtErr.message);
 
+  await logActivity("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount);
   $("payAmount").value = "";
-  await loadAssets(); await loadDebts();
+  await loadAssets(); await loadDebts(); renderRecentTransactions();
   $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
   toast("Payment recorded");
 };
@@ -832,14 +867,25 @@ $("saveBtn").onclick = async () => {
 };
 
 // ---- EXPENSE LIST ----------------------------------------------------------
-// Shared row template + click-to-edit wiring for any expense list - the Log
-// page's Recent Expenses (last 50, any month) and the Reports page's
-// per-month expense log both use this, scoped to their own container so
-// the two lists (each with their own `rows` array/index) never cross-wire.
+// Shared row template + click-to-edit wiring for any expense/transaction
+// list - the Log page's Recent Transactions (expenses + account_activity
+// merged, see recentTransactions below) and the Reports page's per-month
+// expense log (expenses only) both use this, scoped to their own container
+// so the two lists (each with their own `rows` array/index) never cross-wire.
+// A row from `account_activity` carries a `kind` field expense rows never
+// have (no such column on `expenses`) - that's what tells the two apart
+// here, rather than a separate flag threaded through every caller.
 function renderExpenseList(containerId, rows, emptyMsg) {
   const el = $(containerId);
   if (!rows.length) { el.innerHTML = `<p class="muted">${emptyMsg}</p>`; return; }
-  el.innerHTML = rows.map((r, i) => `
+  el.innerHTML = rows.map((r, i) => r.kind ? `
+    <div class="exp" data-idx="${i}" style="cursor:default">
+      <div>
+        <div>${r.description}</div>
+        <div class="meta">${r.occurred_at} · ${ACTIVITY_LABEL[r.kind] || "Account activity"}</div>
+      </div>
+      <span class="amt">${fmt(r.amount)}</span>
+    </div>` : `
     <div class="exp" data-idx="${i}">
       <div>
         <div>${r.description || r.merchant || "(no description)"}</div>
@@ -848,8 +894,22 @@ function renderExpenseList(containerId, rows, emptyMsg) {
       <span class="amt">${fmt(r.amount)}</span>
     </div>`).join("");
   el.querySelectorAll(".exp").forEach((rowEl) => {
-    rowEl.onclick = () => openEdit(rows[Number(rowEl.dataset.idx)]);
+    const row = rows[Number(rowEl.dataset.idx)];
+    if (row.kind) return; // account activity - informational only, nothing to edit
+    rowEl.onclick = () => openEdit(row);
   });
+}
+
+// Merges expenses with account_activity for the Log page's Recent
+// Transactions list - Reports' Monthly Expense Log intentionally does NOT
+// use this, it renders `allExpenses` directly (expenses only).
+function recentTransactions(limit = 50) {
+  return [...allExpenses, ...accountActivity]
+    .sort((a, b) => (b.occurred_at || "").localeCompare(a.occurred_at || "") || (b.created_at || "").localeCompare(a.created_at || ""))
+    .slice(0, limit);
+}
+function renderRecentTransactions() {
+  renderExpenseList("expList", recentTransactions(50), "No transactions yet - add an expense above.");
 }
 
 async function loadExpenses() {
@@ -867,7 +927,7 @@ async function loadExpenses() {
   $("monthCount").textContent = monthRows.length;
   renderNetWorth();
 
-  renderExpenseList("expList", allExpenses.slice(0, 50), "No expenses yet - add one above.");
+  renderRecentTransactions();
 }
 
 // ---- EDIT MODAL + LEARNING LOOP -------------------------------------------

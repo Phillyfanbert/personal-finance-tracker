@@ -671,9 +671,14 @@ function findLinkedAsset(accountId) {
   return assets.find((a) => a.id === acct.linked_asset_id) || null;
 }
 
-function refreshAdjustDisplay() {
-  const asset = assets.find((a) => a.id === adjustingAssetId);
-  if (asset) $("adjustCurrentValue").textContent = fmt(asset.value);
+// Closes the panel once a change has actually gone through - a confirmed
+// balance change is done, not something to keep tweaking in place, and
+// closing it is itself the confirmation to the user that it took effect
+// (on top of the toast) rather than leaving the form sitting open as if
+// nothing happened.
+function closeAssetAdjust() {
+  $("assetAdjustForm").classList.add("hidden");
+  adjustingAssetId = null;
 }
 
 function openAssetAdjust(accountId) {
@@ -704,7 +709,7 @@ $("adjustAddBtn").onclick = async () => {
   if (error) return toast(error.message);
   $("adjustAmount").value = "";
   await logActivity("asset_adjust", `Added ${fmt(amount)} to ${asset.name}`, amount);
-  await loadAssets(); refreshAdjustDisplay(); renderRecentTransactions(); toast("Added");
+  await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Added");
 };
 
 $("adjustSubtractBtn").onclick = async () => {
@@ -718,7 +723,7 @@ $("adjustSubtractBtn").onclick = async () => {
   if (error) return toast(error.message);
   $("adjustAmount").value = "";
   await logActivity("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, amount);
-  await loadAssets(); refreshAdjustDisplay(); renderRecentTransactions(); toast("Subtracted");
+  await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Subtracted");
 };
 
 $("adjustSetBtn").onclick = async () => {
@@ -732,7 +737,7 @@ $("adjustSetBtn").onclick = async () => {
   const { error } = await sb.from("assets").update({ value: rounded }).eq("id", asset.id);
   if (error) return toast(error.message);
   await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, rounded - oldValue);
-  await loadAssets(); refreshAdjustDisplay(); renderRecentTransactions(); toast("Balance updated");
+  await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Balance updated");
 };
 
 // ---- LIABILITIES (tracked debts) ---------------------------------------
@@ -879,7 +884,11 @@ function openDebtBalanceForm(debtId, tab) {
 }
 $("debtTabOwed").onclick = () => setDebtTab("owed");
 $("debtTabPaying").onclick = () => setDebtTab("paying");
-$("debtBalanceClose").onclick = () => { $("debtBalanceForm").classList.add("hidden"); activeDebtId = null; };
+function closeDebtBalanceForm() {
+  $("debtBalanceForm").classList.add("hidden");
+  activeDebtId = null;
+}
+$("debtBalanceClose").onclick = closeDebtBalanceForm;
 
 // Directly overwrites the balance - for fixing a wrong number (typo, a
 // charge that was missed or double-logged), not for a new charge (that's
@@ -894,7 +903,7 @@ $("debtOwedSetConfirm").onclick = async () => {
   const { error } = await sb.from("liabilities").update({ balance: Math.round(newBalance * 100) / 100 }).eq("id", debt.id);
   if (error) return toast(error.message);
   await loadDebts();
-  $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
+  closeDebtBalanceForm();
   toast("Amount owed updated");
 };
 
@@ -908,7 +917,7 @@ $("debtOwedConfirm").onclick = async () => {
   if (error) return toast(error.message);
   $("debtOwedAmount").value = "";
   await loadDebts();
-  $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
+  closeDebtBalanceForm();
   toast("Added to balance owed");
 };
 
@@ -933,7 +942,7 @@ $("payConfirmBtn").onclick = async () => {
   await logActivity("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount);
   $("payAmount").value = "";
   await loadAssets(); await loadDebts(); renderRecentTransactions();
-  $("debtBalanceCurrent").textContent = fmt(debts.find((d) => d.id === activeDebtId)?.balance ?? 0);
+  closeDebtBalanceForm();
   toast("Payment recorded");
 };
 

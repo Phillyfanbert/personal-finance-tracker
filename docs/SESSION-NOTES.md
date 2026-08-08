@@ -329,3 +329,92 @@ was specifically about that flow) - other destructive actions (asset/
 liability/subscription/expense delete) still use `window.confirm()` and
 were deliberately left alone rather than churning unrelated code; swapping
 them to `confirmModal()` later is a one-line change each if wanted.
+
+## Session update - 2026-08-08 (part 4) - every account type from the research doc
+
+Big one. The user explicitly chose (via clarifying question, not assumed)
+to implement literally every account type cataloged in
+`docs/bank-account-types-research.md` as a selectable type in the Accounts
+card, not just the payment-method subset - so things like a Roth IRA, HSA,
+or cryptocurrency exchange are now addable there too, even though you'd
+never select them to pay for a burger. `supabase/17_expand_account_types.sql`
+(applied live) expanded `accounts.type`, `assets.type`, `liabilities.type`,
+and `expenses.payment_type` to ~42 values. Deliberately excluded: business
+accounts (out of scope per `CLAUDE.md`'s personal-finance framing) and
+escrow accounts (a sub-ledger belonging to a mortgage servicer, not
+something an individual opens or selects).
+
+**Everything now keys off one config, not per-type special-casing.**
+`ACCOUNT_TYPES` in `app.js` is the single source of truth: `{ label,
+category, kind: 'asset'|'liability', linkType }` per type. `AUTO_ASSET_TYPE`
+/ `AUTO_LIABILITY_TYPE` / `ACCOUNT_TYPE_NAME` / `LIABILITY_ACCOUNT_TYPES` /
+`DEBT_TYPE_LABEL` / `ASSET_TYPE_LABEL` are all *derived* from it now, not
+hand-maintained maps - adding a 43rd type later means adding one line to
+`ACCOUNT_TYPES`, not touching five functions. This is also why
+`assetDeltaError`/`applyAssetDelta`/`applyLiabilityDelta` no longer
+special-case the literal string `'credit'` - they now gate purely on
+whether the account has a `linked_asset_id` vs `linked_liability_id`,
+which is what actually makes a HELOC or a 401(k) work correctly here
+without bespoke code, the same way a credit card always has.
+
+**The 3-button account-type toggle became a categorized `<select>`.**
+Three always-visible buttons (the original design, chosen specifically
+so a selection couldn't be glanced past) don't fit 42 options. The
+regression that toggle design was solving for is mitigated instead with a
+bold, always-updating "Adding: <type>" summary line next to the dropdown
+- see `populateAcctTypeSelect`/`setAcctType` (app.js). If this still feels
+too easy to fat-finger in practice, revisit before adding more types on
+top of it.
+
+**Bank-name validation (`isKnownBank`, the ~3,750-name FDIC list) is now
+per-type, not per-category.** Original plan was "Deposit/Credit/Loans get
+strict validation, Retirement/Specialty don't," but that broke on BNPL
+specifically (Affirm, Klarna aren't FDIC banks, but BNPL was filed under
+"Credit accounts") - caught by actually testing "Affirm" against the form
+before shipping, not just reading the code. Fixed by making
+`BANK_VALIDATED_TYPES` an explicit set of the ~11 types that are
+realistically always bank/credit-union issued (Checking, Savings, Money
+Market, Cash Management, CD, Credit Card, Charge Card, Secured Credit
+Card, Personal Line of Credit, HELOC, Overdraft Line), with every loan
+type, BNPL, and all Retirement/Specialty types getting a plain non-empty
+"Institution name" field instead. If you add a new type later, decide
+which bucket it goes in explicitly - don't assume category membership
+implies bank-issued-ness, that was the exact bug here.
+
+**Every liability payment now requires an actual linked account**, per
+explicit user confirmation on this specific question. The Pay-a-liability
+form's "From account" dropdown (`payFromAsset`, renamed from "From asset")
+now only lists assets with a `linked_asset_id` pointing at them
+(`loadAssets()`) - a standalone Investment/Property/retirement asset with
+no account behind it can no longer be selected there. Expense logging
+already required an account before this (quick-add and edit both) and is
+unchanged. Standalone liability "Owed" corrections
+(`debtOwedSetConfirm`/`debtOwedConfirm`) are deliberately NOT required to
+link an account - unchanged from before, since that's a debt correction,
+not a transaction moving money through an account (same reasoning as the
+account_activity work above).
+
+**The edit modal's separate "Payment" field is gone.** It was a second,
+independently-editable field that could disagree with the selected
+Account (guarded by the now-deleted `isCreditAccount()` check) - with 42
+types instead of 3, that mismatch surface only got worse. `payment_type`
+is now derived from the selected account directly in the edit modal too,
+exactly like quick-add already did. This removes a whole class of
+possible bugs, not just the credit-specific one it used to guard against.
+
+**Standalone Assets/Liabilities dropdowns also grew**, independent of the
+Accounts card: `assetType` gained Retirement & investment and most of
+Specialty (populateAssetTypeSelect), `debtType` gained the specific loan
+types (populateDebtTypeSelect) - both because these are more realistically
+tracked as a plain value with no spendable "account" behind them (you
+don't tag a Starbucks purchase as "paid via my 401(k)"). Prepaid/payroll
+cards, digital wallet, and second-chance checking were deliberately left
+out of the standalone Assets list - they're just Checking variants, only
+useful as a spendable account.
+
+**Not done / explicitly out of scope this pass:** HELOC draw-vs-repayment
+period modeling, CD maturity dates, any live-priced value source (crypto,
+brokerage, retirement) - all of docs/bank-account-types-research.md's
+"open questions" section 12 is still open. This pass is the type
+taxonomy and the linking/delta plumbing, not the deeper behavior of any
+one exotic type.

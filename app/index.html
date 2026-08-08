@@ -180,32 +180,35 @@
         <div id="acctForm" class="hidden" style="margin-top:10px">
           <!-- No separate "account name" field - it was always just the
                type in practice (Checking, Savings, Credit), so the name is
-               derived from Account type below instead of typed twice. -->
-          <label>Bank</label>
+               derived from Account type below instead of typed twice.
+               ~40 types across 5 categories no longer fit as always-visible
+               toggle buttons (the original design, chosen specifically so a
+               selection couldn't be glanced past - see app.js's
+               populateAcctTypeSelect comment for the history and how the
+               regression is mitigated here instead: a bold "Adding: <type>"
+               summary line that updates with every change). -->
+          <label>Account type</label>
+          <select id="acctType" style="margin-bottom:4px"></select>
+          <p class="muted" style="font-size:13px;margin:4px 0 10px"><strong id="acctTypeSummary">Adding: Checking</strong></p>
+          <label id="acctBankLabel">Bank</label>
           <!-- <datalist>, not a custom dropdown - it's a native, built-in
                search-as-you-type combobox (typing filters the list to
                matches) while still taking free text for a bank not in it,
                which a plain <select> can't do. Options are populated in
                loadAccounts() (app.js): common banks plus every bank_name
                already used on this account, so a previously-typed bank is
-               just as easy to re-select as a seeded one. -->
+               just as easy to re-select as a seeded one. For a non-bank
+               institution (brokerage, crypto exchange, insurer, plan
+               administrator) this still accepts free text, just without
+               the strict FDIC-bank-name check - see BANK_VALIDATED_
+               CATEGORIES in app.js. -->
           <input id="acctBank" placeholder="Start typing a bank..." list="bankSuggestions" autocomplete="off" />
           <datalist id="bankSuggestions"></datalist>
-          <!-- Toggle buttons, not a <select> - a dropdown's current value is
-               easy to glance past (a "Credit"-named account got silently
-               saved as Checking because the default was never changed);
-               three always-visible buttons make the active one unmissable. -->
-          <label>Account type</label>
-          <div class="row" id="acctTypeToggle" style="margin-bottom:8px">
-            <button type="button" data-acct-type="debit" style="padding:10px 0;font-size:13px">Checking</button>
-            <button type="button" class="secondary" data-acct-type="savings" style="padding:10px 0;font-size:13px">Savings</button>
-            <button type="button" class="secondary" data-acct-type="credit" style="padding:10px 0;font-size:13px">Credit</button>
-          </div>
           <div id="acctAssetLink">
-            <p class="muted" style="font-size:12px;margin:8px 0 0">A new $0 bank balance is created automatically for this account - edit it below once saved.</p>
+            <p class="muted" style="font-size:12px;margin:8px 0 0">A new $0 balance is created automatically for this account - edit it below once saved.</p>
           </div>
           <div id="acctLiabilityLink" class="hidden">
-            <p class="muted" style="font-size:12px;margin:8px 0 0">Credit charges tagged with this account add to a liability's balance instead of an asset - a new $0 liability is created automatically to track it.</p>
+            <p class="muted" style="font-size:12px;margin:8px 0 0">Charges tagged with this account add to a liability's balance instead of an asset - a new $0 liability is created automatically to track it.</p>
           </div>
           <div style="height:8px"></div>
           <button id="saveAcctBtn">Save account</button>
@@ -251,9 +254,18 @@
         <div id="assetForm" class="hidden" style="margin-top:10px">
           <div class="row">
             <input id="assetName" placeholder="Vanguard Brokerage" />
+            <!-- The base 4 are standalone-only, no account-type equivalent.
+                 Retirement/investment and specialty groups are appended in
+                 JS (populateAssetTypeSelect, app.js) from the same
+                 ACCOUNT_TYPES config the Accounts card uses, minus the
+                 handful (prepaid/payroll cards, digital wallet, second-
+                 chance checking) that only make sense as a spendable
+                 account, not a standalone value. -->
             <select id="assetType">
-              <option value="investment">Investment</option><option value="property">Property</option>
-              <option value="vehicle">Vehicle</option><option value="other">Other</option>
+              <optgroup label="General">
+                <option value="investment">Investment</option><option value="property">Property</option>
+                <option value="vehicle">Vehicle</option><option value="other">Other</option>
+              </optgroup>
             </select>
           </div>
           <label>Value</label>
@@ -295,6 +307,15 @@
         <div id="debtForm" class="hidden" style="margin-top:10px">
           <div class="row">
             <input id="debtName" placeholder="Chase Sapphire" />
+            <!-- 'loan'/'mortgage'/'other' are the original generic values;
+                 the specific loan types are appended in JS
+                 (populateDebtTypeSelect, app.js) from ACCOUNT_TYPES' Loans
+                 category - a standalone loan (no linked account, since you
+                 don't "spend against" a mortgage the way you do a credit
+                 card) is the more realistic way most of these are actually
+                 tracked. Credit-category types (credit card, HELOC, ...)
+                 stay Accounts-card-only, matching how 'credit' already
+                 worked before this. -->
             <select id="debtType">
               <option value="loan">Loan</option>
               <option value="mortgage">Mortgage</option><option value="other">Other</option>
@@ -482,12 +503,10 @@
   <div id="editModal" class="modal hidden">
     <div class="sheet">
       <div class="topbar"><strong>Edit expense</strong><button class="secondary" id="editClose" style="width:auto;padding:6px 12px">Close</button></div>
-      <div class="row">
-        <div><label>Amount</label><input id="eAmount" type="number" step="0.01" inputmode="decimal" /></div>
-        <div><label>Payment</label>
-          <select id="ePayment"><option value="">None</option><option>debit</option><option>credit</option><option>cash</option></select>
-        </div>
-      </div>
+      <!-- No separate Payment field - same as quick-add, payment type is
+           derived from whichever account is selected below (app.js). -->
+      <label>Amount</label>
+      <input id="eAmount" type="number" step="0.01" inputmode="decimal" />
       <label>Description / merchant</label>
       <input id="eDesc" />
       <div class="row">
@@ -538,7 +557,12 @@
         <button id="debtOwedConfirm">Add to owed</button>
       </div>
       <div id="debtPayingMode">
-        <label>From asset</label>
+        <!-- Account-linked assets only - paying a liability down is a
+             transaction and every transaction links to a specific account,
+             so a standalone asset (Investment, Property, a manually-added
+             retirement account) with no linked account can't be picked
+             here. See loadAssets() (app.js). -->
+        <label>From account</label>
         <select id="payFromAsset"></select>
         <label>Amount</label>
         <input id="payAmount" type="number" step="0.01" inputmode="decimal" />

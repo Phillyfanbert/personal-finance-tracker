@@ -166,24 +166,108 @@ async function loadRules() {
 }
 
 // ---- ACCOUNTS --------------------------------------------------------------
-// Account types that represent real money on hand get a matching Asset
-// auto-created and linked, so they count toward net worth without a manual
-// second step. 'credit' is a liability, not an asset, so it's excluded.
+// Every account type from docs/bank-account-types-research.md, as a single
+// data-driven config instead of one hardcoded map per concern - adding a
+// new type later means adding one entry here, not touching five different
+// functions. `kind` decides whether saving this type auto-creates+links a
+// row in `assets` (money you have) or `liabilities` (money you owe);
+// `linkType` is that row's own `type` value. `category` groups the account
+// type picker (see setAcctType/index.html) and decides the bank-name
+// validation strictness (see isKnownBank below) - a checking account is
+// realistically at an FDIC bank, a brokerage or crypto exchange is not.
+// Business accounts and escrow accounts are deliberately excluded - see
+// 17_expand_account_types.sql for why.
 // 'cash' is deliberately absent - there's exactly one Cash account per
 // user, auto-managed by ensureCashAccount(), never created through this
 // form, and the only type exempt from needing a bank (accounts_bank_name_
-// required, 14_account_bank_name.sql).
-// Savings gets its own asset type (not "bank") so the Assets card can tell
-// a Checking-linked balance apart from a Savings-linked one at a glance.
-const AUTO_ASSET_TYPE = { debit: "bank", savings: "savings" };
-// Credit accounts link to a Liability (tracked debt) instead of an Asset -
-// a charge should accumulate onto a running balance, not draw down
-// something you own. Auto-created the same way bank assets are.
-const AUTO_LIABILITY_TYPE = { credit: "credit_card" };
+// required, 14_account_bank_name.sql). 'other'/'checking' stay valid at
+// the database level for backward compatibility but aren't offered here.
+const ACCOUNT_TYPES = {
+  debit:                  { label: "Checking",                    category: "Deposit accounts",         kind: "asset",     linkType: "bank" },
+  savings:                { label: "Savings",                     category: "Deposit accounts",         kind: "asset",     linkType: "savings" },
+  money_market:           { label: "Money Market",                category: "Deposit accounts",         kind: "asset",     linkType: "money_market" },
+  cash_management:        { label: "Cash Management",             category: "Deposit accounts",         kind: "asset",     linkType: "cash_management" },
+  cd:                     { label: "Certificate of Deposit",      category: "Deposit accounts",         kind: "asset",     linkType: "cd" },
+
+  credit:                 { label: "Credit Card",                 category: "Credit accounts",          kind: "liability", linkType: "credit_card" },
+  charge_card:            { label: "Charge Card",                 category: "Credit accounts",          kind: "liability", linkType: "charge_card" },
+  secured_credit_card:    { label: "Secured Credit Card",         category: "Credit accounts",          kind: "liability", linkType: "secured_credit_card" },
+  store_card:             { label: "Store / Retail Card",         category: "Credit accounts",          kind: "liability", linkType: "store_card" },
+  personal_line_of_credit:{ label: "Personal Line of Credit",     category: "Credit accounts",          kind: "liability", linkType: "personal_line_of_credit" },
+  heloc:                  { label: "HELOC",                       category: "Credit accounts",          kind: "liability", linkType: "heloc" },
+  overdraft_line:         { label: "Overdraft Line of Credit",    category: "Credit accounts",          kind: "liability", linkType: "overdraft_line" },
+  bnpl:                   { label: "Buy Now, Pay Later",          category: "Credit accounts",          kind: "liability", linkType: "bnpl" },
+
+  personal_loan:          { label: "Personal Loan",               category: "Loans",                    kind: "liability", linkType: "personal_loan" },
+  auto_loan:              { label: "Auto Loan",                   category: "Loans",                    kind: "liability", linkType: "auto_loan" },
+  mortgage:               { label: "Mortgage",                    category: "Loans",                    kind: "liability", linkType: "mortgage" },
+  home_equity_loan:       { label: "Home Equity Loan",            category: "Loans",                    kind: "liability", linkType: "home_equity_loan" },
+  student_loan:           { label: "Student Loan",                category: "Loans",                    kind: "liability", linkType: "student_loan" },
+  payday_loan:            { label: "Payday Loan",                 category: "Loans",                    kind: "liability", linkType: "payday_loan" },
+  title_loan:             { label: "Title Loan",                  category: "Loans",                    kind: "liability", linkType: "title_loan" },
+
+  retirement_employer:    { label: "401(k) / 403(b) / 457",       category: "Retirement & investment",  kind: "asset",     linkType: "retirement_employer" },
+  ira:                    { label: "IRA",                         category: "Retirement & investment",  kind: "asset",     linkType: "ira" },
+  brokerage:              { label: "Brokerage",                   category: "Retirement & investment",  kind: "asset",     linkType: "brokerage" },
+  plan_529:               { label: "529 Plan",                    category: "Retirement & investment",  kind: "asset",     linkType: "plan_529" },
+  tsp:                    { label: "Thrift Savings Plan (TSP)",   category: "Retirement & investment",  kind: "asset",     linkType: "tsp" },
+  solo_401k:              { label: "Solo 401(k)",                 category: "Retirement & investment",  kind: "asset",     linkType: "solo_401k" },
+  rollover_inherited_ira: { label: "Rollover / Inherited IRA",    category: "Retirement & investment",  kind: "asset",     linkType: "rollover_inherited_ira" },
+  annuity:                { label: "Annuity",                     category: "Retirement & investment",  kind: "asset",     linkType: "annuity" },
+
+  hsa:                    { label: "HSA",                         category: "Specialty",                kind: "asset",     linkType: "hsa" },
+  fsa:                    { label: "FSA",                         category: "Specialty",                kind: "asset",     linkType: "fsa" },
+  hra:                    { label: "HRA",                         category: "Specialty",                kind: "asset",     linkType: "hra" },
+  dependent_care_fsa:     { label: "Dependent Care FSA",          category: "Specialty",                kind: "asset",     linkType: "dependent_care_fsa" },
+  coverdell_esa:          { label: "Coverdell ESA",               category: "Specialty",                kind: "asset",     linkType: "coverdell_esa" },
+  able_account:           { label: "ABLE Account",                category: "Specialty",                kind: "asset",     linkType: "able_account" },
+  prepaid_card:           { label: "Prepaid Card",                category: "Specialty",                kind: "asset",     linkType: "prepaid_card" },
+  payroll_card:           { label: "Payroll Card",                category: "Specialty",                kind: "asset",     linkType: "payroll_card" },
+  second_chance_checking: { label: "Second-Chance Checking",      category: "Specialty",                kind: "asset",     linkType: "second_chance_checking" },
+  digital_wallet:         { label: "Digital Wallet",              category: "Specialty",                kind: "asset",     linkType: "digital_wallet" },
+  treasury_direct:        { label: "Treasury Direct",             category: "Specialty",                kind: "asset",     linkType: "treasury_direct" },
+  crypto:                 { label: "Cryptocurrency",              category: "Specialty",                kind: "asset",     linkType: "crypto" },
+  multi_currency:         { label: "Multi-Currency Account",      category: "Specialty",                kind: "asset",     linkType: "multi_currency" },
+  life_insurance_cash_value: { label: "Life Insurance Cash Value",category: "Specialty",                kind: "asset",     linkType: "life_insurance_cash_value" },
+};
+const ACCOUNT_CATEGORIES = ["Deposit accounts", "Credit accounts", "Loans", "Retirement & investment", "Specialty"];
+// Per-type, not per-category - "is this realistically an FDIC/NCUA bank or
+// credit union" doesn't follow category lines cleanly. Every Deposit
+// account is bank-issued, but Credit accounts and Loans are a mix: a
+// mortgage or HELOC is bank-issued, but BNPL (Affirm, Klarna) and payday/
+// title loans are not, and even ordinary loans are routinely issued by
+// non-bank lenders (Sallie Mae for student loans, a dealership's captive
+// finance arm for auto loans). Retirement/Specialty institutions
+// (brokerages, crypto exchanges, insurers, plan administrators) are never
+// banks. Requiring one of ~3,750 real bank names anywhere on this list
+// would incorrectly reject real institution names like "Affirm" or
+// "Fidelity" - those get a plain non-empty-name check instead.
+const BANK_VALIDATED_TYPES = new Set([
+  "debit", "savings", "money_market", "cash_management", "cd",
+  "credit", "charge_card", "secured_credit_card", "personal_line_of_credit", "heloc", "overdraft_line",
+]);
+// Derived rather than hand-maintained, so ACCOUNT_TYPES above stays the
+// single source of truth - see AUTO_ASSET_TYPE/AUTO_LIABILITY_TYPE below.
+function accountTypesOfKind(kind) {
+  const out = {};
+  for (const [type, cfg] of Object.entries(ACCOUNT_TYPES)) {
+    if (cfg.kind === kind) out[type] = cfg.linkType;
+  }
+  return out;
+}
+const AUTO_ASSET_TYPE = accountTypesOfKind("asset");
+const AUTO_LIABILITY_TYPE = accountTypesOfKind("liability");
 // No free-text "account name" field - in practice it was always just the
 // type anyway (Checking, Savings, Credit), so the account's name is
-// derived from whichever type button is selected instead of typed twice.
-const ACCOUNT_TYPE_NAME = { debit: "Checking", savings: "Savings", credit: "Credit" };
+// derived from whichever type is selected instead of typed twice.
+const ACCOUNT_TYPE_NAME = Object.fromEntries(
+  Object.entries(ACCOUNT_TYPES).map(([type, cfg]) => [type, cfg.label])
+);
+// Every liability-linked account type, in one place - anywhere that used
+// to special-case the literal string 'credit' (Monthly liabilities math,
+// the "Owed" balance-line prefix) now checks this instead, so a HELOC or
+// mortgage account behaves the same way a credit card always has.
+const LIABILITY_ACCOUNT_TYPES = new Set(Object.keys(AUTO_LIABILITY_TYPE));
 // BANK_NAMES (bankNames.js) is ~3,750 real FDIC-insured banks plus a few
 // well-known credit unions/brands FDIC doesn't cover - not a hardcoded
 // seed list anymore. isKnownBank() is what actually enforces "type a real
@@ -208,21 +292,41 @@ function isKnownBank(name) {
   return BANK_NAMES.some((b) => b.toLowerCase().includes(typed));
 }
 
-let selectedAcctType = "debit";
-function setAcctType(type) {
-  selectedAcctType = type;
-  document.querySelectorAll("#acctTypeToggle [data-acct-type]").forEach((el) => {
-    el.classList.toggle("secondary", el.dataset.acctType !== type);
-  });
-  const isCredit = type === "credit";
-  $("acctAssetLink").classList.toggle("hidden", isCredit);
-  $("acctLiabilityLink").classList.toggle("hidden", !isCredit);
+// With ~40 types across 5 categories, a 3-button toggle (the original
+// design, chosen specifically so a selection couldn't be glanced past - a
+// dropdown's silent default once shipped a real "Credit-named account
+// saved as Checking" bug) doesn't fit on screen. A <select> is unavoidable
+// at this scale, so the regression is mitigated a different way instead:
+// a bold, always-visible "Adding: <type>" label next to it, updated on
+// every change, so the current selection stays impossible to miss even
+// without three physically separate buttons.
+function populateAcctTypeSelect() {
+  const sel = $("acctType");
+  sel.innerHTML = ACCOUNT_CATEGORIES.map((cat) => {
+    const opts = Object.entries(ACCOUNT_TYPES)
+      .filter(([, cfg]) => cfg.category === cat)
+      .map(([type, cfg]) => `<option value="${type}">${cfg.label}</option>`)
+      .join("");
+    return `<optgroup label="${cat}">${opts}</optgroup>`;
+  }).join("");
 }
-document.querySelectorAll("#acctTypeToggle [data-acct-type]").forEach((el) => {
-  el.onclick = () => setAcctType(el.dataset.acctType);
-});
+
+function setAcctType(type) {
+  $("acctType").value = type;
+  const cfg = ACCOUNT_TYPES[type];
+  $("acctTypeSummary").textContent = `Adding: ${cfg.label}`;
+  const isLiability = cfg.kind === "liability";
+  $("acctAssetLink").classList.toggle("hidden", isLiability);
+  $("acctLiabilityLink").classList.toggle("hidden", !isLiability);
+  $("acctBankLabel").textContent = BANK_VALIDATED_TYPES.has(type) ? "Bank" : "Institution";
+  $("acctBank").placeholder = BANK_VALIDATED_TYPES.has(type)
+    ? "Start typing a bank..."
+    : "Institution name (e.g. Fidelity, Affirm, Coinbase)";
+}
+$("acctType").onchange = () => setAcctType($("acctType").value);
 $("addAcctBtn").onclick = () => {
   $("acctForm").classList.toggle("hidden");
+  populateAcctTypeSelect();
   setAcctType("debit"); // every fresh open starts from the same visible state
 };
 
@@ -235,15 +339,18 @@ $("addAcctBtn").onclick = () => {
 // bank (a Checking and a Savings, say) still need separate balances.
 $("saveAcctBtn").onclick = async () => {
   const bank_name = $("acctBank").value.trim();
-  const type = selectedAcctType;
+  const type = $("acctType").value;
   const name = ACCOUNT_TYPE_NAME[type];
-  if (!bank_name) return toast("Bank name required");
-  if (!isKnownBank(bank_name)) return toast("Enter a real bank name, or pick one from the list.");
+  const bankLabel = BANK_VALIDATED_TYPES.has(type) ? "Bank" : "Institution";
+  if (!bank_name) return toast(`${bankLabel} name required`);
+  if (BANK_VALIDATED_TYPES.has(type) && !isKnownBank(bank_name)) {
+    return toast("Enter a real bank name, or pick one from the list.");
+  }
 
   let linked_asset_id = null;
   let linked_liability_id = null;
   let autoMsg = null;
-  if (type === "credit") {
+  if (AUTO_LIABILITY_TYPE[type]) {
     const { data: newDebt, error: debtErr } = await sb.from("liabilities")
       .insert({ name: bank_name, type: AUTO_LIABILITY_TYPE[type], balance: 0 })
       .select().single();
@@ -313,7 +420,7 @@ function renderAccountsList() {
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${bankLabel}</div>
         <div class="type">${a.name}</div>
-        ${balance != null ? `<div class="balance">${a.type === "credit" ? "Owed " : ""}${fmt(balance)}</div>` : ""}
+        ${balance != null ? `<div class="balance">${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}</div>` : ""}
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
@@ -363,7 +470,38 @@ async function loadAccounts() {
 }
 
 // ---- ASSETS ------------------------------------------------------------
-$("addAssetBtn").onclick = () => $("assetForm").classList.toggle("hidden");
+// Retirement/investment and specialty account types are almost always
+// tracked as a plain value rather than something you'd ever select to pay
+// for an expense, so they're offered here too, not just in the Accounts
+// card - giving a way to add e.g. a Roth IRA without it cluttering the
+// "how did you pay for this" picker. Excludes the handful in Specialty
+// that only make sense as a spendable account (prepaid/payroll cards,
+// digital wallet, second-chance checking - all just Checking variants).
+const STANDALONE_ONLY_ASSET_CATEGORIES = ["Retirement & investment", "Specialty"];
+const ACCOUNT_ONLY_SPECIALTY_TYPES = new Set(["prepaid_card", "payroll_card", "second_chance_checking", "digital_wallet"]);
+// cap() alone is fine for the original single-word asset types (investment,
+// property, cash, bank, savings, vehicle, other) but turns a multi-word
+// type like "retirement_employer" into "Retirement_employer" - this maps
+// every asset-kind ACCOUNT_TYPES entry's linkType back to its proper label
+// so the Assets card shows "401(k) / 403(b) / 457", not a raw enum value.
+const ASSET_TYPE_LABEL = {};
+for (const cfg of Object.values(ACCOUNT_TYPES)) {
+  if (cfg.kind === "asset") ASSET_TYPE_LABEL[cfg.linkType] = cfg.label;
+}
+const assetTypeLabel = (type) => ASSET_TYPE_LABEL[type] || cap(type);
+function populateAssetTypeSelect() {
+  const sel = $("assetType");
+  if (sel.dataset.populated) return; // static "General" group is in the HTML; only append once
+  sel.dataset.populated = "1";
+  for (const cat of STANDALONE_ONLY_ASSET_CATEGORIES) {
+    const opts = Object.entries(ACCOUNT_TYPES)
+      .filter(([type, cfg]) => cfg.category === cat && cfg.kind === "asset" && !ACCOUNT_ONLY_SPECIALTY_TYPES.has(type))
+      .map(([type, cfg]) => `<option value="${cfg.linkType}">${cfg.label}</option>`)
+      .join("");
+    sel.insertAdjacentHTML("beforeend", `<optgroup label="${cat}">${opts}</optgroup>`);
+  }
+}
+$("addAssetBtn").onclick = () => { $("assetForm").classList.toggle("hidden"); populateAssetTypeSelect(); };
 $("saveAssetBtn").onclick = async () => {
   const name = $("assetName").value.trim();
   const type = $("assetType").value;
@@ -392,11 +530,19 @@ async function loadAssets() {
   $("assetsList").innerHTML = assets.length
     ? assets.map((a) => `
       <div class="exp">
-        <div>${a.type === "cash" ? "" : `<div class="meta">${cap(a.type)}</div>`}${a.name}</div>
+        <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}</div>`}${a.name}</div>
         <span class="amt">${fmt(a.value)}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
-  $("payFromAsset").innerHTML = assets.map((a) => `<option value="${a.id}">${a.name} (${fmt(a.value)})</option>`).join("");
+  // Paying down a liability must draw from an actual linked account, not
+  // any asset value (a standalone Investment/Property/Vehicle/retirement
+  // asset with no account behind it) - every transaction links to a
+  // specific account, this form included. If that leaves nothing to pick,
+  // the Pay button below still catches it with an explicit error.
+  const payableAssets = assets.filter((a) => linkedAssetIds.has(a.id));
+  $("payFromAsset").innerHTML = payableAssets.length
+    ? payableAssets.map((a) => `<option value="${a.id}">${a.name} (${fmt(a.value)})</option>`).join("")
+    : `<option value="">No linked account available</option>`;
   document.querySelectorAll("[data-del-asset]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -419,10 +565,18 @@ async function loadAssets() {
 // corrected number. `deltas` lets a caller check multiple effects on the
 // same asset together (editSave reverses one expense and applies another
 // in the same action - they can land on the same asset or different ones).
+//
+// Which account types draw down an asset vs. accrue a liability is decided
+// purely by whether the account has a linked_asset_id or linked_liability_id
+// (never both, see saveAcctBtn), not by comparing `paymentType` against a
+// hardcoded string. This is what makes every account type in ACCOUNT_TYPES
+// work correctly here automatically, including ones added after this was
+// written - `paymentType` is still accepted for signature stability with
+// existing call sites but is no longer used for this decision.
 function assetDeltaError(deltas) {
   const netByAsset = new Map(); // assetId -> { asset, net }
-  for (const { accountId, paymentType, amount, sign } of deltas) {
-    if (paymentType === "credit" || !accountId) continue;
+  for (const { accountId, amount, sign } of deltas) {
+    if (!accountId) continue;
     const account = accounts.find((a) => a.id === accountId);
     if (!account || !account.linked_asset_id) continue;
     const asset = assets.find((a) => a.id === account.linked_asset_id);
@@ -438,14 +592,16 @@ function assetDeltaError(deltas) {
   return null;
 }
 
-// Non-credit expenses draw down the linked asset (if the account has one),
-// so assets stay in sync with real spending. Credit-card spending is a
-// liability, not a draw on an asset, so it's deliberately skipped here.
+// Draws down the linked asset for any account type backed by one (checking,
+// savings, money market, HSA, brokerage, ...) so assets stay in sync with
+// real spending. An account backed by a liability instead (credit card,
+// HELOC, mortgage, ...) has no linked_asset_id, so this is a no-op for it -
+// see applyLiabilityDelta below for that side.
 // sign: -1 to apply an expense (deduct), +1 to reverse one (edit/delete).
 // Callers must run assetDeltaError first and abort on a non-null result -
 // this function trusts that check and just writes the new value.
 async function applyAssetDelta(accountId, paymentType, amount, sign) {
-  if (paymentType === "credit" || !accountId) return;
+  if (!accountId) return;
   const account = accounts.find((a) => a.id === accountId);
   if (!account || !account.linked_asset_id) return;
   const asset = assets.find((a) => a.id === account.linked_asset_id);
@@ -454,15 +610,16 @@ async function applyAssetDelta(accountId, paymentType, amount, sign) {
   await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
 }
 
-// Credit expenses accumulate onto the linked liability's running balance -
-// a charge is owed the moment it happens and stays owed regardless of
-// when (or how irregularly) the card actually gets paid off. Sign is the
-// OPPOSITE of applyAssetDelta's: spending *increases* what you owe, so
-// sign: +1 to apply a charge (increase balance), -1 to reverse one
-// (edit/delete). Paying the card down is a separate transfer (see
-// payConfirmBtn below), never routed through this function.
+// Accumulates onto the linked liability's running balance for any account
+// type backed by one (credit card, charge card, HELOC, mortgage, personal
+// loan, ...) - a charge is owed the moment it happens and stays owed
+// regardless of when (or how irregularly) the balance actually gets paid
+// down. Sign is the OPPOSITE of applyAssetDelta's: spending *increases*
+// what you owe, so sign: +1 to apply a charge (increase balance), -1 to
+// reverse one (edit/delete). Paying a balance down is a separate transfer
+// (see payConfirmBtn below), never routed through this function.
 async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
-  if (paymentType !== "credit" || !accountId) return;
+  if (!accountId) return;
   const account = accounts.find((a) => a.id === accountId);
   if (!account || !account.linked_liability_id) return;
   const debt = debts.find((d) => d.id === account.linked_liability_id);
@@ -579,7 +736,22 @@ $("adjustSetBtn").onclick = async () => {
 };
 
 // ---- LIABILITIES (tracked debts) ---------------------------------------
-$("addDebtBtn").onclick = () => $("debtForm").classList.toggle("hidden");
+// The specific loan types (auto, student, personal, home equity) are almost
+// always tracked standalone - you don't "spend against" a mortgage the way
+// you do a credit card - so they're appended here from ACCOUNT_TYPES' Loans
+// category. Credit-category types (credit card, HELOC, BNPL, ...) stay
+// Accounts-card-only, matching how 'credit' already worked before this.
+function populateDebtTypeSelect() {
+  const sel = $("debtType");
+  if (sel.dataset.populated) return;
+  sel.dataset.populated = "1";
+  const opts = Object.entries(ACCOUNT_TYPES)
+    .filter(([, cfg]) => cfg.category === "Loans" && cfg.linkType !== "mortgage")
+    .map(([, cfg]) => `<option value="${cfg.linkType}">${cfg.label}</option>`)
+    .join("");
+  sel.insertAdjacentHTML("beforeend", opts);
+}
+$("addDebtBtn").onclick = () => { $("debtForm").classList.toggle("hidden"); populateDebtTypeSelect(); };
 $("saveDebtBtn").onclick = async () => {
   const name = $("debtName").value.trim();
   const type = $("debtType").value;
@@ -599,7 +771,15 @@ $("saveDebtBtn").onclick = async () => {
   await loadDebts(); toast("Liability added");
 };
 
-const DEBT_TYPE_LABEL = { credit_card: "Credit", loan: "Loan", mortgage: "Mortgage", other: "Other" };
+// Derived from ACCOUNT_TYPES (every liability-kind entry's linkType ->
+// label) plus the two standalone-only values ('loan', a generic bucket
+// predating the more specific loan types; 'other') that have no
+// account-type counterpart at all.
+const DEBT_TYPE_LABEL = { loan: "Loan", other: "Other" };
+for (const cfg of Object.values(ACCOUNT_TYPES)) {
+  if (cfg.kind === "liability") DEBT_TYPE_LABEL[cfg.linkType] = cfg.label;
+}
+DEBT_TYPE_LABEL.credit_card = "Credit"; // shorter than ACCOUNT_TYPES' "Credit Card" - fits the existing card layout better
 
 async function loadDebts() {
   const { data } = await sb.from("liabilities").select("*").order("created_at");
@@ -736,7 +916,7 @@ $("payConfirmBtn").onclick = async () => {
   const amount = parseFloat($("payAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const assetId = $("payFromAsset").value;
-  if (!assetId) return toast("Choose an asset to pay from");
+  if (!assetId) return toast("Choose an account to pay from - add one in the Accounts card if none are listed.");
   const debt = debts.find((d) => d.id === activeDebtId);
   const asset = assets.find((a) => a.id === assetId);
   if (!debt || !asset) return toast("Pick a valid liability and asset");
@@ -767,15 +947,16 @@ function renderNetWorth() {
   $("assetsTotal").textContent = fmt(nw.assetsTotal);
   $("liabilitiesTotal").textContent = fmt(nw.liabilitiesTotal);
 
-  // Monthly liabilities is just this month's credit charges - a slice of
-  // Total, not a separate pool (Total already includes every credit
-  // charge ever made, this month's included). Debit/cash spending already
-  // reduces an asset directly (applyAssetDelta), so it's never counted
-  // here; subscriptions are a recurring cost, not debt, so they don't
-  // belong here either - see the Reports page for both of those instead.
+  // Monthly liabilities is just this month's charges against any
+  // liability-linked account type (credit card, HELOC, mortgage, ...) - a
+  // slice of Total, not a separate pool (Total already includes every such
+  // charge ever made, this month's included). Debit/cash/asset-backed
+  // spending already reduces an asset directly (applyAssetDelta), so it's
+  // never counted here; subscriptions are a recurring cost, not debt, so
+  // they don't belong here either - see the Reports page for both instead.
   const ym = monthKey();
   const creditTotal = allExpenses
-    .filter((r) => (r.occurred_at || "").startsWith(ym) && r.payment_type === "credit")
+    .filter((r) => (r.occurred_at || "").startsWith(ym) && LIABILITY_ACCOUNT_TYPES.has(r.payment_type))
     .reduce((s, r) => s + Number(r.amount), 0);
   $("liabilitiesMonthly").textContent = fmt(creditTotal);
 }
@@ -839,19 +1020,6 @@ function scheduleGemma(raw) {
   }, 650);
 }
 
-// A credit expense needs its *selected* account to actually be a credit
-// account - without that there's nowhere for the liability to go, so block
-// it rather than let it silently vanish. Checking "some credit account
-// exists somewhere" isn't enough: e.g. a Discover credit account existing
-// shouldn't let a Chase credit expense through with no Chase account picked.
-// Only the edit modal needs this now - quick-add derives payment_type from
-// the selected account directly, so the mismatch this guards against can't
-// happen there anymore.
-function isCreditAccount(accountId) {
-  const acct = accounts.find((a) => a.id === accountId);
-  return !!acct && acct.type === "credit";
-}
-
 $("saveBtn").onclick = async () => {
   const amount = parseFloat($("fAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
@@ -907,7 +1075,7 @@ function renderExpenseList(containerId, rows, emptyMsg) {
     <div class="exp" data-idx="${i}">
       <div>
         <div>${r.description || r.merchant || "(no description)"}</div>
-        <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + r.payment_type : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
+        <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + (ACCOUNT_TYPE_NAME[r.payment_type] || r.payment_type) : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
       </div>
       <span class="amt">${fmt(r.amount)}</span>
     </div>`).join("");
@@ -952,7 +1120,6 @@ async function loadExpenses() {
 function openEdit(row) {
   editing = row;
   $("eAmount").value = row.amount ?? "";
-  $("ePayment").value = row.payment_type ?? "";
   $("eDesc").value = row.description ?? "";
   $("eCategory").value = row.category ?? CATEGORIES[0];
   $("eAccount").value = row.account_id ?? "";
@@ -968,9 +1135,11 @@ $("editSave").onclick = async () => {
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const accountId = $("eAccount").value;
   if (!accountId) return toast("Select an account");
-  if ($("ePayment").value === "credit" && !isCreditAccount(accountId)) {
-    return toast("Select a credit account (Accounts card) before logging a credit expense.");
-  }
+  // No separate Payment field - same as quick-add, the account IS the
+  // payment type. This also removes the only way payment_type and the
+  // selected account could ever disagree, so there's no credit-account
+  // mismatch left to guard against here.
+  const paymentType = accounts.find((a) => a.id === accountId).type;
   const desc = $("eDesc").value.trim();
   const newCategory = $("eCategory").value || null;
   const categoryChanged = newCategory && newCategory !== editing.category;
@@ -978,7 +1147,7 @@ $("editSave").onclick = async () => {
 
   const patch = {
     amount, description: desc || null, merchant: desc.split(/\s+/)[0] || editing.merchant,
-    category: newCategory, payment_type: $("ePayment").value || null,
+    category: newCategory, payment_type: paymentType,
     account_id: accountId, occurred_at: $("eDate").value,
   };
 
@@ -1085,7 +1254,12 @@ async function renderReports() {
   const ym = $("monthSel").value || monthKey();
   const byCat = sumBy(allExpenses, "category", ym);
   const byAcct = sumBy(allExpenses, "account", ym, acctName);
-  const byPayment = sumBy(allExpenses, "payment_type", ym);
+  // sumBy reads e.payment_type raw - fine for the original debit/credit/cash
+  // values, but a snake_case type like "retirement_employer" would show up
+  // unformatted in the chart. Pre-labels a throwaway copy rather than
+  // teaching the generic chart helper about account types.
+  const labeledByPayment = allExpenses.map((e) => ({ ...e, payment_type: ACCOUNT_TYPE_NAME[e.payment_type] || e.payment_type }));
+  const byPayment = sumBy(labeledByPayment, "payment_type", ym);
   const total = byCat.reduce((s, d) => s + d.value, 0);
   const subs = byCat.filter((d) => d.label === "Subscriptions").reduce((s, d) => s + d.value, 0);
 
@@ -1164,7 +1338,7 @@ async function autoLogDueSubscriptions() {
       if (error) break; // don't loop forever against a persistent write error
       await applyAssetDelta(sub.account_id, paymentType, amount, -1);
       await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
-      if (paymentType === "credit") {
+      if (account.linked_liability_id) {
         const debt = debts.find((d) => d.id === account.linked_liability_id);
         if (debt) debt.balance = Math.max(0, Math.round((Number(debt.balance) + amount) * 100) / 100);
       } else {

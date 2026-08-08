@@ -888,7 +888,9 @@ $("editSave").onclick = async () => {
   if (!editing) return;
   const amount = parseFloat($("eAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
-  if ($("ePayment").value === "credit" && !isCreditAccount($("eAccount").value)) {
+  const accountId = $("eAccount").value;
+  if (!accountId) return toast("Select an account");
+  if ($("ePayment").value === "credit" && !isCreditAccount(accountId)) {
     return toast("Select a credit account (Accounts card) before logging a credit expense.");
   }
   const desc = $("eDesc").value.trim();
@@ -899,7 +901,7 @@ $("editSave").onclick = async () => {
   const patch = {
     amount, description: desc || null, merchant: desc.split(/\s+/)[0] || editing.merchant,
     category: newCategory, payment_type: $("ePayment").value || null,
-    account_id: $("eAccount").value || null, occurred_at: $("eDate").value,
+    account_id: accountId, occurred_at: $("eDate").value,
   };
 
   // Check both the reversal (old effect undone) and the new effect together -

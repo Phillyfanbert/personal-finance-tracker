@@ -467,7 +467,37 @@ async function loadAccounts() {
   $("sAccount").innerHTML = opts;
   const bankNames = [...new Set([...BANK_NAMES, ...accounts.map((a) => a.bank_name).filter(Boolean)])].sort();
   $("bankSuggestions").innerHTML = bankNames.map((b) => `<option value="${b}"></option>`).join("");
+  populateTxnTypeFilter();
+  populateTxnAccountFilter();
 }
+
+// Shared by all four Recent Transactions filters below - rebuilds a
+// <select>'s options and restores whatever was selected before, if it's
+// still a valid choice, rather than silently resetting the filter back to
+// "All ..." every time the underlying data reloads (e.g. after adding an
+// account or logging an expense).
+function repopulateFilter(sel, allLabel, entries) {
+  const prev = sel.value;
+  sel.innerHTML = `<option value="">${allLabel}</option>` +
+    entries.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+  if (entries.some(([value]) => value === prev)) sel.value = prev;
+}
+
+// Options are whatever payment types this user's own accounts actually
+// use, not the full ~42-type list from ACCOUNT_TYPES (most people only
+// ever touch a handful).
+function populateTxnTypeFilter() {
+  const types = [...new Set(accounts.map((a) => a.type))];
+  repopulateFilter($("txnTypeFilter"), "All types", types.map((t) => [t, ACCOUNT_TYPE_NAME[t] || t]));
+}
+$("txnTypeFilter").onchange = renderRecentTransactions;
+
+function populateTxnAccountFilter() {
+  repopulateFilter($("txnAccountFilter"), "All accounts", accounts.map((a) => [a.id, acctLabel(a)]));
+}
+$("txnAccountFilter").onchange = renderRecentTransactions;
+$("txnCategoryFilter").onchange = renderRecentTransactions;
+$("txnKindFilter").onchange = renderRecentTransactions;
 
 // ---- ASSETS ------------------------------------------------------------
 // Retirement/investment and specialty account types are almost always
@@ -1097,14 +1127,37 @@ function renderExpenseList(containerId, rows, emptyMsg) {
 
 // Merges expenses with account_activity for the Log page's Recent
 // Transactions list - Reports' Monthly Expense Log intentionally does NOT
-// use this, it renders `allExpenses` directly (expenses only).
-function recentTransactions(limit = 50) {
-  return [...allExpenses, ...accountActivity]
+// use this, it renders `allExpenses` directly (expenses only). All four
+// filters AND together and are applied before the limit, not after, so a
+// filtered view still shows up to `limit` matches instead of whatever's
+// left over from the unfiltered top 50. account_activity rows have no
+// payment_type, account_id, or category at all, so the type/account/
+// category filters naturally drop them the moment any one of those is
+// set to something other than "All ..." - `kind` is the only filter that
+// can explicitly ask for them back (kind === "activity").
+function recentTransactions(limit = 50, { paymentType = "", accountId = "", category = "", kind = "" } = {}) {
+  let rows = [...allExpenses, ...accountActivity];
+  if (kind === "expense") rows = rows.filter((r) => !r.kind);
+  else if (kind === "activity") rows = rows.filter((r) => !!r.kind);
+  if (paymentType) rows = rows.filter((r) => r.payment_type === paymentType);
+  if (accountId) rows = rows.filter((r) => r.account_id === accountId);
+  if (category) rows = rows.filter((r) => r.category === category);
+  return rows
     .sort((a, b) => (b.occurred_at || "").localeCompare(a.occurred_at || "") || (b.created_at || "").localeCompare(a.created_at || ""))
     .slice(0, limit);
 }
 function renderRecentTransactions() {
-  renderExpenseList("expList", recentTransactions(50), "No transactions yet - add an expense above.");
+  const filters = {
+    paymentType: $("txnTypeFilter").value,
+    accountId: $("txnAccountFilter").value,
+    category: $("txnCategoryFilter").value,
+    kind: $("txnKindFilter").value,
+  };
+  const anyFilterActive = Object.values(filters).some(Boolean);
+  const emptyMsg = anyFilterActive
+    ? "No transactions match these filters."
+    : "No transactions yet - add an expense above.";
+  renderExpenseList("expList", recentTransactions(50, filters), emptyMsg);
 }
 
 async function loadExpenses() {
@@ -1122,7 +1175,16 @@ async function loadExpenses() {
   $("monthCount").textContent = monthRows.length;
   renderNetWorth();
 
+  populateTxnCategoryFilter();
   renderRecentTransactions();
+}
+
+// Options are whatever categories actually appear on a real expense, not
+// the full CATEGORIES list (categorize.js) - no point offering a filter
+// for a category nothing has ever been logged under yet.
+function populateTxnCategoryFilter() {
+  const categories = [...new Set(allExpenses.map((r) => r.category).filter(Boolean))].sort();
+  repopulateFilter($("txnCategoryFilter"), "All categories", categories.map((c) => [c, c]));
 }
 
 // ---- EDIT MODAL + LEARNING LOOP -------------------------------------------

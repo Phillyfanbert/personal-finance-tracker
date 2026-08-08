@@ -263,6 +263,11 @@ const AUTO_LIABILITY_TYPE = accountTypesOfKind("liability");
 const ACCOUNT_TYPE_NAME = Object.fromEntries(
   Object.entries(ACCOUNT_TYPES).map(([type, cfg]) => [type, cfg.label])
 );
+// 'cash' (and legacy DB-only values 'checking'/'other') aren't in
+// ACCOUNT_TYPES, so ACCOUNT_TYPE_NAME has no entry for them - cap() is a
+// safety net so a raw type ever shown to the user (the type filter, a
+// transaction's meta line) reads "Cash", not the lowercase enum value.
+const accountTypeLabel = (type) => ACCOUNT_TYPE_NAME[type] || cap(type);
 // Every liability-linked account type, in one place - anywhere that used
 // to special-case the literal string 'credit' (Monthly liabilities math,
 // the "Owed" balance-line prefix) now checks this instead, so a HELOC or
@@ -488,12 +493,12 @@ function repopulateFilter(sel, allLabel, entries) {
 // ever touch a handful).
 function populateTxnTypeFilter() {
   const types = [...new Set(accounts.map((a) => a.type))];
-  repopulateFilter($("txnTypeFilter"), "All types", types.map((t) => [t, ACCOUNT_TYPE_NAME[t] || t]));
+  repopulateFilter($("txnTypeFilter"), "All", types.map((t) => [t, accountTypeLabel(t)]));
 }
 $("txnTypeFilter").onchange = renderRecentTransactions;
 
 function populateTxnAccountFilter() {
-  repopulateFilter($("txnAccountFilter"), "All accounts", accounts.map((a) => [a.id, acctLabel(a)]));
+  repopulateFilter($("txnAccountFilter"), "All", accounts.map((a) => [a.id, acctLabel(a)]));
 }
 $("txnAccountFilter").onchange = renderRecentTransactions;
 $("txnCategoryFilter").onchange = renderRecentTransactions;
@@ -1114,7 +1119,7 @@ function renderExpenseList(containerId, rows, emptyMsg) {
     <div class="exp" data-idx="${i}">
       <div>
         <div>${r.description || r.merchant || "(no description)"}</div>
-        <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + (ACCOUNT_TYPE_NAME[r.payment_type] || r.payment_type) : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
+        <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
       </div>
       <span class="amt">${fmt(r.amount)}</span>
     </div>`).join("");
@@ -1184,7 +1189,7 @@ async function loadExpenses() {
 // for a category nothing has ever been logged under yet.
 function populateTxnCategoryFilter() {
   const categories = [...new Set(allExpenses.map((r) => r.category).filter(Boolean))].sort();
-  repopulateFilter($("txnCategoryFilter"), "All categories", categories.map((c) => [c, c]));
+  repopulateFilter($("txnCategoryFilter"), "All", categories.map((c) => [c, c]));
 }
 
 // ---- EDIT MODAL + LEARNING LOOP -------------------------------------------
@@ -1329,7 +1334,7 @@ async function renderReports() {
   // values, but a snake_case type like "retirement_employer" would show up
   // unformatted in the chart. Pre-labels a throwaway copy rather than
   // teaching the generic chart helper about account types.
-  const labeledByPayment = allExpenses.map((e) => ({ ...e, payment_type: ACCOUNT_TYPE_NAME[e.payment_type] || e.payment_type }));
+  const labeledByPayment = allExpenses.map((e) => ({ ...e, payment_type: accountTypeLabel(e.payment_type) }));
   const byPayment = sumBy(labeledByPayment, "payment_type", ym);
   const total = byCat.reduce((s, d) => s + d.value, 0);
   const subs = byCat.filter((d) => d.label === "Subscriptions").reduce((s, d) => s + d.value, 0);

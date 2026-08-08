@@ -156,32 +156,45 @@
       <div class="card">
         <strong>Recent Transactions</strong>
         <!-- Four independent filters, all AND-ed together (see
-             filteredTransactions in app.js). Type/Account/Category options
-             are populated from what's actually in use, not the full
-             ~42-type list or every category that exists - most users only
-             ever touch a handful. Account activity rows (payments, balance
-             adjustments) have no payment_type or category, so they drop
-             out of the list under those two filters, and under Kind
-             unless "Account activity" is picked there. -->
-        <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
-          <select id="txnTypeFilter" style="width:auto;flex:1;min-width:110px;max-width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
-            <option value="">All types</option>
-          </select>
-          <select id="txnAccountFilter" style="width:auto;flex:1;min-width:110px;max-width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
-            <option value="">All accounts</option>
-          </select>
-          <select id="txnCategoryFilter" style="width:auto;flex:1;min-width:110px;max-width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
-            <option value="">All categories</option>
-          </select>
-          <!-- "Expenses + activity" (the original default label) was too
-               long for this box, so the collapsed value overlapped the
-               native dropdown arrow - shortened to match the "All ..."
-               pattern used by the other three filters instead. -->
-          <select id="txnKindFilter" style="width:auto;flex:1;min-width:110px;max-width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
-            <option value="">All kinds</option>
-            <option value="expense">Expenses only</option>
-            <option value="activity">Activity only</option>
-          </select>
+             filteredTransactions in app.js). A label above each one names
+             what it filters by, so the option text itself can just say
+             "All" instead of repeating it ("All types", "All kinds", ...)
+             - that repetition was also what made "Expenses + activity"
+             too long for its box and overlap the dropdown arrow. Type/
+             Account/Category options are populated from what's actually
+             in use, not the full ~42-type list or every category that
+             exists - most users only ever touch a handful. Account
+             activity rows (payments, balance adjustments) have no
+             payment_type or category, so they drop out of the list under
+             those two filters, and under Kind unless "Activity only" is
+             picked there. -->
+        <div class="row" style="flex-wrap:wrap;gap:6px 10px;margin-top:8px;align-items:flex-end">
+          <div style="flex:1;min-width:110px">
+            <label style="margin:0 0 4px">Type</label>
+            <select id="txnTypeFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:110px">
+            <label style="margin:0 0 4px">Account</label>
+            <select id="txnAccountFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:110px">
+            <label style="margin:0 0 4px">Category</label>
+            <select id="txnCategoryFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:110px">
+            <label style="margin:0 0 4px">Kind</label>
+            <select id="txnKindFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+              <option value="">All</option>
+              <option value="expense">Expenses only</option>
+              <option value="activity">Activity only</option>
+            </select>
+          </div>
         </div>
         <p class="muted" style="font-size:12px;margin:8px 0 0">Tap an expense to edit or recategorize. Account activity (payments, balance adjustments) is shown for reference only.</p>
         <div id="expList" class="scroll-list" style="margin-top:8px"><p class="muted">Loading…</p></div>

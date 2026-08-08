@@ -51,7 +51,7 @@
       padding: 12px 0; border-bottom: 1px solid var(--border); gap: 10px; cursor: pointer; }
     .exp:last-child { border-bottom: none; }
     /* Caps a long expense list instead of letting it push everything below
-       it down the page - Recent Expenses (Log) and the Reports month log. */
+       it down the page - Recent Transactions (Log) and the Reports month log. */
     .scroll-list { max-height: 360px; overflow-y: auto; }
     .exp .meta { font-size: 13px; color: var(--muted); }
     .exp .amt { font-weight: 700; white-space: nowrap; }
@@ -154,8 +154,8 @@
 
       <!-- Expense list -->
       <div class="card">
-        <strong>Recent Expenses</strong>
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
+        <strong>Recent Transactions</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize. Account activity (payments, balance adjustments) is shown for reference only.</p>
         <div id="expList" class="scroll-list" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
 
@@ -347,9 +347,11 @@
       </div>
 
       <!-- Every expense in the selected month - subscriptions, credit, and
-           debit alike - same row style as the Log page's Recent Expenses,
-           tap to edit. Scrollable so a busy month doesn't push every chart
-           below it far down the page - see renderReports (app.js). -->
+           debit alike - same row style as the Log page's Recent Transactions,
+           tap to edit. Deliberately expenses only, unlike the Log page's list
+           (no account activity) - this card is about spending for the month,
+           not every balance change. Scrollable so a busy month doesn't push
+           every chart below it far down the page - see renderReports (app.js). -->
       <div class="card">
         <strong>🧾 Monthly Expense Log</strong>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>

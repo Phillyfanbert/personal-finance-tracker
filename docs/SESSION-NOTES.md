@@ -285,3 +285,35 @@ permanent rules indefinitely.
 monthly report/Q&A features - their status (built, server-machine setup
 still pending, untested against a real Gemma endpoint) is unchanged from
 2026-08-05, see the sections above.
+
+## Session update - 2026-08-08 (part 2) - Recent Transactions
+
+The Log page's "Recent Expenses" list only ever showed rows from
+`expenses` - paying down a liability (Pay modal) or manually adjusting an
+asset's balance (+/-/set panel) moved real money but left no trace there,
+which read as incomplete once the list was renamed conceptually to
+"transactions." Fixed by adding a new `account_activity` table
+(`supabase/16_account_activity.sql`, applied live) that logs those two
+action families (`kind`: `asset_adjust` from `adjustAddBtn`/
+`adjustSubtractBtn`/`adjustSetBtn`, `liability_payment` from
+`payConfirmBtn`) with a human-readable description and a positive `amount`
+(no signed-amount convention to get wrong on merge/display). The Log
+page's list (`app.js`'s `recentTransactions()` + `renderRecentTransactions()`)
+merges `expenses` and `account_activity` client-side, sorted by
+`occurred_at` then `created_at` desc, capped at 50. `renderExpenseList` now
+branches on a `kind` field (only `account_activity` rows have one -
+`expenses` has no such column) to render activity rows as non-clickable
+(no edit modal - there's nothing there to edit) with an `ACTIVITY_LABEL`
+in place of a category.
+
+**Deliberately NOT logged as activity:** standalone-liability manual
+"owed" edits (direct-set / add-a-charge, `debtOwedSetConfirm`/
+`debtOwedConfirm`) - those correct or add to debt, they don't move money
+through an account, which is a different thing from what "Recent
+Transactions" is for here. Don't add them without deciding that's actually
+wanted.
+
+**Reports' "Monthly Expense Log" (`rptExpList`) is unchanged, on purpose** -
+per the user's explicit ask, it still reads `allExpenses` directly with no
+`account_activity` merge. `renderExpenseList` is shared by both lists;
+what differs is only what each caller passes in.

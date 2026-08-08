@@ -682,11 +682,20 @@ async function loadAccountActivity() {
   accountActivity = data || [];
 }
 
-async function logActivity(kind, description, amount, occurred_at) {
+// accountId is the account whose own balance changed (required, so this
+// always shows up when filtering Recent Transactions by that account -
+// omitting it was a real bug caught live: adjusting Cash's balance didn't
+// show up when filtering by the Cash account, since nothing recorded
+// which account it was). relatedAccountId is only for a liability_payment
+// where the liability itself is account-linked (a credit card), so the
+// payment also shows up when filtering by the card, not just the account
+// the money came from.
+async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null) {
   const rounded = Math.abs(Math.round(Number(amount) * 100) / 100);
   if (!rounded) return; // no actual change (e.g. "set" to the same value) - nothing to log
   const { error } = await sb.from("account_activity").insert({
     kind, description, amount: rounded, occurred_at: occurred_at || new Date().toISOString().slice(0, 10),
+    account_id: accountId, related_account_id: relatedAccountId,
   });
   if (!error) await loadAccountActivity();
 }
@@ -699,6 +708,7 @@ async function logActivity(kind, description, amount, occurred_at) {
 // with an error rather than floored, so the user knows the edit didn't
 // go through.
 let adjustingAssetId = null;
+let adjustingAccountId = null; // tracked alongside the asset so logActivity can attribute the change to it
 
 function findLinkedAsset(accountId) {
   const acct = accounts.find((a) => a.id === accountId);
@@ -714,6 +724,7 @@ function findLinkedAsset(accountId) {
 function closeAssetAdjust() {
   $("assetAdjustForm").classList.add("hidden");
   adjustingAssetId = null;
+  adjustingAccountId = null;
 }
 
 function openAssetAdjust(accountId) {
@@ -724,9 +735,11 @@ function openAssetAdjust(accountId) {
   if (adjustingAssetId === asset.id && !panel.classList.contains("hidden")) {
     panel.classList.add("hidden");
     adjustingAssetId = null;
+    adjustingAccountId = null;
     return;
   }
   adjustingAssetId = asset.id;
+  adjustingAccountId = accountId;
   $("adjustAssetLabel").textContent = asset.name;
   $("adjustCurrentValue").textContent = fmt(asset.value);
   $("adjustAmount").value = "";
@@ -743,7 +756,7 @@ $("adjustAddBtn").onclick = async () => {
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) return toast(error.message);
   $("adjustAmount").value = "";
-  await logActivity("asset_adjust", `Added ${fmt(amount)} to ${asset.name}`, amount);
+  await logActivity("asset_adjust", `Added ${fmt(amount)} to ${asset.name}`, amount, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Added");
 };
 
@@ -757,7 +770,7 @@ $("adjustSubtractBtn").onclick = async () => {
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) return toast(error.message);
   $("adjustAmount").value = "";
-  await logActivity("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, amount);
+  await logActivity("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, amount, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Subtracted");
 };
 
@@ -771,7 +784,7 @@ $("adjustSetBtn").onclick = async () => {
   const oldValue = Number(asset.value);
   const { error } = await sb.from("assets").update({ value: rounded }).eq("id", asset.id);
   if (error) return toast(error.message);
-  await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, rounded - oldValue);
+  await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, rounded - oldValue, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Balance updated");
 };
 
@@ -974,7 +987,13 @@ $("payConfirmBtn").onclick = async () => {
   const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
   if (debtErr) return toast(debtErr.message);
 
-  await logActivity("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount);
+  // account_id = the funding account (money actually left it, same as an
+  // expense's account_id); related_account_id = the debt's own account,
+  // only if it's credit-linked, so filtering by either side surfaces this
+  // payment - a standalone liability (no linked account) leaves it null.
+  const fundingAccountId = accounts.find((a) => a.linked_asset_id === asset.id)?.id ?? null;
+  const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
+  await logActivity("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount, undefined, fundingAccountId, debtAccountId);
   $("payAmount").value = "";
   await loadAssets(); await loadDebts(); renderRecentTransactions();
   closeDebtBalanceForm();
@@ -1136,16 +1155,19 @@ function renderExpenseList(containerId, rows, emptyMsg) {
 // filters AND together and are applied before the limit, not after, so a
 // filtered view still shows up to `limit` matches instead of whatever's
 // left over from the unfiltered top 50. account_activity rows have no
-// payment_type, account_id, or category at all, so the type/account/
-// category filters naturally drop them the moment any one of those is
-// set to something other than "All ..." - `kind` is the only filter that
-// can explicitly ask for them back (kind === "activity").
+// payment_type or category at all, so those two filters naturally drop
+// them the moment either is set to something other than "All" - `kind` is
+// the only filter that can explicitly ask for them back (kind ===
+// "activity"). account_activity DOES carry account_id (and, for a
+// liability_payment against a credit-linked debt, related_account_id
+// too), so the account filter matches either side - filtering by a credit
+// card shows both its charges and the payments made against it.
 function recentTransactions(limit = 50, { paymentType = "", accountId = "", category = "", kind = "" } = {}) {
   let rows = [...allExpenses, ...accountActivity];
   if (kind === "expense") rows = rows.filter((r) => !r.kind);
   else if (kind === "activity") rows = rows.filter((r) => !!r.kind);
   if (paymentType) rows = rows.filter((r) => r.payment_type === paymentType);
-  if (accountId) rows = rows.filter((r) => r.account_id === accountId);
+  if (accountId) rows = rows.filter((r) => r.account_id === accountId || r.related_account_id === accountId);
   if (category) rows = rows.filter((r) => r.category === category);
   return rows
     .sort((a, b) => (b.occurred_at || "").localeCompare(a.occurred_at || "") || (b.created_at || "").localeCompare(a.created_at || ""))

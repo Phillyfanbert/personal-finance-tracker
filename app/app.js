@@ -1167,12 +1167,13 @@ $("saveBtn").onclick = async () => {
 // A row from `account_activity` carries a `kind` field expense rows never
 // have (no such column on `expenses`) - that's what tells the two apart
 // here, rather than a separate flag threaded through every caller.
-// Every row gets an undo icon (↺, not the delete "x" - undoing reverses
-// the underlying money movement, it doesn't just remove a line item) so a
-// mistake - a miskeyed expense, a balance adjustment fat-fingered, a
-// payment made against the wrong debt - can be corrected from the list
-// directly instead of hunting down the right form to reverse it by hand.
-// See undoTransaction() below.
+// Every row gets an undo icon (↶, not the delete "x" - undoing reverses
+// the underlying money movement, it doesn't just remove a line item; and
+// not a full-circle arrow like ↺/⟲, which reads as "refresh" rather than
+// "undo") so a mistake - a miskeyed expense, a balance adjustment
+// fat-fingered, a payment made against the wrong debt - can be corrected
+// from the list directly instead of hunting down the right form to
+// reverse it by hand. See undoTransaction() below.
 function renderExpenseList(containerId, rows, emptyMsg) {
   const el = $(containerId);
   if (!rows.length) { el.innerHTML = `<p class="muted">${emptyMsg}</p>`; return; }
@@ -1182,14 +1183,14 @@ function renderExpenseList(containerId, rows, emptyMsg) {
         <div>${r.description}</div>
         <div class="meta">${r.occurred_at} · ${ACTIVITY_LABEL[r.kind] || "Account activity"}</div>
       </div>
-      <span class="amt">${fmt(Math.abs(r.amount))}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↺</span></span>
+      <span class="amt">${fmt(Math.abs(r.amount))}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span></span>
     </div>` : `
     <div class="exp" data-idx="${i}">
       <div>
         <div>${r.description || r.merchant || "(no description)"}</div>
         <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
       </div>
-      <span class="amt">${fmt(r.amount)}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↺</span></span>
+      <span class="amt">${fmt(r.amount)}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span></span>
     </div>`).join("");
   el.querySelectorAll(".exp").forEach((rowEl) => {
     const row = rows[Number(rowEl.dataset.idx)];

@@ -390,7 +390,7 @@
 
       <div class="totals">
         <div class="card"><div class="muted" style="font-size:12px">Selected month</div><div class="big" id="rptTotal">$0</div></div>
-        <div class="card"><div class="muted" style="font-size:12px">Subscriptions</div><div class="big" id="rptSubs">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Subscriptions/Bills</div><div class="big" id="rptSubs">$0</div></div>
       </div>
 
       <!-- Interactive spending Q&A (Gemma, optional/best-effort like Phase 3) -->
@@ -450,7 +450,7 @@
       <div class="topbar">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="secondary" id="backFromSubs" style="width:auto;padding:8px 10px">←</button>
-          <h1 style="margin:0">Subscriptions</h1>
+          <h1 style="margin:0">Subscriptions/Bills</h1>
         </div>
         <button class="secondary" id="addSubBtn" style="width:auto;padding:8px 12px">+ Add</button>
       </div>
@@ -482,7 +482,7 @@
 
       <!-- Add / edit form (hidden until used) -->
       <div class="card hidden" id="subForm">
-        <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription</strong></div>
+        <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription/bill</strong></div>
         <label>Service name</label>
         <input id="sName" placeholder="Spotify" />
         <div class="row">
@@ -509,7 +509,7 @@
           <button class="secondary" id="cancelSubBtn">Cancel</button>
         </div>
         <div style="height:8px"></div>
-        <button class="secondary hidden" id="deleteSubBtn" style="color:var(--err)">Delete subscription</button>
+        <button class="secondary hidden" id="deleteSubBtn" style="color:var(--err)">Delete subscription/bill</button>
       </div>
 
       <div class="card">
@@ -518,7 +518,7 @@
       </div>
 
       <div class="card">
-        <strong>All subscriptions</strong>
+        <strong>All subscriptions/bills</strong>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
         <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
@@ -694,7 +694,7 @@
   <!-- Bottom nav -->
   <nav id="nav" class="nav hidden">
     <button id="navLog" class="active">Log</button>
-    <button id="navSubs">Subscriptions</button>
+    <button id="navSubs">Subscriptions/Bills</button>
     <button id="navReports">Reports</button>
   </nav>
 

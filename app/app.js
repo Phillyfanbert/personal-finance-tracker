@@ -698,8 +698,14 @@ async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
 // never appeared there. This is a separate, append-only log just for that,
 // merged with `expenses` client-side for display (see recentTransactions
 // below); the Reports "Monthly Expense Log" deliberately reads `expenses`
-// only and must stay that way. `amount` is always stored positive - the
-// description says what happened, no sign convention to get wrong on merge.
+// only and must stay that way. `amount` is a SIGNED delta for asset_adjust
+// (positive = balance went up, negative = went down) so undoActivity()
+// below can reverse it correctly regardless of whether it was an add, a
+// subtract, or a direct "set" - a set's sign used to get discarded
+// (always stored positive), which made a "Set balance to $X" row
+// impossible to undo correctly. liability_payment's amount is always
+// positive - a payment only ever moves money one direction (out of the
+// asset, off the liability), so there's no sign to lose there.
 const ACTIVITY_LABEL = { asset_adjust: "Balance update", liability_payment: "Debt payment" };
 
 async function loadAccountActivity() {
@@ -717,13 +723,15 @@ async function loadAccountActivity() {
 // which account it was). relatedAccountId is only for a liability_payment
 // where the liability itself is account-linked (a credit card), so the
 // payment also shows up when filtering by the card, not just the account
-// the money came from.
-async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null) {
-  const rounded = Math.abs(Math.round(Number(amount) * 100) / 100);
+// the money came from. liabilityId is the liability actually paid down -
+// needed for undoActivity() to find a STANDALONE liability (no linked
+// account, so relatedAccountId is null for it) well enough to reverse it.
+async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null) {
+  const rounded = Math.round(Number(amount) * 100) / 100;
   if (!rounded) return; // no actual change (e.g. "set" to the same value) - nothing to log
   const { error } = await sb.from("account_activity").insert({
     kind, description, amount: rounded, occurred_at: occurred_at || new Date().toISOString().slice(0, 10),
-    account_id: accountId, related_account_id: relatedAccountId,
+    account_id: accountId, related_account_id: relatedAccountId, liability_id: liabilityId,
   });
   if (!error) await loadAccountActivity();
 }
@@ -798,7 +806,7 @@ $("adjustSubtractBtn").onclick = async () => {
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) return toast(error.message);
   $("adjustAmount").value = "";
-  await logActivity("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, amount, undefined, adjustingAccountId);
+  await logActivity("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, -amount, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Subtracted");
 };
 
@@ -1019,9 +1027,12 @@ $("payConfirmBtn").onclick = async () => {
   // expense's account_id); related_account_id = the debt's own account,
   // only if it's credit-linked, so filtering by either side surfaces this
   // payment - a standalone liability (no linked account) leaves it null.
+  // liability_id is stored directly too (not just derivable from
+  // related_account_id) since a standalone liability has no account side
+  // at all - undoActivity() needs a reliable way to find it either way.
   const fundingAccountId = accounts.find((a) => a.linked_asset_id === asset.id)?.id ?? null;
   const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
-  await logActivity("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount, undefined, fundingAccountId, debtAccountId);
+  await logActivity("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount, undefined, fundingAccountId, debtAccountId, debt.id);
   $("payAmount").value = "";
   await loadAssets(); await loadDebts(); renderRecentTransactions();
   closeDebtBalanceForm();
@@ -1156,6 +1167,12 @@ $("saveBtn").onclick = async () => {
 // A row from `account_activity` carries a `kind` field expense rows never
 // have (no such column on `expenses`) - that's what tells the two apart
 // here, rather than a separate flag threaded through every caller.
+// Every row gets an undo icon (↺, not the delete "x" - undoing reverses
+// the underlying money movement, it doesn't just remove a line item) so a
+// mistake - a miskeyed expense, a balance adjustment fat-fingered, a
+// payment made against the wrong debt - can be corrected from the list
+// directly instead of hunting down the right form to reverse it by hand.
+// See undoTransaction() below.
 function renderExpenseList(containerId, rows, emptyMsg) {
   const el = $(containerId);
   if (!rows.length) { el.innerHTML = `<p class="muted">${emptyMsg}</p>`; return; }
@@ -1165,20 +1182,92 @@ function renderExpenseList(containerId, rows, emptyMsg) {
         <div>${r.description}</div>
         <div class="meta">${r.occurred_at} · ${ACTIVITY_LABEL[r.kind] || "Account activity"}</div>
       </div>
-      <span class="amt">${fmt(r.amount)}</span>
+      <span class="amt">${fmt(Math.abs(r.amount))}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↺</span></span>
     </div>` : `
     <div class="exp" data-idx="${i}">
       <div>
         <div>${r.description || r.merchant || "(no description)"}</div>
         <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
       </div>
-      <span class="amt">${fmt(r.amount)}</span>
+      <span class="amt">${fmt(r.amount)}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↺</span></span>
     </div>`).join("");
   el.querySelectorAll(".exp").forEach((rowEl) => {
     const row = rows[Number(rowEl.dataset.idx)];
-    if (row.kind) return; // account activity - informational only, nothing to edit
+    if (row.kind) return; // account activity - informational only, nothing to edit (but still undoable)
     rowEl.onclick = () => openEdit(row);
   });
+  el.querySelectorAll("[data-undo-idx]").forEach((undoEl) => {
+    undoEl.onclick = (ev) => {
+      ev.stopPropagation(); // don't also trigger the row's openEdit click
+      undoTransaction(rows[Number(undoEl.dataset.undoIdx)]);
+    };
+  });
+}
+
+// Reverses a transaction picked from Recent Transactions (or the Reports
+// monthly log, which shares this same list renderer) - an expense gets
+// deleted with its asset/liability effect reversed, exactly like the edit
+// modal's Delete button; an account_activity row (a balance adjustment or
+// a liability payment) has no edit modal at all, so this is the only way
+// to correct one short of manually reversing it by hand. Confirmed first
+// via confirmModal, same bar as account deletion - reversing real money
+// movement deserves a real confirmation, not a stray-tap accident.
+async function undoTransaction(row) {
+  const isActivity = !!row.kind;
+  const desc = isActivity ? row.description : (row.description || row.merchant || "this expense");
+  const ok = await confirmModal(
+    `This reverses "${desc}" (${fmt(Math.abs(row.amount))}). This can't be undone.`,
+    { title: isActivity ? "Undo this activity?" : "Undo this expense?", confirmLabel: "Undo" }
+  );
+  if (!ok) return;
+  if (isActivity) await undoActivity(row);
+  else await undoExpense(row);
+}
+
+async function undoExpense(row) {
+  const { error } = await sb.from("expenses").delete().eq("id", row.id);
+  if (error) return toast(error.message);
+  await applyAssetDelta(row.account_id, row.payment_type, Number(row.amount), +1);
+  await applyLiabilityDelta(row.account_id, row.payment_type, Number(row.amount), -1);
+  await loadAssets(); await loadDebts(); await loadExpenses();
+  toast("Expense undone");
+}
+
+// account_activity rows carry a SIGNED amount for asset_adjust (see
+// logActivity) so reversing one is always "subtract whatever the original
+// delta was from the current value" - correct regardless of whether the
+// original action was an add, a subtract, or a direct "set", and correct
+// regardless of what's happened to the balance since (same reasoning as
+// applyAssetDelta's sign param already relies on for expense edit/delete).
+// A liability_payment's amount is always positive and always moved money
+// the same direction (out of the asset, off the liability), so undoing it
+// is just adding that amount back to both.
+async function undoActivity(row) {
+  if (row.kind === "asset_adjust") {
+    const account = accounts.find((a) => a.id === row.account_id);
+    const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
+    if (!asset) return toast("Can't undo - the linked account no longer exists.");
+    const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
+    if (newValue < 0) return toast(`Can't undo - would take ${asset.name} below $0.`);
+    const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+    if (error) return toast(error.message);
+  } else if (row.kind === "liability_payment") {
+    const account = accounts.find((a) => a.id === row.account_id);
+    const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
+    const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
+    if (!asset || !debt) return toast("Can't undo - the linked account or liability no longer exists.");
+    const newAssetValue = Math.round((Number(asset.value) + Number(row.amount)) * 100) / 100;
+    const newBalance = Math.round((Number(debt.balance) + Number(row.amount)) * 100) / 100;
+    const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
+    if (assetErr) return toast(assetErr.message);
+    const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
+    if (debtErr) return toast(debtErr.message);
+  }
+  const { error } = await sb.from("account_activity").delete().eq("id", row.id);
+  if (error) return toast(error.message);
+  await loadAssets(); await loadDebts(); await loadAccountActivity();
+  renderRecentTransactions();
+  toast("Undone");
 }
 
 // Merges expenses with account_activity for the Log page's Recent
@@ -1491,7 +1580,7 @@ async function autoLogDueSubscriptions() {
   if (blockedNames.size) {
     toast(`Logged ${loggedCount} charge${loggedCount === 1 ? "" : "s"} - couldn't cover ${[...blockedNames].join(", ")}`);
   } else if (loggedCount) {
-    toast(`Logged ${loggedCount} subscription charge${loggedCount === 1 ? "" : "s"} automatically`);
+    toast(`Logged ${loggedCount} subscription/bill charge${loggedCount === 1 ? "" : "s"} automatically`);
   }
 }
 
@@ -1596,7 +1685,7 @@ function renderSubscriptions() {
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")
-    : `<p class="muted">No subscriptions yet - add one above.</p>`;
+    : `<p class="muted">No subscriptions or bills yet - add one above.</p>`;
 
   // Scoped to #subList only - the upcoming-renewals block above is display-only.
   document.querySelectorAll("#subList [data-sub]").forEach((el) => {
@@ -1612,7 +1701,7 @@ $("cancelSubBtn").onclick = closeSubForm;
 
 function openSubForm(sub) {
   editingSub = sub;
-  $("subFormTitle").textContent = sub ? "Edit subscription" : "New subscription";
+  $("subFormTitle").textContent = sub ? "Edit subscription/bill" : "New subscription/bill";
   $("sName").value = sub?.name ?? "";
   $("sAmount").value = sub?.amount ?? "";
   $("sCycle").value = sub?.billing_cycle ?? "monthly";
@@ -1650,7 +1739,7 @@ $("saveSubBtn").onclick = async () => {
   if (error) return toast(error.message);
   closeSubForm();
   await loadSubscriptions();
-  toast(editingSub ? "Subscription updated" : "Subscription added");
+  toast(editingSub ? "Subscription/bill updated" : "Subscription/bill added");
 };
 
 // A subscription's amount/cycle is just a forecast (see networth.js) until
@@ -1662,7 +1751,7 @@ $("saveSubBtn").onclick = async () => {
 $("markPaidBtn").onclick = async () => {
   if (!editingSub) return;
   const sub = editingSub;
-  if (!sub.account_id) return toast("Link an account to this subscription first, then save, then mark as paid.");
+  if (!sub.account_id) return toast("Link an account to this subscription/bill first, then save, then mark as paid.");
   const account = accounts.find((a) => a.id === sub.account_id);
   if (!account) return toast("Linked account not found - pick one, save, then mark as paid.");
   const amount = Number(sub.amount);
@@ -1699,7 +1788,7 @@ $("deleteSubBtn").onclick = async () => {
   if (error) return toast(error.message);
   closeSubForm();
   await loadSubscriptions();
-  toast("Subscription deleted");
+  toast("Subscription/bill deleted");
 };
 
 // ---- PROFILE (README §1.2, feeds Phase 4 discount matching) ----------------

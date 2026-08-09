@@ -1094,6 +1094,25 @@ $("quick").addEventListener("input", (e) => {
 });
 $("cancelBtn").onclick = () => { $("quick").value = ""; $("confirm").classList.add("hidden"); $("parseStatus").textContent = ""; };
 
+// If the user hand-edits the Amount field after a parse (keyword or Gemma),
+// the raw quick-add text still shows the old amount word-for-word - and that
+// raw text is exactly what gets saved as both `description` and `raw_input`
+// (see saveBtn below), so a stale figure there is misleading, not cosmetic.
+// Keep the two in sync. Only fires on real keystrokes here (programmatic
+// `.value =` assignments elsewhere don't dispatch `input`), so this can't
+// loop with the quick-add parser.
+$("fAmount").addEventListener("input", () => {
+  const raw = $("quick").value;
+  if (!raw.trim()) return;
+  const val = $("fAmount").value;
+  const replacement = val ? `$${val}` : "";
+  const amtRe = /\$?\s*\d+(?:\.\d{1,2})?/;
+  $("quick").value = amtRe.test(raw)
+    ? raw.replace(amtRe, replacement).trim()
+    : [replacement, raw].filter(Boolean).join(" ");
+  entrySource = "manual";
+});
+
 // Debounced background call to Gemma. Never blocks; silently falls back.
 function scheduleGemma(raw) {
   if (!GEMMA_ENDPOINT) return; // feature dormant when unconfigured

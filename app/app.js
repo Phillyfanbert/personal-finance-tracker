@@ -1682,7 +1682,7 @@ function renderSubscriptions() {
       <div class="exp" data-sub="${s.id}" style="${s.is_active ? "" : "opacity:.5"}">
         <div>
           <div>${s.name}${s.is_active ? "" : " · (inactive)"}</div>
-          <div class="meta">${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + s.billing_cycle + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
+          <div class="meta">${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + cap(s.billing_cycle) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")

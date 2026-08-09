@@ -1734,7 +1734,9 @@ function renderSubscriptions() {
   });
 }
 
-$("addSubBtn").onclick = () => openSubForm(null);
+const openNewSubForm = () => openSubForm(null);
+$("addSubBtn").onclick = openNewSubForm;
+$("addSubBtnBottom").onclick = openNewSubForm;
 $("cancelSubBtn").onclick = closeSubForm;
 
 function openSubForm(sub) {

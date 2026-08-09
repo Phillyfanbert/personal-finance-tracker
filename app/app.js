@@ -1522,6 +1522,19 @@ async function renderReports() {
 }
 
 // ---- SUBSCRIPTIONS (README §3.7 / F5) --------------------------------------
+// Suggestions only, not a fixed enum - sCategory (index.html) is a free-text
+// input with a <datalist>, the same "pick a suggestion or type your own"
+// pattern acctBank already uses for bank_name. Category values in the DB are
+// therefore whatever the user actually typed, not one of these fixed
+// strings - don't add a CHECK constraint or validate against this list.
+// Set drawn from docs/subscription-bill-types-research.md §18.1.
+const SUBSCRIPTION_CATEGORY_SUGGESTIONS = [
+  "Utilities", "Housing", "Insurance", "Streaming & Media", "Software & Cloud",
+  "Memberships & Dues", "Subscription Commerce", "Financial & Fees",
+  "Health & Wellness", "Family & Education", "Transportation",
+  "Charitable & Dues", "Other",
+];
+
 async function loadSubscriptions() {
   const { data, error } = await sb.from("subscriptions").select("*").order("next_renewal", { ascending: true });
   if (error) { $("subList").innerHTML = `<p class="muted">${error.message}</p>`; return; }
@@ -1530,6 +1543,11 @@ async function loadSubscriptions() {
   renderDeals();
   renderDealFindings();
   renderNetWorth();
+  // Merge in every category the user has already typed, same as
+  // loadAccounts() does for bankSuggestions - lets a custom category the
+  // user invented once show back up as a suggestion next time.
+  const cats = [...new Set([...SUBSCRIPTION_CATEGORY_SUGGESTIONS, ...subscriptions.map((s) => s.category).filter(Boolean)])].sort();
+  $("subCategorySuggestions").innerHTML = cats.map((c) => `<option value="${c}"></option>`).join("");
 }
 
 // A subscription's next_renewal reaching today means the real-world charge
@@ -1701,7 +1719,7 @@ function renderSubscriptions() {
       <div class="exp" data-sub="${s.id}" style="${s.is_active ? "" : "opacity:.5"}">
         <div>
           <div>${s.name}${s.is_active ? "" : " · (inactive)"}</div>
-          <div class="meta">${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + cap(s.billing_cycle) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
+          <div class="meta">${s.category ? s.category + " · " : ""}${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + cap(s.billing_cycle) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")
@@ -1723,6 +1741,7 @@ function openSubForm(sub) {
   editingSub = sub;
   $("subFormTitle").textContent = sub ? "Edit subscription/bill" : "New subscription/bill";
   $("sName").value = sub?.name ?? "";
+  $("sCategory").value = sub?.category ?? "";
   $("sAmount").value = sub?.amount ?? "";
   $("sCycle").value = sub?.billing_cycle ?? "monthly";
   $("sRenewal").value = sub?.next_renewal ?? "";
@@ -1744,6 +1763,7 @@ $("saveSubBtn").onclick = async () => {
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const row = {
     name, amount,
+    category: $("sCategory").value.trim() || null,
     billing_cycle: $("sCycle").value,
     next_renewal: $("sRenewal").value || null,
     account_id: $("sAccount").value || null,

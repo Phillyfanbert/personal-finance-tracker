@@ -485,6 +485,12 @@
         <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription/bill</strong></div>
         <label>Service name</label>
         <input id="sName" placeholder="Spotify" />
+        <!-- Free text with suggestions, not a fixed dropdown - same pattern
+             as acctBank below: pick a common category or type any label of
+             your own (see docs/subscription-bill-types-research.md). -->
+        <label>Category</label>
+        <input id="sCategory" placeholder="Streaming & Media" list="subCategorySuggestions" autocomplete="off" />
+        <datalist id="subCategorySuggestions"></datalist>
         <div class="row">
           <div><label>Amount</label><input id="sAmount" type="number" step="0.01" inputmode="decimal" /></div>
           <div><label>Billing cycle</label>

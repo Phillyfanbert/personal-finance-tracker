@@ -273,6 +273,29 @@ const accountTypeLabel = (type) => ACCOUNT_TYPE_NAME[type] || cap(type);
 // the "Owed" balance-line prefix) now checks this instead, so a HELOC or
 // mortgage account behaves the same way a credit card always has.
 const LIABILITY_ACCOUNT_TYPES = new Set(Object.keys(AUTO_LIABILITY_TYPE));
+// Every account type CAN be created and its balance manually tracked
+// (tap its circle in the Accounts card), but not every type is something
+// you'd actually select as "how did you pay for this" - you can't swipe a
+// 401(k) at Chipotle. This set is what's excluded from the expense
+// payment-method pickers (quick-add, edit modal, subscriptions) - found by
+// live-testing (a mock 401(k) account sat in the same dropdown as
+// checking, with zero distinction) and confirmed as a real gap, not just
+// a bug, so this was an explicit decision, not a default.
+//
+// Grounded in whether the real-world product actually has a debit card /
+// check-writing capability, not category membership - Specialty is a
+// deliberate mix (HSA/FSA/ABLE genuinely have cards; Coverdell/Treasury
+// Direct/crypto/life insurance cash value do not), same lesson as
+// BANK_VALIDATED_TYPES not following category lines cleanly either. All
+// of Deposit accounts (except CD, which is locked until maturity) and all
+// of Credit accounts remain spendable - a credit card, HELOC, or even
+// BNPL is still something you'd genuinely select at checkout.
+const NON_SPENDABLE_ACCOUNT_TYPES = new Set([
+  "cd",
+  "personal_loan", "auto_loan", "mortgage", "home_equity_loan", "student_loan", "payday_loan", "title_loan",
+  "retirement_employer", "ira", "brokerage", "plan_529", "tsp", "solo_401k", "rollover_inherited_ira", "annuity",
+  "coverdell_esa", "treasury_direct", "crypto", "life_insurance_cash_value",
+]);
 // BANK_NAMES (bankNames.js) is ~3,750 real FDIC-insured banks plus a few
 // well-known credit unions/brands FDIC doesn't cover - not a hardcoded
 // seed list anymore. isKnownBank() is what actually enforces "type a real
@@ -465,8 +488,13 @@ async function loadAccounts() {
   const { data } = await sb.from("accounts").select("*").order("created_at");
   accounts = data || [];
   renderAccountsList();
-  // account selects (add + edit)
-  const opts = `<option value="">None</option>` + accounts.map((a) => `<option value="${a.id}">${acctLabel(a)}</option>`).join("");
+  // Payment-method pickers (quick-add, edit, subscriptions) only offer
+  // accounts you'd actually pay with in real life - see
+  // NON_SPENDABLE_ACCOUNT_TYPES. A 401(k) or CD still exists as an
+  // account (tap its circle in the Accounts card to adjust its balance),
+  // it just never shows up as "how did you pay for this."
+  const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type));
+  const opts = `<option value="">None</option>` + spendable.map((a) => `<option value="${a.id}">${acctLabel(a)}</option>`).join("");
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;

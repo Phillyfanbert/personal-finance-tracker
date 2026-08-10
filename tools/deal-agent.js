@@ -27,7 +27,7 @@
 //   SearXNG up, runs this script, and tears SearXNG back down afterward.
 //
 //   This script can also be run directly with plain env vars:
-//   export SUPABASE_URL=https://ixosipgbikygqilbgvjx.supabase.co
+//   export SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
 //   export SUPABASE_SERVICE_ROLE_KEY=sb_secret_...   # Dashboard -> API Keys. NEVER commit this.
 //   export SEARXNG_URL=http://localhost:8080
 //   export GEMMA_ENDPOINT=http://localhost:11434/api/generate

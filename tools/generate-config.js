@@ -32,8 +32,8 @@ const contents = `window.APP_CONFIG = {
   // since this generator (the actual build step, per this file's own
   // header) never read or wrote either flag. Fixed alongside adding the
   // second one rather than leaving the same gap duplicated.
-  DEAL_FINDINGS_ENABLED: process.env.DEAL_FINDINGS_ENABLED === "true",
-  PRICE_FINDINGS_ENABLED: process.env.PRICE_FINDINGS_ENABLED === "true",
+  DEAL_FINDINGS_ENABLED: ${process.env.DEAL_FINDINGS_ENABLED === "true"},
+  PRICE_FINDINGS_ENABLED: ${process.env.PRICE_FINDINGS_ENABLED === "true"},
 };
 `;
 

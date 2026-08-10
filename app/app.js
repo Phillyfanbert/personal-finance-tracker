@@ -2170,7 +2170,7 @@ function renderSubscriptions() {
     ? sorted.map((s) => `
       <div class="exp" data-sub="${s.id}" style="${s.is_active ? "" : "opacity:.5"}">
         <div>
-          <div>${s.name}${s.is_active ? "" : " · (inactive)"}</div>
+          <div>${s.name}${s.is_essential ? " · Essential" : ""}${s.is_active ? "" : " · (inactive)"}</div>
           <div class="meta">${s.category ? s.category + " · " : ""}${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + cap(s.billing_cycle) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
         </div>
         <span class="amt">${fmt(s.amount)}</span>
@@ -2201,6 +2201,7 @@ function openSubForm(sub) {
   $("sRenewal").value = sub?.next_renewal ?? "";
   $("sAccount").value = sub?.account_id ?? "";
   $("sActive").checked = sub ? !!sub.is_active : true;
+  $("sEssential").checked = !!sub?.is_essential;
   $("sNotes").value = sub?.notes ?? "";
   $("deleteSubBtn").classList.toggle("hidden", !sub);
   // Only makes sense for an existing, currently-active subscription.
@@ -2222,6 +2223,7 @@ $("saveSubBtn").onclick = async () => {
     next_renewal: $("sRenewal").value || null,
     account_id: $("sAccount").value || null,
     is_active: $("sActive").checked,
+    is_essential: $("sEssential").checked,
     notes: $("sNotes").value.trim() || null,
   };
   $("saveSubBtn").disabled = true;

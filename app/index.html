@@ -345,8 +345,26 @@
           </div>
           <label>Value</label>
           <input id="assetValue" type="number" step="0.01" inputmode="decimal" />
+
+          <!-- Vehicle-only (assetType.onchange, app.js). Filling these in
+               makes net worth use the live depreciation estimate instead of
+               the Value field above - see effectiveAssetValue, depreciation.js. -->
+          <div id="assetDepreciationSection" class="hidden" style="margin-top:8px">
+            <p class="muted" style="font-size:12px;margin:0 0 8px">Estimate this vehicle's current value from its purchase price instead of typing an updated value by hand. Leave blank to keep using Value above.</p>
+            <div class="row">
+              <div><label>Purchase price</label><input id="assetPurchasePrice" type="number" step="0.01" inputmode="decimal" /></div>
+              <div><label>Purchase date</label><input id="assetPurchaseDate" type="date" /></div>
+            </div>
+            <label>Depreciation rate (%/year)</label>
+            <input id="assetDepRate" type="number" step="0.1" min="0" max="100" placeholder="15" />
+            <div class="muted" id="assetDepPreview" style="font-size:12px;margin-top:6px"></div>
+          </div>
+
           <div style="height:8px"></div>
-          <button id="saveAssetBtn">Save asset</button>
+          <div class="row">
+            <button id="saveAssetBtn">Save asset</button>
+            <button class="secondary" id="cancelAssetBtn">Cancel</button>
+          </div>
         </div>
       </div>
 

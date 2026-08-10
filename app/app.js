@@ -10,6 +10,7 @@ import {
   renderBreakdownBar, renderTrendBar, renderLineChart,
 } from "./charts.js";
 import { buildBalanceHistory } from "./accountHistory.js";
+import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
@@ -600,7 +601,55 @@ function populateAssetTypeSelect() {
     sel.insertAdjacentHTML("beforeend", `<optgroup label="${cat}">${opts}</optgroup>`);
   }
 }
-$("addAssetBtn").onclick = () => { $("assetForm").classList.toggle("hidden"); populateAssetTypeSelect(); };
+// Add-or-edit, same shape as openSubForm/editingSub (subscriptions) -
+// standalone assets only (a linked asset's value comes from the account
+// circle's assetAdjustForm instead, never from here).
+let editingAsset = null;
+function openAssetForm(asset) {
+  editingAsset = asset || null;
+  populateAssetTypeSelect();
+  $("assetName").value = asset?.name ?? "";
+  $("assetType").value = asset?.type ?? "investment";
+  $("assetValue").value = asset?.value ?? "";
+  $("assetPurchasePrice").value = asset?.purchase_price ?? "";
+  $("assetPurchaseDate").value = asset?.purchase_date ?? "";
+  $("assetDepRate").value = asset?.depreciation_rate != null ? Number(asset.depreciation_rate) * 100 : "";
+  updateAssetTypeUI();
+  $("assetForm").classList.remove("hidden");
+}
+function closeAssetForm() {
+  $("assetForm").classList.add("hidden");
+  editingAsset = null;
+}
+$("addAssetBtn").onclick = () => {
+  if (editingAsset === null && !$("assetForm").classList.contains("hidden")) { closeAssetForm(); return; }
+  openAssetForm(null);
+};
+$("cancelAssetBtn").onclick = closeAssetForm;
+
+// Depreciation fields only make sense for a vehicle - shown/hidden per
+// type, same pattern acctLiabilityLink (Accounts card) already uses.
+function updateAssetTypeUI() {
+  $("assetDepreciationSection").classList.toggle("hidden", $("assetType").value !== "vehicle");
+  updateAssetDepPreview();
+}
+$("assetType").onchange = updateAssetTypeUI;
+
+function updateAssetDepPreview() {
+  const price = parseFloat($("assetPurchasePrice").value);
+  const date = $("assetPurchaseDate").value;
+  const ratePct = parseFloat($("assetDepRate").value);
+  if (!Number.isFinite(price) || !date || !Number.isFinite(ratePct)) {
+    $("assetDepPreview").textContent = "";
+    return;
+  }
+  const est = estimateValue(price, date, ratePct / 100);
+  $("assetDepPreview").textContent = est !== null ? `Estimated current value: ${fmt(est)} - used instead of Value above` : "";
+}
+$("assetPurchasePrice").oninput = updateAssetDepPreview;
+$("assetPurchaseDate").oninput = updateAssetDepPreview;
+$("assetDepRate").oninput = updateAssetDepPreview;
+
 $("saveAssetBtn").onclick = async () => {
   const name = $("assetName").value.trim();
   const type = $("assetType").value;
@@ -609,10 +658,21 @@ $("saveAssetBtn").onclick = async () => {
   if (!Number.isFinite(value)) return toast("Enter a value");
   if (type === "cash") return toast("Cash is automatic - use the Cash account's +/- panel instead.");
   if (type === "bank") return toast("Bank assets come from a Checking account - add one in the Accounts card instead.");
-  const { error } = await sb.from("assets").insert({ name, type, value });
+
+  const isVehicle = type === "vehicle";
+  const purchase_price = isVehicle && $("assetPurchasePrice").value !== "" ? parseFloat($("assetPurchasePrice").value) : null;
+  const purchase_date = isVehicle && $("assetPurchaseDate").value ? $("assetPurchaseDate").value : null;
+  const depreciation_rate = isVehicle && $("assetDepRate").value !== "" ? parseFloat($("assetDepRate").value) / 100 : null;
+  const row = { name, type, value, purchase_price, purchase_date, depreciation_rate };
+
+  const q = editingAsset
+    ? sb.from("assets").update(row).eq("id", editingAsset.id)
+    : sb.from("assets").insert(row);
+  const { error } = await q;
   if (error) return toast(error.message);
-  $("assetName").value = ""; $("assetValue").value = ""; $("assetForm").classList.add("hidden");
-  await loadAssets(); toast("Asset added");
+  const wasEditing = !!editingAsset;
+  closeAssetForm();
+  await loadAssets(); toast(wasEditing ? "Asset updated" : "Asset added");
 };
 
 // CD is the only asset type with a maturity date today - reuses
@@ -638,13 +698,22 @@ async function loadAssets() {
   // account.sql) is the only way to remove it now; a standalone asset
   // with no account (investment, property, manually added) still can.
   const linkedAssetIds = new Set(accounts.map((a) => a.linked_asset_id).filter(Boolean));
+  // Standalone assets (not linked to an account) are click-to-edit here -
+  // a linked one is edited from its account circle's assetAdjustForm
+  // instead, same split the delete "✕" below already uses. The displayed
+  // amount is the live depreciation estimate for a vehicle with full
+  // purchase info (effectiveAssetValue, depreciation.js), not the stored
+  // value - every other asset type is unaffected.
   $("assetsList").innerHTML = assets.length
     ? assets.map((a) => `
-      <div class="exp">
+      <div class="exp" ${linkedAssetIds.has(a.id) ? "" : `data-edit-asset="${a.id}" style="cursor:pointer"`}>
         <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}</div>`}${a.name}</div>
-        <span class="amt">${fmt(a.value)}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
+        <span class="amt">${fmt(effectiveAssetValue(a))}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
+  document.querySelectorAll("[data-edit-asset]").forEach((el) => {
+    el.onclick = () => openAssetForm(assets.find((a) => a.id === el.dataset.editAsset));
+  });
   // Paying down a liability must draw from an actual linked account, not
   // any asset value (a standalone Investment/Property/Vehicle/retirement
   // asset with no account behind it) - every transaction links to a
@@ -1112,7 +1181,11 @@ $("payConfirmBtn").onclick = async () => {
 // Recomputed from already-loaded state - cheap, no extra queries. Call
 // after anything that changes assets, debts, or expenses.
 function renderNetWorth() {
-  const nw = computeNetWorth(assets, debts);
+  // Depreciation-adjusted at the call site, not inside computeNetWorth -
+  // networth.js stays pure aggregation with no idea depreciation exists
+  // (see its own header comment on scope).
+  const depreciatedAssets = assets.map((a) => ({ ...a, value: effectiveAssetValue(a) }));
+  const nw = computeNetWorth(depreciatedAssets, debts);
 
   $("netWorthTotal").textContent = fmt(nw.netWorth);
   $("assetsTotal").textContent = fmt(nw.assetsTotal);

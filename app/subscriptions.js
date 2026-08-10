@@ -8,6 +8,8 @@ export function monthlyAmount(sub) {
   const amt = Number(sub.amount || 0);
   switch (sub.billing_cycle) {
     case "annual": return amt / 12;
+    case "semiannual": return amt / 6;
+    case "quarterly": return amt / 3;
     case "monthly": return amt;
     default: return amt; // 'other' - treat the stored amount as monthly
   }
@@ -60,14 +62,20 @@ export function renewalLabel(days) {
  * exist in the target month (Jan 31 + 1 month lands on Mar 3, not Feb 28).
  * Clamping the day to the target month's actual length avoids that -
  * also needed for annual on leap-day subscriptions (Feb 29 -> Feb 28).
+ *
+ * A single month-count-based formula covers all four defined cycles
+ * (monthly=1, quarterly=3, semiannual=6, annual=12) rather than
+ * special-casing each - verified equivalent to the original monthly/
+ * annual-only branches before quarterly/semiannual were added.
  */
 export function advanceRenewal(isoDate, billingCycle) {
   if (!isoDate) return isoDate;
-  if (billingCycle !== "annual" && billingCycle !== "monthly") return isoDate;
+  const monthsToAdd = { monthly: 1, quarterly: 3, semiannual: 6, annual: 12 }[billingCycle];
+  if (!monthsToAdd) return isoDate;
   const [y, m, day] = isoDate.split("-").map(Number);
-  let targetYear = y, targetMonth = m; // targetMonth stays 1-indexed throughout
-  if (billingCycle === "annual") targetYear += 1;
-  else { targetMonth += 1; if (targetMonth > 12) { targetMonth = 1; targetYear += 1; } }
+  let targetMonth = m + monthsToAdd; // 1-indexed, pre-carry
+  const targetYear = y + Math.floor((targetMonth - 1) / 12);
+  targetMonth = ((targetMonth - 1) % 12) + 1;
   // New Date(y, m, 0) is day 0 of 1-indexed month m, i.e. the last day of
   // the *previous* 0-indexed month - which, since targetMonth is already
   // 1-indexed, is exactly the last day of targetMonth itself.
@@ -86,16 +94,17 @@ function looseNameMatch(a, b) {
   return x.includes(y) || y.includes(x);
 }
 
-// 'weekly'/'quarterly' aren't valid subscriptions.billing_cycle values yet
-// (see docs/ROADMAP.md "Quarterly / semiannual billing cycles") - anything
-// that isn't monthly or annual maps to the existing 'other' cycle, same as
-// a user picking "Other" manually today.
+// 'weekly'/'biweekly' still aren't valid subscriptions.billing_cycle
+// values - those map to the existing 'other' cycle, same as a user
+// picking "Other" manually today. Quarterly/semiannual are real values
+// now (30_quarterly_semiannual_billing_cycle.sql).
 const INTERVAL_BUCKETS = [
-  { cycle: "monthly", label: "month", days: 30, tolerance: 4 },
-  { cycle: "annual", label: "year", days: 365, tolerance: 15 },
   { cycle: "other", label: "~7 days", days: 7, tolerance: 2 },
   { cycle: "other", label: "~14 days", days: 14, tolerance: 3 },
-  { cycle: "other", label: "~90 days", days: 90, tolerance: 7 },
+  { cycle: "monthly", label: "month", days: 30, tolerance: 4 },
+  { cycle: "quarterly", label: "~3 months", days: 91, tolerance: 8 },
+  { cycle: "semiannual", label: "~6 months", days: 182, tolerance: 10 },
+  { cycle: "annual", label: "year", days: 365, tolerance: 15 },
 ];
 
 function matchInterval(gaps) {

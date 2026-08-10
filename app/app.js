@@ -1979,9 +1979,10 @@ async function loadSubscriptions() {
 // subscription's catch-up the moment a cycle would push its account
 // negative rather than logging a charge with nowhere to come from - the
 // remaining missed cycles wait for the next load, a top-up, or manual
-// "Mark as paid". Only 'monthly'/'annual' (advanceRenewal has no defined
-// interval for 'other') with a linked account are eligible; everything
-// else is unchanged here, same as before this existed.
+// "Mark as paid". Every cycle advanceRenewal defines an interval for
+// (monthly/quarterly/semiannual/annual - not 'other') with a linked
+// account is eligible; everything else is unchanged here, same as
+// before this existed.
 //
 // assetDeltaError/applyAssetDelta read the live assets/debts arrays, which
 // a DB write alone doesn't update - so after each successful cycle, the
@@ -1997,7 +1998,7 @@ async function autoLogDueSubscriptions() {
 
   for (const sub of subscriptions) {
     if (!sub.is_active || !sub.next_renewal || !sub.account_id) continue;
-    if (sub.billing_cycle !== "monthly" && sub.billing_cycle !== "annual") continue;
+    if (!["monthly", "quarterly", "semiannual", "annual"].includes(sub.billing_cycle)) continue;
     const account = accounts.find((a) => a.id === sub.account_id);
     if (!account) continue;
     const paymentType = account.type;

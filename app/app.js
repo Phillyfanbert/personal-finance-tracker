@@ -14,6 +14,9 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { budgetStatus } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget } from "./investments.js";
+import {
+  guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
+} from "./csvImport.js";
 import { buildExpensesCsv } from "./export.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
@@ -34,6 +37,15 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // ---- tiny helpers ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Every innerHTML template string below interpolates *some* user-typed or
+// scraped/LLM-derived text (an expense description, an asset name, the
+// Investments tab's price-agent-sourced "why" explanation, ...) - wrap
+// exactly those interpolations in esc(), never fixed labels/numbers/dates.
+// Applied only at render time; the DB always stores the raw, unescaped
+// value - escaping here is about what reaches the DOM as markup, not
+// about what gets written to Supabase.
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
   setTimeout(() => t.classList.remove("show"), 2200);
@@ -523,9 +535,9 @@ function renderAccountsList() {
         const styleAttr = styleParts.length ? ` style="${styleParts.join(";")}"` : "";
         return `
       <div class="acct-circle-item" ${clickAttr}${styleAttr}>
-        <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : (bankLabel.trim()[0] || "?").toUpperCase()}</div>
+        <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : esc((bankLabel.trim()[0] || "?").toUpperCase())}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
-        <div class="name">${bankLabel}</div>
+        <div class="name">${esc(bankLabel)}</div>
         <div class="type">${a.name}${a.archived_at ? " (archived)" : ""}</div>
         ${balance != null ? `<div class="balance">${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}</div>` : ""}
         ${a.type === "cash" ? "" : `<div class="muted" data-archive-acct="${a.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">${a.archived_at ? "Unarchive" : "Archive"}</div>`}
@@ -592,12 +604,12 @@ async function loadAccounts() {
   // (closed) account is excluded the same way, for a different reason -
   // see 22_account_archive.sql.
   const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at);
-  const opts = `<option value="">None</option>` + spendable.map((a) => `<option value="${a.id}">${acctLabel(a)}</option>`).join("");
+  const opts = `<option value="">None</option>` + spendable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
   const bankNames = [...new Set([...BANK_NAMES, ...accounts.map((a) => a.bank_name).filter(Boolean)])].sort();
-  $("bankSuggestions").innerHTML = bankNames.map((b) => `<option value="${b}"></option>`).join("");
+  $("bankSuggestions").innerHTML = bankNames.map((b) => `<option value="${esc(b)}"></option>`).join("");
   populateTxnTypeFilter();
   populateTxnAccountFilter();
 }
@@ -607,10 +619,14 @@ async function loadAccounts() {
 // still a valid choice, rather than silently resetting the filter back to
 // "All ..." every time the underlying data reloads (e.g. after adding an
 // account or logging an expense).
+// Escapes both value and label unconditionally - some callers pass a
+// fixed label (safe either way), others pass acctLabel()/category text
+// that traces back to a free-typed field, so escaping once here is safer
+// than trusting every call site to remember to.
 function repopulateFilter(sel, allLabel, entries) {
   const prev = sel.value;
-  sel.innerHTML = `<option value="">${allLabel}</option>` +
-    entries.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+  sel.innerHTML = `<option value="">${esc(allLabel)}</option>` +
+    entries.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
   if (entries.some(([value]) => value === prev)) sel.value = prev;
 }
 
@@ -806,7 +822,7 @@ async function loadAssets() {
   $("assetsList").innerHTML = assets.length
     ? assets.map((a) => `
       <div class="exp" ${linkedAssetIds.has(a.id) ? "" : `data-edit-asset="${a.id}" style="cursor:pointer"`}>
-        <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}</div>`}${a.name}</div>
+        <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}</div>`}${esc(a.name)}</div>
         <span class="amt">${fmt(effectiveAssetValue(a))}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
@@ -820,7 +836,7 @@ async function loadAssets() {
   // the Pay button below still catches it with an explicit error.
   const payableAssets = assets.filter((a) => linkedAssetIds.has(a.id));
   $("payFromAsset").innerHTML = payableAssets.length
-    ? payableAssets.map((a) => `<option value="${a.id}">${a.name} (${fmt(a.value)})</option>`).join("")
+    ? payableAssets.map((a) => `<option value="${a.id}">${esc(a.name)} (${fmt(a.value)})</option>`).join("")
     : `<option value="">No linked account available</option>`;
   document.querySelectorAll("[data-del-asset]").forEach((el) => {
     el.onclick = async (ev) => {
@@ -874,12 +890,17 @@ function renderAssetPriceFindings() {
     return;
   }
   $("assetPriceFindingsList").innerHTML = matches.map((f, i) => {
-    const link = f.url ? `<a href="${f.url}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
+    // f.url/f.symbol/f.currency trace back to tools/price-agent.js, which
+    // is server-side and gates outbound fetches through a domain allowlist
+    // (hostAllowed) - but the finding text itself is still Gemma output
+    // derived from a scraped page, so it's escaped/attribute-safe here too,
+    // not trusted just because it didn't come from this app's own users.
+    const link = f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
     return `
       <div class="exp" style="cursor:default">
         <div>
-          <div>${f.symbol}</div>
-          <div class="meta">${fmt(f.price)} ${f.currency || "USD"} ${link}</div>
+          <div>${esc(f.symbol)}</div>
+          <div class="meta">${fmt(f.price)} ${esc(f.currency || "USD")} ${link}</div>
         </div>
         <span class="amt" style="font-size:12px;cursor:pointer;text-decoration:underline;color:var(--accent)" data-apply-price-idx="${i}">Apply</span>
       </div>`;
@@ -1211,7 +1232,7 @@ async function loadDebts() {
     return `
     <div class="exp">
       <div>
-        <div class="meta">${DEBT_TYPE_LABEL[d.type] || cap(d.type)}</div>${d.name}
+        <div class="meta">${DEBT_TYPE_LABEL[d.type] || cap(d.type)}</div>${esc(d.name)}
         ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
         ${heloc ? `<div class="meta">${heloc.label}</div>` : ""}
         ${heloc?.phase === "draw" ? "" : payoffLine(d)}
@@ -1580,6 +1601,202 @@ $("saveBtn").onclick = async () => {
   toast("Saved ✓" + budgetWarningToastSuffix(row.category));
 };
 
+// ---- CSV IMPORT (expense-history migration) --------------------------------
+// Runs entirely client-side - PapaParse parses the file in the browser,
+// csvImport.js normalizes rows, and the only network calls this makes are
+// the same RLS-scoped sb.from("expenses").insert() every other expense
+// write already uses. The file itself never leaves the browser. See
+// index.html's csvImportModal comment for why this deliberately never
+// calls applyAssetDelta/applyLiabilityDelta - imported rows are history
+// that already happened, not a new money movement to apply.
+const CSV_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const CSV_MAX_ROWS = 10000;
+const CSV_INSERT_CHUNK_SIZE = 500;
+
+let csvHeaders = [];
+let csvDataRows = []; // raw string[][], header row excluded
+let csvMapping = { dateCol: null, amountCol: null, descCol: null, categoryCol: null };
+let csvPreviewRows = []; // { normalized, duplicate }[] - only successfully-normalized rows
+let csvSkippedCount = 0; // rows that failed to normalize (bad date/amount)
+let csvLastImportedIds = []; // this session's last import - Undo target
+
+function resetCsvImportState() {
+  csvHeaders = []; csvDataRows = [];
+  csvMapping = { dateCol: null, amountCol: null, descCol: null, categoryCol: null };
+  csvPreviewRows = []; csvSkippedCount = 0; csvLastImportedIds = [];
+  $("csvFileInput").value = "";
+  $("csvFileError").textContent = "";
+  $("csvStep1").classList.remove("hidden");
+  $("csvStep2").classList.add("hidden");
+  $("csvStep3").classList.add("hidden");
+  $("csvStep4").classList.add("hidden");
+}
+$("openCsvImportBtn").onclick = () => {
+  resetCsvImportState();
+  $("csvImportModal").classList.remove("hidden");
+};
+$("csvImportClose").onclick = () => $("csvImportModal").classList.add("hidden");
+$("csvImportDone").onclick = () => $("csvImportModal").classList.add("hidden");
+
+function csvColumnOptions(selectedIdx) {
+  return `<option value="">None</option>` +
+    csvHeaders.map((h, i) => `<option value="${i}" ${i === selectedIdx ? "selected" : ""}>${esc(h || `Column ${i + 1}`)}</option>`).join("");
+}
+
+$("csvFileInput").onchange = () => {
+  const file = $("csvFileInput").files[0];
+  $("csvFileError").textContent = "";
+  if (!file) return;
+  if (file.size > CSV_MAX_FILE_BYTES) {
+    $("csvFileError").textContent = `File is too large (max ${CSV_MAX_FILE_BYTES / 1024 / 1024}MB).`;
+    $("csvFileInput").value = "";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = Papa.parse(String(reader.result), { skipEmptyLines: true });
+    const rows = result.data || [];
+    if (result.errors?.length && !rows.length) {
+      $("csvFileError").textContent = "Couldn't parse this file as CSV.";
+      $("csvFileInput").value = "";
+      return;
+    }
+    if (!rows.length) {
+      $("csvFileError").textContent = "This file has no rows.";
+      $("csvFileInput").value = "";
+      return;
+    }
+    if (rows.length - 1 > CSV_MAX_ROWS) {
+      $("csvFileError").textContent = `This file has more than ${CSV_MAX_ROWS.toLocaleString()} rows - split it into smaller files.`;
+      $("csvFileInput").value = "";
+      return;
+    }
+    csvHeaders = rows[0];
+    csvDataRows = rows.slice(1);
+    csvMapping = guessColumnMapping(csvHeaders);
+    $("csvMapDate").innerHTML = csvColumnOptions(csvMapping.dateCol);
+    $("csvMapAmount").innerHTML = csvColumnOptions(csvMapping.amountCol);
+    $("csvMapDesc").innerHTML = csvColumnOptions(csvMapping.descCol);
+    $("csvMapCategory").innerHTML = csvColumnOptions(csvMapping.categoryCol);
+    $("csvFlipSign").checked = guessSignConvention(csvDataRows, csvMapping);
+    const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at);
+    $("csvAccount").innerHTML = spendable.length
+      ? spendable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("")
+      : `<option value="">No account available - add one first</option>`;
+    $("csvStep1").classList.add("hidden");
+    $("csvStep2").classList.remove("hidden");
+  };
+  reader.onerror = () => { $("csvFileError").textContent = "Couldn't read this file."; };
+  reader.readAsText(file);
+};
+
+$("csvStep2Back").onclick = () => {
+  $("csvStep2").classList.add("hidden");
+  $("csvStep1").classList.remove("hidden");
+};
+
+$("csvStep2Next").onclick = () => {
+  const dateCol = $("csvMapDate").value !== "" ? Number($("csvMapDate").value) : null;
+  const amountCol = $("csvMapAmount").value !== "" ? Number($("csvMapAmount").value) : null;
+  if (dateCol == null || amountCol == null) return toast("Pick a Date and an Amount column");
+  if (!$("csvAccount").value) return toast("Pick an account to import into");
+  csvMapping = {
+    dateCol, amountCol,
+    descCol: $("csvMapDesc").value !== "" ? Number($("csvMapDesc").value) : null,
+    categoryCol: $("csvMapCategory").value !== "" ? Number($("csvMapCategory").value) : null,
+  };
+  const flipSign = $("csvFlipSign").checked;
+
+  csvPreviewRows = [];
+  csvSkippedCount = 0;
+  for (const raw of csvDataRows) {
+    const normalized = normalizeRow(raw, csvMapping, { flipSign });
+    if (!normalized) { csvSkippedCount++; continue; }
+    csvPreviewRows.push({ normalized, duplicate: isLikelyDuplicate(normalized, allExpenses) });
+  }
+
+  const dupCount = csvPreviewRows.filter((r) => r.duplicate).length;
+  $("csvPreviewSummary").textContent =
+    `${csvPreviewRows.length} row${csvPreviewRows.length === 1 ? "" : "s"} ready to import` +
+    (dupCount ? `, ${dupCount} flagged as possible duplicates` : "") +
+    (csvSkippedCount ? `. ${csvSkippedCount} row${csvSkippedCount === 1 ? "" : "s"} skipped (couldn't read a date/amount).` : ".");
+
+  $("csvPreviewList").innerHTML = csvPreviewRows.length
+    ? csvPreviewRows.map((r, i) => `
+      <div class="exp" style="cursor:default">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          <input type="checkbox" class="csv-row-select" data-csv-idx="${i}" ${r.duplicate ? "" : "checked"} style="flex-shrink:0" />
+          <div style="min-width:0">
+            <div>${esc(r.normalized.description || "(no description)")}${r.duplicate ? ` <span class="muted" style="font-size:11px">possible duplicate</span>` : ""}</div>
+            <div class="meta">${r.normalized.occurred_at}${r.normalized.category ? " · " + esc(r.normalized.category) : ""}</div>
+          </div>
+        </div>
+        <span class="amt">${fmt(r.normalized.amount)}</span>
+      </div>`).join("")
+    : `<p class="muted" style="font-size:13px">No valid rows found in this file.</p>`;
+
+  $("csvStep2").classList.add("hidden");
+  $("csvStep3").classList.remove("hidden");
+};
+
+$("csvStep3Back").onclick = () => {
+  $("csvStep3").classList.add("hidden");
+  $("csvStep2").classList.remove("hidden");
+};
+
+$("csvImportConfirm").onclick = async () => {
+  const checkedIdx = new Set(
+    [...document.querySelectorAll(".csv-row-select:checked")].map((el) => Number(el.dataset.csvIdx))
+  );
+  const toImport = csvPreviewRows.filter((_, i) => checkedIdx.has(i));
+  if (!toImport.length) return toast("Nothing checked to import");
+
+  const accountId = $("csvAccount").value;
+  const importAccount = accounts.find((a) => a.id === accountId);
+  const paymentType = importAccount.type;
+
+  const rows = toImport.map((r) => ({
+    amount: r.normalized.amount,
+    description: r.normalized.description,
+    merchant: null,
+    category: r.normalized.category || categorize(r.normalized.description || "", userRules) || null,
+    payment_type: paymentType,
+    account_id: accountId,
+    occurred_at: r.normalized.occurred_at,
+    source: "import",
+  }));
+
+  $("csvImportConfirm").disabled = true;
+  csvLastImportedIds = [];
+  for (let i = 0; i < rows.length; i += CSV_INSERT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + CSV_INSERT_CHUNK_SIZE);
+    const { data, error } = await sb.from("expenses").insert(chunk).select("id");
+    if (error) {
+      $("csvImportConfirm").disabled = false;
+      return toast(`Import failed partway through (${csvLastImportedIds.length} rows written): ${error.message}`);
+    }
+    csvLastImportedIds.push(...(data || []).map((r) => r.id));
+  }
+  $("csvImportConfirm").disabled = false;
+
+  await loadExpenses();
+  $("csvImportSummary").textContent = `Imported ${csvLastImportedIds.length} expense${csvLastImportedIds.length === 1 ? "" : "s"}.`;
+  $("csvStep3").classList.add("hidden");
+  $("csvStep4").classList.remove("hidden");
+  toast(`Imported ${csvLastImportedIds.length} expense${csvLastImportedIds.length === 1 ? "" : "s"} ✓`);
+};
+
+$("csvUndoImportBtn").onclick = async () => {
+  if (!csvLastImportedIds.length) return;
+  if (!(await confirmModal("This removes every expense from this import.", { title: "Undo this import?" }))) return;
+  const { error } = await sb.from("expenses").delete().in("id", csvLastImportedIds);
+  if (error) return toast(error.message);
+  csvLastImportedIds = [];
+  await loadExpenses();
+  $("csvImportModal").classList.add("hidden");
+  toast("Import undone");
+};
+
 // ---- EXPENSE LIST ----------------------------------------------------------
 // Shared row template + click-to-edit wiring for any expense/transaction
 // list - the Log page's Recent Transactions (expenses + account_activity
@@ -1607,7 +1824,7 @@ function renderExpenseList(containerId, rows, emptyMsg, { selectable = false } =
   el.innerHTML = rows.map((r, i) => r.kind ? `
     <div class="exp" data-idx="${i}" style="cursor:default">
       <div>
-        <div>${r.description}</div>
+        <div>${esc(r.description)}</div>
         <div class="meta">${r.occurred_at} · ${ACTIVITY_LABEL[r.kind] || "Account activity"}</div>
       </div>
       <span class="amt">${fmt(Math.abs(r.amount))}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span></span>
@@ -1616,8 +1833,8 @@ function renderExpenseList(containerId, rows, emptyMsg, { selectable = false } =
       <div style="display:flex;align-items:center;gap:8px;min-width:0">
         ${selectable ? `<input type="checkbox" class="txn-select" data-sel-idx="${i}" style="flex-shrink:0" ${selectedTxnIds.has(r.id) ? "checked" : ""} />` : ""}
         <div style="min-width:0">
-          <div>${r.description || r.merchant || "(no description)"}</div>
-          <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
+          <div>${esc(r.description || r.merchant || "(no description)")}</div>
+          <div class="meta">${r.occurred_at} · ${esc(r.category || "Uncategorized")}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + esc(acctName(r.account_id)) : ""}</div>
         </div>
       </div>
       <span class="amt">${fmt(r.amount)}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span></span>
@@ -1796,7 +2013,7 @@ async function loadExpenses() {
   const { data, error } = await sb.from("expenses")
     .select("*").gte("occurred_at", since)
     .order("occurred_at", { ascending: false }).order("created_at", { ascending: false });
-  if (error) { $("expList").innerHTML = `<p class="muted">${error.message}</p>`; return; }
+  if (error) { $("expList").innerHTML = `<p class="muted">${esc(error.message)}</p>`; return; }
   allExpenses = data || [];
   // Drop any selected id a reload no longer has (deleted/undone/out of the
   // 12-month window) so the bulk-action count never overcounts stale ids.
@@ -1966,7 +2183,7 @@ function renderBudgetWarnings() {
   budgetWarnings = budgetStatus(budgets, byCat).filter((s) => s.warn);
   $("budgetWarningNotice").classList.toggle("hidden", !budgetWarnings.length);
   $("budgetWarningList").innerHTML = budgetWarnings.map((s) =>
-    `<div>${s.category}: ${s.over ? "over budget" : `${s.pct}% of budget`} (${fmt(s.spent)} / ${fmt(s.limit)})</div>`
+    `<div>${esc(s.category)}: ${s.over ? "over budget" : `${s.pct}% of budget`} (${fmt(s.spent)} / ${fmt(s.limit)})</div>`
   ).join("");
 }
 
@@ -1993,10 +2210,10 @@ function renderBudgets(byCat) {
         return `
       <div style="margin-bottom:10px">
         <div class="row" style="justify-content:space-between;font-size:13px">
-          <span>${s.category}</span>
+          <span>${esc(s.category)}</span>
           <span>
             ${fmt(s.spent)} / ${fmt(s.limit)} (${s.pct}%)
-            <span class="x" data-del-budget="${s.category}" style="margin-left:8px">✕</span>
+            <span class="x" data-del-budget="${esc(s.category)}" style="margin-left:8px">✕</span>
           </span>
         </div>
         <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
@@ -2090,7 +2307,7 @@ function renderInvestments() {
       return `
         <div class="exp" style="cursor:default">
           <div>
-            <div>${a.name}</div>
+            <div>${esc(a.name)}</div>
             <div class="meta">${assetTypeLabel(a.type)}</div>
           </div>
           <span class="amt">${fmt(effectiveAssetValue(a))}</span>
@@ -2100,7 +2317,7 @@ function renderInvestments() {
       <div class="exp" style="cursor:default;flex-direction:column;align-items:stretch;gap:4px">
         <div style="display:flex;justify-content:space-between;gap:10px">
           <div>
-            <div>${h.symbol} <span class="muted" style="font-size:12px">${a.name}</span></div>
+            <div>${esc(h.symbol)} <span class="muted" style="font-size:12px">${esc(a.name)}</span></div>
             <div class="meta">${h.quantity ?? "?"} @ ${h.latestPrice != null ? fmt(h.latestPrice) : "no live price yet"}</div>
           </div>
           <div style="text-align:right">
@@ -2109,7 +2326,7 @@ function renderInvestments() {
             ${h.dayChange != null ? `<div style="font-size:12px;color:${gainColor(h.dayChange)}">today ${fmt(h.dayChange)} (${signedPct(h.dayChangePct)})</div>` : ""}
           </div>
         </div>
-        ${h.explanation ? `<div class="muted" style="font-size:12px">${h.explanation}</div>` : ""}
+        ${h.explanation ? `<div class="muted" style="font-size:12px">${esc(h.explanation)}</div>` : ""}
       </div>`;
   }).join("") : `<p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p>`;
 
@@ -2123,10 +2340,10 @@ function renderInvestments() {
     return `
       <div style="margin-bottom:10px">
         <div class="row" style="justify-content:space-between;font-size:13px">
-          <span>${a.bucket}</span>
+          <span>${esc(a.bucket)}</span>
           <span>
             ${a.currentPct}% / ${a.targetPercent}% target (${gapLabel})
-            <span class="x" data-del-invest-target="${a.bucket}" style="margin-left:8px">✕</span>
+            <span class="x" data-del-invest-target="${esc(a.bucket)}" style="margin-left:8px">✕</span>
           </span>
         </div>
         <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
@@ -2185,7 +2402,7 @@ function accountCurrentBalance(account) {
 function populateHistoryAccountSelect() {
   const sel = $("historyAccountSelect");
   const prev = sel.value;
-  sel.innerHTML = accounts.map((a) => `<option value="${a.id}">${acctLabel(a)}</option>`).join("");
+  sel.innerHTML = accounts.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
   sel.value = accounts.some((a) => a.id === prev) ? prev : (accounts[0]?.id ?? "");
 }
 $("historyAccountSelect").onchange = renderAccountHistory;
@@ -2340,7 +2557,7 @@ const SUBSCRIPTION_CATEGORY_SUGGESTIONS = [
 
 async function loadSubscriptions() {
   const { data, error } = await sb.from("subscriptions").select("*").order("next_renewal", { ascending: true });
-  if (error) { $("subList").innerHTML = `<p class="muted">${error.message}</p>`; return; }
+  if (error) { $("subList").innerHTML = `<p class="muted">${esc(error.message)}</p>`; return; }
   subscriptions = data || [];
   renderSubscriptions();
   renderDeals();
@@ -2351,7 +2568,7 @@ async function loadSubscriptions() {
   // loadAccounts() does for bankSuggestions - lets a custom category the
   // user invented once show back up as a suggestion next time.
   const cats = [...new Set([...SUBSCRIPTION_CATEGORY_SUGGESTIONS, ...subscriptions.map((s) => s.category).filter(Boolean)])].sort();
-  $("subCategorySuggestions").innerHTML = cats.map((c) => `<option value="${c}"></option>`).join("");
+  $("subCategorySuggestions").innerHTML = cats.map((c) => `<option value="${esc(c)}"></option>`).join("");
 }
 
 // A subscription's next_renewal reaching today means the real-world charge
@@ -2442,7 +2659,7 @@ function renderRecurringCandidates() {
   $("recurringList").innerHTML = candidates.map((c, i) => `
     <div class="exp" style="cursor:pointer" data-recur-idx="${i}">
       <div>
-        <div>${c.merchant}</div>
+        <div>${esc(c.merchant)}</div>
         <div class="meta">${c.occurrenceCount}x, last ${c.lastOccurredAt} · every ${c.cycleLabel}</div>
       </div>
       <span class="amt" style="color:var(--accent)">${fmt(c.amount)} · Add →</span>
@@ -2480,12 +2697,12 @@ function renderDeals() {
   const parts = [];
 
   for (const d of deals) {
-    const link = d.url ? `<a href="${d.url}" target="_blank" rel="noopener" style="color:var(--accent)">view plan →</a>` : "";
+    const link = d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--accent)">view plan →</a>` : "";
     parts.push(`
       <div class="exp" style="cursor:default">
         <div>
-          <div>${d.service} · <span style="color:var(--ok)">save ${fmt(d.monthlySavings)}/mo</span></div>
-          <div class="meta">You pay ${fmt(d.currentMonthly)}/mo · ${d.planType} plan is ${fmt(d.planPrice)}/${d.planCycle === "annual" ? "yr" : "mo"}${d.eligibility ? " (" + d.eligibility + ")" : ""} ${link}</div>
+          <div>${esc(d.service)} · <span style="color:var(--ok)">save ${fmt(d.monthlySavings)}/mo</span></div>
+          <div class="meta">You pay ${fmt(d.currentMonthly)}/mo · ${esc(d.planType)} plan is ${fmt(d.planPrice)}/${d.planCycle === "annual" ? "yr" : "mo"}${d.eligibility ? " (" + esc(d.eligibility) + ")" : ""} ${link}</div>
         </div>
         <span class="amt" style="color:var(--ok)">${fmt(d.yearlySavings)}/yr</span>
       </div>`);
@@ -2493,7 +2710,7 @@ function renderDeals() {
 
   // Gentle student upsell if the user hasn't set student status.
   if (upsells.length) {
-    const svc = upsells.map((u) => `${u.service} (${fmt(u.potentialYearly)}/yr)`).join(", ");
+    const svc = upsells.map((u) => `${esc(u.service)} (${fmt(u.potentialYearly)}/yr)`).join(", ");
     parts.push(`
       <div class="exp" style="cursor:pointer;border-top:1px dashed var(--border)" id="upsellRow">
         <div>
@@ -2516,7 +2733,7 @@ function renderDeals() {
     byPlanType.get(u.planType).push(u);
   }
   for (const [planType, items] of byPlanType) {
-    const svc = items.map((u) => `${u.service} (${fmt(u.potentialYearly)}/yr)`).join(", ");
+    const svc = items.map((u) => `${esc(u.service)} (${fmt(u.potentialYearly)}/yr)`).join(", ");
     parts.push(`
       <div class="exp" style="cursor:pointer;border-top:1px dashed var(--border)" data-upsell-plantype="${planType}">
         <div>
@@ -2557,18 +2774,18 @@ function renderDealFindings() {
     return;
   }
   $("dealFindingsList").innerHTML = matches.map((f) => {
-    const link = f.url ? `<a href="${f.url}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
+    const link = f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
     const price = f.price != null ? fmt(Number(f.price)) : "?";
     // A candidate finding gets Promote/Reject (F6 Phase E); an already-
     // verified one just shows its status - nothing left to review.
     const actions = f.status === "candidate"
       ? `<button class="secondary" data-promote-finding="${f.id}" style="width:auto;padding:3px 8px;font-size:11px;margin-right:4px">Promote</button><button class="secondary" data-reject-finding="${f.id}" style="width:auto;padding:3px 8px;font-size:11px">Reject</button>`
-      : `<span class="muted" style="font-size:11px">${f.status === "verified" ? "✓ verified" : f.status}</span>`;
+      : `<span class="muted" style="font-size:11px">${f.status === "verified" ? "✓ verified" : esc(f.status)}</span>`;
     return `
       <div class="exp" style="cursor:default;flex-wrap:wrap;gap:6px">
         <div>
-          <div>${f.service}${f.plan_type ? " · " + f.plan_type : ""}</div>
-          <div class="meta">${price}${f.eligibility ? " (" + f.eligibility + ")" : ""} ${link}</div>
+          <div>${esc(f.service)}${f.plan_type ? " · " + esc(f.plan_type) : ""}</div>
+          <div class="meta">${price}${f.eligibility ? " (" + esc(f.eligibility) + ")" : ""} ${link}</div>
         </div>
         <span class="amt">${actions}</span>
       </div>`;
@@ -2628,7 +2845,7 @@ function renderSubscriptions() {
   $("subUpcoming").innerHTML = up.length
     ? up.map((s) => `
       <div class="exp" style="cursor:default">
-        <div><div>${s.name}</div><div class="meta">${s.next_renewal} · ${renewalLabel(s.days)}${acctName(s.account_id) ? " · " + acctName(s.account_id) : ""}</div></div>
+        <div><div>${esc(s.name)}</div><div class="meta">${s.next_renewal} · ${renewalLabel(s.days)}${acctName(s.account_id) ? " · " + esc(acctName(s.account_id)) : ""}</div></div>
         <span class="amt">${fmt(s.amount)}${s.billing_cycle === "annual" ? "/yr" : "/mo"}</span>
       </div>`).join("")
     : `<p class="muted">None in the next 30 days.</p>`;
@@ -2639,8 +2856,8 @@ function renderSubscriptions() {
     ? sorted.map((s) => `
       <div class="exp" data-sub="${s.id}" style="${s.is_active ? "" : "opacity:.5"}">
         <div>
-          <div>${s.name}${s.is_essential ? " · Essential" : ""}${s.is_active ? "" : " · (inactive)"}</div>
-          <div class="meta">${s.category ? s.category + " · " : ""}${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + cap(s.billing_cycle) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
+          <div>${esc(s.name)}${s.is_essential ? " · Essential" : ""}${s.is_active ? "" : " · (inactive)"}</div>
+          <div class="meta">${s.category ? esc(s.category) + " · " : ""}${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + cap(s.billing_cycle) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")

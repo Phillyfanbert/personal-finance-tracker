@@ -173,6 +173,7 @@
             <button class="secondary" id="cancelBtn">Cancel</button>
           </div>
         </div>
+        <button class="secondary" id="openCsvImportBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">Import CSV</button>
       </div>
 
       <!-- Expense list -->
@@ -891,6 +892,69 @@
     </div>
   </div>
 
+  <!-- ============ CSV IMPORT MODAL ============ -->
+  <!-- Migrate expense history from another platform. Runs entirely
+       client-side (PapaParse parses the file in the browser, csvImport.js
+       normalizes rows) - nothing is uploaded anywhere except the final,
+       user-confirmed rows via the same RLS-scoped insert every other
+       expense write already uses. Deliberately does NOT apply asset/
+       liability deltas (see app.js) - these are historical expenses that
+       already happened, so the linked account's current balance already
+       reflects them; replaying them through that pipeline would
+       double-subtract and corrupt it. -->
+  <div id="csvImportModal" class="modal hidden">
+    <div class="sheet">
+      <div class="topbar"><strong>Import CSV</strong><button class="secondary" id="csvImportClose" style="width:auto;padding:6px 12px">Close</button></div>
+
+      <div id="csvStep1">
+        <p class="muted" style="font-size:13px">Import expense history from another platform (bank export, Mint, YNAB, ...). Everything happens in your browser - the file itself is never uploaded anywhere.</p>
+        <p class="muted" style="font-size:12px;margin-top:8px"><strong>Imported expenses only add to your history for tracking and reports - they never change any account or liability balance.</strong> Those already reflect this spending in real life; adjust them yourself afterward if this file doesn't already match your current balance.</p>
+        <label style="margin-top:12px">CSV file (up to 5MB, ~10,000 rows)</label>
+        <input id="csvFileInput" type="file" accept=".csv,text/csv" />
+        <p class="muted" id="csvFileError" style="font-size:12px;color:var(--err);margin-top:6px"></p>
+      </div>
+
+      <div id="csvStep2" class="hidden">
+        <p class="muted" style="font-size:13px">Match each column in your file to a field. Date and Amount are required.</p>
+        <div class="row">
+          <div><label>Date column</label><select id="csvMapDate"></select></div>
+          <div><label>Amount column</label><select id="csvMapAmount"></select></div>
+        </div>
+        <div class="row">
+          <div><label>Description column (optional)</label><select id="csvMapDesc"></select></div>
+          <div><label>Category column (optional)</label><select id="csvMapCategory"></select></div>
+        </div>
+        <label style="margin-top:10px"><input type="checkbox" id="csvFlipSign" style="width:auto;margin-right:8px" />Amounts in this file are negative for money spent</label>
+        <label>Import into account</label>
+        <select id="csvAccount"></select>
+        <div style="height:10px"></div>
+        <div class="row">
+          <button id="csvStep2Next">Preview</button>
+          <button class="secondary" id="csvStep2Back">Back</button>
+        </div>
+      </div>
+
+      <div id="csvStep3" class="hidden">
+        <p class="muted" id="csvPreviewSummary" style="font-size:13px"></p>
+        <p class="muted" style="font-size:12px">Rows checked will be imported. Likely duplicates (matching an existing expense's date, amount, and description) start unchecked.</p>
+        <div id="csvPreviewList" class="scroll-list" style="margin-top:8px"></div>
+        <div style="height:10px"></div>
+        <div class="row">
+          <button id="csvImportConfirm">Import checked rows</button>
+          <button class="secondary" id="csvStep3Back">Back</button>
+        </div>
+      </div>
+
+      <div id="csvStep4" class="hidden">
+        <p id="csvImportSummary" style="font-size:14px"></p>
+        <div class="row">
+          <button class="secondary" id="csvUndoImportBtn" style="color:var(--err)">Undo this import</button>
+          <button id="csvImportDone">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ PROFILE MODAL ============ -->
   <div id="profileModal" class="modal hidden">
     <div class="sheet">
@@ -989,15 +1053,20 @@
   <nav id="nav" class="nav hidden">
     <button id="navLog" class="active">Log</button>
     <button id="navSubs">Subscriptions/Bills</button>
-    <button id="navReports">Reports</button>
     <button id="navInvest">Investments</button>
+    <button id="navReports">Reports</button>
   </nav>
 
   <div id="toast" class="toast"></div>
 
-  <!-- Supabase + Chart.js from CDN (no build step) -->
+  <!-- Supabase + Chart.js + PapaParse from CDN (no build step). PapaParse
+       parses CSV imports (Log page) - correctly handles quoted fields with
+       embedded commas/quotes, which a hand-rolled split(',') parser would
+       silently misparse (a real correctness/data-integrity risk for
+       financial data, confirmed by testing before adopting it). -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js"></script>
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>
   <script>

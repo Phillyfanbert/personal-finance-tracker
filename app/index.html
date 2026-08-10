@@ -556,6 +556,19 @@
         <div class="chartbox short"><canvas id="historyChart"></canvas></div>
       </div>
 
+      <!-- One snapshot per calendar day the app was actually opened
+           (snapshotNetWorthIfNeeded, app.js) - unlike account balance
+           history, net worth can't be reconstructed from existing rows
+           alone (a standalone asset/liability has no delta trail), so
+           this is a real stored snapshot, not a live reconstruction. Not
+           scoped to the month selector, same reasoning as the account
+           history card above. -->
+      <div class="card">
+        <strong>Net worth trend</strong>
+        <div class="chartbox short"><canvas id="netWorthTrendChart"></canvas></div>
+        <p class="muted" id="netWorthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
+      </div>
+
       <div id="rptEmpty" class="card hidden"><p class="muted" style="margin:0">No expenses in this month yet.</p></div>
     </div>
 

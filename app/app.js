@@ -137,6 +137,7 @@ async function init() {
   await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadAssets(), loadDebts(), loadAccountActivity()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
   await autoLogDueSubscriptions();
+  await snapshotNetWorthIfNeeded();
 }
 
 // Every user gets exactly one Cash account + linked Cash asset, auto-created
@@ -1382,6 +1383,25 @@ function renderNetWorth() {
   $("liabilitiesMonthly").textContent = fmt(creditTotal);
 }
 
+// Net worth trend (docs/ROADMAP.md Reports & Net Worth #1) - no cron/
+// server trigger exists for a static PWA, so a snapshot only ever
+// happens because the app was actually opened that day; a day it wasn't
+// opened just has no row, an honest gap rather than a fabricated
+// backfill. Upsert (not insert) so today's snapshot stays current if net
+// worth changes again later the same day, rather than freezing at
+// whatever it was on the first load. Called once per init(), not from
+// renderNetWorth() (which runs many times per session) - one write per
+// day is the point, not one per render.
+async function snapshotNetWorthIfNeeded() {
+  const depreciatedAssets = assets.map((a) => ({ ...a, value: effectiveAssetValue(a) }));
+  const nw = computeNetWorth(depreciatedAssets, debts);
+  const snapshot_date = new Date().toISOString().slice(0, 10);
+  await sb.from("net_worth_snapshots").upsert(
+    { snapshot_date, assets_total: nw.assetsTotal, liabilities_total: nw.liabilitiesTotal, net_worth: nw.netWorth },
+    { onConflict: "user_id,snapshot_date" }
+  );
+}
+
 // ---- QUICK ADD -------------------------------------------------------------
 // There's no separate "Payment" field anymore - an expense's payment type
 // IS whatever type the chosen Account is (cash/debit/credit values match
@@ -1841,6 +1861,22 @@ async function loadReports() {
   loadInsights();
   populateHistoryAccountSelect();
   renderAccountHistory();
+  await renderNetWorthTrend();
+}
+
+// Real stored snapshots (net_worth_snapshots), not a live reconstruction
+// - see the card's comment in index.html for why. Not scoped to monthSel,
+// same as the account balance history chart above.
+async function renderNetWorthTrend() {
+  const { data } = await sb.from("net_worth_snapshots").select("*").order("snapshot_date", { ascending: true });
+  const rows = data || [];
+  $("netWorthTrendEmpty").classList.toggle("hidden", rows.length >= 2);
+  if (rows.length < 2) return; // a single point isn't a "trend"
+  const labels = rows.map((r) => {
+    const [y, m, d] = r.snapshot_date.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  });
+  renderLineChart($("netWorthTrendChart"), labels, rows.map((r) => Number(r.net_worth)));
 }
 
 // Whichever side of accounts.linked_asset_id/linked_liability_id is set is

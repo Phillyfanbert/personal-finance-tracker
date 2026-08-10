@@ -2592,3 +2592,32 @@ $("profileSave").onclick = async () => {
   renderDeals(); // eligibility may have changed (e.g. now a student, or military)
   toast("Profile saved");
 };
+
+// docs/ROADMAP.md Cross-cutting #2 - a plain JSON dump of every table this
+// user's own data actually lives in, RLS-scoped automatically since this
+// runs as the signed-in user (not service_role). Deliberately excludes
+// the shared reference tables (subscription_catalog, deal_findings,
+// asset_price_findings, service_domains) - not this user's data, and
+// dumping deal_findings especially would mix in other users' unrelated
+// candidate/rejected rows that happen to still be readable.
+const USER_DATA_TABLES = [
+  "profiles", "accounts", "expenses", "category_rules", "subscriptions",
+  "assets", "liabilities", "account_activity", "budgets", "net_worth_snapshots",
+];
+$("downloadDataBtn").onclick = async () => {
+  $("downloadDataBtn").disabled = true;
+  const dump = { exported_at: new Date().toISOString() };
+  for (const table of USER_DATA_TABLES) {
+    const { data, error } = await sb.from(table).select("*");
+    if (error) { $("downloadDataBtn").disabled = false; return toast(`Export failed on ${table}: ${error.message}`); }
+    dump[table] = data || [];
+  }
+  $("downloadDataBtn").disabled = false;
+  const blob = new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `personal-finance-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast("Download started");
+};

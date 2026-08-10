@@ -859,6 +859,12 @@
       <input id="pNotes" placeholder="anything else that helps" />
       <div style="height:14px"></div>
       <button id="profileSave">Save profile</button>
+      <div style="height:8px"></div>
+      <!-- Every table this profile row's own data lives in - not the
+           shared reference tables (subscription_catalog, deal_findings,
+           asset_price_findings, service_domains), which aren't this
+           user's data to begin with (docs/ROADMAP.md Cross-cutting #2). -->
+      <button class="secondary" id="downloadDataBtn">Download all my data</button>
     </div>
   </div>
 

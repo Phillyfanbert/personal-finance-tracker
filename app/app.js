@@ -12,6 +12,7 @@ import {
 import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
+import { budgetStatus } from "./budgets.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
@@ -75,6 +76,7 @@ let subscriptions = []; // cache of the user's subscriptions
 let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
+let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
 let assets = [];      // net-worth assets (Log page)
 let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (Log page)
 let accountActivity = []; // non-expense money movements (asset adjust, liability pay) - Recent Transactions
@@ -128,13 +130,14 @@ async function init() {
   fillCategorySelect($("fCategory"));
   fillCategorySelect($("eCategory"));
   fillCategorySelect($("bulkCategorySelect"));
+  fillCategorySelect($("budgetCategory"));
   $("fDate").value = new Date().toISOString().slice(0, 10);
   await ensureCashAccount();
   // loadAccounts before loadDebts: the debts list checks accounts for which
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadAssets(), loadDebts(), loadAccountActivity()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
   await autoLogDueSubscriptions();
   await snapshotNetWorthIfNeeded();
@@ -1879,6 +1882,61 @@ async function renderNetWorthTrend() {
   renderLineChart($("netWorthTrendChart"), labels, rows.map((r) => Number(r.net_worth)));
 }
 
+// ---- BUDGETS (docs/ROADMAP.md Reports & Net Worth #2) ---------------------
+async function loadBudgets() {
+  const { data } = await sb.from("budgets").select("*").order("category");
+  budgets = data || [];
+}
+
+// Called from renderReports() with that render's own byCat, rather than
+// recomputing sumBy() a second time - scoped to whatever month monthSel
+// has selected, unlike the account-history/net-worth-trend charts.
+function renderBudgets(byCat) {
+  const statuses = budgetStatus(budgets, byCat);
+  $("budgetsList").innerHTML = statuses.length
+    ? statuses.map((s) => {
+        const pctClamped = Math.min(100, s.pct);
+        const barColor = s.over ? "var(--err)" : "var(--ok)";
+        return `
+      <div style="margin-bottom:10px">
+        <div class="row" style="justify-content:space-between;font-size:13px">
+          <span>${s.category}</span>
+          <span>
+            ${fmt(s.spent)} / ${fmt(s.limit)} (${s.pct}%)
+            <span class="x" data-del-budget="${s.category}" style="margin-left:8px">✕</span>
+          </span>
+        </div>
+        <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
+          <div style="background:${barColor};width:${pctClamped}%;height:100%"></div>
+        </div>
+      </div>`;
+      }).join("")
+    : `<p class="muted" style="font-size:13px">No budgets set yet.</p>`;
+  document.querySelectorAll("[data-del-budget]").forEach((el) => {
+    el.onclick = async () => {
+      const { error } = await sb.from("budgets").delete().eq("category", el.dataset.delBudget);
+      if (error) return toast(error.message);
+      await loadBudgets();
+      renderReports();
+      toast("Budget removed");
+    };
+  });
+}
+
+$("saveBudgetBtn").onclick = async () => {
+  const category = $("budgetCategory").value;
+  const monthly_limit = parseFloat($("budgetLimit").value);
+  if (!category) return toast("Pick a category");
+  if (!Number.isFinite(monthly_limit) || monthly_limit <= 0) return toast("Enter a valid monthly limit");
+  const { error } = await sb.from("budgets")
+    .upsert({ category, monthly_limit }, { onConflict: "user_id,category" });
+  if (error) return toast(error.message);
+  $("budgetLimit").value = "";
+  await loadBudgets();
+  renderReports();
+  toast("Budget set");
+};
+
 // Whichever side of accounts.linked_asset_id/linked_liability_id is set is
 // where the live balance actually lives (see CLAUDE.md's data model) - an
 // account row itself never stores a dollar value.
@@ -1967,6 +2025,7 @@ async function renderReports() {
 
   const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
   renderExpenseList("rptExpList", monthRows, "No expenses this month.");
+  renderBudgets(byCat);
 
   renderBreakdownBar($("catChart"), byCat);
   renderBreakdownBar($("acctChart"), byAcct);

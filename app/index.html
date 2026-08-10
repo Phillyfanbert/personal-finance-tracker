@@ -528,6 +528,22 @@
         <div class="chartbox"><canvas id="catChart"></canvas></div>
       </div>
 
+      <!-- An ongoing monthly limit per category, not per-month-varying -
+           set once, applies every month until changed. Scoped to the
+           month selector above, unlike the account-history/net-worth-
+           trend charts, since "over/under budget" is inherently about a
+           specific month's actual spend (docs/ROADMAP.md Reports & Net
+           Worth #2). -->
+      <div class="card">
+        <strong>Budgets</strong>
+        <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
+        <div class="row" style="margin-top:10px">
+          <select id="budgetCategory" style="flex:1"></select>
+          <input id="budgetLimit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1" />
+          <button id="saveBudgetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
+        </div>
+      </div>
+
       <div class="card">
         <strong>By account</strong>
         <div class="chartbox short"><canvas id="acctChart"></canvas></div>

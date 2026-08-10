@@ -13,6 +13,7 @@ import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { budgetStatus } from "./budgets.js";
+import { buildExpensesCsv } from "./export.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
@@ -2033,6 +2034,60 @@ async function renderReports() {
   const trailing = lastMonths(6, ym);
   renderTrendBar($("trendChart"), trailing, monthlyTotals(allExpenses, trailing));
 }
+
+// ---- MONTH REPORT EXPORT (docs/ROADMAP.md Reports & Net Worth #3) --------
+// Recomputes ym/monthRows fresh rather than reading renderReports()'s
+// locals - cheap (already-loaded allExpenses, no new query) and avoids
+// threading extra state through just for these two buttons.
+$("exportCsvBtn").onclick = () => {
+  const ym = $("monthSel").value || monthKey();
+  const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  const csv = buildExpensesCsv(monthRows, acctName);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `expenses-${ym}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+// window.print() against an isolated new-tab document, not a CDN PDF
+// library (jsPDF etc.) and not @media print CSS fighting the live app's
+// own layout - a clean report built fresh in its own tab is far more
+// robust than trying to make the whole SPA shell print sensibly. The
+// user picks "Save as PDF" as the print destination themselves; nothing
+// here writes a PDF directly.
+$("exportPdfBtn").onclick = () => {
+  const ym = $("monthSel").value || monthKey();
+  const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  const byCat = sumBy(allExpenses, "category", ym);
+  const total = byCat.reduce((s, d) => s + d.value, 0);
+  const win = window.open("", "_blank");
+  if (!win) { toast("Allow pop-ups to print/export a PDF"); return; }
+  const rowsHtml = monthRows.map((r) =>
+    `<tr><td>${r.occurred_at}</td><td>${r.description || r.merchant || ""}</td><td>${r.category || ""}</td><td style="text-align:right">${fmt(r.amount)}</td></tr>`
+  ).join("");
+  const catHtml = byCat.map((c) => `<tr><td>${c.label}</td><td style="text-align:right">${fmt(c.value)}</td></tr>`).join("");
+  win.document.write(`<!doctype html><html><head><title>${monthLabel(ym)} report</title>
+<meta charset="utf-8">
+<style>
+body{font-family:-apple-system,Helvetica,Arial,sans-serif;padding:24px;color:#111}
+h1{font-size:20px;margin:0 0 4px} h2{font-size:15px;margin:24px 0 8px}
+table{width:100%;border-collapse:collapse}
+td,th{padding:6px 8px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}
+.total{font-size:15px;font-weight:700;margin:8px 0 0}
+</style></head><body>
+<h1>${monthLabel(ym)}</h1>
+<div class="total">Total: ${fmt(total)}</div>
+<h2>By category</h2>
+<table>${catHtml}</table>
+<h2>Expenses</h2>
+<table><tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr>${rowsHtml}</table>
+</body></html>`);
+  win.document.close();
+  win.focus();
+  win.print();
+};
 
 // ---- SUBSCRIPTIONS (README §3.7 / F5) --------------------------------------
 // Suggestions only, not a fixed enum - sCategory (index.html) is a free-text

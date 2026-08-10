@@ -518,7 +518,13 @@
            not every balance change. Scrollable so a busy month doesn't push
            every chart below it far down the page - see renderReports (app.js). -->
       <div class="card">
-        <strong>Monthly Expense Log</strong>
+        <div class="topbar" style="margin-bottom:4px">
+          <strong>Monthly Expense Log</strong>
+          <div class="row" style="width:auto;gap:6px">
+            <button class="secondary" id="exportCsvBtn" style="width:auto;padding:5px 10px;font-size:12px">CSV</button>
+            <button class="secondary" id="exportPdfBtn" style="width:auto;padding:5px 10px;font-size:12px">Print / PDF</button>
+          </div>
+        </div>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
         <div id="rptExpList" class="scroll-list" style="margin-top:8px"></div>
       </div>

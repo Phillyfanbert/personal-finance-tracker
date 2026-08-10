@@ -325,6 +325,9 @@
         <!-- Only shown when a CD's maturity_date is within 30 days - see
              upcomingMaturities() (app.js). -->
         <div id="assetMaturityNotice" class="hidden muted" style="font-size:12px;margin-top:6px"></div>
+        <!-- Only shown for a manually-valued asset not touched in 6+
+             months - see staleAssets() (app.js). -->
+        <div id="assetStaleNotice" class="hidden muted" style="font-size:12px;margin-top:6px"></div>
         <button class="secondary" id="addAssetBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add asset</button>
         <div id="assetForm" class="hidden" style="margin-top:10px">
           <div class="row">

@@ -687,6 +687,25 @@ function upcomingMaturities(withinDays = 30, today = new Date()) {
     .sort((a, b) => a.days - b.days);
 }
 
+// Excludes cash/bank - those get touched by applyAssetDelta on every
+// expense against them, so they're never realistically stale - and a
+// vehicle with full depreciation info, which is always fresh by
+// construction (effectiveAssetValue recomputes it live, so "when was this
+// last edited" doesn't mean anything for it). Everything else (investment,
+// property, a plain vehicle, retirement/specialty types, other) only ever
+// changes when the user manually edits it, which is exactly what this is
+// meant to catch. updated_at only reflects real edits as of
+// 25_touch_updated_at_trigger.sql - before that migration it was
+// permanently stuck at creation time regardless of later edits.
+function staleAssets(monthsThreshold = 6, today = new Date()) {
+  return assets
+    .filter((a) => a.type !== "cash" && a.type !== "bank" && a.updated_at)
+    .filter((a) => !(a.type === "vehicle" && estimateValue(a.purchase_price, a.purchase_date, a.depreciation_rate) !== null))
+    .map((a) => ({ ...a, monthsSince: Math.floor((today - new Date(a.updated_at)) / (30.44 * 86400000)) }))
+    .filter((a) => a.monthsSince >= monthsThreshold)
+    .sort((a, b) => b.monthsSince - a.monthsSince);
+}
+
 async function loadAssets() {
   const { data } = await sb.from("assets").select("*").order("created_at");
   assets = data || [];
@@ -736,6 +755,10 @@ async function loadAssets() {
   $("assetMaturityNotice").classList.toggle("hidden", !maturing.length);
   $("assetMaturityNotice").textContent = maturing
     .map((a) => `${a.name} matures ${renewalLabel(a.days)}`).join(" · ");
+  const stale = staleAssets();
+  $("assetStaleNotice").classList.toggle("hidden", !stale.length);
+  $("assetStaleNotice").textContent = stale
+    .map((a) => `${a.name} last updated ${a.monthsSince} month${a.monthsSince === 1 ? "" : "s"} ago`).join(" · ");
   renderNetWorth();
   renderAccountsList(); // a changed asset value may be a linked account's balance line
 }

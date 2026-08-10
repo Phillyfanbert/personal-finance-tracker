@@ -96,6 +96,37 @@ export function renderBreakdownBar(canvas, data) {
   });
 }
 
+/**
+ * Line chart for a day-by-day balance series (docs/ROADMAP.md Accounts #1).
+ * `canvas.id` is the registry key, same as renderBreakdownBar - lets this
+ * coexist with the bar charts without clobbering them on redraw.
+ */
+export function renderLineChart(canvas, labels, values) {
+  destroy(canvas.id);
+  _charts[canvas.id] = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        borderColor: "#0ea5e9",
+        backgroundColor: "rgba(14,165,233,0.15)",
+        fill: true,
+        tension: 0.2,
+        pointRadius: 2,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: TEXT }, grid: { display: false } },
+        y: { ticks: { color: TEXT, callback: (v) => "$" + v }, grid: { color: GRID } },
+      },
+    },
+  });
+}
+
 export function renderTrendBar(canvas, months, totals) {
   destroy("trend");
   _charts["trend"] = new Chart(canvas, {

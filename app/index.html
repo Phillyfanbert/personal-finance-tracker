@@ -170,6 +170,10 @@
              payment_type or category, so they drop out of the list under
              those two filters, and under Kind unless "Activity only" is
              picked there. -->
+        <div style="margin-top:8px">
+          <label style="margin:0 0 4px">Search</label>
+          <input id="txnSearch" placeholder="Search merchant or description..." style="width:100%;font-size:13px;padding:6px 8px" autocomplete="off" />
+        </div>
         <div class="row" style="flex-wrap:wrap;gap:6px 10px;margin-top:8px;align-items:flex-end">
           <div style="flex:1;min-width:110px">
             <label style="margin:0 0 4px">Type</label>
@@ -197,8 +201,25 @@
               <option value="activity">Activity only</option>
             </select>
           </div>
+          <div style="flex:1;min-width:80px">
+            <label style="margin:0 0 4px">Min $</label>
+            <input id="txnMinAmount" type="number" step="0.01" inputmode="decimal" placeholder="0" style="width:100%;font-size:12px;padding:6px 8px" />
+          </div>
+          <div style="flex:1;min-width:80px">
+            <label style="margin:0 0 4px">Max $</label>
+            <input id="txnMaxAmount" type="number" step="0.01" inputmode="decimal" placeholder="Any" style="width:100%;font-size:12px;padding:6px 8px" />
+          </div>
         </div>
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Tap an expense to edit or recategorize. Account activity (payments, balance adjustments) is shown for reference only.</p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Tap an expense to edit or recategorize, or check a few to recategorize them together. Account activity (payments, balance adjustments) is shown for reference only and can't be checked.</p>
+        <!-- Selection persists across filter changes (so refining a search
+             doesn't lose a partially-built selection) - only cleared by
+             Clear, a successful Apply, or a fresh loadExpenses(). -->
+        <div class="row hidden" id="bulkActionBar" style="align-items:center;gap:8px;margin-top:8px;padding:8px;background:var(--panel-2);border-radius:8px">
+          <span class="muted" style="font-size:12px;white-space:nowrap" id="bulkSelectedCount"></span>
+          <select id="bulkCategorySelect" style="flex:1;font-size:12px;padding:6px 8px"></select>
+          <button id="bulkApplyBtn" style="width:auto;padding:6px 12px;font-size:12px">Apply</button>
+          <button class="secondary" id="bulkClearBtn" style="width:auto;padding:6px 12px;font-size:12px">Clear</button>
+        </div>
         <div id="expList" class="scroll-list" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
 
@@ -442,6 +463,19 @@
         <div class="chartbox short"><canvas id="trendChart"></canvas></div>
       </div>
 
+      <!-- Reconstructed from expenses + account_activity (see
+           app/accountHistory.js) rather than a stored snapshot - not
+           scoped to the month selector above, unlike the other charts on
+           this page, since a balance history spans an account's whole
+           lifetime. -->
+      <div class="card">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Account balance history</strong>
+          <select id="historyAccountSelect" style="width:auto;font-size:12px"></select>
+        </div>
+        <div class="chartbox short"><canvas id="historyChart"></canvas></div>
+      </div>
+
       <div id="rptEmpty" class="card hidden"><p class="muted" style="margin:0">No expenses in this month yet.</p></div>
     </div>
 
@@ -458,6 +492,19 @@
       <div class="totals">
         <div class="card"><div class="muted" style="font-size:12px">Monthly total</div><div class="big" id="subsTotalMonthly">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Yearly</div><div class="big" id="subsTotalYearly">$0</div></div>
+      </div>
+
+      <!-- Recurring-expense detection (README appendix open decision,
+           docs/ROADMAP.md Log/Quick Add #1) - hidden unless at least one
+           candidate is found, unlike dealsCard below which always shows an
+           empty-state message; this is a discovery nudge, not a summary
+           that should always occupy space. -->
+      <div class="card hidden" id="recurringCard">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Recurring expenses found</strong>
+        </div>
+        <p class="muted" style="font-size:12px;margin:0 0 8px">These look like a bill based on your expense history - tap one to start tracking it here.</p>
+        <div id="recurringList"></div>
       </div>
 
       <!-- Savings / discount discovery (README §3.7 F6) -->

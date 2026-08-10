@@ -7,10 +7,12 @@
 import { categorize, quickParse, CATEGORIES } from "./categorize.js";
 import {
   monthKey, monthLabel, lastMonths, sumBy, monthlyTotals,
-  renderBreakdownBar, renderTrendBar,
+  renderBreakdownBar, renderTrendBar, renderLineChart,
 } from "./charts.js";
+import { buildBalanceHistory } from "./accountHistory.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
+  detectRecurringExpenses,
 } from "./subscriptions.js";
 import { findDeals, studentUpsell, matchService } from "./discounts.js";
 import { parseWithGemma, askGemma } from "./gemma.js";
@@ -122,6 +124,7 @@ function showView(v) {
 async function init() {
   fillCategorySelect($("fCategory"));
   fillCategorySelect($("eCategory"));
+  fillCategorySelect($("bulkCategorySelect"));
   $("fDate").value = new Date().toISOString().slice(0, 10);
   await ensureCashAccount();
   // loadAccounts before loadDebts: the debts list checks accounts for which
@@ -531,6 +534,9 @@ function populateTxnAccountFilter() {
 $("txnAccountFilter").onchange = renderRecentTransactions;
 $("txnCategoryFilter").onchange = renderRecentTransactions;
 $("txnKindFilter").onchange = renderRecentTransactions;
+$("txnSearch").oninput = renderRecentTransactions;
+$("txnMinAmount").oninput = renderRecentTransactions;
+$("txnMaxAmount").oninput = renderRecentTransactions;
 
 // ---- ASSETS ------------------------------------------------------------
 // Retirement/investment and specialty account types are almost always
@@ -1193,7 +1199,12 @@ $("saveBtn").onclick = async () => {
 // fat-fingered, a payment made against the wrong debt - can be corrected
 // from the list directly instead of hunting down the right form to
 // reverse it by hand. See undoTransaction() below.
-function renderExpenseList(containerId, rows, emptyMsg) {
+// `selectable` (Recent Transactions only, not the Reports month log - see
+// callers) adds a checkbox to expense rows for bulkApplyBtn/bulkClearBtn
+// below; account_activity rows never get one, since category doesn't
+// apply to them. selectedTxnIds is checked, not just set, on render so a
+// selection already made survives a re-render from a filter change.
+function renderExpenseList(containerId, rows, emptyMsg, { selectable = false } = {}) {
   const el = $(containerId);
   if (!rows.length) { el.innerHTML = `<p class="muted">${emptyMsg}</p>`; return; }
   el.innerHTML = rows.map((r, i) => r.kind ? `
@@ -1205,9 +1216,12 @@ function renderExpenseList(containerId, rows, emptyMsg) {
       <span class="amt">${fmt(Math.abs(r.amount))}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span></span>
     </div>` : `
     <div class="exp" data-idx="${i}">
-      <div>
-        <div>${r.description || r.merchant || "(no description)"}</div>
-        <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        ${selectable ? `<input type="checkbox" class="txn-select" data-sel-idx="${i}" style="flex-shrink:0" ${selectedTxnIds.has(r.id) ? "checked" : ""} />` : ""}
+        <div style="min-width:0">
+          <div>${r.description || r.merchant || "(no description)"}</div>
+          <div class="meta">${r.occurred_at} · ${r.category || "Uncategorized"}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + acctName(r.account_id) : ""}</div>
+        </div>
       </div>
       <span class="amt">${fmt(r.amount)}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span></span>
     </div>`).join("");
@@ -1222,7 +1236,42 @@ function renderExpenseList(containerId, rows, emptyMsg) {
       undoTransaction(rows[Number(undoEl.dataset.undoIdx)]);
     };
   });
+  el.querySelectorAll(".txn-select").forEach((cb) => {
+    cb.onclick = (ev) => ev.stopPropagation(); // don't also trigger the row's openEdit click
+    cb.onchange = () => {
+      const row = rows[Number(cb.dataset.selIdx)];
+      if (cb.checked) selectedTxnIds.add(row.id); else selectedTxnIds.delete(row.id);
+      updateBulkActionBar();
+    };
+  });
 }
+
+// Selected ids persist across a Recent Transactions re-render (filter
+// change, new data) - cleared only by Clear, a successful Apply, or
+// signing out. Keyed by expenses.id, so it only ever holds expense rows,
+// never account_activity ones (see renderExpenseList above).
+let selectedTxnIds = new Set();
+function updateBulkActionBar() {
+  const n = selectedTxnIds.size;
+  $("bulkActionBar").classList.toggle("hidden", n === 0);
+  $("bulkSelectedCount").textContent = `${n} selected`;
+}
+$("bulkClearBtn").onclick = () => { selectedTxnIds.clear(); renderRecentTransactions(); };
+$("bulkApplyBtn").onclick = async () => {
+  const category = $("bulkCategorySelect").value;
+  if (!category || !selectedTxnIds.size) return;
+  $("bulkApplyBtn").disabled = true;
+  // Category never factors into applyAssetDelta/applyLiabilityDelta (see
+  // editSave above) - a plain category update needs no asset/liability
+  // recalculation, unlike a full single-row edit.
+  const { error } = await sb.from("expenses").update({ category }).in("id", [...selectedTxnIds]);
+  $("bulkApplyBtn").disabled = false;
+  if (error) return toast(error.message);
+  const n = selectedTxnIds.size;
+  selectedTxnIds.clear();
+  await loadExpenses();
+  toast(`Recategorized ${n} expense${n === 1 ? "" : "s"} to ${category}`);
+};
 
 // Reverses a transaction picked from Recent Transactions (or the Reports
 // monthly log, which shares this same list renderer) - an expense gets
@@ -1292,40 +1341,56 @@ async function undoActivity(row) {
 
 // Merges expenses with account_activity for the Log page's Recent
 // Transactions list - Reports' Monthly Expense Log intentionally does NOT
-// use this, it renders `allExpenses` directly (expenses only). All four
-// filters AND together and are applied before the limit, not after, so a
-// filtered view still shows up to `limit` matches instead of whatever's
-// left over from the unfiltered top 50. account_activity rows have no
-// payment_type or category at all, so those two filters naturally drop
-// them the moment either is set to something other than "All" - `kind` is
-// the only filter that can explicitly ask for them back (kind ===
-// "activity"). account_activity DOES carry account_id (and, for a
-// liability_payment against a credit-linked debt, related_account_id
-// too), so the account filter matches either side - filtering by a credit
-// card shows both its charges and the payments made against it.
-function recentTransactions(limit = 50, { paymentType = "", accountId = "", category = "", kind = "" } = {}) {
+// use this, it renders `allExpenses` directly (expenses only). All filters
+// AND together and are applied before the limit, not after, so a filtered
+// view still shows up to `limit` matches instead of whatever's left over
+// from the unfiltered top 50. account_activity rows have no payment_type
+// or category at all, so those two filters naturally drop them the moment
+// either is set to something other than "All" - `kind` is the only filter
+// that can explicitly ask for them back (kind === "activity").
+// account_activity DOES carry account_id (and, for a liability_payment
+// against a credit-linked debt, related_account_id too), so the account
+// filter matches either side - filtering by a credit card shows both its
+// charges and the payments made against it. `search` matches description/
+// merchant text (case-insensitive substring, either field). Amount range
+// compares against the *displayed* magnitude (Math.abs) rather than the
+// raw signed value, since a negative asset_adjust still renders as a
+// plain positive dollar figure in the list (renderExpenseList) - filtering
+// on the signed value would surprise a user searching "around $50".
+function recentTransactions(limit = 50, { paymentType = "", accountId = "", category = "", kind = "", search = "", minAmount = null, maxAmount = null } = {}) {
   let rows = [...allExpenses, ...accountActivity];
   if (kind === "expense") rows = rows.filter((r) => !r.kind);
   else if (kind === "activity") rows = rows.filter((r) => !!r.kind);
   if (paymentType) rows = rows.filter((r) => r.payment_type === paymentType);
   if (accountId) rows = rows.filter((r) => r.account_id === accountId || r.related_account_id === accountId);
   if (category) rows = rows.filter((r) => r.category === category);
+  if (search) {
+    const q = search.toLowerCase();
+    rows = rows.filter((r) => `${r.description || ""} ${r.merchant || ""}`.toLowerCase().includes(q));
+  }
+  if (minAmount !== null) rows = rows.filter((r) => Math.abs(Number(r.amount)) >= minAmount);
+  if (maxAmount !== null) rows = rows.filter((r) => Math.abs(Number(r.amount)) <= maxAmount);
   return rows
     .sort((a, b) => (b.occurred_at || "").localeCompare(a.occurred_at || "") || (b.created_at || "").localeCompare(a.created_at || ""))
     .slice(0, limit);
 }
 function renderRecentTransactions() {
+  const minAmount = $("txnMinAmount").value !== "" ? parseFloat($("txnMinAmount").value) : null;
+  const maxAmount = $("txnMaxAmount").value !== "" ? parseFloat($("txnMaxAmount").value) : null;
   const filters = {
     paymentType: $("txnTypeFilter").value,
     accountId: $("txnAccountFilter").value,
     category: $("txnCategoryFilter").value,
     kind: $("txnKindFilter").value,
+    search: $("txnSearch").value.trim(),
+    minAmount, maxAmount,
   };
-  const anyFilterActive = Object.values(filters).some(Boolean);
+  const anyFilterActive = Object.values(filters).some((v) => v !== "" && v !== null);
   const emptyMsg = anyFilterActive
     ? "No transactions match these filters."
     : "No transactions yet - add an expense above.";
-  renderExpenseList("expList", recentTransactions(50, filters), emptyMsg);
+  renderExpenseList("expList", recentTransactions(50, filters), emptyMsg, { selectable: true });
+  updateBulkActionBar();
 }
 
 async function loadExpenses() {
@@ -1336,6 +1401,10 @@ async function loadExpenses() {
     .order("occurred_at", { ascending: false }).order("created_at", { ascending: false });
   if (error) { $("expList").innerHTML = `<p class="muted">${error.message}</p>`; return; }
   allExpenses = data || [];
+  // Drop any selected id a reload no longer has (deleted/undone/out of the
+  // 12-month window) so the bulk-action count never overcounts stale ids.
+  const liveIds = new Set(allExpenses.map((r) => r.id));
+  for (const id of selectedTxnIds) if (!liveIds.has(id)) selectedTxnIds.delete(id);
 
   const ym = monthKey();
   const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
@@ -1345,6 +1414,7 @@ async function loadExpenses() {
 
   populateTxnCategoryFilter();
   renderRecentTransactions();
+  renderRecurringCandidates();
 }
 
 // Options are whatever categories actually appear on a real expense, not
@@ -1456,6 +1526,41 @@ async function loadReports() {
   }
   renderReports();
   loadInsights();
+  populateHistoryAccountSelect();
+  renderAccountHistory();
+}
+
+// Whichever side of accounts.linked_asset_id/linked_liability_id is set is
+// where the live balance actually lives (see CLAUDE.md's data model) - an
+// account row itself never stores a dollar value.
+function accountCurrentBalance(account) {
+  if (account.linked_asset_id) return Number(assets.find((a) => a.id === account.linked_asset_id)?.value ?? 0);
+  if (account.linked_liability_id) return Number(debts.find((d) => d.id === account.linked_liability_id)?.balance ?? 0);
+  return 0;
+}
+
+function populateHistoryAccountSelect() {
+  const sel = $("historyAccountSelect");
+  const prev = sel.value;
+  sel.innerHTML = accounts.map((a) => `<option value="${a.id}">${acctLabel(a)}</option>`).join("");
+  sel.value = accounts.some((a) => a.id === prev) ? prev : (accounts[0]?.id ?? "");
+}
+$("historyAccountSelect").onchange = renderAccountHistory;
+
+// Not scoped to monthSel - see the comment on this card in index.html.
+// Dates are built from y/m/d parts rather than `new Date(dateString)`,
+// same defensive pattern daysUntil/advanceRenewal already use, since a
+// bare "YYYY-MM-DD" is parsed as UTC midnight and can render as the wrong
+// calendar day depending on the browser's local timezone.
+function renderAccountHistory() {
+  const account = accounts.find((a) => a.id === $("historyAccountSelect").value);
+  if (!account) return;
+  const points = buildBalanceHistory(account, accountCurrentBalance(account), allExpenses, accountActivity);
+  const labels = points.map((p) => {
+    const [y, m, d] = p.date.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  });
+  renderLineChart($("historyChart"), labels, points.map((p) => p.balance));
 }
 
 // Latest monthly report, generated server-side by tools/monthly-report.js.
@@ -1543,6 +1648,7 @@ async function loadSubscriptions() {
   renderDeals();
   renderDealFindings();
   renderNetWorth();
+  renderRecurringCandidates();
   // Merge in every category the user has already typed, same as
   // loadAccounts() does for bankSuggestions - lets a custom category the
   // user invented once show back up as a suggestion next time.
@@ -1620,6 +1726,39 @@ async function autoLogDueSubscriptions() {
   } else if (loggedCount) {
     toast(`Logged ${loggedCount} subscription/bill charge${loggedCount === 1 ? "" : "s"} automatically`);
   }
+}
+
+// ---- RECURRING-EXPENSE DETECTION (README appendix open decision, ROADMAP.md
+// Log/Quick Add #1) --------------------------------------------------------
+// Depends on both allExpenses and subscriptions, which load in parallel in
+// init() (Promise.all) - called from the end of both loadExpenses() and
+// loadSubscriptions() so it re-renders correctly once whichever finishes
+// second lands, same eventually-consistent pattern renderNetWorth() uses.
+function renderRecurringCandidates() {
+  const card = $("recurringCard");
+  if (!allExpenses.length && !subscriptions.length) { card.classList.add("hidden"); return; }
+  const candidates = detectRecurringExpenses(allExpenses, subscriptions);
+  card.classList.toggle("hidden", candidates.length === 0);
+  if (!candidates.length) return;
+  $("recurringList").innerHTML = candidates.map((c, i) => `
+    <div class="exp" style="cursor:pointer" data-recur-idx="${i}">
+      <div>
+        <div>${c.merchant}</div>
+        <div class="meta">${c.occurrenceCount}x, last ${c.lastOccurredAt} · every ${c.cycleLabel}</div>
+      </div>
+      <span class="amt" style="color:var(--accent)">${fmt(c.amount)} · Add →</span>
+    </div>`).join("");
+  document.querySelectorAll("#recurringList [data-recur-idx]").forEach((el) => {
+    el.onclick = () => {
+      const c = candidates[Number(el.dataset.recurIdx)];
+      openSubForm(null);
+      $("sName").value = c.merchant;
+      $("sAmount").value = c.amount;
+      $("sCycle").value = c.suggestedCycle;
+      $("sAccount").value = c.accountId || "";
+      $("sCategory").value = c.category || "";
+    };
+  });
 }
 
 // ---- DISCOUNT DISCOVERY (README §3.7 / F6) ---------------------------------

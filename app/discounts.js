@@ -127,3 +127,45 @@ export function studentUpsell(subscriptions, catalog, profile) {
   }
   return out.sort((a, b) => b.potentialYearly - a.potentialYearly);
 }
+
+// Generalizes studentUpsell() above for the profile-expansion eligibility
+// fields (docs/ROADMAP.md Profile & Discount Discovery #2) - military,
+// first_responder/healthcare, senior. Reuses isEligible() rather than
+// re-deriving each profile-field check, so this and findDeals/isEligible
+// can never silently disagree about what "eligible" means for a given
+// plan_type. Currently has no catalog data to match against (seeding real
+// researched prices was explicitly deferred - see ROADMAP.md), so this
+// returns [] in practice today; the mechanism is complete and tested, it's
+// just waiting on data, same shape studentUpsell() itself was in before
+// any student catalog rows existed.
+const UPSELLABLE_PLAN_TYPES = ["military", "first_responder", "healthcare", "senior"];
+
+export function eligibilityUpsells(subscriptions, catalog, profile) {
+  const already = new Set(findDeals(subscriptions, catalog, profile).map((d) => d.service));
+  const out = [];
+  for (const sub of subscriptions) {
+    if (!sub.is_active) continue;
+    if (already.has(sub.name)) continue;
+    const current = monthlyAmount(sub);
+    for (const planType of UPSELLABLE_PLAN_TYPES) {
+      if (isEligible({ plan_type: planType }, profile)) continue; // already eligible - findDeals would've matched it
+      let best = null;
+      for (const e of catalog) {
+        if (e.plan_type !== planType) continue;
+        if (!matchService(sub.name, e.service)) continue;
+        const m = catalogMonthly(e);
+        if (m === null) continue;
+        if (m < current - 0.01 && (!best || m < best)) best = m;
+      }
+      if (best !== null) {
+        out.push({
+          service: sub.name, planType,
+          currentMonthly: r2(current), upsellMonthly: r2(best),
+          potentialYearly: r2((current - best) * 12),
+        });
+        break; // one nudge per subscription - don't stack multiple plan-type nudges for the same sub
+      }
+    }
+  }
+  return out.sort((a, b) => b.potentialYearly - a.potentialYearly);
+}

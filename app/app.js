@@ -18,7 +18,7 @@ import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
 } from "./subscriptions.js";
-import { findDeals, studentUpsell, matchService } from "./discounts.js";
+import { findDeals, studentUpsell, eligibilityUpsells, matchService } from "./discounts.js";
 import { parseWithGemma, askGemma } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
@@ -2226,9 +2226,19 @@ function renderRecurringCandidates() {
 }
 
 // ---- DISCOUNT DISCOVERY (README §3.7 / F6) ---------------------------------
+// One question per plan_type eligibilityUpsells() can nudge toward
+// (docs/ROADMAP.md Profile & Discount Discovery #2).
+const UPSELL_PLAN_LABEL = {
+  military: "Are you in the military?",
+  first_responder: "Are you a first responder?",
+  healthcare: "Are you a healthcare worker?",
+  senior: "Are you a senior?",
+};
+
 function renderDeals() {
   const deals = findDeals(subscriptions, catalog, profile);
   const upsells = studentUpsell(subscriptions, catalog, profile);
+  const eligUpsells = eligibilityUpsells(subscriptions, catalog, profile);
   const totalYearly = deals.reduce((s, d) => s + d.yearlySavings, 0);
   $("dealsTotal").textContent = totalYearly > 0 ? `up to ${fmt(totalYearly)}/yr` : "";
 
@@ -2258,6 +2268,29 @@ function renderDeals() {
       </div>`);
   }
 
+  // Eligibility upsells (military/first_responder/healthcare/senior) - one
+  // row per matched plan type, same "tap to open profile" pattern as the
+  // student upsell above. Currently always empty in practice, since no
+  // real catalog rows exist yet for these plan types (seeding real
+  // researched prices was explicitly deferred - see ROADMAP.md); the
+  // mechanism is complete and will start surfacing rows the moment real
+  // catalog data exists.
+  const byPlanType = new Map();
+  for (const u of eligUpsells) {
+    if (!byPlanType.has(u.planType)) byPlanType.set(u.planType, []);
+    byPlanType.get(u.planType).push(u);
+  }
+  for (const [planType, items] of byPlanType) {
+    const svc = items.map((u) => `${u.service} (${fmt(u.potentialYearly)}/yr)`).join(", ");
+    parts.push(`
+      <div class="exp" style="cursor:pointer;border-top:1px dashed var(--border)" data-upsell-plantype="${planType}">
+        <div>
+          <div>${UPSELL_PLAN_LABEL[planType] || "You may be eligible for a discount"}</div>
+          <div class="meta">Update your profile to unlock deals on: ${svc}. Tap to update your profile.</div>
+        </div>
+      </div>`);
+  }
+
   if (!parts.length) {
     const hint = subscriptions.some((s) => s.is_active)
       ? "No cheaper eligible plans found for your current subscriptions."
@@ -2268,6 +2301,9 @@ function renderDeals() {
   $("dealsList").innerHTML = parts.join("");
   const up = $("upsellRow");
   if (up) up.onclick = () => $("profileBtn").click();
+  document.querySelectorAll("[data-upsell-plantype]").forEach((el) => {
+    el.onclick = () => $("profileBtn").click();
+  });
 }
 
 // Machine-found deals (F6 stretch) - separate, clearly-labeled, unverified.

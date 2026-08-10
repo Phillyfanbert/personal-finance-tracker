@@ -2324,15 +2324,62 @@ function renderDealFindings() {
   $("dealFindingsList").innerHTML = matches.map((f) => {
     const link = f.url ? `<a href="${f.url}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
     const price = f.price != null ? fmt(Number(f.price)) : "?";
+    // A candidate finding gets Promote/Reject (F6 Phase E); an already-
+    // verified one just shows its status - nothing left to review.
+    const actions = f.status === "candidate"
+      ? `<button class="secondary" data-promote-finding="${f.id}" style="width:auto;padding:3px 8px;font-size:11px;margin-right:4px">Promote</button><button class="secondary" data-reject-finding="${f.id}" style="width:auto;padding:3px 8px;font-size:11px">Reject</button>`
+      : `<span class="muted" style="font-size:11px">${f.status === "verified" ? "✓ verified" : f.status}</span>`;
     return `
-      <div class="exp" style="cursor:default">
+      <div class="exp" style="cursor:default;flex-wrap:wrap;gap:6px">
         <div>
           <div>${f.service}${f.plan_type ? " · " + f.plan_type : ""}</div>
           <div class="meta">${price}${f.eligibility ? " (" + f.eligibility + ")" : ""} ${link}</div>
         </div>
-        <span class="amt muted" style="font-size:11px">${f.status === "verified" ? "✓ verified" : "unverified"}</span>
+        <span class="amt">${actions}</span>
       </div>`;
   }).join("");
+  document.querySelectorAll("[data-promote-finding]").forEach((el) => {
+    el.onclick = () => promoteFinding(dealFindings.find((f) => f.id === el.dataset.promoteFinding));
+  });
+  document.querySelectorAll("[data-reject-finding]").forEach((el) => {
+    el.onclick = () => rejectFinding(el.dataset.rejectFinding);
+  });
+}
+
+// F6 Phase E (docs/F6-live-deals-proposal.md §9) - promoting copies a
+// finding's fields into subscription_catalog (a plain insert, not
+// atomic with the status update below; low risk for this app's ~2-user
+// trust model, same as the rest of this app's multi-step writes) and
+// marks the finding verified so it stops offering Promote/Reject again.
+// Confirmed first (confirmModal) since this has an ongoing effect on
+// the shared, trusted catalog every user sees - not a one-off action.
+async function promoteFinding(finding) {
+  if (!finding) return;
+  const priceLabel = finding.price != null ? fmt(Number(finding.price)) : "no price";
+  const msg = `Add ${finding.service} (${finding.plan_type || "unknown plan"}, ${priceLabel}) to your trusted catalog? This becomes a normal deal every user sees.`;
+  if (!(await confirmModal(msg, { title: "Promote this finding?", confirmLabel: "Promote" }))) return;
+  const { error: insertErr } = await sb.from("subscription_catalog").insert({
+    service: finding.service, plan_type: finding.plan_type, price: finding.price,
+    eligibility: finding.eligibility, url: finding.url, notes: "Promoted from a live finding",
+  });
+  if (insertErr) return toast(insertErr.message);
+  const { error: updateErr } = await sb.from("deal_findings").update({ status: "verified" }).eq("id", finding.id);
+  if (updateErr) return toast(updateErr.message);
+  await loadCatalog();
+  await loadDealFindings();
+  renderDealFindings();
+  renderDeals();
+  toast("Promoted to your trusted catalog");
+}
+
+// Rejecting just hides it - deal_findings' own SELECT policy excludes
+// status = 'rejected', so a rejected row simply stops coming back.
+async function rejectFinding(id) {
+  const { error } = await sb.from("deal_findings").update({ status: "rejected" }).eq("id", id);
+  if (error) return toast(error.message);
+  await loadDealFindings();
+  renderDealFindings();
+  toast("Finding rejected");
 }
 
 function renderSubscriptions() {

@@ -302,6 +302,14 @@
               <button class="secondary" id="adjustSubtractBtn">- Subtract</button>
             </div>
           </div>
+
+          <!-- Only shown for a CD-type asset (openAssetAdjust, app.js). -->
+          <div id="adjustMaturitySection" class="hidden" style="margin:12px 0 0">
+            <label>Maturity date</label>
+            <input id="adjustMaturityDate" type="date" />
+            <div style="height:8px"></div>
+            <button class="secondary" id="adjustMaturitySaveBtn">Save maturity date</button>
+          </div>
         </div>
       </div>
 
@@ -314,6 +322,9 @@
         </div>
         <p class="muted" style="font-size:12px;margin:0 0 10px">What you own - balances, investments, property. Counted in net worth.</p>
         <div id="assetsList" class="muted" style="font-size:13px">No assets yet.</div>
+        <!-- Only shown when a CD's maturity_date is within 30 days - see
+             upcomingMaturities() (app.js). -->
+        <div id="assetMaturityNotice" class="hidden muted" style="font-size:12px;margin-top:6px"></div>
         <button class="secondary" id="addAssetBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add asset</button>
         <div id="assetForm" class="hidden" style="margin-top:10px">
           <div class="row">

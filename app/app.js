@@ -615,6 +615,18 @@ $("saveAssetBtn").onclick = async () => {
   await loadAssets(); toast("Asset added");
 };
 
+// CD is the only asset type with a maturity date today - reuses
+// subscriptions.js's daysUntil/renewalLabel rather than duplicating date
+// math; those two are generic day-delta helpers, not actually
+// subscription-specific despite living in that file.
+function upcomingMaturities(withinDays = 30, today = new Date()) {
+  return assets
+    .filter((a) => a.type === "cd" && a.maturity_date)
+    .map((a) => ({ ...a, days: daysUntil(a.maturity_date, today) }))
+    .filter((a) => a.days !== null && a.days <= withinDays)
+    .sort((a, b) => a.days - b.days);
+}
+
 async function loadAssets() {
   const { data } = await sb.from("assets").select("*").order("created_at");
   assets = data || [];
@@ -651,6 +663,10 @@ async function loadAssets() {
       await loadAssets(); toast("Asset deleted"); renderNetWorth();
     };
   });
+  const maturing = upcomingMaturities();
+  $("assetMaturityNotice").classList.toggle("hidden", !maturing.length);
+  $("assetMaturityNotice").textContent = maturing
+    .map((a) => `${a.name} matures ${renewalLabel(a.days)}`).join(" · ");
   renderNetWorth();
   renderAccountsList(); // a changed asset value may be a linked account's balance line
 }
@@ -816,6 +832,10 @@ function openAssetAdjust(accountId) {
   $("adjustCurrentValue").textContent = fmt(asset.value);
   $("adjustAmount").value = "";
   $("adjustNewBalance").value = String(asset.value);
+  // CD-only - see 23_asset_maturity_date.sql.
+  const showMaturity = asset.type === "cd";
+  $("adjustMaturitySection").classList.toggle("hidden", !showMaturity);
+  if (showMaturity) $("adjustMaturityDate").value = asset.maturity_date ?? "";
   panel.classList.remove("hidden");
 }
 
@@ -858,6 +878,19 @@ $("adjustSetBtn").onclick = async () => {
   if (error) return toast(error.message);
   await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, rounded - oldValue, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Balance updated");
+};
+
+// A date the user sees and acts on manually, not something that auto-
+// converts or auto-reminds beyond the notice in loadAssets() below -
+// consistent with this app's general preference for explicit user action
+// over automatic mutation of financial data (see CD in ROADMAP.md).
+$("adjustMaturitySaveBtn").onclick = async () => {
+  if (!adjustingAssetId) return;
+  const maturity_date = $("adjustMaturityDate").value || null;
+  const { error } = await sb.from("assets").update({ maturity_date }).eq("id", adjustingAssetId);
+  if (error) return toast(error.message);
+  await loadAssets();
+  toast("Maturity date saved");
 };
 
 // ---- LIABILITIES (tracked debts) ---------------------------------------

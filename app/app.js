@@ -1106,6 +1106,17 @@ for (const cfg of Object.values(ACCOUNT_TYPES)) {
 }
 DEBT_TYPE_LABEL.credit_card = "Credit"; // shorter than ACCOUNT_TYPES' "Credit Card" - fits the existing card layout better
 
+// The phase is always derived from today vs draw_period_end, never stored
+// as its own enum - see 28_heloc_draw_period.sql. null (not a HELOC, or a
+// HELOC with no draw_period_end set yet) means "don't show anything."
+function helocPhaseInfo(d, today = new Date()) {
+  if (d.type !== "heloc" || !d.draw_period_end) return null;
+  const todayStr = today.toISOString().slice(0, 10);
+  return d.draw_period_end < todayStr
+    ? { phase: "repayment", label: `Repayment period (draw ended ${d.draw_period_end})` }
+    : { phase: "draw", label: `Draw period (interest-only) - ends ${d.draw_period_end}` };
+}
+
 async function loadDebts() {
   const { data } = await sb.from("liabilities").select("*").order("created_at");
   debts = data || [];
@@ -1120,6 +1131,10 @@ async function loadDebts() {
   const linkedDebtIds = new Set(accounts.map((a) => a.linked_liability_id).filter(Boolean));
   // Only shown once both interest_rate and minimum_payment are set - both
   // have always been stored but never used in any calculation until this.
+  // Skipped during an active HELOC draw period (see helocPhaseInfo) -
+  // projecting a payoff date is misleading there, since a real HELOC
+  // doesn't amortize principal during draw regardless of what a minimum
+  // payment field says.
   const payoffLine = (d) => {
     if (d.interest_rate == null || d.minimum_payment == null) return "";
     const p = payoffProjection(d.balance, d.interest_rate, d.minimum_payment);
@@ -1128,12 +1143,16 @@ async function loadDebts() {
     if (p.months <= 0) return "";
     return `<div class="meta">Payoff in ${p.months}mo (${p.payoffDate}) · ${fmt(p.totalInterest)} interest</div>`;
   };
-  const rowHtml = (d) => `
+  const rowHtml = (d) => {
+    const heloc = helocPhaseInfo(d);
+    return `
     <div class="exp">
       <div>
         <div class="meta">${DEBT_TYPE_LABEL[d.type] || cap(d.type)}</div>${d.name}
         ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
-        ${payoffLine(d)}
+        ${heloc ? `<div class="meta">${heloc.label}</div>` : ""}
+        ${heloc?.phase === "draw" ? "" : payoffLine(d)}
+        <div class="muted" data-edit-debt="${d.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Edit details</div>
       </div>
       <span class="amt">
         ${linkedDebtIds.has(d.id) ? "" : `<button class="secondary" data-add-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">+</button>`}
@@ -1141,6 +1160,7 @@ async function loadDebts() {
         ${fmt(d.balance)}${linkedDebtIds.has(d.id) ? "" : `<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>`}
       </span>
     </div>`;
+  };
   const creditDebts = debts.filter((d) => linkedDebtIds.has(d.id));
   const otherDebts = debts.filter((d) => !linkedDebtIds.has(d.id));
   $("creditDebtsList").innerHTML = creditDebts.length
@@ -1164,9 +1184,57 @@ async function loadDebts() {
   document.querySelectorAll("[data-add-debt]").forEach((el) => {
     el.onclick = (ev) => { ev.stopPropagation(); openDebtBalanceForm(el.dataset.addDebt, "owed"); };
   });
+  document.querySelectorAll("[data-edit-debt]").forEach((el) => {
+    el.onclick = (ev) => { ev.stopPropagation(); openDebtDetailsForm(debts.find((d) => d.id === el.dataset.editDebt)); };
+  });
   renderNetWorth();
   renderAccountsList(); // a changed liability balance may be a linked account's balance line
 }
+
+// Interest rate / minimum payment / due date / draw period end - never
+// balance, which stays strictly driven by real expenses/payments against
+// the liability regardless of type (CLAUDE.md's data model section).
+// Works for both a standalone liability and an account-linked one (a
+// credit card or HELOC never goes through debtForm above at all, so this
+// was previously the only way to set these fields for those).
+let editingDebtDetails = null;
+function openDebtDetailsForm(debt) {
+  if (!debt) return;
+  editingDebtDetails = debt;
+  $("debtDetailsRate").value = debt.interest_rate ?? "";
+  $("debtDetailsMinPay").value = debt.minimum_payment ?? "";
+  $("debtDetailsDue").value = debt.due_date ?? "";
+  const isHeloc = debt.type === "heloc";
+  $("debtDetailsDrawSection").classList.toggle("hidden", !isHeloc);
+  if (isHeloc) {
+    $("debtDetailsDrawEnd").value = debt.draw_period_end ?? "";
+    const phase = helocPhaseInfo(debt);
+    $("debtDetailsPhaseInfo").textContent = phase ? phase.label : "No draw-period end date set yet.";
+  }
+  $("debtDetailsForm").classList.remove("hidden");
+  $("debtDetailsForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function closeDebtDetailsForm() {
+  $("debtDetailsForm").classList.add("hidden");
+  editingDebtDetails = null;
+}
+$("debtDetailsCancelBtn").onclick = closeDebtDetailsForm;
+$("debtDetailsSaveBtn").onclick = async () => {
+  if (!editingDebtDetails) return;
+  const patch = {
+    interest_rate: $("debtDetailsRate").value !== "" ? parseFloat($("debtDetailsRate").value) : null,
+    minimum_payment: $("debtDetailsMinPay").value !== "" ? parseFloat($("debtDetailsMinPay").value) : null,
+    due_date: $("debtDetailsDue").value || null,
+  };
+  if (editingDebtDetails.type === "heloc") {
+    patch.draw_period_end = $("debtDetailsDrawEnd").value || null;
+  }
+  const { error } = await sb.from("liabilities").update(patch).eq("id", editingDebtDetails.id);
+  if (error) return toast(error.message);
+  closeDebtDetailsForm();
+  await loadDebts();
+  toast("Liability details saved");
+};
 
 // ---- ADJUST A LIABILITY'S BALANCE (owed vs. paying it down) -------------
 // "Paying balance" (transfer: asset down, liability down, never a new

@@ -449,6 +449,33 @@
           <div style="height:8px"></div>
           <button id="saveDebtBtn">Save liability</button>
         </div>
+
+        <!-- Details for ANY existing liability, standalone or account-
+             linked (a credit card/HELOC never goes through debtForm above
+             at all - it's auto-created with no interest_rate/minimum_
+             payment/due_date, so this was previously the only kind with no
+             way to ever set them). Never touches balance - that stays
+             strictly driven by real expenses/payments, see app.js. -->
+        <div id="debtDetailsForm" class="hidden" style="margin-top:10px">
+          <div class="topbar" style="margin-bottom:6px"><strong>Liability details</strong></div>
+          <div class="row">
+            <div><label>Interest rate % (optional)</label><input id="debtDetailsRate" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label>Min payment (optional)</label><input id="debtDetailsMinPay" type="number" step="0.01" inputmode="decimal" /></div>
+          </div>
+          <label>Due date (optional)</label>
+          <input id="debtDetailsDue" type="date" />
+          <!-- HELOC-only (openDebtDetailsForm, app.js). -->
+          <div id="debtDetailsDrawSection" class="hidden" style="margin-top:8px">
+            <label>Draw period ends (optional)</label>
+            <input id="debtDetailsDrawEnd" type="date" />
+            <p class="muted" id="debtDetailsPhaseInfo" style="font-size:12px;margin-top:6px"></p>
+          </div>
+          <div style="height:8px"></div>
+          <div class="row">
+            <button id="debtDetailsSaveBtn">Save details</button>
+            <button class="secondary" id="debtDetailsCancelBtn">Cancel</button>
+          </div>
+        </div>
       </div>
     </div>
 

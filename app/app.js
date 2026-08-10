@@ -93,9 +93,31 @@ $("signInBtn").onclick = async () => {
   const email = $("email").value.trim();
   if (!email) return toast("Enter your email");
   $("signInBtn").disabled = true;
+  $("signInBtn").textContent = "Sending...";
+  $("authMsg").textContent = "Sending magic link...";
   const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
   $("signInBtn").disabled = false;
-  $("authMsg").textContent = error ? error.message : "Link sent - check your email.";
+  $("signInBtn").textContent = "Send magic link instead";
+  $("authMsg").textContent = error ? error.message : "Link sent ✓ - check your email.";
+  toast(error ? "Couldn't send link" : "Magic link sent ✓");
+};
+// Primary sign-in path (see index.html's authView comment) - completes
+// entirely in whichever window is open, so it's the only path that keeps
+// an installed home-screen icon signed in. Magic link above stays as the
+// bootstrap/recovery path for setting or resetting this password.
+$("passwordSignInBtn").onclick = async () => {
+  const email = $("email").value.trim();
+  const password = $("password").value;
+  if (!email) return toast("Enter your email");
+  if (!password) return toast("Enter your password");
+  $("passwordSignInBtn").disabled = true;
+  $("passwordSignInBtn").textContent = "Signing in...";
+  $("passwordAuthMsg").textContent = "Signing in...";
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  $("passwordSignInBtn").disabled = false;
+  $("passwordSignInBtn").textContent = "Sign in";
+  $("passwordAuthMsg").textContent = error ? error.message : "";
+  if (error) toast("Couldn't sign in");
 };
 $("signOutBtn").onclick = async () => { await sb.auth.signOut(); location.reload(); };
 
@@ -2623,4 +2645,27 @@ $("downloadDataBtn").onclick = async () => {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast("Download started");
+};
+
+// Only reachable while already signed in (via password or magic link), so
+// this is how the ~2 known users move onto password sign-in for the first
+// time, or change it later - see index.html's authView/Account security
+// comments for why a password is what actually keeps an installed
+// home-screen icon signed in.
+$("setPasswordBtn").onclick = async () => {
+  const pw = $("pNewPassword").value;
+  if (!pw || pw.length < 6) return toast("Password must be at least 6 characters");
+  $("setPasswordBtn").disabled = true;
+  $("setPasswordBtn").textContent = "Saving...";
+  const { error } = await sb.auth.updateUser({ password: pw });
+  $("setPasswordBtn").disabled = false;
+  $("setPasswordBtn").textContent = "Set / change password";
+  if (error) {
+    $("passwordSetMsg").textContent = error.message;
+    toast("Couldn't set password");
+    return;
+  }
+  $("pNewPassword").value = "";
+  $("passwordSetMsg").textContent = "Password updated ✓";
+  toast("Password updated ✓");
 };

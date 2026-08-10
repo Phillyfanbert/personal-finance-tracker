@@ -96,14 +96,26 @@
     <div id="authView">
       <h1>Personal Finance Tracker</h1>
       <div class="card">
-        <p class="muted">Sign in with a magic link - no password. Check your email and tap the link.</p>
+        <p class="muted">Sign in with your password. Haven't set one yet? Send yourself a magic link below, then set a password from Profile once you're in.</p>
         <label for="email">Email</label>
         <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
         <div style="height:10px"></div>
-        <button id="signInBtn">Send magic link</button>
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" placeholder="Password" />
+        <div style="height:10px"></div>
+        <button id="passwordSignInBtn">Sign in</button>
+        <p id="passwordAuthMsg" class="muted" style="margin-top:12px"></p>
+        <div class="muted" style="text-align:center;font-size:12px;margin:16px 0">or</div>
+        <button class="secondary" id="signInBtn">Send magic link instead</button>
         <p id="authMsg" class="muted" style="margin-top:12px"></p>
       </div>
-      <p class="muted" style="font-size:12px">First time on iPhone? After signing in, tap Share → “Add to Home Screen” to install.</p>
+      <!-- iOS gives a home-screen icon its own storage, separate from
+           Safari - a magic link always opens in Safari, so a session from
+           it can never reach an installed icon (the icon stays permanently
+           signed out no matter how many links you click). Signing in with
+           a password happens in whichever window is already open, so it's
+           the only path that actually keeps the installed icon signed in. -->
+      <p class="muted" style="font-size:12px">First time on iPhone? After signing in, tap Share → “Add to Home Screen” to install. Use your password (not a magic link) to sign in on the installed icon, or it won't stay signed in.</p>
     </div>
 
     <!-- ============ APP: LOG VIEW ============ -->
@@ -865,6 +877,21 @@
            asset_price_findings, service_domains), which aren't this
            user's data to begin with (docs/ROADMAP.md Cross-cutting #2). -->
       <button class="secondary" id="downloadDataBtn">Download all my data</button>
+
+      <!-- Lets the ~2 known users move off magic-link-only sign-in
+           (README §3.4 originally chose email/OAuth over SMS purely to
+           avoid the SMS cost - password auth doesn't reintroduce that).
+           A password is required for the installed home-screen icon to
+           ever get a session at all - iOS gives it separate storage from
+           Safari, and a magic link always opens in Safari, so a session
+           from clicking one can never reach the icon. Magic link stays
+           available above as the bootstrap/recovery path for setting or
+           resetting this. -->
+      <div class="muted" style="font-size:12px;margin:16px 0 4px;font-weight:700">Account security</div>
+      <label>New password</label>
+      <input id="pNewPassword" type="password" autocomplete="new-password" placeholder="At least 6 characters" />
+      <button class="secondary" id="setPasswordBtn">Set / change password</button>
+      <p id="passwordSetMsg" class="muted" style="margin-top:8px;font-size:12px"></p>
     </div>
   </div>
 

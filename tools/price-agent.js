@@ -24,7 +24,15 @@
 //      pricing pages are per-service.
 //   2. Fetch each surviving page's text and ask Gemma to extract a price as
 //      strict JSON (same pattern as app/gemma.js's parseWithGemma).
-//   3. Write validated findings to asset_price_findings via the REST API
+//   3. If a price was found, one more best-effort step: search for recent
+//      news on the symbol (TRUSTED_NEWS_DOMAINS, a superset of the price
+//      allowlist) and ask Gemma for a short neutral explanation of why the
+//      price moved (Investments tab). One attempt per symbol per run, not
+//      per price-finding row - the news search doesn't depend on which
+//      allowlisted page happened to produce the price. Failure here
+//      (search, fetch, or Gemma) never blocks the price write itself;
+//      explanation just stays null, same failure-tolerance as step 2.
+//   4. Write validated findings to asset_price_findings via the REST API
 //      using the service_role key (bypasses RLS by design).
 //
 // Setup (on the server machine, next to Ollama and deal-agent.js):
@@ -64,6 +72,11 @@ const TRUSTED_PRICE_DOMAINS = [
   "morningstar.com",
   "nasdaq.com",
 ];
+
+// Superset of the price domains, plus a couple of dedicated news outlets -
+// a "why did this move" explanation benefits from an actual news article,
+// which a pure price-quote page usually doesn't have.
+const TRUSTED_NEWS_DOMAINS = [...TRUSTED_PRICE_DOMAINS, "reuters.com", "cnbc.com"];
 
 const RESULTS_PER_QUERY = 2;
 const PAGE_TEXT_LIMIT = 4000;
@@ -215,6 +228,90 @@ async function warmUpGemma() {
   console.log(`Gemma warm-up took ${((Date.now() - start) / 1000).toFixed(1)}s`);
 }
 
+// ---- "Why did this move" explanation (Investments tab, best-effort) -------
+function buildNewsQuery(symbol) {
+  return `${symbol} stock price today news`;
+}
+
+function buildExplanationPrompt(symbol, pageText) {
+  return [
+    "You explain why a stock or crypto price moved, based on webpage text.",
+    'Respond with ONLY a JSON object, no prose, no code fences. Use this',
+    'exact shape: { "explanation": string|null, "confidence": number }',
+    `The symbol is "${symbol}". explanation should be a short, neutral,`,
+    "1-2 sentence summary of why the price moved today, only if the text",
+    "actually gives a reason (earnings, news, a market-wide move, etc).",
+    "confidence is 0..1, how sure you are this reason is real and specific",
+    "to this exact symbol. If the text gives no clear reason, set",
+    "explanation to null rather than guessing.",
+    `Page text: ${JSON.stringify(pageText)}`,
+  ].join("\n");
+}
+
+function validateExplanation(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const explanation = typeof raw.explanation === "string" && raw.explanation.trim() ? raw.explanation.trim() : null;
+  if (!explanation) return null;
+  const confidence = Number.isFinite(Number(raw.confidence))
+    ? Math.max(0, Math.min(1, Number(raw.confidence)))
+    : 0.5;
+  return { explanation, confidence };
+}
+
+async function extractExplanationWithGemma(symbol, pageText) {
+  const res = await fetchWithTimeout(GEMMA_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: GEMMA_MODEL,
+      prompt: buildExplanationPrompt(symbol, pageText),
+      stream: false,
+      format: "json",
+    }),
+  }, GEMMA_TIMEOUT_MS);
+  if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
+  const data = await res.json();
+  const payload = "response" in data ? JSON.parse(data.response) : data;
+  return validateExplanation(payload);
+}
+
+// One attempt per symbol per run (not per price-finding row - see the
+// header comment). Every failure mode here (search, fetch, Gemma) is
+// caught and logged, never thrown - this must never take down a run that
+// otherwise found a valid price.
+async function findExplanation(symbol) {
+  let results;
+  try {
+    results = await searchSearxng(buildNewsQuery(symbol));
+  } catch (err) {
+    console.warn(`[${symbol}] news search failed: ${err.message}`);
+    return null;
+  }
+  await sleep(REQUEST_DELAY_MS);
+
+  const allowed = results.filter((r) => hostAllowed(r.url, TRUSTED_NEWS_DOMAINS)).slice(0, 2);
+  for (const result of allowed) {
+    let pageText;
+    try {
+      pageText = await fetchPageText(result.url);
+    } catch (err) {
+      console.warn(`[${symbol}] news page fetch failed for ${result.url}: ${err.message}`);
+      continue;
+    }
+    await sleep(REQUEST_DELAY_MS);
+
+    let extracted;
+    try {
+      extracted = await extractExplanationWithGemma(symbol, pageText);
+    } catch (err) {
+      console.warn(`[${symbol}] explanation extraction failed for ${result.url}: ${err.message}`);
+      continue;
+    }
+    if (extracted) return extracted.explanation;
+  }
+  return null;
+}
+
 // ---- Per-symbol pipeline ----------------------------------------------
 async function processSymbol(symbol) {
   const findings = [];
@@ -257,7 +354,15 @@ async function processSymbol(symbol) {
         raw_snippet: (result.content || "").slice(0, 500),
         confidence: extracted.confidence,
         extracted_by: "gemma",
+        explanation: null,
       });
+    }
+  }
+
+  if (findings.length) {
+    const explanation = await findExplanation(symbol);
+    if (explanation) {
+      for (const f of findings) f.explanation = explanation;
     }
   }
   return findings;

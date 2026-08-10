@@ -384,6 +384,20 @@
             <div><label>Quantity (optional)</label><input id="assetQuantity" type="number" step="any" inputmode="decimal" /></div>
           </div>
 
+          <!-- Investment-only (assetType.onchange, app.js). Cost basis is a
+               separate field from the vehicle purchase price above - a
+               holding has no depreciation date/rate to pair it with, just
+               a total amount originally paid, used for the Investments
+               tab's gain/loss math. Bucket feeds that tab's target-
+               allocation calculator, same free-text-plus-suggestions
+               pattern accounts.bank_name/subscriptions.category use. -->
+          <div id="assetInvestmentSection" class="hidden" style="margin-top:8px">
+            <label>Cost basis - total paid (optional)</label>
+            <input id="assetCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you originally paid, in total" />
+            <label>Allocation bucket (optional)</label>
+            <input id="assetInvestBucket" list="investBucketSuggestions" placeholder="Stocks, Bonds, Cash..." />
+          </div>
+
           <div style="height:8px"></div>
           <div class="row">
             <button id="saveAssetBtn">Save asset</button>
@@ -707,6 +721,74 @@
       </div>
     </div>
 
+    <!-- ============ APP: INVESTMENTS VIEW ============ -->
+    <div id="investView" class="hidden">
+      <div class="topbar">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="secondary" id="backFromInvest" style="width:auto;padding:8px 10px">←</button>
+          <h1 style="margin:0">Investments</h1>
+        </div>
+      </div>
+
+      <div class="totals">
+        <div class="card"><div class="muted" style="font-size:12px">Total value</div><div class="big" id="investTotalValue">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Total gain/loss</div><div class="big" id="investTotalGainLoss">$0</div></div>
+      </div>
+      <div class="totals">
+        <div class="card"><div class="muted" style="font-size:12px">Today's change</div><div class="big" id="investTodayChange">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Cost basis</div><div class="big" id="investTotalCostBasis">$0</div></div>
+      </div>
+      <p class="muted" id="investTodayChangeEmpty" style="font-size:12px;margin:-8px 0 14px">Today's change needs at least 2 days of price history - check back once tools/price-agent.js has run more than once.</p>
+
+      <!-- One snapshot per calendar day the app was actually opened
+           (snapshotPortfolioIfNeeded, app.js) - same reasoning as the
+           Reports page's net worth trend (no cron/server for a static
+           PWA). A day the app wasn't opened just has no row. -->
+      <div class="card">
+        <strong>Value over time</strong>
+        <div class="chartbox short"><canvas id="investTrendChart"></canvas></div>
+        <p class="muted" id="investTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
+      </div>
+
+      <!-- Every asset in INVESTMENT_ASSET_TYPES (app.js) - a ticker-tracked
+           holding shows live price/gain-loss/day-change math; a symbol-less
+           one (a blended 401(k), say) just shows its value. Explanation
+           text (if tools/price-agent.js found one) shows under the row. -->
+      <div class="card">
+        <strong>Holdings</strong>
+        <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p></div>
+      </div>
+
+      <!-- A calculator, not a recommendation - risk label and targets are
+           only ever shown back to you as numbers. Nothing here ever
+           suggests what to buy. -->
+      <div class="card">
+        <strong>Target allocation</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 8px">Set your own target mix and see how far off you are - this never picks investments for you.</p>
+        <label>Risk label (for your own reference only)</label>
+        <select id="investRiskLabel">
+          <option value="">Not set</option>
+          <option value="conservative">Conservative</option>
+          <option value="moderate">Moderate</option>
+          <option value="aggressive">Aggressive</option>
+        </select>
+        <div id="investTargetsList" style="margin-top:12px"><p class="muted" style="font-size:13px">No targets set yet.</p></div>
+        <div class="row" style="margin-top:10px">
+          <input id="investTargetBucket" list="investBucketSuggestions" placeholder="Bucket (Stocks, Bonds...)" style="flex:1" />
+          <input id="investTargetPercent" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />
+          <button id="saveInvestTargetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
+        </div>
+      </div>
+
+      <datalist id="investBucketSuggestions">
+        <option value="Stocks"></option>
+        <option value="Bonds"></option>
+        <option value="Cash"></option>
+        <option value="Crypto"></option>
+        <option value="Real Estate"></option>
+      </datalist>
+    </div>
+
   </div>
 
   <!-- ============ CONFIRM MODAL ============ -->
@@ -899,6 +981,7 @@
     <button id="navLog" class="active">Log</button>
     <button id="navSubs">Subscriptions/Bills</button>
     <button id="navReports">Reports</button>
+    <button id="navInvest">Investments</button>
   </nav>
 
   <div id="toast" class="toast"></div>

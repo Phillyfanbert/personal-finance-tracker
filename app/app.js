@@ -13,6 +13,7 @@ import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { budgetStatus } from "./budgets.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget } from "./investments.js";
 import { buildExpensesCsv } from "./export.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
@@ -78,6 +79,7 @@ let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
+let investmentTargets = []; // per-bucket allocation targets (Investments tab)
 let assets = [];      // net-worth assets (Log page)
 let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (Log page)
 let accountActivity = []; // non-expense money movements (asset adjust, liability pay) - Recent Transactions
@@ -132,22 +134,26 @@ function renderAuth(session) {
   $("authView").classList.toggle("hidden", authed);
   $("nav").classList.toggle("hidden", !authed);
   if (authed) { showView("log"); init(); }
-  else { $("logView").classList.add("hidden"); $("subsView").classList.add("hidden"); $("reportsView").classList.add("hidden"); }
+  else { $("logView").classList.add("hidden"); $("subsView").classList.add("hidden"); $("reportsView").classList.add("hidden"); $("investView").classList.add("hidden"); }
 }
 
 // ---- NAVIGATION ------------------------------------------------------------
 $("navLog").onclick = () => showView("log");
 $("navSubs").onclick = () => { showView("subs"); loadSubscriptions(); };
 $("navReports").onclick = () => { showView("reports"); loadReports(); };
+$("navInvest").onclick = () => { showView("invest"); renderInvestments(); renderInvestmentsTrend(); };
 $("backFromSubs").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
+$("backFromInvest").onclick = () => showView("log");
 function showView(v) {
   $("logView").classList.toggle("hidden", v !== "log");
   $("subsView").classList.toggle("hidden", v !== "subs");
   $("reportsView").classList.toggle("hidden", v !== "reports");
+  $("investView").classList.toggle("hidden", v !== "invest");
   $("navLog").classList.toggle("active", v === "log");
   $("navSubs").classList.toggle("active", v === "subs");
   $("navReports").classList.toggle("active", v === "reports");
+  $("navInvest").classList.toggle("active", v === "invest");
 }
 
 // ---- INIT ------------------------------------------------------------------
@@ -162,10 +168,11 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
   await autoLogDueSubscriptions();
   await snapshotNetWorthIfNeeded();
+  await snapshotPortfolioIfNeeded();
 }
 
 // Every user gets exactly one Cash account + linked Cash asset, auto-created
@@ -343,6 +350,18 @@ const NON_SPENDABLE_ACCOUNT_TYPES = new Set([
   "personal_loan", "auto_loan", "mortgage", "home_equity_loan", "student_loan", "payday_loan", "title_loan",
   "retirement_employer", "ira", "brokerage", "plan_529", "tsp", "solo_401k", "rollover_inherited_ira", "annuity",
   "coverdell_esa", "treasury_direct", "crypto", "life_insurance_cash_value",
+]);
+// Which asset types populate the Investments tab. Derived from
+// ACCOUNT_TYPES' own category grouping (every "Retirement & investment"
+// type), plus 'crypto' added explicitly - it's category Specialty, not
+// Retirement & investment, same "decide per-type, don't assume category
+// decides it" rule BANK_VALIDATED_TYPES/NON_SPENDABLE_ACCOUNT_TYPES above
+// already document. Broader than "has a price_symbol set" on purpose - a
+// plain 401(k) with no individual tickers should still show up as a
+// value-only line, just with no gain/loss or day-change math to show.
+const INVESTMENT_ASSET_TYPES = new Set([
+  ...Object.entries(ACCOUNT_TYPES).filter(([, cfg]) => cfg.category === "Retirement & investment").map(([type]) => type),
+  "crypto",
 ]);
 // BANK_NAMES (bankNames.js) is ~3,750 real FDIC-insured banks plus a few
 // well-known credit unions/brands FDIC doesn't cover - not a hardcoded
@@ -660,6 +679,8 @@ function openAssetForm(asset) {
   $("assetDepRate").value = asset?.depreciation_rate != null ? Number(asset.depreciation_rate) * 100 : "";
   $("assetPriceSymbol").value = asset?.price_symbol ?? "";
   $("assetQuantity").value = asset?.quantity ?? "";
+  $("assetCostBasis").value = asset?.purchase_price ?? "";
+  $("assetInvestBucket").value = asset?.investment_bucket ?? "";
   updateAssetTypeUI();
   $("assetForm").classList.remove("hidden");
 }
@@ -673,10 +694,12 @@ $("addAssetBtn").onclick = () => {
 };
 $("cancelAssetBtn").onclick = closeAssetForm;
 
-// Depreciation fields only make sense for a vehicle - shown/hidden per
-// type, same pattern acctLiabilityLink (Accounts card) already uses.
+// Depreciation fields only make sense for a vehicle, cost-basis/bucket
+// only for an investment - shown/hidden per type, same pattern
+// acctLiabilityLink (Accounts card) already uses.
 function updateAssetTypeUI() {
   $("assetDepreciationSection").classList.toggle("hidden", $("assetType").value !== "vehicle");
+  $("assetInvestmentSection").classList.toggle("hidden", !INVESTMENT_ASSET_TYPES.has($("assetType").value));
   updateAssetDepPreview();
 }
 $("assetType").onchange = updateAssetTypeUI;
@@ -706,12 +729,20 @@ $("saveAssetBtn").onclick = async () => {
   if (type === "bank") return toast("Bank assets come from a Checking account - add one in the Accounts card instead.");
 
   const isVehicle = type === "vehicle";
-  const purchase_price = isVehicle && $("assetPurchasePrice").value !== "" ? parseFloat($("assetPurchasePrice").value) : null;
+  const isInvestment = INVESTMENT_ASSET_TYPES.has(type);
+  // purchase_price doubles as a vehicle's purchase price (depreciation
+  // math) and an investment's cost basis (Investments tab gain/loss) -
+  // two different form fields writing the same column, mutually exclusive
+  // by type, since a holding has no depreciation date/rate to pair with it.
+  const purchase_price = isVehicle && $("assetPurchasePrice").value !== "" ? parseFloat($("assetPurchasePrice").value)
+    : isInvestment && $("assetCostBasis").value !== "" ? parseFloat($("assetCostBasis").value)
+    : null;
   const purchase_date = isVehicle && $("assetPurchaseDate").value ? $("assetPurchaseDate").value : null;
   const depreciation_rate = isVehicle && $("assetDepRate").value !== "" ? parseFloat($("assetDepRate").value) / 100 : null;
   const price_symbol = $("assetPriceSymbol").value.trim() || null;
   const quantity = $("assetQuantity").value !== "" ? parseFloat($("assetQuantity").value) : null;
-  const row = { name, type, value, purchase_price, purchase_date, depreciation_rate, price_symbol, quantity };
+  const investment_bucket = isInvestment ? ($("assetInvestBucket").value.trim() || null) : null;
+  const row = { name, type, value, purchase_price, purchase_date, depreciation_rate, price_symbol, quantity, investment_bucket };
 
   const q = editingAsset
     ? sb.from("assets").update(row).eq("id", editingAsset.id)
@@ -811,6 +842,7 @@ async function loadAssets() {
   renderNetWorth();
   renderAccountsList(); // a changed asset value may be a linked account's balance line
   renderAssetPriceFindings();
+  renderInvestments();
 }
 
 // Matches findings to the user's own assets by symbol, exact
@@ -1963,6 +1995,147 @@ $("saveBudgetBtn").onclick = async () => {
   await loadBudgets();
   renderReports();
   toast("Budget set");
+};
+
+// ---- INVESTMENTS TAB --------------------------------------------------------
+async function loadInvestmentTargets() {
+  const { data } = await sb.from("investment_targets").select("*").order("bucket");
+  investmentTargets = data || [];
+}
+
+// One snapshot per calendar day the app was actually opened, same
+// reasoning and shape as snapshotNetWorthIfNeeded above - no cron/server
+// trigger exists for a static PWA.
+async function snapshotPortfolioIfNeeded() {
+  const investmentAssets = assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type));
+  const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
+  const totals = portfolioTotals(holdings, investmentAssets);
+  const snapshot_date = new Date().toISOString().slice(0, 10);
+  await sb.from("portfolio_snapshots").upsert(
+    { snapshot_date, total_value: totals.totalValue, total_cost_basis: totals.totalCostBasis },
+    { onConflict: "user_id,snapshot_date" }
+  );
+}
+
+async function renderInvestmentsTrend() {
+  const { data } = await sb.from("portfolio_snapshots").select("*").order("snapshot_date", { ascending: true });
+  const rows = data || [];
+  $("investTrendEmpty").classList.toggle("hidden", rows.length >= 2);
+  if (rows.length < 2) return; // a single point isn't a "trend"
+  const labels = rows.map((r) => {
+    const [y, m, d] = r.snapshot_date.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  });
+  renderLineChart($("investTrendChart"), labels, rows.map((r) => Number(r.total_value)));
+}
+
+const gainColor = (n) => (n == null ? "" : n >= 0 ? "var(--ok)" : "var(--err)");
+const signedPct = (n) => (n >= 0 ? "+" : "") + n + "%";
+
+function renderInvestments() {
+  const investmentAssets = assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type));
+  const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
+  const totals = portfolioTotals(holdings, investmentAssets);
+
+  $("investTotalValue").textContent = fmt(totals.totalValue);
+  $("investTotalCostBasis").textContent = fmt(totals.totalCostBasis);
+  $("investTotalGainLoss").textContent = totals.totalGainLoss != null
+    ? `${fmt(totals.totalGainLoss)} (${signedPct(totals.totalGainLossPct)})` : "—";
+  $("investTotalGainLoss").style.color = gainColor(totals.totalGainLoss);
+  $("investTodayChangeEmpty").classList.toggle("hidden", totals.todayChange != null);
+  $("investTodayChange").textContent = totals.todayChange != null
+    ? `${fmt(totals.todayChange)} (${signedPct(totals.todayChangePct)})` : "—";
+  $("investTodayChange").style.color = gainColor(totals.todayChange);
+
+  $("investHoldingsList").innerHTML = investmentAssets.length ? investmentAssets.map((a) => {
+    const h = holdings.find((x) => x.asset.id === a.id);
+    if (!h) {
+      // Symbol-less investment asset (a blended 401(k), say) - value only,
+      // nothing to compute gain/loss or a day-change against.
+      return `
+        <div class="exp" style="cursor:default">
+          <div>
+            <div>${a.name}</div>
+            <div class="meta">${assetTypeLabel(a.type)}</div>
+          </div>
+          <span class="amt">${fmt(effectiveAssetValue(a))}</span>
+        </div>`;
+    }
+    return `
+      <div class="exp" style="cursor:default;flex-direction:column;align-items:stretch;gap:4px">
+        <div style="display:flex;justify-content:space-between;gap:10px">
+          <div>
+            <div>${h.symbol} <span class="muted" style="font-size:12px">${a.name}</span></div>
+            <div class="meta">${h.quantity ?? "?"} @ ${h.latestPrice != null ? fmt(h.latestPrice) : "no live price yet"}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="amt">${fmt(h.currentValue)}</div>
+            <div style="font-size:12px;color:${gainColor(h.gainLoss)}">${h.gainLoss != null ? `${fmt(h.gainLoss)} (${signedPct(h.gainLossPct)})` : "no cost basis set"}</div>
+            ${h.dayChange != null ? `<div style="font-size:12px;color:${gainColor(h.dayChange)}">today ${fmt(h.dayChange)} (${signedPct(h.dayChangePct)})</div>` : ""}
+          </div>
+        </div>
+        ${h.explanation ? `<div class="muted" style="font-size:12px">${h.explanation}</div>` : ""}
+      </div>`;
+  }).join("") : `<p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p>`;
+
+  $("investRiskLabel").value = profile?.risk_label ?? "";
+
+  const allocation = allocationVsTarget(investmentAssets, holdings, investmentTargets);
+  $("investTargetsList").innerHTML = allocation.length ? allocation.map((a) => {
+    const pctClamped = Math.min(100, a.currentPct);
+    const barColor = a.currentPct > a.targetPercent ? "var(--err)" : "var(--ok)";
+    const gapLabel = a.gapDollars >= 0 ? `${fmt(a.gapDollars)} under target` : `${fmt(Math.abs(a.gapDollars))} over target`;
+    return `
+      <div style="margin-bottom:10px">
+        <div class="row" style="justify-content:space-between;font-size:13px">
+          <span>${a.bucket}</span>
+          <span>
+            ${a.currentPct}% / ${a.targetPercent}% target (${gapLabel})
+            <span class="x" data-del-invest-target="${a.bucket}" style="margin-left:8px">✕</span>
+          </span>
+        </div>
+        <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
+          <div style="background:${barColor};width:${pctClamped}%;height:100%"></div>
+        </div>
+      </div>`;
+  }).join("") : `<p class="muted" style="font-size:13px">No targets set yet.</p>`;
+  document.querySelectorAll("[data-del-invest-target]").forEach((el) => {
+    el.onclick = async () => {
+      const { error } = await sb.from("investment_targets").delete().eq("bucket", el.dataset.delInvestTarget);
+      if (error) return toast(error.message);
+      await loadInvestmentTargets();
+      renderInvestments();
+      toast("Target removed");
+    };
+  });
+}
+
+$("saveInvestTargetBtn").onclick = async () => {
+  const bucket = $("investTargetBucket").value.trim();
+  const target_percent = parseFloat($("investTargetPercent").value);
+  if (!bucket) return toast("Enter a bucket name");
+  if (!Number.isFinite(target_percent) || target_percent < 0 || target_percent > 100) return toast("Enter a valid target percent (0-100)");
+  const { error } = await sb.from("investment_targets")
+    .upsert({ bucket, target_percent }, { onConflict: "user_id,bucket" });
+  if (error) return toast(error.message);
+  $("investTargetBucket").value = "";
+  $("investTargetPercent").value = "";
+  await loadInvestmentTargets();
+  renderInvestments();
+  toast("Target set");
+};
+
+// Saved immediately on change, not behind a Save button - it's a single
+// reference-only field (see index.html's Investments-view comment), not
+// part of the bigger Profile form. Partial upsert (only id + risk_label in
+// the payload) leaves every other profiles column untouched, same as
+// budgets'/investment_targets' own partial upserts above.
+$("investRiskLabel").onchange = async () => {
+  const risk_label = $("investRiskLabel").value || null;
+  const { error } = await sb.from("profiles").upsert({ id: userId, risk_label }, { onConflict: "id" });
+  if (error) return toast(error.message);
+  profile = { ...(profile || {}), risk_label };
+  toast("Risk label saved");
 };
 
 // Whichever side of accounts.linked_asset_id/linked_liability_id is set is

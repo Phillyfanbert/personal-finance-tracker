@@ -11,6 +11,7 @@ import {
 } from "./charts.js";
 import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
+import { payoffProjection } from "./payoff.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
@@ -1117,11 +1118,22 @@ async function loadDebts() {
   // liability (Pay only) vs. a standalone Loan/Mortgage/Other with no
   // linked account (Pay, +, and delete - the only kind added manually now).
   const linkedDebtIds = new Set(accounts.map((a) => a.linked_liability_id).filter(Boolean));
+  // Only shown once both interest_rate and minimum_payment are set - both
+  // have always been stored but never used in any calculation until this.
+  const payoffLine = (d) => {
+    if (d.interest_rate == null || d.minimum_payment == null) return "";
+    const p = payoffProjection(d.balance, d.interest_rate, d.minimum_payment);
+    if (!p) return "";
+    if (p.neverPaysOff) return `<div class="meta" style="color:var(--err)">Min payment won't cover interest - balance will grow</div>`;
+    if (p.months <= 0) return "";
+    return `<div class="meta">Payoff in ${p.months}mo (${p.payoffDate}) · ${fmt(p.totalInterest)} interest</div>`;
+  };
   const rowHtml = (d) => `
     <div class="exp">
       <div>
         <div class="meta">${DEBT_TYPE_LABEL[d.type] || cap(d.type)}</div>${d.name}
         ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
+        ${payoffLine(d)}
       </div>
       <span class="amt">
         ${linkedDebtIds.has(d.id) ? "" : `<button class="secondary" data-add-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">+</button>`}

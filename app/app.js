@@ -769,7 +769,8 @@ async function loadAssets() {
   document.querySelectorAll("[data-del-asset]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
-      if (!confirm("Delete this asset?")) return;
+      const target = assets.find((a) => a.id === el.dataset.delAsset);
+      if (!(await confirmModal("This can't be undone.", { title: `Delete ${target?.name || "this asset"}?` }))) return;
       const { error } = await sb.from("assets").delete().eq("id", el.dataset.delAsset);
       if (error) return toast(error.message);
       await loadAssets(); toast("Asset deleted"); renderNetWorth();
@@ -1177,7 +1178,8 @@ async function loadDebts() {
   document.querySelectorAll("[data-del-debt]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
-      if (!confirm("Delete this liability?")) return;
+      const target = debts.find((d) => d.id === el.dataset.delDebt);
+      if (!(await confirmModal("This can't be undone.", { title: `Delete ${target?.name || "this liability"}?` }))) return;
       const { error } = await sb.from("liabilities").delete().eq("id", el.dataset.delDebt);
       if (error) return toast(error.message);
       await loadDebts(); toast("Liability deleted"); renderNetWorth();
@@ -1840,7 +1842,8 @@ $("editSave").onclick = async () => {
 
 $("editDelete").onclick = async () => {
   if (!editing) return;
-  if (!confirm("Delete this expense?")) return;
+  const desc = editing.description || editing.merchant || "this expense";
+  if (!(await confirmModal("This can't be undone.", { title: `Delete ${desc}?` }))) return;
   const { error } = await sb.from("expenses").delete().eq("id", editing.id);
   if (error) return toast(error.message);
   await applyAssetDelta(editing.account_id, editing.payment_type, Number(editing.amount), +1);
@@ -2513,7 +2516,7 @@ $("markPaidBtn").onclick = async () => {
 
 $("deleteSubBtn").onclick = async () => {
   if (!editingSub) return;
-  if (!confirm(`Delete ${editingSub.name}?`)) return;
+  if (!(await confirmModal("This can't be undone.", { title: `Delete ${editingSub.name}?` }))) return;
   const { error } = await sb.from("subscriptions").delete().eq("id", editingSub.id);
   if (error) return toast(error.message);
   closeSubForm();

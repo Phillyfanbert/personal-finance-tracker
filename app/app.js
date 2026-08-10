@@ -416,18 +416,23 @@ function renderAccountsList() {
   // Grouped by bank so a Checking and a Savings at the same bank sit next
   // to each other, rather than wherever creation order happened to put
   // them. Cash has no bank_name, so it's pinned first explicitly instead
-  // of relying on null/empty-string sorting first.
+  // of relying on null/empty-string sorting first. Archived accounts sort
+  // last (active-first), same idea as subscriptions' is_active ordering.
   const sorted = [...accounts].sort((a, b) => {
     if (a.type === "cash") return -1;
     if (b.type === "cash") return 1;
-    return (a.bank_name || "").localeCompare(b.bank_name || "") || a.name.localeCompare(b.name);
+    return (!!a.archived_at - !!b.archived_at) ||
+      (a.bank_name || "").localeCompare(b.bank_name || "") || a.name.localeCompare(b.name);
   });
   $("acctList").innerHTML = sorted.length
     ? sorted.map((a, i) => {
         // Bank/cash-type accounts link to an asset (tap opens the asset-adjust
         // panel); credit accounts link to a liability instead (tap opens the
         // Pay form - see openDebtBalanceForm below). 'other' accounts with
-        // no link get no click affordance.
+        // no link get no click affordance. Still tappable when archived -
+        // archiving only hides an account from "how did you pay for this"
+        // pickers, it stays fully visible/adjustable here, same treatment
+        // NON_SPENDABLE_ACCOUNT_TYPES already gets for a different reason.
         const clickAttr = a.linked_asset_id
           ? `data-adjust-acct="${a.id}"`
           : a.linked_liability_id
@@ -445,16 +450,39 @@ function renderAccountsList() {
         // Cash has no bank_name, so it plays both roles (matches its
         // existing "Cash" / "Cash" double line, unchanged).
         const bankLabel = a.bank_name || a.name;
+        // A single combined style attribute - two `style="..."` attributes
+        // on one element isn't valid HTML, and the browser silently drops
+        // the second one, so a clickable *and* archived account would
+        // otherwise never actually render dimmed.
+        const styleParts = [clickAttr ? "cursor:pointer" : "", a.archived_at ? "opacity:.5" : ""].filter(Boolean);
+        const styleAttr = styleParts.length ? ` style="${styleParts.join(";")}"` : "";
         return `
-      <div class="acct-circle-item" ${clickAttr ? `${clickAttr} style="cursor:pointer"` : ""}>
+      <div class="acct-circle-item" ${clickAttr}${styleAttr}>
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : (bankLabel.trim()[0] || "?").toUpperCase()}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${bankLabel}</div>
-        <div class="type">${a.name}</div>
+        <div class="type">${a.name}${a.archived_at ? " (archived)" : ""}</div>
         ${balance != null ? `<div class="balance">${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}</div>` : ""}
+        ${a.type === "cash" ? "" : `<div class="muted" data-archive-acct="${a.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">${a.archived_at ? "Unarchive" : "Archive"}</div>`}
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
+  // Archive/unarchive - a reversible toggle, unlike delete below. Leaves
+  // the linked asset/liability completely untouched (see
+  // 22_account_archive.sql) - archiving never changes net worth.
+  document.querySelectorAll("[data-archive-acct]").forEach((el) => {
+    el.onclick = async (ev) => {
+      ev.stopPropagation();
+      const acct = accounts.find((a) => a.id === el.dataset.archiveAcct);
+      const archiving = !acct.archived_at;
+      const { error } = await sb.from("accounts")
+        .update({ archived_at: archiving ? new Date().toISOString() : null })
+        .eq("id", el.dataset.archiveAcct);
+      if (error) return toast(error.message);
+      await loadAccounts();
+      toast(archiving ? "Account archived" : "Account unarchived");
+    };
+  });
   // delete handlers - expenses keep their history (account_id -> null on delete, per schema)
   // Cash has no delete affordance - it's auto-managed (ensureCashAccount), use
   // the +/- adjust form instead of removing it.
@@ -467,9 +495,9 @@ function renderAccountsList() {
       // with_account.sql) - warn about that up front since it's not obvious
       // from "delete this account" alone.
       const msg = acct?.linked_liability_id
-        ? "Existing expenses stay but become unassigned. Its linked liability and tracked balance are deleted too."
+        ? "Existing expenses stay but become unassigned. Its linked liability and tracked balance are deleted too. Consider Archive instead if you want to keep its history."
         : acct?.linked_asset_id
-        ? "Existing expenses stay but become unassigned. Its linked asset and balance are deleted too."
+        ? "Existing expenses stay but become unassigned. Its linked asset and balance are deleted too. Consider Archive instead if you want to keep its history."
         : "Existing expenses stay but become unassigned.";
       if (!(await confirmModal(msg, { title: "Delete this account?" }))) return;
       const { error } = await sb.from("accounts").delete().eq("id", el.dataset.delAcct);
@@ -495,8 +523,10 @@ async function loadAccounts() {
   // accounts you'd actually pay with in real life - see
   // NON_SPENDABLE_ACCOUNT_TYPES. A 401(k) or CD still exists as an
   // account (tap its circle in the Accounts card to adjust its balance),
-  // it just never shows up as "how did you pay for this."
-  const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type));
+  // it just never shows up as "how did you pay for this." An archived
+  // (closed) account is excluded the same way, for a different reason -
+  // see 22_account_archive.sql.
+  const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at);
   const opts = `<option value="">None</option>` + spendable.map((a) => `<option value="${a.id}">${acctLabel(a)}</option>`).join("");
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;

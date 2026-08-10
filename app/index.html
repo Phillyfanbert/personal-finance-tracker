@@ -804,6 +804,20 @@
   <div id="profileModal" class="modal hidden">
     <div class="sheet">
       <div class="topbar"><strong>Your profile</strong><button class="secondary" id="profileClose" style="width:auto;padding:6px 12px">Close</button></div>
+
+      <!-- Surfaced first, above the deal/financial-context fields below -
+           this is account-level, not profile data, and password sign-in
+           (see index.html's authView comment) is what keeps an installed
+           home-screen icon signed in, so it belongs where it's seen first. -->
+      <div class="muted" style="font-size:12px;margin:0 0 4px;font-weight:700">Account security</div>
+      <label>Email</label>
+      <input id="pEmail" disabled />
+      <label>New password</label>
+      <input id="pNewPassword" type="password" autocomplete="new-password" placeholder="At least 6 characters" />
+      <button class="secondary" id="setPasswordBtn">Set / change password</button>
+      <p id="passwordSetMsg" class="muted" style="margin-top:8px;font-size:12px"></p>
+      <div style="height:14px"></div>
+
       <p class="muted" style="font-size:12px;margin:0 0 8px">Used to match you to better subscription deals and to give sharper answers in Reports' Q&A. Only you can see this.</p>
       <label>Display name</label>
       <input id="pName" placeholder="Your name" />
@@ -877,21 +891,6 @@
            asset_price_findings, service_domains), which aren't this
            user's data to begin with (docs/ROADMAP.md Cross-cutting #2). -->
       <button class="secondary" id="downloadDataBtn">Download all my data</button>
-
-      <!-- Lets the ~2 known users move off magic-link-only sign-in
-           (README §3.4 originally chose email/OAuth over SMS purely to
-           avoid the SMS cost - password auth doesn't reintroduce that).
-           A password is required for the installed home-screen icon to
-           ever get a session at all - iOS gives it separate storage from
-           Safari, and a magic link always opens in Safari, so a session
-           from clicking one can never reach the icon. Magic link stays
-           available above as the bootstrap/recovery path for setting or
-           resetting this. -->
-      <div class="muted" style="font-size:12px;margin:16px 0 4px;font-weight:700">Account security</div>
-      <label>New password</label>
-      <input id="pNewPassword" type="password" autocomplete="new-password" placeholder="At least 6 characters" />
-      <button class="secondary" id="setPasswordBtn">Set / change password</button>
-      <p id="passwordSetMsg" class="muted" style="margin-top:8px;font-size:12px"></p>
     </div>
   </div>
 

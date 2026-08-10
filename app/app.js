@@ -84,6 +84,7 @@ let accountActivity = []; // non-expense money movements (asset adjust, liabilit
 let editing = null;   // expense row currently in the edit modal
 let editingSub = null; // subscription row currently in the sub form
 let userId = null;    // signed-in user's uuid
+let userEmail = null; // signed-in user's email, shown read-only in Profile
 let profile = null;   // the user's profiles row
 let entrySource = "manual"; // 'manual' | 'parsed' - set to 'parsed' when Gemma fills fields
 let gemmaTimer = null;      // debounce handle for background parsing
@@ -127,6 +128,7 @@ sb.auth.getSession().then(({ data }) => renderAuth(data.session));
 function renderAuth(session) {
   const authed = !!session;
   userId = session?.user?.id ?? null;
+  userEmail = session?.user?.email ?? null;
   $("authView").classList.toggle("hidden", authed);
   $("nav").classList.toggle("hidden", !authed);
   if (authed) { showView("log"); init(); }
@@ -2559,6 +2561,7 @@ function toggleStudentFields() {
 $("pStatus").onchange = toggleStudentFields;
 
 $("profileBtn").onclick = () => {
+  $("pEmail").value = userEmail ?? "";
   $("pName").value = profile?.display_name ?? "";
   $("pStatus").value = profile?.status ?? "other";
   $("pSchool").value = profile?.school ?? "";

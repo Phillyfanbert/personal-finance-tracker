@@ -16,7 +16,7 @@
     :root {
       --bg: #0f172a; --panel: #1e293b; --panel-2: #273449;
       --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --accent-2: #0ea5e9;
-      --ok: #34d399; --err: #f87171; --border: #334155;
+      --ok: #34d399; --err: #f87171; --warn: #fbbf24; --border: #334155;
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
@@ -135,6 +135,15 @@
       <div class="totals">
         <div class="card"><div class="muted" style="font-size:12px">This month</div><div class="big" id="monthTotal">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Entries</div><div class="big" id="monthCount">0</div></div>
+      </div>
+
+      <!-- Proactive, not something you have to open Reports to see - a
+           category at/over its budget (renderBudgetWarnings, app.js).
+           Same threshold (90%+, or over) also drives the matching toast
+           fired right when a save actually crosses it. -->
+      <div id="budgetWarningNotice" class="card hidden" style="border-color:var(--err)">
+        <strong style="color:var(--err)">Budget warning</strong>
+        <div id="budgetWarningList" style="margin-top:6px;font-size:13px"></div>
       </div>
 
       <!-- Quick add -->

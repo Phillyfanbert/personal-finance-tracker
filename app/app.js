@@ -79,6 +79,7 @@ let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
+let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
 let investmentTargets = []; // per-bucket allocation targets (Investments tab)
 let assets = [];      // net-worth assets (Log page)
 let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (Log page)
@@ -1575,7 +1576,8 @@ $("saveBtn").onclick = async () => {
   await applyLiabilityDelta(row.account_id, row.payment_type, amount, +1);
   $("quick").value = ""; $("confirm").classList.add("hidden"); $("parseStatus").textContent = "";
   entrySource = "manual";
-  await loadAssets(); await loadDebts(); await loadExpenses(); toast("Saved ✓");
+  await loadAssets(); await loadDebts(); await loadExpenses();
+  toast("Saved ✓" + budgetWarningToastSuffix(row.category));
 };
 
 // ---- EXPENSE LIST ----------------------------------------------------------
@@ -1806,6 +1808,7 @@ async function loadExpenses() {
   $("monthTotal").textContent = fmt(monthRows.reduce((s, r) => s + Number(r.amount), 0));
   $("monthCount").textContent = monthRows.length;
   renderNetWorth();
+  renderBudgetWarnings();
 
   populateTxnCategoryFilter();
   renderRecentTransactions();
@@ -1893,7 +1896,8 @@ $("editSave").onclick = async () => {
   }
   $("editSave").disabled = false;
   $("editModal").classList.add("hidden"); editing = null;
-  await loadExpenses(); toast(categoryChanged ? "Saved - I'll remember that" : "Saved ✓");
+  await loadExpenses();
+  toast((categoryChanged ? "Saved - I'll remember that" : "Saved ✓") + budgetWarningToastSuffix(newCategory));
 };
 
 $("editDelete").onclick = async () => {
@@ -1948,6 +1952,35 @@ async function loadBudgets() {
   budgets = data || [];
 }
 
+// Proactive Log-page banner, unlike renderBudgets() (Reports page) which
+// only shows anything to a user who's already navigated there - same
+// "surface it without being asked" pattern assetMaturityNotice/
+// assetStaleNotice already use. Always scoped to the current calendar
+// month (monthKey(), no month-selector input) since that's what "am I
+// about to go over budget right now" actually means, unlike the Reports
+// charts which can look at any past month. Called from loadExpenses()
+// (a new expense can change this) and whenever budgets themselves change
+// (saveBudgetBtn, the delete handler in renderBudgets).
+function renderBudgetWarnings() {
+  const byCat = sumBy(allExpenses, "category", monthKey());
+  budgetWarnings = budgetStatus(budgets, byCat).filter((s) => s.warn);
+  $("budgetWarningNotice").classList.toggle("hidden", !budgetWarnings.length);
+  $("budgetWarningList").innerHTML = budgetWarnings.map((s) =>
+    `<div>${s.category}: ${s.over ? "over budget" : `${s.pct}% of budget`} (${fmt(s.spent)} / ${fmt(s.limit)})</div>`
+  ).join("");
+}
+
+// Appended to a "Saved" toast right after logging/editing an expense, so
+// the warning shows up at the moment it becomes true, not just as a
+// passive banner the user has to notice on their own. Looks up the
+// category in budgetWarnings (set by the renderBudgetWarnings() call that
+// already happened via loadExpenses() earlier in the same save handler).
+function budgetWarningToastSuffix(category) {
+  const w = budgetWarnings.find((s) => s.category === category);
+  if (!w) return "";
+  return w.over ? ` · ${category} is over budget` : ` · ${category} is at ${w.pct}% of budget`;
+}
+
 // Called from renderReports() with that render's own byCat, rather than
 // recomputing sumBy() a second time - scoped to whatever month monthSel
 // has selected, unlike the account-history/net-worth-trend charts.
@@ -1956,7 +1989,7 @@ function renderBudgets(byCat) {
   $("budgetsList").innerHTML = statuses.length
     ? statuses.map((s) => {
         const pctClamped = Math.min(100, s.pct);
-        const barColor = s.over ? "var(--err)" : "var(--ok)";
+        const barColor = s.over ? "var(--err)" : s.warn ? "var(--warn)" : "var(--ok)";
         return `
       <div style="margin-bottom:10px">
         <div class="row" style="justify-content:space-between;font-size:13px">
@@ -1978,6 +2011,7 @@ function renderBudgets(byCat) {
       if (error) return toast(error.message);
       await loadBudgets();
       renderReports();
+      renderBudgetWarnings(); // a removed budget can also remove a Log-page warning
       toast("Budget removed");
     };
   });
@@ -1994,6 +2028,7 @@ $("saveBudgetBtn").onclick = async () => {
   $("budgetLimit").value = "";
   await loadBudgets();
   renderReports();
+  renderBudgetWarnings(); // a changed limit can newly trigger (or clear) a Log-page warning
   toast("Budget set");
 };
 

@@ -363,12 +363,33 @@
             <div class="muted" id="assetDepPreview" style="font-size:12px;margin-top:6px"></div>
           </div>
 
+          <!-- Optional for any asset type - only used by the live asset
+               price finder (PRICE_FINDINGS_ENABLED, docs/ROADMAP.md Assets
+               #4). Quantity is required before a live price can be applied,
+               since price alone isn't a total value - see app.js. -->
+          <div class="row" style="margin-top:8px">
+            <div><label>Price symbol (optional)</label><input id="assetPriceSymbol" placeholder="AAPL, BTC, VTSAX" /></div>
+            <div><label>Quantity (optional)</label><input id="assetQuantity" type="number" step="any" inputmode="decimal" /></div>
+          </div>
+
           <div style="height:8px"></div>
           <div class="row">
             <button id="saveAssetBtn">Save asset</button>
             <button class="secondary" id="cancelAssetBtn">Cancel</button>
           </div>
         </div>
+      </div>
+
+      <!-- Live asset prices (docs/ROADMAP.md Assets #4) - hidden unless
+           PRICE_FINDINGS_ENABLED is set in config.js. Same trust tier as
+           F6's "Found online" card below: machine-found, unverified,
+           applying a price is an explicit tap, never automatic. -->
+      <div class="card hidden" id="assetPriceFindingsCard">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Live asset prices</strong>
+          <span class="muted" style="font-size:12px">unverified - tap a link to check the source</span>
+        </div>
+        <div id="assetPriceFindingsList"></div>
       </div>
 
       <!-- Liabilities: tracked credit debt only. Subscriptions and a full

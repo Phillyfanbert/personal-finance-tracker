@@ -27,6 +27,13 @@ const contents = `window.APP_CONFIG = {
   SUPABASE_ANON_KEY: ${JSON.stringify(SUPABASE_ANON_KEY)},
   GEMMA_ENDPOINT: ${JSON.stringify(process.env.GEMMA_ENDPOINT || "")},
   GEMMA_MODEL: ${JSON.stringify(process.env.GEMMA_MODEL || "gemma")},
+  // Both previously missing here entirely - the production deploy could
+  // never show F6 deal findings regardless of what a local config.js had,
+  // since this generator (the actual build step, per this file's own
+  // header) never read or wrote either flag. Fixed alongside adding the
+  // second one rather than leaving the same gap duplicated.
+  DEAL_FINDINGS_ENABLED: process.env.DEAL_FINDINGS_ENABLED === "true",
+  PRICE_FINDINGS_ENABLED: process.env.PRICE_FINDINGS_ENABLED === "true",
 };
 `;
 

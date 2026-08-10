@@ -23,4 +23,10 @@ window.APP_CONFIG = {
   // the home-machine search agent (Phase B/C of the proposal). Flip to true
   // once you're ready to surface machine-found (unverified) deals in the UI.
   DEAL_FINDINGS_ENABLED: false,
+
+  // Live asset prices (docs/ROADMAP.md Assets #4) - same dormant-until-
+  // configured shape as DEAL_FINDINGS_ENABLED above, built on the same
+  // SearXNG+Gemma pipeline (tools/price-agent.js) instead of a paid price
+  // API. Flip to true once that agent is actually running somewhere.
+  PRICE_FINDINGS_ENABLED: false,
 };

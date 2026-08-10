@@ -21,7 +21,7 @@ import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 
-const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, DEAL_FINDINGS_ENABLED } = window.APP_CONFIG || {};
+const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR-PROJECT")) {
   alert("Set your Supabase URL and anon key in config.js (see SETUP.md §4).");
 }
@@ -73,6 +73,7 @@ let allExpenses = []; // cache for reports (last ~12 months)
 let subscriptions = []; // cache of the user's subscriptions
 let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
+let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
 let assets = [];      // net-worth assets (Log page)
 let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (Log page)
 let accountActivity = []; // non-expense money movements (asset adjust, liability pay) - Recent Transactions
@@ -132,7 +133,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssets(), loadDebts(), loadAccountActivity()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadAssets(), loadDebts(), loadAccountActivity()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
   await autoLogDueSubscriptions();
 }
@@ -160,6 +161,19 @@ async function loadDealFindings() {
   if (!DEAL_FINDINGS_ENABLED) { dealFindings = []; return; }
   const { data } = await sb.from("deal_findings").select("*").gt("expires_at", new Date().toISOString());
   dealFindings = data || [];
+}
+
+// Dormant until PRICE_FINDINGS_ENABLED is flipped on (config.js) and
+// tools/price-agent.js starts writing rows (docs/ROADMAP.md Assets #4).
+// Loads in parallel with loadAssets() (init()'s Promise.all), so this also
+// re-renders on its own completion - whichever of the two finishes second
+// is the one that ends up with a correct render, same pattern
+// renderRecurringCandidates() already uses for its own two parallel loads.
+async function loadAssetPriceFindings() {
+  if (!PRICE_FINDINGS_ENABLED) { assetPriceFindings = []; renderAssetPriceFindings(); return; }
+  const { data } = await sb.from("asset_price_findings").select("*").gt("expires_at", new Date().toISOString());
+  assetPriceFindings = data || [];
+  renderAssetPriceFindings();
 }
 function fillCategorySelect(sel) { sel.innerHTML = CATEGORIES.map((c) => `<option>${c}</option>`).join(""); }
 
@@ -614,6 +628,8 @@ function openAssetForm(asset) {
   $("assetPurchasePrice").value = asset?.purchase_price ?? "";
   $("assetPurchaseDate").value = asset?.purchase_date ?? "";
   $("assetDepRate").value = asset?.depreciation_rate != null ? Number(asset.depreciation_rate) * 100 : "";
+  $("assetPriceSymbol").value = asset?.price_symbol ?? "";
+  $("assetQuantity").value = asset?.quantity ?? "";
   updateAssetTypeUI();
   $("assetForm").classList.remove("hidden");
 }
@@ -663,7 +679,9 @@ $("saveAssetBtn").onclick = async () => {
   const purchase_price = isVehicle && $("assetPurchasePrice").value !== "" ? parseFloat($("assetPurchasePrice").value) : null;
   const purchase_date = isVehicle && $("assetPurchaseDate").value ? $("assetPurchaseDate").value : null;
   const depreciation_rate = isVehicle && $("assetDepRate").value !== "" ? parseFloat($("assetDepRate").value) / 100 : null;
-  const row = { name, type, value, purchase_price, purchase_date, depreciation_rate };
+  const price_symbol = $("assetPriceSymbol").value.trim() || null;
+  const quantity = $("assetQuantity").value !== "" ? parseFloat($("assetQuantity").value) : null;
+  const row = { name, type, value, purchase_price, purchase_date, depreciation_rate, price_symbol, quantity };
 
   const q = editingAsset
     ? sb.from("assets").update(row).eq("id", editingAsset.id)
@@ -761,6 +779,62 @@ async function loadAssets() {
     .map((a) => `${a.name} last updated ${a.monthsSince} month${a.monthsSince === 1 ? "" : "s"} ago`).join(" · ");
   renderNetWorth();
   renderAccountsList(); // a changed asset value may be a linked account's balance line
+  renderAssetPriceFindings();
+}
+
+// Matches findings to the user's own assets by symbol, exact
+// (case-insensitive) rather than the loose substring matching
+// matchService (discounts.js) uses for service names - a ticker should
+// match exactly, since a loose match risks a false positive ("A" inside
+// "AAPL"). Applying a finding requires quantity to be set first (see
+// 27_asset_quantity.sql) - refuses rather than guessing 1, since silently
+// setting a multi-share holding's value to a single share's price would
+// be a real, wrong financial number.
+function renderAssetPriceFindings() {
+  const card = $("assetPriceFindingsCard");
+  if (!card) return;
+  if (!PRICE_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  const bySymbol = new Map();
+  for (const a of assets) {
+    if (!a.price_symbol) continue;
+    const key = a.price_symbol.trim().toUpperCase();
+    if (!bySymbol.has(key)) bySymbol.set(key, []);
+    bySymbol.get(key).push(a);
+  }
+  const matches = assetPriceFindings.filter((f) => bySymbol.has((f.symbol || "").trim().toUpperCase()));
+
+  if (!matches.length) {
+    $("assetPriceFindingsList").innerHTML = `<p class="muted" style="font-size:13px">No live findings yet for your assets.</p>`;
+    return;
+  }
+  $("assetPriceFindingsList").innerHTML = matches.map((f, i) => {
+    const link = f.url ? `<a href="${f.url}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
+    return `
+      <div class="exp" style="cursor:default">
+        <div>
+          <div>${f.symbol}</div>
+          <div class="meta">${fmt(f.price)} ${f.currency || "USD"} ${link}</div>
+        </div>
+        <span class="amt" style="font-size:12px;cursor:pointer;text-decoration:underline;color:var(--accent)" data-apply-price-idx="${i}">Apply</span>
+      </div>`;
+  }).join("");
+  document.querySelectorAll("[data-apply-price-idx]").forEach((el) => {
+    el.onclick = async () => {
+      const finding = matches[Number(el.dataset.applyPriceIdx)];
+      const targets = bySymbol.get((finding.symbol || "").trim().toUpperCase()) || [];
+      let applied = 0;
+      for (const asset of targets) {
+        if (!asset.quantity) { toast(`Set a quantity for ${asset.name} first`); continue; }
+        const newValue = Math.round(Number(finding.price) * Number(asset.quantity) * 100) / 100;
+        const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+        if (error) { toast(error.message); continue; }
+        applied++;
+      }
+      if (applied) { await loadAssets(); toast(`Applied live price to ${applied} asset${applied === 1 ? "" : "s"}`); }
+    };
+  });
 }
 
 // No linked asset (Checking or Cash) may ever go negative, on any path -

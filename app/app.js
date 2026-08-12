@@ -14,7 +14,8 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage } from "./investments.js";
+import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
 } from "./csvImport.js";
@@ -573,6 +574,25 @@ function isKnownBank(name) {
   if (tokens.length === 1 && (bankGenericOnly(typed) || typed.length < 5)) return false;
   if (BANK_KEYS.some((k) => containsWords(k, typed))) return true;
   return BANK_REVERSE_KEYS.some((k) => containsWords(typed, k));
+}
+
+// Exact match, not fuzzy - a ticker is a precise, case-sensitive-in-reality
+// (normalized to uppercase here) code, unlike a bank's legal name, which is
+// why this doesn't need isKnownBank's word-containment logic. Checks
+// CRYPTO_SYMBOLS instead of the security lists specifically for a holding
+// whose parent account is type 'crypto' (tickers.js's header comment
+// explains why a crypto "ticker" isn't a market-issued security symbol and
+// so isn't in the same list). See tickers.js's own header for the honesty
+// caveat this function inherits: a false negative here does not mean the
+// ticker isn't real, only that this hand-curated list doesn't have it -
+// that's exactly why the caller (saveHoldingBtn) always offers a confirm-
+// to-override path rather than a hard block, the same pattern isKnownBank's
+// caller (saveAcctBtn) already established.
+function isKnownTicker(symbol, parentType) {
+  const typed = symbol.trim().toUpperCase();
+  if (!typed) return false;
+  const list = parentType === "crypto" ? CRYPTO_SYMBOLS : ALL_SECURITY_TICKERS;
+  return list.includes(typed);
 }
 
 // With ~40 types across 5 categories, a 3-button toggle (the original
@@ -1392,6 +1412,7 @@ const ACTIVITY_LABEL = {
   liability_payment: "Debt payment",
   owed_adjust: "Owed correction",
   account_created: "Account opened",
+  contribution: "Contribution",
 };
 // The one activity kind that moves no money and so has nothing to reverse -
 // "undoing" it would mean deleting the account, which is what the Accounts
@@ -1417,7 +1438,11 @@ async function loadAccountActivity() {
 // the money came from. liabilityId is the liability actually paid down -
 // needed for undoActivity() to find a STANDALONE liability (no linked
 // account, so relatedAccountId is null for it) well enough to reverse it.
-async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null) {
+// assetId (trailing, optional) is for 'contribution' rows specifically -
+// most investment assets are standalone (STANDALONE_ONLY_ASSET_CATEGORIES),
+// no linked account at all, so accountId alone can't say WHICH investment
+// asset a contribution belongs to. See 42_contribution_tracking.sql.
+async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null, assetId = null) {
   const rounded = Math.round(Number(amount) * 100) / 100;
   // A zero amount normally means nothing actually changed (a "set" to the
   // same value), so there is nothing worth a history row. account_created is
@@ -1426,7 +1451,7 @@ async function logActivity(kind, description, amount, occurred_at, accountId, re
   if (!rounded && kind !== "account_created") return;
   const { error } = await sb.from("account_activity").insert({
     kind, description, amount: rounded, occurred_at: occurred_at || new Date().toISOString().slice(0, 10),
-    account_id: accountId, related_account_id: relatedAccountId, liability_id: liabilityId,
+    account_id: accountId, related_account_id: relatedAccountId, liability_id: liabilityId, asset_id: assetId,
   });
   if (!error) await loadAccountActivity();
 }
@@ -2583,6 +2608,20 @@ async function undoActivity(row) {
     if (assetErr) return toast(assetErr.message);
     const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
     if (debtErr) return toast(debtErr.message);
+  } else if (row.kind === "contribution") {
+    // Unlike asset_adjust, this goes straight to asset_id - a contribution
+    // is logged against the specific investment asset directly (most are
+    // standalone, no account to indirect through via account_id at all;
+    // see 42_contribution_tracking.sql). amount is always positive (a
+    // contribution only ever adds money in), so undoing is always a
+    // straight subtraction, never a sign-dependent one like asset_adjust's.
+    const asset = row.asset_id ? assets.find((a) => a.id === row.asset_id) : null;
+    if (!asset) return toast("Can't undo - the investment no longer exists.");
+    const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
+    if (newValue < 0) return toast(`Can't undo - would take ${asset.name} below $0.`);
+    const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+    if (error) return toast(error.message);
+    await syncParentAssetValue(asset.parent_asset_id); // no-op unless asset is itself a holding
   }
   const { error } = await sb.from("account_activity").delete().eq("id", row.id);
   if (error) return toast(error.message);
@@ -3002,7 +3041,11 @@ function renderInvestments() {
     return `
       <div style="margin-bottom:14px">
         <div class="exp" style="cursor:default">
-          <div><div><strong>${esc(p.name)}</strong></div><div class="meta">${assetTypeLabel(p.type)}${children.length ? ` · ${children.length} holding${children.length === 1 ? "" : "s"}` : ""}</div></div>
+          <div>
+            <div><strong>${esc(p.name)}</strong></div>
+            <div class="meta">${assetTypeLabel(p.type)}${children.length ? ` · ${children.length} holding${children.length === 1 ? "" : "s"}` : ""}</div>
+            <div class="muted" data-log-contribution="${p.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Log contribution</div>
+          </div>
           <span class="amt">${fmt(effectiveAssetValue(p))}</span>
         </div>
         ${children.length
@@ -3010,6 +3053,9 @@ function renderInvestments() {
           : `<p class="muted" style="font-size:12px;padding-left:12px;margin:6px 0 0">No specific holdings recorded - use "+ Add stock" to enter tickers.</p>`}
       </div>`;
   }).join("") : `<p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p>`;
+  document.querySelectorAll("[data-log-contribution]").forEach((el) => {
+    el.onclick = (ev) => { ev.stopPropagation(); openContributionForm(el.dataset.logContribution); };
+  });
   document.querySelectorAll("[data-edit-holding]").forEach((el) => {
     el.onclick = () => openHoldingForm(assets.find((a) => a.id === el.dataset.editHolding));
   });
@@ -3031,6 +3077,29 @@ function renderInvestments() {
       toast("Holding deleted");
     };
   });
+
+  // Base 2025 IRS limits, factual math only - see CONTRIBUTION_LIMIT_GROUPS'
+  // own comment and docs/bank-account-types-research.md §9b.6. Colored red
+  // once over the limit, same as renderBudgets' over-budget styling - this
+  // is a real hard legal limit, not the soft "aim for under 30%" utilization
+  // guideline the Liabilities card's credit-utilization line deliberately
+  // leaves uncolored, so a color here is stating a fact, not nudging advice.
+  const contributions = accountActivity.filter((a) => a.kind === "contribution");
+  const limitUsage = contributionLimitUsage(assets, contributions, CONTRIBUTION_LIMIT_GROUPS);
+  $("contributionLimitsCard").style.display = limitUsage.length ? "" : "none";
+  $("contributionLimitsList").innerHTML = limitUsage.map((u) => {
+    const pctClamped = Math.min(100, (u.contributed / u.limit) * 100);
+    return `
+      <div style="margin-bottom:10px">
+        <div class="row" style="justify-content:space-between;font-size:13px">
+          <span>${esc(u.label)}</span>
+          <span style="${u.overLimit ? "color:var(--err)" : ""}">${fmt(u.contributed)} / ${fmt(u.limit)}${u.overLimit ? " - over limit" : ""}</span>
+        </div>
+        <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
+          <div style="background:${u.overLimit ? "var(--err)" : "var(--ok)"};width:${pctClamped}%;height:100%"></div>
+        </div>
+      </div>`;
+  }).join("");
 
   $("investRiskLabel").value = profile?.risk_label ?? "";
 
@@ -3072,6 +3141,52 @@ function renderInvestments() {
 // parent_asset_id pointing at the account's asset (40_asset_holdings.sql).
 let editingHolding = null;
 
+// A pension is an income promise, not a tradable security - there is no
+// real-world "ticker" a pension holds, unlike every other INVESTMENT_ASSET_
+// TYPES entry. Excluded here specifically, not from INVESTMENT_ASSET_TYPES
+// itself - a pension asset still shows up everywhere else on the
+// Investments tab (total value, the plain listing) exactly as before, it
+// just can't be the PARENT of a new ticker holding. Everything else stays
+// eligible, including `annuity`: a FIXED annuity has no ticker either, but
+// a VARIABLE annuity genuinely does (its value tracks named sub-account
+// funds, much like a 401(k)'s fund menu) - there's no separate fixed/
+// variable type to gate on, so this stays permissive rather than blocking
+// a real use case to guard against a different one (see docs/bank-account-
+// types-research.md §5.8/§9b for the fixed-vs-variable distinction).
+const TICKER_ELIGIBLE_ASSET_TYPES = new Set(
+  [...INVESTMENT_ASSET_TYPES].filter((t) => t !== "pension")
+);
+
+// Base 2025 IRS contribution limits, no catch-up/income-phase-out/filing-
+// status adjustments - see docs/bank-account-types-research.md §9b.6 for
+// the full reasoning per type and per group, including every excluded
+// type's specific reason for not being tracked (sep_ira needs income data
+// this app doesn't have, 529/UTMA use a gift-tax exclusion rather than a
+// clean single limit, a rollover/inherited IRA generally can't receive new
+// contributions at all, ...). Consumed by contributionLimitUsage()
+// (investments.js), which stays free of this app-level configuration the
+// same way it already takes INVESTMENT_ASSET_TYPES-derived lists as
+// arguments rather than hardcoding them itself.
+//
+// Which types share one limit vs. have their own is the part most likely
+// to be gotten wrong by intuition - a 401(k) and a 457(b) look similar but
+// do NOT share a limit, while a Traditional and a Roth 401(k) look
+// different but DO. Verify the current year's actual figures before
+// relying on this for a real contribution decision - this is a reference
+// calculator showing your own logged numbers back to you, not tax advice,
+// and a stale limit would be worse than showing none.
+const CONTRIBUTION_LIMIT_GROUPS = {
+  elective_deferral: {
+    types: ["traditional_401k", "roth_401k", "plan_403b", "tsp", "solo_401k"],
+    limit: 23500,
+    label: "401(k) / 403(b) / TSP",
+  },
+  plan_457b: { types: ["plan_457b"], limit: 23500, label: "457(b)" },
+  ira: { types: ["traditional_ira", "roth_ira"], limit: 7000, label: "IRA (Traditional + Roth combined)" },
+  simple_ira: { types: ["simple_ira"], limit: 16500, label: "SIMPLE IRA" },
+  espp: { types: ["espp"], limit: 25000, label: "ESPP" },
+};
+
 // Only accounts that can actually contain positions. An investment account
 // created from the Accounts card has a linked asset; a standalone investment
 // asset added from the Assets card can hold tickers too, so both are offered
@@ -3084,29 +3199,93 @@ function holdingParentAssets() {
   // has holdings, for double-counting reasons in totals - the wrong list
   // here, since an account with existing positions must still be offered
   // as somewhere to add another one.
-  return allInvestmentAssets().filter((a) => !a.parent_asset_id);
+  return allInvestmentAssets().filter(
+    (a) => !a.parent_asset_id && TICKER_ELIGIBLE_ASSET_TYPES.has(a.type)
+  );
 }
+
+// Required fields on the holding form: an explicit account, a ticker, share
+// count, and cost basis - the same "starts blank, red border while empty"
+// treatment as REQUIRED_QUICK_ADD_FIELDS, reused rather than reinvented
+// (CLAUDE.md's rule for this pattern). holdingValue is deliberately absent -
+// it stays genuinely optional (falls back to cost basis, see saveHoldingBtn).
+const REQUIRED_HOLDING_FIELDS = ["holdingAccount", "holdingSymbol", "holdingQuantity", "holdingCostBasis"];
+// Tracks the exact symbol text the user has already confirmed via the
+// "not recognized, add anyway" override, so re-showing that confirm on
+// every subsequent save click (with nothing changed) would be needless -
+// cleared whenever the symbol text itself changes, so a genuinely new,
+// still-unconfirmed symbol is always re-checked.
+let holdingSymbolOverrideConfirmedFor = null;
+// Live, on every keystroke in any of the four - plain emptiness only.
+// Deliberately does NOT include the "unrecognized ticker" check (see
+// updateHoldingSymbolTickerHighlight below) - that one is checked only at
+// save time, not here, even though holdingSymbol is one of the four ids
+// this function runs against. Using classList.toggle (not .add) matters
+// for that separation: it unconditionally SETS the class to match current
+// emptiness on every call, which is also what clears a previous ticker-
+// invalid flag the instant the user edits the text at all, before the
+// (separate, save-time-only) validity check has even re-run.
+function updateHoldingFieldHighlighting() {
+  for (const id of REQUIRED_HOLDING_FIELDS) {
+    $(id).classList.toggle("field-required", !$(id).value);
+  }
+}
+// A non-empty holdingSymbol that isn't a recognized ticker and hasn't been
+// override-confirmed yet is ALSO red, on top of the plain-empty check above -
+// but only evaluated at save time (called from saveHoldingBtn), never wired
+// to holdingSymbol's own input event. Flagging every partial, still-being-
+// typed ticker as "wrong" while the user is mid-typing "AAPL" would be
+// actively annoying - caught by testing the live-typing experience, not
+// assumed safe just because the empty-check version of this pattern was
+// already proven to work well for Quick Add.
+function updateHoldingSymbolTickerHighlight() {
+  const symbol = $("holdingSymbol").value.trim().toUpperCase();
+  const parentType = assets.find((a) => a.id === $("holdingAccount").value)?.type;
+  if (symbol && symbol !== holdingSymbolOverrideConfirmedFor && !isKnownTicker(symbol, parentType)) {
+    $("holdingSymbol").classList.add("field-required");
+  }
+}
+for (const id of REQUIRED_HOLDING_FIELDS) {
+  $(id).addEventListener("input", updateHoldingFieldHighlighting);
+}
+// A changed symbol invalidates any prior override confirmation for the OLD
+// text - typing over a confirmed "BRK.A" into something else must be
+// re-checked, not silently inherit the earlier confirmation.
+$("holdingSymbol").addEventListener("input", () => { holdingSymbolOverrideConfirmedFor = null; });
 
 function openHoldingForm(holding) {
   editingHolding = holding || null;
+  holdingSymbolOverrideConfirmedFor = null;
   const parents = holdingParentAssets();
   if (!parents.length) {
-    return toast("Add an investment account first (Accounts or Assets card on the Log page).");
+    return toast("Add an investment account first (Accounts or Assets card on the Log page) - a pension can't hold individual tickers.");
   }
-  $("holdingAccount").innerHTML = parents
+  const opts = parents
     .map((a) => `<option value="${a.id}">${esc(a.name)} (${assetTypeLabel(a.type)})</option>`).join("");
-  $("holdingAccount").value = holding?.parent_asset_id ?? parents[0].id;
+  // New holding: starts on the blank "Choose an account" option, same
+  // "required means actually reachable as empty" fix already applied to
+  // Quick Add's Category - defaulting to parents[0] silently would make
+  // the required-field check below structurally unreachable, the exact
+  // bug that was already found and fixed once. Editing an existing holding
+  // still explicitly selects its real current parent, same as eCategory
+  // does for an existing expense's real category.
+  $("holdingAccount").innerHTML = holding
+    ? opts
+    : `<option value="">Choose an account</option>${opts}`;
+  $("holdingAccount").value = holding?.parent_asset_id ?? "";
   $("holdingSymbol").value = holding?.price_symbol ?? "";
   $("holdingQuantity").value = holding?.quantity ?? "";
   $("holdingCostBasis").value = holding?.purchase_price ?? "";
   $("holdingValue").value = holding?.value ?? "";
   $("holdingBucket").value = holding?.investment_bucket ?? "";
+  updateHoldingFieldHighlighting();
   $("holdingForm").classList.remove("hidden");
   $("holdingForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 function closeHoldingForm() {
   $("holdingForm").classList.add("hidden");
   editingHolding = null;
+  holdingSymbolOverrideConfirmedFor = null;
 }
 $("addHoldingBtn").onclick = () => {
   if ($("holdingForm").classList.contains("hidden")) openHoldingForm(null);
@@ -3115,18 +3294,42 @@ $("addHoldingBtn").onclick = () => {
 $("cancelHoldingBtn").onclick = closeHoldingForm;
 
 $("saveHoldingBtn").onclick = async () => {
+  // Guaranteed-fresh red borders right as Save is attempted - both halves,
+  // since updateHoldingSymbolTickerHighlight is otherwise never wired to
+  // fire on its own (deliberately not live, see its own comment).
+  updateHoldingFieldHighlighting();
+  updateHoldingSymbolTickerHighlight();
   const parentId = $("holdingAccount").value;
+  if (!parentId) return toast("Choose the account this sits in");
   const symbol = $("holdingSymbol").value.trim().toUpperCase();
-  if (!parentId) return toast("Pick the account this sits in");
   if (!symbol) return toast("Enter a ticker or symbol");
-  const quantity = $("holdingQuantity").value !== "" ? parseFloat($("holdingQuantity").value) : null;
-  if (quantity !== null && (!Number.isFinite(quantity) || quantity <= 0)) return toast("Shares must be a positive number");
-  const costBasis = $("holdingCostBasis").value !== "" ? parseFloat($("holdingCostBasis").value) : null;
-  if (costBasis !== null && (!Number.isFinite(costBasis) || costBasis < 0)) return toast("Cost basis can't be negative");
+  // Shares and cost basis are required, not optional - a holding without
+  // them was previously just a name with no actual position behind it.
+  if ($("holdingQuantity").value === "") return toast("Enter the number of shares");
+  const quantity = parseFloat($("holdingQuantity").value);
+  if (!Number.isFinite(quantity) || quantity <= 0) return toast("Shares must be a positive number");
+  if ($("holdingCostBasis").value === "") return toast("Enter what you paid in total");
+  const costBasis = parseFloat($("holdingCostBasis").value);
+  if (!Number.isFinite(costBasis) || costBasis < 0) return toast("Cost basis can't be negative");
   const value = $("holdingValue").value !== "" ? parseFloat($("holdingValue").value) : null;
   if (value !== null && (!Number.isFinite(value) || value < 0)) return toast("Current value can't be negative");
 
   const parent = assets.find((a) => a.id === parentId);
+  // isKnownTicker() checks a hand-curated, necessarily incomplete list
+  // (tickers.js) - a no-match is a confirmation, not a hard stop, same
+  // "comprehensive but not exhaustive" override bank-name entry already
+  // established (saveAcctBtn). Skipped entirely once already confirmed for
+  // this exact symbol text this time around.
+  if (symbol !== holdingSymbolOverrideConfirmedFor && !isKnownTicker(symbol, parent?.type)) {
+    const kind = parent?.type === "crypto" ? "crypto symbol" : "ticker";
+    const ok = await confirmModal(
+      `"${symbol}" isn't in our list of recognized ${kind}s. If this is real and we're just missing it, you can add it as typed.`,
+      { title: `${kind === "crypto symbol" ? "Symbol" : "Ticker"} not recognized`, confirmLabel: "Add anyway" }
+    );
+    if (!ok) { updateHoldingSymbolTickerHighlight(); return; }
+    holdingSymbolOverrideConfirmedFor = symbol;
+  }
+
   const row = {
     // A holding inherits its parent's type so INVESTMENT_ASSET_TYPES keeps
     // matching it and the Investments tab picks it up with no special case.
@@ -3136,7 +3339,11 @@ $("saveHoldingBtn").onclick = async () => {
     price_symbol: symbol,
     quantity,
     purchase_price: costBasis,
-    value: value ?? 0,
+    // A blank Current Value no longer means "worth $0" (that's a real,
+    // false claim about a position that was just paid costBasis for) - it
+    // means "not priced yet," which is honestly closer to costBasis than
+    // to zero until a live price arrives (syncParentAssetValue/price-agent).
+    value: value ?? costBasis,
     investment_bucket: $("holdingBucket").value.trim() || null,
   };
   // Captured before closeHoldingForm() clears editingHolding below.
@@ -3156,6 +3363,73 @@ $("saveHoldingBtn").onclick = async () => {
   renderInvestments();
   renderNetWorth();
   toast(wasEditing ? "Holding updated" : "Holding added");
+};
+
+// ---- CONTRIBUTIONS (Investments tab) -------------------------------------
+// One shared panel, retargeted per account - same pattern assetAdjustForm
+// already uses for Checking/Cash (openAssetAdjust). Writing 'contribution'
+// through logActivity (rather than a plain assets.update) is the whole
+// point - it's what lets contributionLimitUsage() later tell "new money in"
+// apart from a market gain or a manual correction.
+let contributingAssetId = null;
+function closeContributionForm() {
+  $("contributionForm").classList.add("hidden");
+  contributingAssetId = null;
+}
+function openContributionForm(assetId) {
+  const asset = assets.find((a) => a.id === assetId);
+  if (!asset) return;
+  // Tapping the same account's link again while its panel is already open
+  // closes it - same toggle-shut convenience openAssetAdjust already has.
+  if (contributingAssetId === assetId && !$("contributionForm").classList.contains("hidden")) {
+    closeContributionForm();
+    return;
+  }
+  contributingAssetId = assetId;
+  $("contributionLabel").textContent = `Log a contribution to ${asset.name}`;
+  $("contributionAmount").value = "";
+  $("contributionDate").value = new Date().toISOString().slice(0, 10);
+  $("contributionAmount").classList.remove("field-required");
+  $("contributionForm").classList.remove("hidden");
+  $("contributionForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+$("cancelContributionBtn").onclick = closeContributionForm;
+$("contributionAmount").addEventListener("input", () => {
+  $("contributionAmount").classList.toggle("field-required", !$("contributionAmount").value);
+});
+$("saveContributionBtn").onclick = async () => {
+  const asset = assets.find((a) => a.id === contributingAssetId);
+  if (!asset) return closeContributionForm();
+  if (!$("contributionAmount").value) {
+    $("contributionAmount").classList.add("field-required");
+    return toast("Enter an amount");
+  }
+  const amount = parseFloat($("contributionAmount").value);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    $("contributionAmount").classList.add("field-required");
+    return toast("Enter a positive amount");
+  }
+  const occurred_at = $("contributionDate").value || new Date().toISOString().slice(0, 10);
+  const newValue = Math.round((Number(asset.value) + amount) * 100) / 100;
+  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+  if (error) return toast(error.message);
+  // account_id: the linked account if this asset has one (most investment
+  // assets are standalone and won't), purely so Recent History's account
+  // filter can also surface a contribution the same way it already does
+  // for asset_adjust - asset_id (not account_id) is what
+  // contributionLimitUsage() actually reads.
+  const linkedAccountId = accounts.find((a) => a.linked_asset_id === asset.id)?.id ?? null;
+  await logActivity(
+    "contribution", `Contributed ${fmt(amount)} to ${asset.name}`,
+    amount, occurred_at, linkedAccountId, null, null, asset.id
+  );
+  await syncParentAssetValue(asset.parent_asset_id); // no-op unless asset is itself a holding
+  closeContributionForm();
+  await loadAssets();
+  renderInvestments();
+  renderRecentTransactions();
+  renderNetWorth();
+  toast("Contribution logged");
 };
 
 $("saveInvestTargetBtn").onclick = async () => {

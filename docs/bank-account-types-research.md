@@ -879,6 +879,61 @@ two are separate form fields that never both apply).
 | CD | Locked until maturity, so its value is real but not spendable, which is why it is excluded from payment pickers. |
 | Imported CSV expenses | Never re-applied to a balance. They are history that already happened, so the account's current balance already reflects them (`CLAUDE.md`, `app/csvImport.js`). |
 
+### 9b.6 Per-type investment logic: tax treatment, tickers, contribution limits
+
+*Added 2026-08-12, alongside ticker verification and required-fields work
+on the Investments tab. This is the reference this app's code (`app.js`'s
+`TICKER_ELIGIBLE_ASSET_TYPES` and `CONTRIBUTION_LIMIT_GROUPS`) is built
+from - if a number or a yes/no here changes, update both, not just one.*
+
+**Contribution-limit figures below are 2025 base limits only** - no
+catch-up contributions (age 50+, or the special age-60-63 catch-up under
+SECURE 2.0), no income phase-outs, no filing-status adjustments. They come
+from training knowledge, not a live IRS feed (this app has no live data
+source for anything - same honesty already given for `BANK_NAMES` and
+`tickers.js`). **Verify the current year's actual figures before relying on
+this for a real contribution decision** - this app is a calculator showing
+your own numbers back to you, not tax advice, and a stale or wrong limit
+would be worse than showing none at all.
+
+| Type | Tax treatment | Tickers apply? | Contribution limit (2025 base, own reference only) |
+|---|---|---|---|
+| Traditional 401(k)/403(b)/TSP/Solo 401(k) employee portion | Pre-tax now, ordinary income tax on withdrawal | Yes | $23,500/yr, **shared** across this whole group per person (not per account) |
+| Roth 401(k) | Post-tax now, tax-free qualified withdrawal | Yes | Same $23,500/yr group as above - Roth and Traditional 401(k) contributions share one combined limit, they do not stack |
+| 457(b) | Pre-tax (or Roth 457(b), post-tax) now, taxed/tax-free on withdrawal to match | Yes | $23,500/yr, its **own separate** bucket by law - not shared with the 401(k)/403(b)/TSP group even though the dollar figure happens to match for 2025 |
+| Traditional IRA | Pre-tax (if deductible) now, ordinary income tax on withdrawal | Yes | $7,000/yr, **shared** with Roth IRA |
+| Roth IRA | Post-tax now, tax-free qualified withdrawal; income limits can reduce or eliminate eligibility entirely (not tracked here - no income field exists) | Yes | Same $7,000/yr group as Traditional IRA |
+| SEP IRA | Pre-tax now, ordinary income tax on withdrawal | Yes | Greater of 25% of compensation or $70,000 - **not tracked**, this app has no income field, and for most people the 25%-of-compensation test is the actual binding constraint, not the flat dollar cap, so showing just the cap would overstate what is really allowed |
+| SIMPLE IRA | Pre-tax now, ordinary income tax on withdrawal | Yes | $16,500/yr, its own bucket |
+| Brokerage | Ordinary taxable account - capital gains/dividends taxed as earned/realized | Yes | No limit - not tracked |
+| 529 plan | After-tax in, tax-free growth for qualified education expenses | Yes | No single federal limit - governed by the annual gift-tax exclusion (~$19,000/beneficiary for 2025, doubled if a couple splits the gift) plus a per-state aggregate lifetime cap that varies enormously (some states $235,000+, others $500,000+) - **not tracked**, no clean single number exists to check against |
+| TSP | Same as 401(k) - pre-tax (Traditional) or post-tax (Roth TSP) | Yes | Part of the $23,500/yr elective-deferral group above |
+| Solo 401(k) | Same as 401(k) for the employee-deferral portion; the *employer*/profit-sharing portion depends on net self-employment income | Yes | Employee-deferral portion only tracked, in the $23,500/yr group above - the employer/profit-sharing component is **not tracked** (needs self-employment income data this app doesn't have) |
+| Rollover / inherited IRA | Matches whatever the money's original tax treatment was (pre-tax stays pre-tax, Roth stays Roth) | Yes | **Not tracked** - a rollover is a transfer of existing money, not a new contribution, and an inherited IRA generally cannot receive new contributions at all |
+| Annuity | Tax-deferred growth; ordinary income tax on the earnings portion of a withdrawal | **Conditional** - a *variable* annuity has named sub-account funds with real tickers/symbols; a *fixed* annuity does not. No separate fixed/variable type exists in this app's data model, so `annuity` stays ticker-eligible rather than blocking the real (variable) case to guard against the other | No standard IRS annual limit like a retirement account - **not tracked** |
+| ESPP | Ordinary income tax on the discount at purchase, capital gains tax on any further gain at sale | Yes | $25,000/yr (fair market value at grant, for a qualified Section 423 plan), its own bucket |
+| Pension | Employer-funded defined-benefit promise, not an account balance - see §5.10 | **No** - a pension is an income promise, not a tradable security; `TICKER_ELIGIBLE_ASSET_TYPES` (`app.js`) excludes it specifically | Not applicable - a participant generally does not make discretionary contributions to a pension the way they do to a 401(k) |
+| Custodial UTMA/UGMA | Taxed to the minor (subject to "kiddie tax" rules above a threshold), not the custodian | Yes | Same gift-tax-exclusion shape as a 529 (§5.4) - **not tracked**, no clean account-level limit |
+| Crypto | Capital gains/loss on disposal, same general shape as a brokerage account | Yes, against a **separate** symbol list (`CRYPTO_SYMBOLS`, `tickers.js`) - a crypto "ticker" (BTC, ETH) is not a market-issued security symbol the way a stock/ETF/fund ticker is | No IRS contribution limit concept - not tracked |
+
+**Which types share a contribution-limit "bucket" together, summarized**
+(this is the part most likely to be gotten wrong by intuition - a 401(k)
+and a 457(b) look similar but do **not** share a limit, while a Traditional
+and a Roth 401(k) look different but **do**):
+
+- **Elective deferral group**: `traditional_401k`, `roth_401k`, `plan_403b`,
+  `tsp`, `solo_401k` (employee portion only) - one shared $23,500/yr limit
+  across every account of these types combined, per person.
+- **457(b) group**: `plan_457b` alone - its own separate $23,500/yr limit,
+  not combined with the group above.
+- **IRA group**: `traditional_ira`, `roth_ira` - one shared $7,000/yr limit.
+- **SIMPLE IRA group**: `simple_ira` alone - its own $16,500/yr limit.
+- **ESPP group**: `espp` alone - its own $25,000/yr limit.
+- **Not tracked at all**: `sep_ira`, `plan_529`, `rollover_inherited_ira`,
+  `annuity`, `custodial_utma`, `brokerage`, `crypto`, `pension`, and the
+  legacy `ira`/`retirement_employer` buckets - each for the specific reason
+  given in its own table row above, not by omission.
+
 ## 10. Mapping to this app's data model
 
 ### 10.1 What exists today

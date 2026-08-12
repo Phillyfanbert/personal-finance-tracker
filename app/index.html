@@ -829,7 +829,7 @@
           </div>
           <div class="row">
             <div><label>Total cost basis</label><input id="holdingCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you paid in total" /></div>
-            <div><label>Current value</label><input id="holdingValue" type="number" step="0.01" inputmode="decimal" placeholder="Worth today" /></div>
+            <div><label>Current value (optional)</label><input id="holdingValue" type="number" step="0.01" inputmode="decimal" placeholder="Defaults to cost basis until priced" /></div>
           </div>
           <label>Bucket (optional, for target allocation)</label>
           <select id="holdingBucket"></select>
@@ -841,6 +841,36 @@
           </div>
         </div>
         <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p></div>
+      </div>
+
+      <!-- One shared panel, retargeted per account - same "single form,
+           repositioned" pattern assetAdjustForm already uses for Checking/
+           Cash. amount/date only - kind='contribution' is what tells this
+           apart from an ordinary asset_adjust (app.js). -->
+      <div id="contributionForm" class="hidden" style="margin-bottom:12px;padding:12px;background:var(--panel-2);border-radius:10px">
+        <div class="topbar" style="margin-bottom:6px"><strong id="contributionLabel">Log a contribution</strong></div>
+        <div class="row">
+          <div><label>Amount</label><input id="contributionAmount" type="number" step="0.01" inputmode="decimal" placeholder="500" /></div>
+          <div><label>Date</label><input id="contributionDate" type="date" /></div>
+        </div>
+        <div style="height:8px"></div>
+        <div class="row">
+          <button id="saveContributionBtn">Log contribution</button>
+          <button class="secondary" id="cancelContributionBtn">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Base 2025 IRS limits only (no catch-up, no income phase-outs) -
+           see docs/bank-account-types-research.md §9b.6 for the full
+           per-type reasoning and which types share a limit vs. have their
+           own. A calculator against your own logged contributions, not
+           advice - only ever states the math, same boundary the Target
+           allocation card below already holds for what to buy. Only shows
+           a group the user actually has a qualifying account in. -->
+      <div class="card" id="contributionLimitsCard" style="display:none">
+        <strong>Contribution limits (this year)</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 8px">Base annual limits only - doesn't account for catch-up contributions, income phase-outs, or filing status. Verify against current IRS figures for your situation.</p>
+        <div id="contributionLimitsList"></div>
       </div>
 
       <!-- A calculator, not a recommendation - risk label and targets are

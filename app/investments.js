@@ -146,3 +146,53 @@ export function allocationVsTarget(assets, holdings, targets) {
     return { bucket: t.bucket, currentValue, currentPct, targetPercent, gapDollars };
   });
 }
+
+/**
+ * Annual contribution-limit usage per group, for the groups the user
+ * actually has a qualifying account in (a group with zero matching assets
+ * is omitted entirely, not shown as "$0 of $X" - see
+ * docs/bank-account-types-research.md §9b.6 for why only some types are
+ * tracked at all, and which types share one limit vs. have their own).
+ *
+ * limitGroups' shape (keyed by group id, defined in app.js as
+ * CONTRIBUTION_LIMIT_GROUPS - kept out of this pure module, same as
+ * INVESTMENT_ASSET_TYPES/ACCOUNT_TYPES already are, since the groups are
+ * app-level configuration, not a calculation this module owns):
+ *   { [groupId]: { types: string[], limit: number, label: string } }
+ *
+ * A contribution counts toward a group if its account_activity row has
+ * kind 'contribution', its asset_id resolves to an asset whose type is in
+ * that group, and its occurred_at falls in the given year - deliberately
+ * NOT "any balance increase," which would double-count ordinary market
+ * gains as if they were new money (the entire reason 'contribution' exists
+ * as its own account_activity kind rather than reusing asset_adjust).
+ *
+ * @param {object[]} assets every asset (used to map an asset id -> its type)
+ * @param {object[]} contributionActivity account_activity rows with kind 'contribution'
+ * @param {Object} limitGroups CONTRIBUTION_LIMIT_GROUPS from app.js
+ * @param {Date} [today]
+ */
+export function contributionLimitUsage(assets, contributionActivity, limitGroups, today = new Date()) {
+  const year = String(today.getFullYear());
+  const typeById = new Map(assets.map((a) => [a.id, a.type]));
+  const results = [];
+  for (const [groupId, group] of Object.entries(limitGroups)) {
+    const hasQualifyingAsset = assets.some((a) => group.types.includes(a.type));
+    if (!hasQualifyingAsset) continue;
+    const contributed = r2(
+      contributionActivity
+        .filter((row) => group.types.includes(typeById.get(row.asset_id)))
+        .filter((row) => (row.occurred_at || "").startsWith(year))
+        .reduce((sum, row) => sum + Number(row.amount || 0), 0)
+    );
+    results.push({
+      groupId,
+      label: group.label,
+      limit: group.limit,
+      contributed,
+      remaining: r2(group.limit - contributed),
+      overLimit: contributed > group.limit,
+    });
+  }
+  return results;
+}

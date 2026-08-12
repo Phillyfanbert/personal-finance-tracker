@@ -1547,6 +1547,24 @@ const GRACE_PERIOD_LIABILITY_TYPES = new Set([
   "credit_card", "charge_card", "secured_credit_card", "store_card", "medical_credit_card",
 ]);
 
+// Liability types where "credit limit" is a real, revolving ceiling the
+// balance sits against - what credit utilization (balance / limit) is
+// computed from below. Deliberately NOT the same set as
+// GRACE_PERIOD_LIABILITY_TYPES: a HELOC/personal line of credit/overdraft
+// line has no grace period (interest above) but absolutely has a credit
+// limit, while a charge card has a grace period but, by definition, no
+// preset spending limit at all ("no preset spending limit" is the
+// traditional charge card's whole distinguishing feature) - so it's
+// excluded here for the opposite reason it's included there. BNPL is
+// excluded too: a pay-in-4 plan has a fixed installment amount for that one
+// purchase, not a revolving limit you utilize a percentage of. Per-type,
+// not per-category, same rule as BANK_VALIDATED_TYPES/GRACE_PERIOD_
+// LIABILITY_TYPES above.
+const CREDIT_LIMIT_LIABILITY_TYPES = new Set([
+  "credit_card", "secured_credit_card", "store_card", "medical_credit_card",
+  "personal_line_of_credit", "heloc", "overdraft_line",
+]);
+
 // The phase is always derived from today vs draw_period_end, never stored
 // as its own enum - see 28_heloc_draw_period.sql. null (not a HELOC, or a
 // HELOC with no draw_period_end set yet) means "don't show anything."
@@ -1584,6 +1602,18 @@ async function loadDebts() {
     if (p.months <= 0) return "";
     return `<div class="meta">Payoff in ${p.months}mo (${p.payoffDate}) · ${fmt(p.totalInterest)} interest</div>`;
   };
+  // Plain balance/limit math, no judgment attached - shown once both are
+  // set (CREDIT_LIMIT_LIABILITY_TYPES), same "stored but unused until now"
+  // shape as interest_rate/minimum_payment above. Deliberately no color
+  // threshold or "aim for under 30%" framing: that's a real, commonly-cited
+  // credit-scoring guideline, but stating it here would edge from "show the
+  // math" into advice, the same line the Investments tab's allocation
+  // calculator already refuses to cross for what to buy.
+  const utilizationLine = (d) => {
+    if (!CREDIT_LIMIT_LIABILITY_TYPES.has(d.type) || d.credit_limit == null || !d.credit_limit) return "";
+    const pct = Math.round((Number(d.balance) / Number(d.credit_limit)) * 100);
+    return `<div class="meta">${fmt(d.balance)} of ${fmt(d.credit_limit)} limit used (${pct}%)</div>`;
+  };
   // The plain-language version of creditCycle.js's three end-of-cycle
   // outcomes. Deliberately explicit that paying the minimum does not stop
   // interest - that misunderstanding is the whole reason this exists, so the
@@ -1619,6 +1649,7 @@ async function loadDebts() {
         ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
         ${heloc ? `<div class="meta">${heloc.label}</div>` : ""}
         ${heloc?.phase === "draw" ? "" : payoffLine(d)}
+        ${utilizationLine(d)}
         ${cycleLine(d)}
         <div class="muted" data-edit-debt="${d.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Edit details</div>
       </div>
@@ -1711,6 +1742,9 @@ function openDebtDetailsForm(debt) {
   $("debtDetailsRate").value = debt.interest_rate ?? "";
   $("debtDetailsMinPay").value = debt.minimum_payment ?? "";
   $("debtDetailsDue").value = debt.due_date ?? "";
+  const hasLimit = CREDIT_LIMIT_LIABILITY_TYPES.has(debt.type);
+  $("debtDetailsLimitSection").classList.toggle("hidden", !hasLimit);
+  if (hasLimit) $("debtDetailsLimit").value = debt.credit_limit ?? "";
   const hasCycle = GRACE_PERIOD_LIABILITY_TYPES.has(debt.type);
   $("debtDetailsCycleSection").classList.toggle("hidden", !hasCycle);
   if (hasCycle) {
@@ -1747,6 +1781,11 @@ $("debtDetailsSaveBtn").onclick = async () => {
   };
   if (editingDebtDetails.type === "heloc") {
     patch.draw_period_end = $("debtDetailsDrawEnd").value || null;
+  }
+  if (CREDIT_LIMIT_LIABILITY_TYPES.has(editingDebtDetails.type)) {
+    const limit = $("debtDetailsLimit").value !== "" ? parseFloat($("debtDetailsLimit").value) : null;
+    if (limit !== null && (!Number.isFinite(limit) || limit < 0)) return toast("Credit limit can't be negative");
+    patch.credit_limit = limit;
   }
   if (GRACE_PERIOD_LIABILITY_TYPES.has(editingDebtDetails.type)) {
     const day = (id) => ($(id).value !== "" ? parseInt($(id).value, 10) : null);

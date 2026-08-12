@@ -526,6 +526,16 @@
           </div>
           <label>Due date (optional)</label>
           <input id="debtDetailsDue" type="date" />
+          <!-- Only for a real revolving limit (CREDIT_LIMIT_LIABILITY_TYPES,
+               app.js) - a HELOC/line of credit/regular card has one, a
+               charge card by definition doesn't ("no preset spending
+               limit"), and a loan's original amount isn't a limit you
+               utilize a percentage of. Powers the utilization line shown
+               on the Liabilities card once both this and a balance exist. -->
+          <div id="debtDetailsLimitSection" class="hidden">
+            <label>Credit limit (optional)</label>
+            <input id="debtDetailsLimit" type="number" step="0.01" inputmode="decimal" placeholder="e.g. 5000" />
+          </div>
           <!-- Credit-account-only (openDebtDetailsForm, app.js). Interest on
                a card is decided by the grace period, not by lateness: pay
                the statement balance in full by the due date and no interest

@@ -785,6 +785,21 @@
         </div>
       </div>
 
+      <!-- Market overview: a fixed set of major US indexes (S&P 500, Dow,
+           NASDAQ, Russell 2000 - app.js's MARKET_INDEXES), genuinely NOT
+           tied to anything the user owns, unlike every other card on this
+           tab. Same dormant SearXNG+Gemma pipeline as the rest of live
+           pricing (tools/price-agent.js), gated by the same
+           PRICE_FINDINGS_ENABLED flag - hidden entirely (not shown with an
+           empty/placeholder state) until that's on and the agent has
+           actually written rows, since there's no manual-entry fallback
+           for a market index the way there is for the user's own assets. -->
+      <div class="card hidden" id="marketOverviewCard">
+        <strong>Market overview</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 8px">Major US indexes, updated once tools/price-agent.js has run.</p>
+        <div id="marketOverviewList"></div>
+      </div>
+
       <!-- Daily health check: a short compilation of numbers already
            computed elsewhere on this tab (today's move, gain/loss since
            cost basis, allocation drift, contribution-limit status, live-

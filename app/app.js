@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -39,6 +39,9 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // ---- tiny helpers ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Same numeric formatting as fmt(), no "$" prefix - a market index level
+// (Market overview card) is a points figure, not a dollar amount.
+const fmtNum = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Every innerHTML template string below interpolates *some* user-typed or
 // scraped/LLM-derived text (an expense description, an asset name, the
 // Investments tab's price-agent-sourced "why" explanation, ...) - wrap
@@ -100,6 +103,7 @@ let subscriptions = []; // cache of the user's subscriptions
 let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
+let marketIndexFindings = []; // shared, machine-found market index levels (Investments tab's Market overview)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
 let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
 let investmentTargets = []; // per-bucket allocation targets (Investments tab)
@@ -164,7 +168,7 @@ function renderAuth(session) {
 $("navLog").onclick = () => showView("log");
 $("navSubs").onclick = () => { showView("subs"); loadSubscriptions(); };
 $("navReports").onclick = () => { showView("reports"); loadReports(); };
-$("navInvest").onclick = () => { showView("invest"); renderInvestments(); renderInvestmentsTrend(); };
+$("navInvest").onclick = () => { showView("invest"); renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); };
 $("backFromSubs").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
 $("backFromInvest").onclick = () => showView("log");
@@ -191,7 +195,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
   await autoLogDueSubscriptions();
   await snapshotNetWorthIfNeeded();
@@ -234,6 +238,17 @@ async function loadAssetPriceFindings() {
   const { data } = await sb.from("asset_price_findings").select("*").gt("expires_at", new Date().toISOString());
   assetPriceFindings = data || [];
   renderAssetPriceFindings();
+}
+
+// Same dormant-until-flag shape as loadAssetPriceFindings above, same
+// PRICE_FINDINGS_ENABLED flag (one switch for "is the price-agent
+// pipeline on," not a second flag for what's fundamentally the same
+// pipeline just writing to a different table for a fixed index list).
+async function loadMarketIndexFindings() {
+  if (!PRICE_FINDINGS_ENABLED) { marketIndexFindings = []; renderMarketOverview(); return; }
+  const { data } = await sb.from("market_index_findings").select("*").gt("expires_at", new Date().toISOString());
+  marketIndexFindings = data || [];
+  renderMarketOverview();
 }
 // A blank "None" first option, not just the real categories - so a select
 // that's never been explicitly set (fCategory on a fresh Quick Add) starts
@@ -457,6 +472,14 @@ const INVESTMENT_ASSET_TYPES = new Set([
 // deliberate catch-all for anything not covered by the rest, rather than
 // leaving no option for it.
 const INVESTMENT_BUCKETS = ["Stocks", "Bonds", "Cash", "Crypto", "Real Estate", "Other"];
+// A fixed list of major US indexes for the Investments tab's Market
+// overview card - genuinely NOT derived from anything a user owns, unlike
+// every other Investments config above. Must match tools/price-agent.js's
+// own MARKET_INDEXES constant exactly (same strings, same order isn't
+// required but the strings are what ties a market_index_findings row back
+// to a row here) - that file has no import/export machinery to share this
+// list from a single source, so the two are kept in sync by hand.
+const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Composite", "Russell 2000"];
 // A plain flat list with no dependency on fetched data, unlike
 // populateAcctTypeSelect/populateAssetTypeSelect/populateDebtTypeSelect
 // (which lazily populate on first form-open) - safe to populate once,
@@ -3190,6 +3213,33 @@ function renderInvestmentHealth(totals, allocation, limitUsage, holdings) {
     <div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0">
       <span style="width:8px;height:8px;border-radius:50%;flex:none;background:${HEALTH_TONE_COLOR[l.tone]}"></span>
       <span>${healthLineText(l)}</span>
+    </div>`).join("");
+}
+
+// Market overview card (top of investView) - a fixed set of major US
+// indexes, genuinely NOT tied to anything the user owns (unlike every
+// other Investments render function). Same dormant-until-flag shape as
+// renderAssetPriceFindings: fully hidden while PRICE_FINDINGS_ENABLED is
+// off, since unlike the Daily health check card above (which always has
+// real facts about the user's own entered data to show), there's no
+// manual-entry fallback for a market index - an empty "not available yet"
+// card forever would be pure clutter, not a fact worth stating.
+function renderMarketOverview() {
+  const card = $("marketOverviewCard");
+  if (!card) return;
+  if (!PRICE_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  const indexes = marketIndexSummary(MARKET_INDEXES, marketIndexFindings);
+  $("marketOverviewList").innerHTML = indexes.map((idx) => `
+    <div class="exp" style="cursor:default">
+      <div>
+        <div>${esc(idx.label)}</div>
+        ${idx.explanation ? `<div class="meta">${esc(idx.explanation)}</div>` : ""}
+      </div>
+      <span class="amt" style="text-align:right">
+        ${idx.price != null ? fmtNum(idx.price) : `<span class="muted" style="font-size:12px">not available yet</span>`}
+        ${idx.change != null ? `<div style="font-size:12px;color:${gainColor(idx.change)}">${signedPct(idx.changePct)}</div>` : ""}
+      </span>
     </div>`).join("");
 }
 

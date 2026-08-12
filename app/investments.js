@@ -291,3 +291,32 @@ export function portfolioHealthSummary(totals, allocation, limitUsage, holdings)
 
   return lines;
 }
+
+/**
+ * Daily overview of a fixed set of major market indexes (S&P 500, NASDAQ,
+ * ...) - genuinely NOT tied to anything the user owns, unlike every other
+ * function in this module. Same day-over-day shape as investmentHoldings
+ * (reuses dailyFindingsForSymbol), just against market_index_findings and
+ * a fixed label list (app.js's MARKET_INDEXES) instead of each user's own
+ * assets.price_symbol. An index with no finding yet (the price-agent
+ * hasn't run, or hasn't found this particular one yet) still gets a row
+ * back with price/change left null, rather than being dropped - callers
+ * show a per-row "not available yet" state, same graceful-degradation
+ * posture the rest of this dormant pipeline already has.
+ * @param {string[]} indexes MARKET_INDEXES from app.js
+ * @param {object[]} findings rows from market_index_findings
+ */
+export function marketIndexSummary(indexes, findings) {
+  return indexes.map((label) => {
+    const days = dailyFindingsForSymbol(findings, label.toUpperCase());
+    const latest = days.length ? days[days.length - 1][1] : null;
+    const prior = days.length > 1 ? days[days.length - 2][1] : null;
+
+    const price = latest ? Number(latest.price) : null;
+    const priorPrice = prior ? Number(prior.price) : null;
+    const change = price != null && priorPrice != null ? r2(price - priorPrice) : null;
+    const changePct = change != null ? pct(change, priorPrice) : null;
+
+    return { label, price, change, changePct, explanation: latest?.explanation || null };
+  });
+}

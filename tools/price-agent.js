@@ -35,6 +35,12 @@
 //   4. Write validated findings to asset_price_findings via the REST API
 //      using the service_role key (bypasses RLS by design).
 //
+// Also runs the exact same 4-step pipeline against a small FIXED list of
+// major market indexes (MARKET_INDEXES below - S&P 500, NASDAQ, ...),
+// writing to a separate market_index_findings table instead (Investments
+// tab's Daily overview) - see that constant's own comment for why this
+// reuses processSymbol()/findExplanation() unchanged rather than forking.
+//
 // Setup (on the server machine, next to Ollama and deal-agent.js):
 //   Shares tools/.env.deal-agent (same env vars, see that file's header) -
 //   no separate env file needed. Run directly:
@@ -368,16 +374,39 @@ async function processSymbol(symbol) {
   return findings;
 }
 
+// ---- Market indexes (docs/ROADMAP.md's Investments tab, Daily overview) --
+// Fixed - unlike the per-user watchlist above, a market index isn't
+// something anyone "holds," so this always runs every time regardless of
+// what any user's assets.price_symbol contains. Mirror this list in
+// app.js's own MARKET_INDEXES if it ever changes - this file has no
+// import/export machinery to share it with app/*.js, same as
+// TRUSTED_PRICE_DOMAINS already has no client-side counterpart either.
+//
+// Deliberately reuses processSymbol()/findExplanation() unchanged rather
+// than forking parallel index-specific query/prompt builders: passing a
+// full plain-English label ("S&P 500") as the "symbol" already produces
+// sensible search queries and a sensible Gemma extraction target (the
+// prompts don't hard-require a ticker shape), and market_index_findings'
+// columns deliberately mirror asset_price_findings' for exactly this
+// reuse. The wording in buildExplanationPrompt ("why a stock or crypto
+// price moved") is slightly imprecise for an index - accepted as
+// best-effort, same honesty stance the rest of this file already takes on
+// explanation quality, rather than forking the whole pipeline to fix one
+// word.
+const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Composite", "Russell 2000"];
+
 // ---- Main ----------------------------------------------------------------
 async function main() {
   requireEnv();
 
   const watchlist = await loadWatchlist();
-  if (!watchlist.length) {
-    console.log("No assets have a price_symbol set - nothing to search for. Exiting.");
+  console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
+  console.log(`Market indexes (${MARKET_INDEXES.length}): ${MARKET_INDEXES.join(", ")}`);
+
+  if (!watchlist.length && !MARKET_INDEXES.length) {
+    console.log("Nothing to search for. Exiting.");
     return;
   }
-  console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
 
   console.log("Warming up Gemma...");
   await warmUpGemma();
@@ -389,13 +418,26 @@ async function main() {
     console.log(`  -> ${findings.length} finding(s)`);
     allFindings.push(...findings);
   }
-
-  if (!allFindings.length) {
-    console.log("No findings this run.");
-    return;
+  if (allFindings.length) {
+    await sbInsert("asset_price_findings", allFindings);
+    console.log(`Wrote ${allFindings.length} finding(s) to asset_price_findings.`);
+  } else {
+    console.log("No asset findings this run.");
   }
-  await sbInsert("asset_price_findings", allFindings);
-  console.log(`Wrote ${allFindings.length} finding(s) to asset_price_findings.`);
+
+  const allIndexFindings = [];
+  for (const label of MARKET_INDEXES) {
+    console.log(`Searching index: ${label}`);
+    const findings = await processSymbol(label);
+    console.log(`  -> ${findings.length} finding(s)`);
+    allIndexFindings.push(...findings);
+  }
+  if (allIndexFindings.length) {
+    await sbInsert("market_index_findings", allIndexFindings);
+    console.log(`Wrote ${allIndexFindings.length} finding(s) to market_index_findings.`);
+  } else {
+    console.log("No market index findings this run.");
+  }
 }
 
 main().catch((err) => {

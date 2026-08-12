@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -2951,16 +2951,30 @@ async function snapshotPortfolioIfNeeded() {
   );
 }
 
+// Same portfolio_snapshots query feeds both the full-history "Value over
+// time" chart and the Daily health check card's compact recent-trend
+// sparkline (last HEALTH_SPARKLINE_DAYS points) - one fetch, two renders,
+// rather than a second round-trip for what's already the same rows.
+const HEALTH_SPARKLINE_DAYS = 14;
+
 async function renderInvestmentsTrend() {
   const { data } = await sb.from("portfolio_snapshots").select("*").order("snapshot_date", { ascending: true });
   const rows = data || [];
-  $("investTrendEmpty").classList.toggle("hidden", rows.length >= 2);
-  if (rows.length < 2) return; // a single point isn't a "trend"
-  const labels = rows.map((r) => {
+  const dayLabel = (r) => {
     const [y, m, d] = r.snapshot_date.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  });
-  renderLineChart($("investTrendChart"), labels, rows.map((r) => Number(r.total_value)));
+  };
+
+  $("investTrendEmpty").classList.toggle("hidden", rows.length >= 2);
+  if (rows.length >= 2) {
+    renderLineChart($("investTrendChart"), rows.map(dayLabel), rows.map((r) => Number(r.total_value)));
+  }
+
+  const recent = rows.slice(-HEALTH_SPARKLINE_DAYS);
+  $("investHealthTrendEmpty").classList.toggle("hidden", recent.length >= 2);
+  if (recent.length >= 2) {
+    renderLineChart($("investHealthTrendChart"), recent.map(dayLabel), recent.map((r) => Number(r.total_value)));
+  }
 }
 
 const gainColor = (n) => (n == null ? "" : n >= 0 ? "var(--ok)" : "var(--err)");
@@ -3131,6 +3145,52 @@ function renderInvestments() {
       toast("Target removed");
     };
   });
+
+  renderInvestmentHealth(totals, allocation, limitUsage, holdings);
+}
+
+// Daily health check card (index.html, top of investView) - a short
+// compilation of the totals/allocation/limitUsage/holdings this function
+// already computed above, via investments.js's portfolioHealthSummary.
+// That function returns raw structured data, not text - formatting and
+// esc() happen here, same split every other Investments render function
+// already keeps between math and presentation.
+const HEALTH_TONE_COLOR = { ok: "var(--ok)", warn: "var(--err)", neutral: "var(--muted)" };
+function healthLineText(l) {
+  switch (l.kind) {
+    case "today":
+      return l.change != null
+        ? `Today ${fmt(l.change)} (${signedPct(l.changePct)}) - portfolio at ${fmt(l.value)}`
+        : `Portfolio at ${fmt(l.value)} - no live price data yet for today's change`;
+    case "gainLoss":
+      return l.gainLoss != null
+        ? `${fmt(l.gainLoss)} (${signedPct(l.gainLossPct)}) since cost basis`
+        : `No cost basis on file yet - gain/loss can't be calculated`;
+    case "allocation":
+      return l.tone === "ok"
+        ? "Allocation is within target"
+        : `${esc(l.bucket)} is ${Math.abs(l.drift)}% ${l.drift > 0 ? "over" : "under"} target`;
+    case "contributions":
+      return l.overCount
+        ? `${l.overCount} of ${l.groupCount} contribution group${l.groupCount === 1 ? "" : "s"} over the annual limit`
+        : l.approachingCount
+        ? `${l.approachingCount} of ${l.groupCount} contribution group${l.groupCount === 1 ? "" : "s"} approaching its annual limit`
+        : "Contributions within limits";
+    case "pricing":
+      return l.priced === l.total
+        ? `Live pricing available for all ${l.total} holding${l.total === 1 ? "" : "s"}`
+        : `Live pricing available for ${l.priced} of ${l.total} holding${l.total === 1 ? "" : "s"}`;
+    default:
+      return "";
+  }
+}
+function renderInvestmentHealth(totals, allocation, limitUsage, holdings) {
+  const health = portfolioHealthSummary(totals, allocation, limitUsage, holdings);
+  $("investHealthList").innerHTML = health.map((l) => `
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0">
+      <span style="width:8px;height:8px;border-radius:50%;flex:none;background:${HEALTH_TONE_COLOR[l.tone]}"></span>
+      <span>${healthLineText(l)}</span>
+    </div>`).join("");
 }
 
 // ---- HOLDINGS (specific tickers inside an investment account) -----------

@@ -79,6 +79,7 @@
     .totals .big { font-size: 22px; font-weight: 800; }
     .chartbox { position: relative; height: 240px; }
     .chartbox.short { height: 200px; }
+    .chartbox.tiny { height: 110px; }
     /* Bottom nav */
     .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
       display: flex; background: var(--panel); border-top: 1px solid var(--border);
@@ -782,6 +783,22 @@
           <button class="secondary" id="backFromInvest" style="width:auto;padding:8px 10px">←</button>
           <h1 style="margin:0">Investments</h1>
         </div>
+      </div>
+
+      <!-- Daily health check: a short compilation of numbers already
+           computed elsewhere on this tab (today's move, gain/loss since
+           cost basis, allocation drift, contribution-limit status, live-
+           pricing coverage) via investments.js's portfolioHealthSummary -
+           deliberately not a fabricated composite score, same boundary
+           CLAUDE.md already draws for the Liabilities card's credit-
+           utilization line. A line only appears when its underlying
+           section actually has data to compile (e.g. no allocation line
+           until a target is set) - omitted, not shown as "no data". -->
+      <div class="card">
+        <strong>Daily health check</strong>
+        <div id="investHealthList" style="margin-top:10px"></div>
+        <div class="chartbox tiny" style="margin-top:10px"><canvas id="investHealthTrendChart"></canvas></div>
+        <p class="muted" id="investHealthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
       </div>
 
       <div class="totals">

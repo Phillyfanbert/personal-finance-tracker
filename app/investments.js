@@ -196,3 +196,98 @@ export function contributionLimitUsage(assets, contributionActivity, limitGroups
   }
   return results;
 }
+
+// A bucket counts as "off target" once it drifts this many percentage
+// points from its own target - same "flag it before it's actually over,
+// not just after" shape as budgets.js's WARN_THRESHOLD_PCT, applied to
+// allocation drift instead of budget overspend.
+export const ALLOCATION_DRIFT_WARN_PCT = 5;
+
+// A contribution group counts as "approaching" its limit at 90% used, not
+// just once actually over - same threshold and reasoning as budgets.js's
+// WARN_THRESHOLD_PCT.
+const CONTRIBUTION_APPROACHING_PCT = 90;
+
+/**
+ * Compiles the numbers already computed elsewhere on the Investments tab
+ * (portfolioTotals, allocationVsTarget, contributionLimitUsage, and the
+ * per-holding price data from investmentHoldings) into a short list of
+ * status lines for the "Daily health check" card at the top of the tab.
+ * Deliberately a compilation of real, already-computed facts - never a
+ * fabricated composite score. Same boundary CLAUDE.md already draws for
+ * the Liabilities card's credit-utilization line: real math shown back to
+ * the user, not an invented number presented as authoritative.
+ *
+ * Returns raw structured data, not formatted strings - app.js does the
+ * fmt()/esc()/text-assembly, same separation portfolioTotals/
+ * allocationVsTarget/contributionLimitUsage already keep between
+ * calculation and presentation. Each line has a `tone` of 'ok' (green),
+ * 'warn' (needs attention), or 'neutral' (no data yet / nothing to flag) -
+ * a UI hint only, callers pick the actual color.
+ *
+ * A line is omitted entirely (not shown with a "no data" placeholder) when
+ * its underlying section has nothing to compile from at all (no allocation
+ * targets set, no contribution tracking, no ticker holdings) - same
+ * "omit rather than fake a zero" rule contributionLimitUsage itself
+ * already follows for a group with no qualifying account.
+ *
+ * @param {object} totals from portfolioTotals()
+ * @param {object[]} allocation from allocationVsTarget()
+ * @param {object[]} limitUsage from contributionLimitUsage()
+ * @param {object[]} holdings from investmentHoldings()
+ */
+export function portfolioHealthSummary(totals, allocation, limitUsage, holdings) {
+  const lines = [];
+
+  lines.push(totals.todayChange != null
+    ? { kind: "today", tone: totals.todayChange >= 0 ? "ok" : "warn", value: totals.totalValue, change: totals.todayChange, changePct: totals.todayChangePct }
+    : { kind: "today", tone: "neutral", value: totals.totalValue, change: null, changePct: null });
+
+  lines.push(totals.totalGainLoss != null
+    ? { kind: "gainLoss", tone: totals.totalGainLoss >= 0 ? "ok" : "warn", gainLoss: totals.totalGainLoss, gainLossPct: totals.totalGainLossPct }
+    : { kind: "gainLoss", tone: "neutral", gainLoss: null, gainLossPct: null });
+
+  // Only the single furthest-off-target bucket, not the whole table - the
+  // full breakdown already has its own card/chart further down the page.
+  if (allocation.length) {
+    const worst = allocation.reduce((a, b) =>
+      Math.abs(b.currentPct - b.targetPercent) > Math.abs(a.currentPct - a.targetPercent) ? b : a
+    );
+    const drift = r2(worst.currentPct - worst.targetPercent);
+    lines.push({
+      kind: "allocation",
+      tone: Math.abs(drift) >= ALLOCATION_DRIFT_WARN_PCT ? "warn" : "ok",
+      bucket: worst.bucket,
+      drift,
+    });
+  }
+
+  if (limitUsage.length) {
+    const overCount = limitUsage.filter((u) => u.overLimit).length;
+    const approachingCount = limitUsage.filter(
+      (u) => !u.overLimit && u.limit > 0 && (u.contributed / u.limit) * 100 >= CONTRIBUTION_APPROACHING_PCT
+    ).length;
+    lines.push({
+      kind: "contributions",
+      tone: overCount || approachingCount ? "warn" : "ok",
+      overCount,
+      approachingCount,
+      groupCount: limitUsage.length,
+    });
+  }
+
+  // Only meaningful once at least one ticker holding exists - a portfolio
+  // of purely blended/symbol-less accounts (a plain 401(k) with no
+  // per-ticker detail) has no live-pricing concept to report on at all.
+  if (holdings.length) {
+    const priced = holdings.filter((h) => h.latestPrice != null).length;
+    lines.push({
+      kind: "pricing",
+      tone: priced === holdings.length ? "ok" : "neutral",
+      priced,
+      total: holdings.length,
+    });
+  }
+
+  return lines;
+}

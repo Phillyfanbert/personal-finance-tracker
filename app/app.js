@@ -711,11 +711,15 @@ function renderAccountsList() {
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
-  // Archive - reversible, unlike delete below. Leaves the linked asset/
-  // liability completely untouched (see 22_account_archive.sql), so
-  // archiving never changes net worth. Only one direction here now: this
-  // list holds active accounts only, so unarchiving lives in the archived
-  // modal instead (renderArchivedAccounts).
+  // Archive - reversible, unlike deleteAccount above. The DB row (archived_
+  // at timestamp only) is all that changes here; the linked asset/liability
+  // itself is left completely untouched (22_account_archive.sql) so
+  // Unarchive can bring back the exact same balance. It DOES change what's
+  // DISPLAYED, though: net worth and every asset/liability listing treat an
+  // archived account as if deleted (topLevelAssets/countableDebts) - see
+  // archivedAccountAssetIds' comment for the reasoning. Only one direction
+  // here now: this list holds active accounts only, so unarchiving lives in
+  // the archived modal instead (renderArchivedAccounts).
   document.querySelectorAll("[data-archive-acct]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -731,25 +735,7 @@ function renderAccountsList() {
   // Cash has no delete affordance - it's auto-managed (ensureCashAccount), use
   // the +/- adjust form instead of removing it.
   document.querySelectorAll("[data-del-acct]").forEach((el) => {
-    el.onclick = async (ev) => {
-      ev.stopPropagation();
-      const acct = accounts.find((a) => a.id === el.dataset.delAcct);
-      // A linked liability or asset is deleted along with its account (DB
-      // triggers, 12_delete_liability_with_account.sql and 13_delete_asset_
-      // with_account.sql) - warn about that up front since it's not obvious
-      // from "delete this account" alone.
-      const msg = acct?.linked_liability_id
-        ? "Existing expenses stay but become unassigned. Its linked liability and tracked balance are deleted too. Consider Archive instead if you want to keep its history."
-        : acct?.linked_asset_id
-        ? "Existing expenses stay but become unassigned. Its linked asset and balance are deleted too. Consider Archive instead if you want to keep its history."
-        : "Existing expenses stay but become unassigned.";
-      if (!(await confirmModal(msg, { title: "Delete this account?" }))) return;
-      const { error } = await sb.from("accounts").delete().eq("id", el.dataset.delAcct);
-      if (error) return toast(error.message);
-      // loadAssets/loadDebts refresh so a deleted linked asset or liability
-      // disappears from its own card too, not just the account from its own.
-      await loadAccounts(); await loadExpenses(); await loadAssets(); await loadDebts(); toast("Account deleted");
-    };
+    el.onclick = async (ev) => { ev.stopPropagation(); await deleteAccount(el.dataset.delAcct); };
   });
   document.querySelectorAll("[data-adjust-acct]").forEach((el) => {
     el.onclick = () => openAssetAdjust(el.dataset.adjustAcct);
@@ -759,11 +745,53 @@ function renderAccountsList() {
   });
 }
 
+// Shared by the main Accounts card's "✕" and the Archived-accounts modal's
+// Delete button below - same cascading DB-trigger delete (12_delete_
+// liability_with_account.sql / 13_delete_asset_with_account.sql), same
+// confirmation, same refresh. Unlike archiving, this is permanent: a linked
+// liability or asset is deleted along with the account, and its past
+// expenses are unassigned (account_id -> null on delete, per schema), not
+// preserved the way an archived account's history stays intact. Returns
+// whether the delete actually happened, so a caller that needs to react
+// (none currently do beyond the shared refresh here) can tell a cancel
+// apart from a failure.
+async function deleteAccount(acctId) {
+  const acct = accounts.find((a) => a.id === acctId);
+  const msg = acct?.linked_liability_id
+    ? "Its linked liability and tracked balance are deleted too, and existing expenses become unassigned. This can't be undone."
+    : acct?.linked_asset_id
+    ? "Its linked asset and balance are deleted too, and existing expenses become unassigned. This can't be undone."
+    : "Existing expenses become unassigned. This can't be undone.";
+  const label = acct ? (acct.bank_name || acct.name) : "this account";
+  if (!(await confirmModal(msg, { title: `Delete ${label}?` }))) return false;
+  const { error } = await sb.from("accounts").delete().eq("id", acctId);
+  if (error) { toast(error.message); return false; }
+  // loadAssets/loadDebts refresh so a deleted linked asset or liability
+  // disappears from its own card too, not just the account from its own;
+  // loadAccounts refreshes both the main circle list and the archived
+  // modal (renderAccountsList calls renderArchivedAccounts).
+  await loadAccounts(); await loadExpenses(); await loadAssets(); await loadDebts();
+  toast("Account deleted");
+  return true;
+}
+
 // Archived accounts live only here, behind the Accounts card's "View
 // archived" link - keeping them in the main circle list crowded out the
-// accounts actually in use, since a closed account is never deleted. Listed
-// as plain rows rather than circles: this is a recovery screen, not
-// something to browse, and the only actions are unarchiving or deleting.
+// accounts actually in use, since a closed account is never deleted (it's
+// still fully recoverable via Unarchive). Listed as plain rows rather than
+// circles: this is a recovery/cleanup screen, not something to browse, and
+// the actions are Unarchive (bring it back exactly as it was) or Delete
+// (permanent - deleteAccount above).
+//
+// While archived, its linked asset/liability is excluded from every
+// listing and total (Assets/Liabilities cards, net worth, Investments tab -
+// see archivedAccountAssetIds/archivedAccountLiabilityIds) even though the
+// row itself, and every past expense/account_activity referencing this
+// account, stays fully intact - that's the "acts deleted, but recoverable
+// and history-preserving" behavior this whole feature is for. The balance
+// shown here is read directly, bypassing that exclusion, since a recovery
+// screen is exactly where you'd want to see what unarchiving would bring
+// back.
 function renderArchivedAccounts() {
   const archived = accounts.filter((a) => a.archived_at);
   const toggle = $("archivedAcctToggle");
@@ -787,7 +815,10 @@ function renderArchivedAccounts() {
           <div>${esc(a.bank_name || a.name)}</div>
           <div class="meta">${esc(a.name)}${balance != null ? ` · ${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}` : ""}</div>
         </div>
-        <span class="amt"><button class="secondary" data-unarchive-acct="${a.id}" style="width:auto;padding:4px 10px;font-size:12px">Unarchive</button></span>
+        <span class="amt">
+          <button class="secondary" data-unarchive-acct="${a.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">Unarchive</button>
+          <button class="secondary" data-delete-archived-acct="${a.id}" style="width:auto;padding:4px 10px;font-size:12px;color:var(--err);border-color:var(--err)">Delete</button>
+        </span>
       </div>`;
     }).join("");
   document.querySelectorAll("[data-unarchive-acct]").forEach((el) => {
@@ -797,6 +828,13 @@ function renderArchivedAccounts() {
       await loadAccounts();
       toast("Account unarchived");
     };
+  });
+  // deleteAccount() already refreshes and re-renders this list (via
+  // loadAccounts -> renderAccountsList -> renderArchivedAccounts), and
+  // closes the modal itself once the archived list is empty - no extra
+  // handling needed here beyond triggering the shared delete.
+  document.querySelectorAll("[data-delete-archived-acct]").forEach((el) => {
+    el.onclick = async () => { await deleteAccount(el.dataset.deleteArchivedAcct); };
   });
 }
 $("archivedAcctToggle").onclick = () => $("archivedAcctModal").classList.remove("hidden");
@@ -991,8 +1029,9 @@ $("saveAssetBtn").onclick = async () => {
 // math; those two are generic day-delta helpers, not actually
 // subscription-specific despite living in that file.
 function upcomingMaturities(withinDays = 30, today = new Date()) {
+  const hidden = archivedAccountAssetIds();
   return assets
-    .filter((a) => a.type === "cd" && a.maturity_date)
+    .filter((a) => a.type === "cd" && a.maturity_date && !hidden.has(a.id))
     .map((a) => ({ ...a, days: daysUntil(a.maturity_date, today) }))
     .filter((a) => a.days !== null && a.days <= withinDays)
     .sort((a, b) => a.days - b.days);
@@ -1009,12 +1048,54 @@ function upcomingMaturities(withinDays = 30, today = new Date()) {
 // 25_touch_updated_at_trigger.sql - before that migration it was
 // permanently stuck at creation time regardless of later edits.
 function staleAssets(monthsThreshold = 6, today = new Date()) {
+  const hidden = archivedAccountAssetIds();
   return assets
-    .filter((a) => a.type !== "cash" && a.type !== "bank" && a.updated_at)
+    .filter((a) => a.type !== "cash" && a.type !== "bank" && a.updated_at && !hidden.has(a.id))
     .filter((a) => !(a.type === "vehicle" && estimateValue(a.purchase_price, a.purchase_date, a.depreciation_rate) !== null))
     .map((a) => ({ ...a, monthsSince: Math.floor((today - new Date(a.updated_at)) / (30.44 * 86400000)) }))
     .filter((a) => a.monthsSince >= monthsThreshold)
     .sort((a, b) => b.monthsSince - a.monthsSince);
+}
+
+// An archived account is treated as functionally deleted everywhere assets
+// or liabilities are LISTED or SUMMED (Assets/Liabilities cards, net worth,
+// Investments tab), while its linked asset/liability row - and every
+// expense/account_activity row that references the account - stays in the
+// database exactly as it was. That's the difference from an actual delete:
+// archiving is reversible (Unarchive brings back the same balance, unlike a
+// real delete's DB-trigger cascade), and history stays fully resolvable
+// (acctName() etc. read the raw `accounts` array, unfiltered by archived
+// status, on purpose). Reversed 2026-08-12 at explicit user request - see
+// 22_account_archive.sql's original "archiving never changes net worth"
+// comment, which this supersedes.
+//
+// A lookup by a specific known id (undo, editing a history row's label,
+// Pay/Edit-details reached from a form already open on that row)
+// deliberately does NOT filter through these - those operate on a row the
+// user is already looking at or a past transaction that must stay
+// resolvable regardless of the account's current archived state. Only the
+// listing/summing call sites below do.
+function archivedAccountAssetIds() {
+  const archivedParents = new Set(
+    accounts.filter((a) => a.archived_at && a.linked_asset_id).map((a) => a.linked_asset_id)
+  );
+  // A holding nested inside an archived parent (40_asset_holdings.sql) has
+  // no linked_asset_id of its own - hidden via its parent's id here, not a
+  // separate check, so archiving hides the whole position list at once,
+  // not just the summary line.
+  const ids = new Set(archivedParents);
+  for (const a of assets) if (a.parent_asset_id && archivedParents.has(a.parent_asset_id)) ids.add(a.id);
+  return ids;
+}
+function archivedAccountLiabilityIds() {
+  return new Set(accounts.filter((a) => a.archived_at && a.linked_liability_id).map((a) => a.linked_liability_id));
+}
+// The liabilities-table counterpart to topLevelAssets, below - every
+// summing/listing call site (net worth, the Liabilities card) goes through
+// this.
+function countableDebts() {
+  const hidden = archivedAccountLiabilityIds();
+  return debts.filter((d) => !hidden.has(d.id));
 }
 
 // Assets that stand on their own, i.e. everything except per-ticker holdings
@@ -1023,9 +1104,12 @@ function staleAssets(monthsThreshold = 6, today = new Date()) {
 // totals or lists "your assets" must go through this rather than the raw
 // `assets` array - net worth, the Assets card, and the snapshot writer all
 // do. The Investments tab is the deliberate exception: it wants the
-// individual positions, which is the entire point of the tab.
+// individual positions, which is the entire point of the tab. Also drops
+// anything belonging to an archived account - see archivedAccountAssetIds
+// above.
 function topLevelAssets() {
-  return assets.filter((a) => !a.parent_asset_id);
+  const hidden = archivedAccountAssetIds();
+  return assets.filter((a) => !a.parent_asset_id && !hidden.has(a.id));
 }
 // Holdings roll up: an investment account is worth the sum of the positions
 // inside it. Written back to the parent's own `value` rather than computed
@@ -1077,7 +1161,9 @@ async function loadAssets() {
   // asset with no account behind it) - every transaction links to a
   // specific account, this form included. If that leaves nothing to pick,
   // the Pay button below still catches it with an explicit error.
-  const payableAssets = assets.filter((a) => linkedAssetIds.has(a.id));
+  // listedAssets already excludes an archived account's asset (topLevelAssets)
+  // - you can't pay a liability down from an account that's been archived.
+  const payableAssets = listedAssets.filter((a) => linkedAssetIds.has(a.id));
   $("payFromAsset").innerHTML = payableAssets.length
     ? payableAssets.map((a) => `<option value="${a.id}">${esc(a.name)} (${fmt(a.value)})</option>`).join("")
     : `<option value="">No linked account available</option>`;
@@ -1543,8 +1629,13 @@ async function loadDebts() {
       </span>
     </div>`;
   };
-  const creditDebts = debts.filter((d) => linkedDebtIds.has(d.id));
-  const otherDebts = debts.filter((d) => !linkedDebtIds.has(d.id));
+  // An archived credit account's liability disappears from this card
+  // entirely, same as a real delete would - countableDebts() drops it. A
+  // standalone liability (otherDebts) is never affected, since archiving is
+  // account-scoped and a standalone liability has no account to archive.
+  const visibleDebts = countableDebts();
+  const creditDebts = visibleDebts.filter((d) => linkedDebtIds.has(d.id));
+  const otherDebts = visibleDebts.filter((d) => !linkedDebtIds.has(d.id));
   $("creditDebtsList").innerHTML = creditDebts.length
     ? creditDebts.map(rowHtml).join("")
     : `<p class="muted" style="font-size:13px">No credit accounts yet.</p>`;
@@ -1836,11 +1927,12 @@ function renderNetWorth() {
   // Depreciation-adjusted at the call site, not inside computeNetWorth -
   // networth.js stays pure aggregation with no idea depreciation exists
   // (see its own header comment on scope).
-  // Child holdings are excluded, never summed on their own - their value is
-  // already rolled into the parent account's asset (see topLevelAssets).
-  // Counting both would double every invested dollar.
+  // topLevelAssets/countableDebts both exclude two things here: child
+  // holdings (already rolled into their parent - counting both would
+  // double every invested dollar) and anything belonging to an archived
+  // account (archiving now acts like a delete for net-worth purposes).
   const depreciatedAssets = topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) }));
-  const nw = computeNetWorth(depreciatedAssets, debts);
+  const nw = computeNetWorth(depreciatedAssets, countableDebts());
 
   $("netWorthTotal").textContent = fmt(nw.netWorth);
   $("assetsTotal").textContent = fmt(nw.assetsTotal);
@@ -1870,11 +1962,10 @@ function renderNetWorth() {
 // renderNetWorth() (which runs many times per session) - one write per
 // day is the point, not one per render.
 async function snapshotNetWorthIfNeeded() {
-  // Child holdings are excluded, never summed on their own - their value is
-  // already rolled into the parent account's asset (see topLevelAssets).
-  // Counting both would double every invested dollar.
+  // See renderNetWorth's comment - same two exclusions (child holdings,
+  // archived-account assets/liabilities) apply to the daily snapshot too.
   const depreciatedAssets = topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) }));
-  const nw = computeNetWorth(depreciatedAssets, debts);
+  const nw = computeNetWorth(depreciatedAssets, countableDebts());
   const snapshot_date = new Date().toISOString().slice(0, 10);
   await sb.from("net_worth_snapshots").upsert(
     { snapshot_date, assets_total: nw.assetsTotal, liabilities_total: nw.liabilitiesTotal, net_worth: nw.netWorth },
@@ -2699,11 +2790,14 @@ async function renderInvestmentsTrend() {
 const gainColor = (n) => (n == null ? "" : n >= 0 ? "var(--ok)" : "var(--err)");
 const signedPct = (n) => (n >= 0 ? "+" : "") + n + "%";
 
-// Every investment-flavoured asset, parents and per-ticker holdings alike.
-// Fine for DISPLAY, where the grouping wants both, but never for totalling -
-// see countableInvestmentAssets.
+// Every investment-flavoured asset, parents and per-ticker holdings alike,
+// EXCLUDING anything belonging to an archived account (archivedAccountAssetIds
+// - same "archived acts deleted" rule as topLevelAssets). Fine for DISPLAY,
+// where the grouping wants both parent and holdings, but never for
+// totalling - see countableInvestmentAssets.
 function allInvestmentAssets() {
-  return assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type));
+  const hidden = archivedAccountAssetIds();
+  return assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type) && !hidden.has(a.id));
 }
 // The set that may be summed without double-counting. An account whose value
 // is the roll-up of its own holdings (syncParentAssetValue) is dropped, since
@@ -2846,7 +2940,14 @@ let editingHolding = null;
 // asset added from the Assets card can hold tickers too, so both are offered
 // as parents. A holding itself is never a parent (no nesting).
 function holdingParentAssets() {
-  return assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type) && !a.parent_asset_id);
+  // allInvestmentAssets() already drops anything belonging to an archived
+  // account (archivedAccountAssetIds) - so an archived account isn't
+  // offered as somewhere to file a new holding either. Deliberately NOT
+  // countableInvestmentAssets(): that helper drops a parent that ALREADY
+  // has holdings, for double-counting reasons in totals - the wrong list
+  // here, since an account with existing positions must still be offered
+  // as somewhere to add another one.
+  return allInvestmentAssets().filter((a) => !a.parent_asset_id);
 }
 
 function openHoldingForm(holding) {
@@ -3159,7 +3260,11 @@ async function autoLogDueSubscriptions() {
     if (!sub.is_active || !sub.next_renewal || !sub.account_id) continue;
     if (!["monthly", "quarterly", "semiannual", "annual"].includes(sub.billing_cycle)) continue;
     const account = accounts.find((a) => a.id === sub.account_id);
-    if (!account) continue;
+    // A real delete already stops this loop (account_id -> null on delete,
+    // per schema, fails the !sub.account_id check above); archiving must
+    // stop it the same way, or this would keep silently charging an
+    // account that's supposed to act deleted every time the app loads.
+    if (!account || account.archived_at) continue;
     const paymentType = account.type;
     const amount = Number(sub.amount);
 

@@ -55,6 +55,30 @@ function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
   setTimeout(() => t.classList.remove("show"), 2200);
 }
+// Generic red-border flag for a denied action (CLAUDE.md's "every denial
+// flags its field" rule) - call right before a `return toast(...)` that
+// rejects a save/action over one or more specific fields. Self-clearing:
+// the border comes off the moment the user next touches that exact field
+// (input or change, whichever fires first), no separate per-form tracking
+// function needed the way REQUIRED_QUICK_ADD_FIELDS/REQUIRED_HOLDING_
+// FIELDS' *live* always-on highlighters are (this is one-shot, not live -
+// those two forms already have live coverage for plain emptiness, so this
+// is what patches the gap for a non-empty-but-invalid value, a cross-field
+// check, or a server-side rejection, everywhere else in the app). Accepts
+// one id or an array, for a denial that's jointly about more than one
+// field. Silently does nothing for an id with no matching element (a
+// field this action isn't clearly about, or a page whose fields aren't
+// mounted in a force-unhide test) rather than throwing.
+function flagField(ids) {
+  for (const id of Array.isArray(ids) ? ids : [ids]) {
+    const el = $(id);
+    if (!el) continue;
+    el.classList.add("field-required");
+    const clear = () => el.classList.remove("field-required");
+    el.addEventListener("input", clear, { once: true });
+    el.addEventListener("change", clear, { once: true });
+  }
+}
 // Promise-based replacement for window.confirm() on destructive actions -
 // resolves true/false, same call shape as confirm() (await it, act on the
 // result), but rendered as an in-app modal so it matches the rest of the UI
@@ -121,7 +145,7 @@ let gemmaTimer = null;      // debounce handle for background parsing
 // ---- AUTH ------------------------------------------------------------------
 $("signInBtn").onclick = async () => {
   const email = $("email").value.trim();
-  if (!email) return toast("Enter your email");
+  if (!email) { flagField("email"); return toast("Enter your email"); }
   $("signInBtn").disabled = true;
   $("signInBtn").textContent = "Sending...";
   $("authMsg").textContent = "Sending magic link...";
@@ -129,6 +153,7 @@ $("signInBtn").onclick = async () => {
   $("signInBtn").disabled = false;
   $("signInBtn").textContent = "Send magic link instead";
   $("authMsg").textContent = error ? error.message : "Link sent ✓ - check your email.";
+  if (error) flagField("email");
   toast(error ? "Couldn't send link" : "Magic link sent ✓");
 };
 // Primary sign-in path (see index.html's authView comment) - completes
@@ -138,8 +163,8 @@ $("signInBtn").onclick = async () => {
 $("passwordSignInBtn").onclick = async () => {
   const email = $("email").value.trim();
   const password = $("password").value;
-  if (!email) return toast("Enter your email");
-  if (!password) return toast("Enter your password");
+  if (!email) { flagField("email"); return toast("Enter your email"); }
+  if (!password) { flagField("password"); return toast("Enter your password"); }
   $("passwordSignInBtn").disabled = true;
   $("passwordSignInBtn").textContent = "Signing in...";
   $("passwordAuthMsg").textContent = "Signing in...";
@@ -147,12 +172,21 @@ $("passwordSignInBtn").onclick = async () => {
   $("passwordSignInBtn").disabled = false;
   $("passwordSignInBtn").textContent = "Sign in";
   $("passwordAuthMsg").textContent = error ? error.message : "";
-  if (error) toast("Couldn't sign in");
+  if (error) { flagField(["email", "password"]); toast("Couldn't sign in"); }
 };
 $("signOutBtn").onclick = async () => { await sb.auth.signOut(); location.reload(); };
 
 sb.auth.onAuthStateChange((_e, session) => renderAuth(session));
 sb.auth.getSession().then(({ data }) => renderAuth(data.session));
+
+// Which tab the user was last on, restored after a reload instead of
+// always landing on Log - localStorage (per-device UI state, not account
+// data, so no RLS/table involved) rather than a URL param, since this is
+// a single-page app with no routing. Falls back to "log" for a missing or
+// unrecognized value (a fresh browser, or a value from some future build
+// this one doesn't know).
+const VIEWS = ["log", "subs", "reports", "invest"];
+const lastView = () => (VIEWS.includes(localStorage.getItem("lastView")) ? localStorage.getItem("lastView") : "log");
 
 function renderAuth(session) {
   const authed = !!session;
@@ -160,7 +194,19 @@ function renderAuth(session) {
   userEmail = session?.user?.email ?? null;
   $("authView").classList.toggle("hidden", authed);
   $("nav").classList.toggle("hidden", !authed);
-  if (authed) { showView("log"); init(); }
+  if (authed) {
+    const view = lastView();
+    showView(view);
+    // The per-tab data each view needs (loadSubscriptions/loadReports/the
+    // Investments renders) only exists once init() finishes - Log itself
+    // needs no extra call since its own cards already self-render as each
+    // of init()'s loadX() calls completes, the same way they always have.
+    init().then(() => {
+      if (view === "subs") loadSubscriptions();
+      else if (view === "reports") loadReports();
+      else if (view === "invest") { renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); }
+    });
+  }
   else { $("logView").classList.add("hidden"); $("subsView").classList.add("hidden"); $("reportsView").classList.add("hidden"); $("investView").classList.add("hidden"); }
 }
 
@@ -173,6 +219,7 @@ $("backFromSubs").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
 $("backFromInvest").onclick = () => showView("log");
 function showView(v) {
+  localStorage.setItem("lastView", v);
   $("logView").classList.toggle("hidden", v !== "log");
   $("subsView").classList.toggle("hidden", v !== "subs");
   $("reportsView").classList.toggle("hidden", v !== "reports");
@@ -688,7 +735,7 @@ $("saveAcctBtn").onclick = async () => {
   const type = $("acctType").value;
   const name = ACCOUNT_TYPE_NAME[type];
   const bankLabel = BANK_VALIDATED_TYPES.has(type) ? "Bank" : "Institution";
-  if (!bank_name) return toast(`${bankLabel} name required`);
+  if (!bank_name) { flagField("acctBank"); return toast(`${bankLabel} name required`); }
   // isKnownBank() checks against ~3,570 real FDIC-insured banks plus a
   // handful of well-known non-FDIC brands - comprehensive, but genuinely
   // not exhaustive (a small credit union, a newer neobank, a foreign
@@ -711,14 +758,14 @@ $("saveAcctBtn").onclick = async () => {
     const { data: newDebt, error: debtErr } = await sb.from("liabilities")
       .insert({ name: bank_name, type: AUTO_LIABILITY_TYPE[type], balance: 0 })
       .select().single();
-    if (debtErr) return toast(debtErr.message);
+    if (debtErr) { flagField("acctBank"); return toast(debtErr.message); }
     linked_liability_id = newDebt.id;
     autoMsg = "Account added - linked to a new $0 balance liability";
   } else if (AUTO_ASSET_TYPE[type]) {
     const { data: newAsset, error: assetErr } = await sb.from("assets")
       .insert({ name: bank_name, type: AUTO_ASSET_TYPE[type], value: 0 })
       .select().single();
-    if (assetErr) return toast(assetErr.message);
+    if (assetErr) { flagField("acctBank"); return toast(assetErr.message); }
     linked_asset_id = newAsset.id;
     autoMsg = "Account added - linked to a new $0 asset, edit its value below";
   }
@@ -726,7 +773,7 @@ $("saveAcctBtn").onclick = async () => {
   const { data: newAccount, error } = await sb.from("accounts")
     .insert({ name, bank_name, type, linked_asset_id, linked_liability_id })
     .select().single();
-  if (error) return toast(error.message);
+  if (error) { flagField("acctBank"); return toast(error.message); }
   // Opening an account is the one history entry that moves no money - it's
   // there so the log can explain where an account came from, rather than a
   // balance appearing to materialise from nowhere. Amount 0, no undo (see
@@ -1085,10 +1132,10 @@ $("saveAssetBtn").onclick = async () => {
   const name = $("assetName").value.trim();
   const type = $("assetType").value;
   const value = parseFloat($("assetValue").value);
-  if (!name) return toast("Asset name required");
-  if (!Number.isFinite(value)) return toast("Enter a value");
-  if (type === "cash") return toast("Cash is automatic - use the Cash account's +/- panel instead.");
-  if (type === "bank") return toast("Bank assets come from a Checking account - add one in the Accounts card instead.");
+  if (!name) { flagField("assetName"); return toast("Asset name required"); }
+  if (!Number.isFinite(value)) { flagField("assetValue"); return toast("Enter a value"); }
+  if (type === "cash") { flagField("assetType"); return toast("Cash is automatic - use the Cash account's +/- panel instead."); }
+  if (type === "bank") { flagField("assetType"); return toast("Bank assets come from a Checking account - add one in the Accounts card instead."); }
 
   const isVehicle = type === "vehicle";
   const isInvestment = INVESTMENT_ASSET_TYPES.has(type);
@@ -1110,7 +1157,7 @@ $("saveAssetBtn").onclick = async () => {
     ? sb.from("assets").update(row).eq("id", editingAsset.id)
     : sb.from("assets").insert(row);
   const { error } = await q;
-  if (error) return toast(error.message);
+  if (error) { flagField("assetName"); return toast(error.message); }
   const wasEditing = !!editingAsset;
   closeAssetForm();
   await loadAssets(); toast(wasEditing ? "Asset updated" : "Asset added");
@@ -1533,12 +1580,12 @@ function openAssetAdjust(accountId) {
 
 $("adjustAddBtn").onclick = async () => {
   const amount = parseFloat($("adjustAmount").value);
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if (!amount || amount <= 0) { flagField("adjustAmount"); return toast("Enter a valid amount"); }
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
   const newValue = Math.round((Number(asset.value) + amount) * 100) / 100;
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-  if (error) return toast(error.message);
+  if (error) { flagField("adjustAmount"); return toast(error.message); }
   $("adjustAmount").value = "";
   await logActivity("asset_adjust", `Added ${fmt(amount)} to ${asset.name}`, amount, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Added");
@@ -1546,13 +1593,13 @@ $("adjustAddBtn").onclick = async () => {
 
 $("adjustSubtractBtn").onclick = async () => {
   const amount = parseFloat($("adjustAmount").value);
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if (!amount || amount <= 0) { flagField("adjustAmount"); return toast("Enter a valid amount"); }
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
-  if (amount > Number(asset.value)) return toast("Balance can't go negative - not enough in " + asset.name);
+  if (amount > Number(asset.value)) { flagField("adjustAmount"); return toast("Balance can't go negative - not enough in " + asset.name); }
   const newValue = Math.round((Number(asset.value) - amount) * 100) / 100;
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-  if (error) return toast(error.message);
+  if (error) { flagField("adjustAmount"); return toast(error.message); }
   $("adjustAmount").value = "";
   await logActivity("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, -amount, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Subtracted");
@@ -1560,14 +1607,14 @@ $("adjustSubtractBtn").onclick = async () => {
 
 $("adjustSetBtn").onclick = async () => {
   const newValue = parseFloat($("adjustNewBalance").value);
-  if (!Number.isFinite(newValue)) return toast("Enter a valid balance");
-  if (newValue < 0) return toast("Balance can't go negative");
+  if (!Number.isFinite(newValue)) { flagField("adjustNewBalance"); return toast("Enter a valid balance"); }
+  if (newValue < 0) { flagField("adjustNewBalance"); return toast("Balance can't go negative"); }
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
   const rounded = Math.round(newValue * 100) / 100;
   const oldValue = Number(asset.value);
   const { error } = await sb.from("assets").update({ value: rounded }).eq("id", asset.id);
-  if (error) return toast(error.message);
+  if (error) { flagField("adjustNewBalance"); return toast(error.message); }
   await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, rounded - oldValue, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Balance updated");
 };
@@ -1580,7 +1627,7 @@ $("adjustMaturitySaveBtn").onclick = async () => {
   if (!adjustingAssetId) return;
   const maturity_date = $("adjustMaturityDate").value || null;
   const { error } = await sb.from("assets").update({ maturity_date }).eq("id", adjustingAssetId);
-  if (error) return toast(error.message);
+  if (error) { flagField("adjustMaturityDate"); return toast(error.message); }
   await loadAssets();
   toast("Maturity date saved");
 };
@@ -1606,8 +1653,8 @@ $("saveDebtBtn").onclick = async () => {
   const name = $("debtName").value.trim();
   const type = $("debtType").value;
   const balance = parseFloat($("debtBalance").value);
-  if (!name) return toast("Liability name required");
-  if (!Number.isFinite(balance)) return toast("Enter a balance");
+  if (!name) { flagField("debtName"); return toast("Liability name required"); }
+  if (!Number.isFinite(balance)) { flagField("debtBalance"); return toast("Enter a balance"); }
   const row = {
     name, type, balance,
     interest_rate: $("debtRate").value ? parseFloat($("debtRate").value) : null,
@@ -1615,7 +1662,7 @@ $("saveDebtBtn").onclick = async () => {
     due_date: $("debtDue").value || null,
   };
   const { error } = await sb.from("liabilities").insert(row);
-  if (error) return toast(error.message);
+  if (error) { flagField("debtName"); return toast(error.message); }
   $("debtName").value = ""; $("debtBalance").value = ""; $("debtRate").value = "";
   $("debtMinPay").value = ""; $("debtDue").value = ""; $("debtForm").classList.add("hidden");
   await loadDebts(); toast("Liability added");
@@ -1871,29 +1918,34 @@ function closeDebtDetailsForm() {
 $("debtDetailsCancelBtn").onclick = closeDebtDetailsForm;
 $("debtDetailsSaveBtn").onclick = async () => {
   if (!editingDebtDetails) return;
+  const touchedIds = ["debtDetailsRate", "debtDetailsMinPay", "debtDetailsDue"];
   const patch = {
     interest_rate: $("debtDetailsRate").value !== "" ? parseFloat($("debtDetailsRate").value) : null,
     minimum_payment: $("debtDetailsMinPay").value !== "" ? parseFloat($("debtDetailsMinPay").value) : null,
     due_date: $("debtDetailsDue").value || null,
   };
   if (editingDebtDetails.type === "heloc") {
+    touchedIds.push("debtDetailsDrawEnd");
     patch.draw_period_end = $("debtDetailsDrawEnd").value || null;
   }
   if (CREDIT_LIMIT_LIABILITY_TYPES.has(editingDebtDetails.type)) {
+    touchedIds.push("debtDetailsLimit");
     const limit = $("debtDetailsLimit").value !== "" ? parseFloat($("debtDetailsLimit").value) : null;
-    if (limit !== null && (!Number.isFinite(limit) || limit < 0)) return toast("Credit limit can't be negative");
+    if (limit !== null && (!Number.isFinite(limit) || limit < 0)) { flagField("debtDetailsLimit"); return toast("Credit limit can't be negative"); }
     patch.credit_limit = limit;
   }
   if (GRACE_PERIOD_LIABILITY_TYPES.has(editingDebtDetails.type)) {
+    touchedIds.push("debtDetailsStatementDay", "debtDetailsDueDay", "debtDetailsStatementBalance", "debtDetailsStatementDate");
     const day = (id) => ($(id).value !== "" ? parseInt($(id).value, 10) : null);
     const statementDay = day("debtDetailsStatementDay");
     const dueDay = day("debtDetailsDueDay");
-    for (const [label, v] of [["Statement closes", statementDay], ["Payment due", dueDay]]) {
-      if (v !== null && (!Number.isInteger(v) || v < 1 || v > 31)) return toast(`${label} must be a day from 1 to 31`);
+    for (const [label, v, id] of [["Statement closes", statementDay, "debtDetailsStatementDay"], ["Payment due", dueDay, "debtDetailsDueDay"]]) {
+      if (v !== null && (!Number.isInteger(v) || v < 1 || v > 31)) { flagField(id); return toast(`${label} must be a day from 1 to 31`); }
     }
     const stmtBalance = $("debtDetailsStatementBalance").value !== ""
       ? parseFloat($("debtDetailsStatementBalance").value) : null;
     if (stmtBalance !== null && (!Number.isFinite(stmtBalance) || stmtBalance < 0)) {
+      flagField("debtDetailsStatementBalance");
       return toast("Statement balance can't be negative");
     }
     patch.statement_day = statementDay;
@@ -1902,7 +1954,7 @@ $("debtDetailsSaveBtn").onclick = async () => {
     patch.last_statement_date = $("debtDetailsStatementDate").value || null;
   }
   const { error } = await sb.from("liabilities").update(patch).eq("id", editingDebtDetails.id);
-  if (error) return toast(error.message);
+  if (error) { flagField(touchedIds); return toast(error.message); }
   closeDebtDetailsForm();
   await loadDebts();
   toast("Liability details saved");
@@ -1991,14 +2043,14 @@ async function logOwedAdjust(debt, delta, reason) {
 
 $("debtOwedSetConfirm").onclick = async () => {
   const newBalance = parseFloat($("debtOwedSet").value);
-  if (!Number.isFinite(newBalance)) return toast("Enter a valid amount");
-  if (newBalance < 0) return toast("Amount owed can't be negative");
+  if (!Number.isFinite(newBalance)) { flagField("debtOwedSet"); return toast("Enter a valid amount"); }
+  if (newBalance < 0) { flagField("debtOwedSet"); return toast("Amount owed can't be negative"); }
   const debt = debts.find((d) => d.id === activeDebtId);
   if (!debt) return;
   const rounded = Math.round(newBalance * 100) / 100;
   const delta = Math.round((rounded - Number(debt.balance)) * 100) / 100;
   const { error } = await sb.from("liabilities").update({ balance: rounded }).eq("id", debt.id);
-  if (error) return toast(error.message);
+  if (error) { flagField("debtOwedSet"); return toast(error.message); }
   await logOwedAdjust(debt, delta, `Corrected ${debt.name} owed to ${fmt(rounded)}`);
   await loadDebts();
   renderRecentTransactions();
@@ -2008,12 +2060,12 @@ $("debtOwedSetConfirm").onclick = async () => {
 
 $("debtOwedConfirm").onclick = async () => {
   const amount = parseFloat($("debtOwedAmount").value);
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if (!amount || amount <= 0) { flagField("debtOwedAmount"); return toast("Enter a valid amount"); }
   const debt = debts.find((d) => d.id === activeDebtId);
   if (!debt) return;
   const newBalance = Math.round((Number(debt.balance) + amount) * 100) / 100;
   const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-  if (error) return toast(error.message);
+  if (error) { flagField("debtOwedAmount"); return toast(error.message); }
   await logOwedAdjust(debt, amount, `Added ${fmt(amount)} charge to ${debt.name}`);
   $("debtOwedAmount").value = "";
   await loadDebts();
@@ -2024,21 +2076,21 @@ $("debtOwedConfirm").onclick = async () => {
 
 $("payConfirmBtn").onclick = async () => {
   const amount = parseFloat($("payAmount").value);
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if (!amount || amount <= 0) { flagField("payAmount"); return toast("Enter a valid amount"); }
   const assetId = $("payFromAsset").value;
-  if (!assetId) return toast("Choose an account to pay from - add one in the Accounts card if none are listed.");
+  if (!assetId) { flagField("payFromAsset"); return toast("Choose an account to pay from - add one in the Accounts card if none are listed."); }
   const debt = debts.find((d) => d.id === activeDebtId);
   const asset = assets.find((a) => a.id === assetId);
-  if (!debt || !asset) return toast("Pick a valid liability and asset");
-  if (amount > Number(asset.value)) return toast(`Not enough in ${asset.name} to pay ${fmt(amount)}`);
+  if (!debt || !asset) { flagField("payFromAsset"); return toast("Pick a valid liability and asset"); }
+  if (amount > Number(asset.value)) { flagField("payAmount"); return toast(`Not enough in ${asset.name} to pay ${fmt(amount)}`); }
 
   const newAssetValue = Math.round((Number(asset.value) - amount) * 100) / 100;
   const newBalance = Math.max(0, Math.round((Number(debt.balance) - amount) * 100) / 100);
 
   const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
-  if (assetErr) return toast(assetErr.message);
+  if (assetErr) { flagField("payAmount"); return toast(assetErr.message); }
   const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-  if (debtErr) return toast(debtErr.message);
+  if (debtErr) { flagField("payAmount"); return toast(debtErr.message); }
 
   // account_id = the funding account (money actually left it, same as an
   // expense's account_id); related_account_id = the debt's own account,
@@ -2238,18 +2290,18 @@ function scheduleGemma(raw) {
 $("saveBtn").onclick = async () => {
   updateRequiredFieldHighlighting(); // guaranteed-fresh red border right as Save is attempted
   const amount = parseFloat($("fAmount").value);
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if (!amount || amount <= 0) { flagField("fAmount"); return toast("Enter a valid amount"); }
   const accountId = $("fAccount").value || null;
-  if (!accountId) return toast("Select an account");
+  if (!accountId) { flagField("fAccount"); return toast("Select an account"); }
   const category = $("fCategory").value || null;
-  if (!category) return toast("Select a category");
+  if (!category) { flagField("fCategory"); return toast("Select a category"); }
   const occurredAt = $("fDate").value;
-  if (!occurredAt) return toast("Select a date");
+  if (!occurredAt) { flagField("fDate"); return toast("Select a date"); }
   // No separate Payment field - the account IS the payment type, since
   // account.type and payment_type share the same values (cash/debit/credit).
   const paymentType = accounts.find((a) => a.id === accountId).type;
   const assetErr = assetDeltaError([{ accountId, paymentType, amount, sign: -1 }]);
-  if (assetErr) return toast(assetErr);
+  if (assetErr) { flagField("fAccount"); return toast(assetErr); }
   const desc = $("fDesc").value.trim();
   const fullText = $("quick").value.trim();
   const row = {
@@ -2264,7 +2316,7 @@ $("saveBtn").onclick = async () => {
   $("saveBtn").disabled = true;
   const { error } = await sb.from("expenses").insert(row);
   $("saveBtn").disabled = false;
-  if (error) return toast(error.message);
+  if (error) { flagField("fAmount"); return toast(error.message); }
   await applyAssetDelta(row.account_id, row.payment_type, amount, -1);
   await applyLiabilityDelta(row.account_id, row.payment_type, amount, +1);
   $("quick").value = ""; $("confirm").classList.add("hidden"); $("parseStatus").textContent = "";
@@ -2370,8 +2422,8 @@ $("csvStep2Back").onclick = () => {
 $("csvStep2Next").onclick = () => {
   const dateCol = $("csvMapDate").value !== "" ? Number($("csvMapDate").value) : null;
   const amountCol = $("csvMapAmount").value !== "" ? Number($("csvMapAmount").value) : null;
-  if (dateCol == null || amountCol == null) return toast("Pick a Date and an Amount column");
-  if (!$("csvAccount").value) return toast("Pick an account to import into");
+  if (dateCol == null || amountCol == null) { flagField(["csvMapDate", "csvMapAmount"]); return toast("Pick a Date and an Amount column"); }
+  if (!$("csvAccount").value) { flagField("csvAccount"); return toast("Pick an account to import into"); }
   csvMapping = {
     dateCol, amountCol,
     descCol: $("csvMapDesc").value !== "" ? Number($("csvMapDesc").value) : null,
@@ -2445,6 +2497,7 @@ $("csvImportConfirm").onclick = async () => {
     const { data, error } = await sb.from("expenses").insert(chunk).select("id");
     if (error) {
       $("csvImportConfirm").disabled = false;
+      flagField("csvAccount");
       return toast(`Import failed partway through (${csvLastImportedIds.length} rows written): ${error.message}`);
     }
     csvLastImportedIds.push(...(data || []).map((r) => r.id));
@@ -2757,13 +2810,13 @@ $("editClose").onclick = () => { $("editModal").classList.add("hidden"); editing
 $("editSave").onclick = async () => {
   if (!editing) return;
   const amount = parseFloat($("eAmount").value);
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if (!amount || amount <= 0) { flagField("eAmount"); return toast("Enter a valid amount"); }
   const accountId = $("eAccount").value;
-  if (!accountId) return toast("Select an account");
+  if (!accountId) { flagField("eAccount"); return toast("Select an account"); }
   const newCategory = $("eCategory").value || null;
-  if (!newCategory) return toast("Select a category");
+  if (!newCategory) { flagField("eCategory"); return toast("Select a category"); }
   const occurredAt = $("eDate").value;
-  if (!occurredAt) return toast("Select a date");
+  if (!occurredAt) { flagField("eDate"); return toast("Select a date"); }
   // No separate Payment field - same as quick-add, the account IS the
   // payment type. This also removes the only way payment_type and the
   // selected account could ever disagree, so there's no credit-account
@@ -2787,11 +2840,11 @@ $("editSave").onclick = async () => {
     { accountId: prevAccountId, paymentType: prevPaymentType, amount: prevAmount, sign: +1 },
     { accountId: patch.account_id, paymentType: patch.payment_type, amount, sign: -1 },
   ]);
-  if (assetErr) return toast(assetErr);
+  if (assetErr) { flagField("eAccount"); return toast(assetErr); }
 
   $("editSave").disabled = true;
   const { error } = await sb.from("expenses").update(patch).eq("id", editing.id);
-  if (error) { $("editSave").disabled = false; return toast(error.message); }
+  if (error) { $("editSave").disabled = false; flagField("eAmount"); return toast(error.message); }
 
   // Reverse the old asset/liability effect (if any), then apply the new one -
   // covers amount/account/payment-type all changing in the same edit.
@@ -2942,11 +2995,11 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
 $("saveBudgetBtn").onclick = async () => {
   const category = $("budgetCategory").value;
   const monthly_limit = parseFloat($("budgetLimit").value);
-  if (!category) return toast("Pick a category");
-  if (!Number.isFinite(monthly_limit) || monthly_limit <= 0) return toast("Enter a valid monthly limit");
+  if (!category) { flagField("budgetCategory"); return toast("Pick a category"); }
+  if (!Number.isFinite(monthly_limit) || monthly_limit <= 0) { flagField("budgetLimit"); return toast("Enter a valid monthly limit"); }
   const { error } = await sb.from("budgets")
     .upsert({ category, monthly_limit }, { onConflict: "user_id,category" });
-  if (error) return toast(error.message);
+  if (error) { flagField("budgetLimit"); return toast(error.message); }
   $("budgetLimit").value = "";
   await loadBudgets();
   renderBudgets();
@@ -3410,19 +3463,19 @@ $("saveHoldingBtn").onclick = async () => {
   updateHoldingFieldHighlighting();
   updateHoldingSymbolTickerHighlight();
   const parentId = $("holdingAccount").value;
-  if (!parentId) return toast("Choose the account this sits in");
+  if (!parentId) { flagField("holdingAccount"); return toast("Choose the account this sits in"); }
   const symbol = $("holdingSymbol").value.trim().toUpperCase();
-  if (!symbol) return toast("Enter a ticker or symbol");
+  if (!symbol) { flagField("holdingSymbol"); return toast("Enter a ticker or symbol"); }
   // Shares and cost basis are required, not optional - a holding without
   // them was previously just a name with no actual position behind it.
-  if ($("holdingQuantity").value === "") return toast("Enter the number of shares");
+  if ($("holdingQuantity").value === "") { flagField("holdingQuantity"); return toast("Enter the number of shares"); }
   const quantity = parseFloat($("holdingQuantity").value);
-  if (!Number.isFinite(quantity) || quantity <= 0) return toast("Shares must be a positive number");
-  if ($("holdingCostBasis").value === "") return toast("Enter what you paid in total");
+  if (!Number.isFinite(quantity) || quantity <= 0) { flagField("holdingQuantity"); return toast("Shares must be a positive number"); }
+  if ($("holdingCostBasis").value === "") { flagField("holdingCostBasis"); return toast("Enter what you paid in total"); }
   const costBasis = parseFloat($("holdingCostBasis").value);
-  if (!Number.isFinite(costBasis) || costBasis < 0) return toast("Cost basis can't be negative");
+  if (!Number.isFinite(costBasis) || costBasis < 0) { flagField("holdingCostBasis"); return toast("Cost basis can't be negative"); }
   const value = $("holdingValue").value !== "" ? parseFloat($("holdingValue").value) : null;
-  if (value !== null && (!Number.isFinite(value) || value < 0)) return toast("Current value can't be negative");
+  if (value !== null && (!Number.isFinite(value) || value < 0)) { flagField("holdingValue"); return toast("Current value can't be negative"); }
 
   const parent = assets.find((a) => a.id === parentId);
   // isKnownTicker() checks a hand-curated, necessarily incomplete list
@@ -3464,7 +3517,7 @@ $("saveHoldingBtn").onclick = async () => {
   const { error } = editingHolding
     ? await sb.from("assets").update(row).eq("id", editingHolding.id)
     : await sb.from("assets").insert(row);
-  if (error) return toast(error.message);
+  if (error) { flagField("holdingSymbol"); return toast(error.message); }
   closeHoldingForm();
   await loadAssets();
   await syncParentAssetValue(parentId);
@@ -3510,19 +3563,13 @@ $("contributionAmount").addEventListener("input", () => {
 $("saveContributionBtn").onclick = async () => {
   const asset = assets.find((a) => a.id === contributingAssetId);
   if (!asset) return closeContributionForm();
-  if (!$("contributionAmount").value) {
-    $("contributionAmount").classList.add("field-required");
-    return toast("Enter an amount");
-  }
+  if (!$("contributionAmount").value) { flagField("contributionAmount"); return toast("Enter an amount"); }
   const amount = parseFloat($("contributionAmount").value);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    $("contributionAmount").classList.add("field-required");
-    return toast("Enter a positive amount");
-  }
+  if (!Number.isFinite(amount) || amount <= 0) { flagField("contributionAmount"); return toast("Enter a positive amount"); }
   const occurred_at = $("contributionDate").value || new Date().toISOString().slice(0, 10);
   const newValue = Math.round((Number(asset.value) + amount) * 100) / 100;
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-  if (error) return toast(error.message);
+  if (error) { flagField("contributionAmount"); return toast(error.message); }
   // account_id: the linked account if this asset has one (most investment
   // assets are standalone and won't), purely so Recent History's account
   // filter can also surface a contribution the same way it already does
@@ -3548,10 +3595,10 @@ $("saveInvestTargetBtn").onclick = async () => {
   // validate as "missing" the way a free-text field would need.
   const bucket = $("investTargetBucket").value;
   const target_percent = parseFloat($("investTargetPercent").value);
-  if (!Number.isFinite(target_percent) || target_percent < 0 || target_percent > 100) return toast("Enter a valid target percent (0-100)");
+  if (!Number.isFinite(target_percent) || target_percent < 0 || target_percent > 100) { flagField("investTargetPercent"); return toast("Enter a valid target percent (0-100)"); }
   const { error } = await sb.from("investment_targets")
     .upsert({ bucket, target_percent }, { onConflict: "user_id,bucket" });
-  if (error) return toast(error.message);
+  if (error) { flagField("investTargetPercent"); return toast(error.message); }
   $("investTargetPercent").value = "";
   await loadInvestmentTargets();
   renderInvestments();
@@ -3566,7 +3613,7 @@ $("saveInvestTargetBtn").onclick = async () => {
 $("investRiskLabel").onchange = async () => {
   const risk_label = $("investRiskLabel").value || null;
   const { error } = await sb.from("profiles").upsert({ id: userId, risk_label }, { onConflict: "id" });
-  if (error) return toast(error.message);
+  if (error) { flagField("investRiskLabel"); return toast(error.message); }
   profile = { ...(profile || {}), risk_label };
   toast("Risk label saved");
 };
@@ -3616,7 +3663,7 @@ async function loadInsights() {
 // ---- INTERACTIVE Q&A (Gemma, optional/best-effort like Phase 3) -----------
 $("qaAskBtn").onclick = async () => {
   const question = $("qaQuestion").value.trim();
-  if (!question) return toast("Type a question first");
+  if (!question) { flagField("qaQuestion"); return toast("Type a question first"); }
   if (!GEMMA_ENDPOINT) {
     $("qaStatus").textContent = "Not configured - set GEMMA_ENDPOINT in config.js (SETUP.md §3.6).";
     return;
@@ -4084,8 +4131,8 @@ function closeSubForm() { $("subForm").classList.add("hidden"); editingSub = nul
 $("saveSubBtn").onclick = async () => {
   const name = $("sName").value.trim();
   const amount = parseFloat($("sAmount").value);
-  if (!name) return toast("Service name required");
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if (!name) { flagField("sName"); return toast("Service name required"); }
+  if (!amount || amount <= 0) { flagField("sAmount"); return toast("Enter a valid amount"); }
   const row = {
     name, amount,
     category: $("sCategory").value.trim() || null,
@@ -4102,7 +4149,7 @@ $("saveSubBtn").onclick = async () => {
     : sb.from("subscriptions").insert(row);
   const { error } = await q;
   $("saveSubBtn").disabled = false;
-  if (error) return toast(error.message);
+  if (error) { flagField("sName"); return toast(error.message); }
   closeSubForm();
   await loadSubscriptions();
   toast(editingSub ? "Subscription/bill updated" : "Subscription/bill added");
@@ -4117,13 +4164,13 @@ $("saveSubBtn").onclick = async () => {
 $("markPaidBtn").onclick = async () => {
   if (!editingSub) return;
   const sub = editingSub;
-  if (!sub.account_id) return toast("Link an account to this subscription/bill first, then save, then mark as paid.");
+  if (!sub.account_id) { flagField("sAccount"); return toast("Link an account to this subscription/bill first, then save, then mark as paid."); }
   const account = accounts.find((a) => a.id === sub.account_id);
-  if (!account) return toast("Linked account not found - pick one, save, then mark as paid.");
+  if (!account) { flagField("sAccount"); return toast("Linked account not found - pick one, save, then mark as paid."); }
   const amount = Number(sub.amount);
   const paymentType = account.type;
   const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
-  if (assetErr) return toast(assetErr);
+  if (assetErr) { flagField("sAccount"); return toast(assetErr); }
 
   const row = {
     amount, description: sub.name, merchant: sub.name,
@@ -4133,7 +4180,7 @@ $("markPaidBtn").onclick = async () => {
   };
   $("markPaidBtn").disabled = true;
   const { error } = await sb.from("expenses").insert(row);
-  if (error) { $("markPaidBtn").disabled = false; return toast(error.message); }
+  if (error) { $("markPaidBtn").disabled = false; flagField("sAccount"); return toast(error.message); }
   await applyAssetDelta(sub.account_id, paymentType, amount, -1);
   await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
 
@@ -4223,7 +4270,7 @@ $("profileSave").onclick = async () => {
   $("profileSave").disabled = true;
   const { error } = await sb.from("profiles").upsert(row, { onConflict: "id" });
   $("profileSave").disabled = false;
-  if (error) return toast(error.message);
+  if (error) { flagField("pName"); return toast(error.message); }
   profile = row;
   $("profileModal").classList.add("hidden");
   renderDeals(); // eligibility may have changed (e.g. now a student, or military)
@@ -4266,13 +4313,14 @@ $("downloadDataBtn").onclick = async () => {
 // home-screen icon signed in.
 $("setPasswordBtn").onclick = async () => {
   const pw = $("pNewPassword").value;
-  if (!pw || pw.length < 6) return toast("Password must be at least 6 characters");
+  if (!pw || pw.length < 6) { flagField("pNewPassword"); return toast("Password must be at least 6 characters"); }
   $("setPasswordBtn").disabled = true;
   $("setPasswordBtn").textContent = "Saving...";
   const { error } = await sb.auth.updateUser({ password: pw });
   $("setPasswordBtn").disabled = false;
   $("setPasswordBtn").textContent = "Set / change password";
   if (error) {
+    flagField("pNewPassword");
     $("passwordSetMsg").textContent = error.message;
     toast("Couldn't set password");
     return;

@@ -1,12 +1,18 @@
 # Bank Account Types: Research Reference
 
 *Status: reference document, not a proposal. This is background research on
-how real-world bank and financial accounts are classified, meant to be the
-factual basis for any future work on this app's `accounts` / `assets` /
-`liabilities` type enums. It does not itself change any code or schema.
-See the "Mapping to this app's data model" section near the end for how
-the research connects back to what actually exists in `supabase/*.sql` and
-`app/app.js` today.*
+how real-world bank and financial accounts are classified, and the factual
+basis for this app's `accounts` / `assets` / `liabilities` type enums.
+See "Mapping to this app's data model" (section 10) for how the research
+connects back to what actually exists in `supabase/*.sql` and `app/app.js`
+today.*
+
+*Most of what this document catalogs is now implemented (55 selectable
+account types as of 2026-08-12). Section **9b** is the part to read when
+the question is "what does the app actually do with this number" rather
+than "what is this product" - it covers how a balance moves, how net worth
+counts it, when credit interest is genuinely charged, and how per-ticker
+holdings roll up without being double-counted.*
 
 ## 1. Purpose and scope
 
@@ -236,6 +242,30 @@ and owe money after. Key differences from a credit card:
 - Missing a payment usually triggers a flat late fee rather than interest,
   though some longer-term BNPL plans do carry interest.
 
+### 3.9 Medical and deferred-interest cards
+
+Cards like CareCredit, and many furniture/jewelry store financing offers,
+are revolving credit accounts issued by a bank (Synchrony, in CareCredit's
+case) but marketed through a provider (a dentist, vet, or retailer) for a
+specific purchase.
+
+Their defining feature is **deferred interest**, which behaves very
+differently from a normal card's 0% promotional APR and is a common source
+of unexpected debt:
+
+- The offer is typically "no interest if paid in full within N months."
+- Interest still *accrues* in the background during the promotional
+  period at the regular APR (often 25-30%).
+- If the full balance is not cleared by the deadline, all of that accrued
+  interest is charged retroactively, back to the original purchase date,
+  not just on the remaining balance.
+- A true 0% promotional APR, by contrast, charges nothing for the promo
+  period and then applies interest going forward only on what is left.
+
+So a $2,000 dental bill paid down to $50 by the deadline can still trigger
+several hundred dollars of retroactive interest on the entire original
+$2,000.
+
 ## 4. Installment loan accounts (borrow once, repay on a fixed schedule)
 
 Unlike revolving credit, an installment loan disburses a fixed amount up
@@ -305,6 +335,40 @@ sometimes rolled over into a new loan if not repaid on time, which can
 functionally extend them indefinitely. They are included here for
 completeness as real, common individual liabilities, not as a
 recommendation to use them.
+
+### 4.7 Credit-builder loans
+
+Offered mainly by credit unions and fintechs (Self, Credit Strong) to
+people with thin or damaged credit files. The mechanics run backwards
+compared to a normal loan: the "borrowed" amount is deposited into a
+locked savings account the borrower cannot touch, the borrower makes
+monthly payments against it, and the money is released only once the loan
+is fully repaid. The lender reports those payments to the credit bureaus
+throughout.
+
+Modelling note: this is genuinely both a liability (the loan balance) and
+a restricted asset (the locked deposit) at the same time, and the two
+offset each other almost exactly. Treating only the liability side would
+overstate what the borrower actually owes on net.
+
+### 4.8 Retirement plan loans (401(k)/403(b) loans)
+
+Many employer plans let a participant borrow from their own vested
+balance, typically up to the lesser of $50,000 or 50% of the vested
+balance, repaid by payroll deduction over up to five years (longer for a
+primary-residence loan).
+
+What makes this unlike any other loan in this document: the borrower is
+both the lender and the debtor. Interest is paid back into the
+participant's own account rather than to a bank. The real cost is
+opportunity cost, since the borrowed portion is out of the market and
+stops compounding for the life of the loan.
+
+The consequential risk is separation from the employer: if the borrower
+leaves or is let go, the outstanding balance generally becomes due by the
+following year's tax filing deadline, and anything unpaid is treated as a
+distribution, triggering income tax plus (under age 59½) a 10% early
+withdrawal penalty.
 
 ## 5. Retirement and investment accounts
 
@@ -402,6 +466,55 @@ tool. Broad categories:
   charges for withdrawing money within the first several years of the
   contract, conceptually similar to (but often steeper than) a CD's early
   withdrawal penalty.
+
+### 5.9 Employee Stock Purchase Plans (ESPP)
+
+A payroll-deduction plan letting employees buy their employer's stock,
+usually at a 5-15% discount off the market price. Many plans add a
+"lookback," pricing the purchase off the lower of the price at the start
+or the end of the offering period, which can make the effective discount
+considerably larger than the headline figure.
+
+Two attributes matter for tracking:
+
+- **Concentration risk.** The holding is the employer's own stock, so the
+  employee's salary and a chunk of their savings depend on the same
+  company. This is a real risk worth being able to see, which is an
+  argument for tracking ESPP shares under their own ticker rather than as
+  an undifferentiated lump.
+- **Cost basis is not the market price.** The discount is treated as
+  compensation income, and cost basis reporting on ESPP shares is a
+  well-known source of double-taxation errors on tax returns.
+
+### 5.10 Pensions (defined benefit plans)
+
+A traditional pension promises a monthly income in retirement, calculated
+from salary and years of service, rather than accumulating an account
+balance the participant owns.
+
+This makes it the odd one out in this section, and the hardest thing here
+to represent honestly as a net-worth line: there is no account balance.
+What exists is a future income stream. Assigning it a present value
+requires assumptions about discount rate, life expectancy, and whether
+benefits are inflation-adjusted, all of which the holder would have to
+supply and none of which the app can reasonably guess.
+
+Pensions are also usually backed by the Pension Benefit Guaranty
+Corporation (PBGC) rather than FDIC/NCUA/SIPC, up to statutory limits.
+
+### 5.11 Custodial investment accounts (UTMA/UGMA)
+
+Covered in section 7 as a *titling* structure, but they are worth noting
+here as an account type too, because a custodial brokerage account behaves
+like a taxable brokerage account with three differences: the assets
+legally belong to the minor, control transfers irrevocably to them at the
+age of majority, and investment income above a threshold is taxed under
+the "kiddie tax" rules at the parent's marginal rate.
+
+The irrevocability is the part with real consequences: money put into an
+UTMA cannot be taken back out for the parent's own use, and the balance
+counts heavily against the child in college financial aid formulas, far
+more so than a 529 owned by the parent.
 
 ## 6. Specialty and purpose-built accounts
 
@@ -654,61 +767,203 @@ closer to how a schema actually needs to represent them.
 | Value source | A dollar balance the user (or the bank) sets directly, versus a market-priced value that has to be fetched or estimated (brokerage, retirement, and technically a vehicle via depreciation, per `docs/asset-depreciation-proposal.md`). |
 | Cost profile | Whether the product is cheap/free to hold (checking, savings, most credit cards paid in full) versus structurally expensive (payday loans, title loans, most carried credit card balances), which matters if this app ever wants to flag or warn about a liability rather than just track its balance neutrally. |
 
+## 9b. How money is counted in each account type
+
+Sections 2 through 8 describe what each product *is*. This section
+describes what the app actually *does* with the number, which is the part
+that has to be right for a balance or a net-worth figure to mean anything.
+
+### 9b.1 The three ways a balance can move
+
+Every account type in this app moves its balance through exactly one of
+these mechanisms. Which one applies is decided by whether the account has
+a `linked_asset_id` or a `linked_liability_id`, never by comparing its type
+against a string (see `CLAUDE.md`'s data model section).
+
+| Mechanism | What moves the number | Types |
+|---|---|---|
+| **Spend-down** | A dated expense against the account reduces the linked asset (`applyAssetDelta`). | Checking, savings, money market, cash management, cash, prepaid/payroll cards, digital wallet, HSA/FSA/HRA, multi-currency |
+| **Borrow-up** | A dated expense against the account *increases* the linked liability (`applyLiabilityDelta`); a payment reduces it and reduces a funding asset at the same time. | Credit card, charge card, secured card, store card, medical card, HELOC, personal line of credit, overdraft line, BNPL |
+| **Mark-to-value** | No expense ever touches it. The balance changes when the user records a new value, or when a live price is found for a ticker held inside it. | Every retirement and investment type, CD, crypto, annuity, life insurance cash value, treasury direct, property, vehicle |
+
+A type being "mark-to-value" is exactly why it is excluded from the
+expense payment pickers (`NON_SPENDABLE_ACCOUNT_TYPES`): you cannot swipe
+a Roth IRA at a shop, so offering it as a payment method could only ever
+produce a wrong balance.
+
+### 9b.2 Net worth counts face value, deliberately
+
+Net worth is `assets - liabilities`, both at face value. Two consequences
+worth being explicit about, because both are judgement calls rather than
+oversights:
+
+- **No tax haircut on pre-tax balances.** A $50,000 traditional 401(k) is
+  worth meaningfully less than a $50,000 Roth 401(k), because every dollar
+  withdrawn from the traditional one owes income tax at a rate nobody can
+  know in advance. Applying an estimated haircut would require guessing
+  the user's future marginal rate, so the app records the account type
+  (which is why Traditional and Roth are separate types now) and reports
+  the real balance, rather than inventing a number.
+- **No present value for pensions.** A defined-benefit pension has no
+  balance to report at all (5.10). Whatever figure the user enters is
+  their own estimate, and the app treats it as an ordinary asset value.
+
+### 9b.3 Credit accounts: when interest is actually charged
+
+The rule the app encodes (`app/creditCycle.js`), and the single most
+commonly misunderstood one:
+
+> Interest is governed by the **grace period**, not by lateness. Paying the
+> **statement balance in full** by the due date means no interest at all.
+> Carrying any part of it accrues interest on the remainder, *even if every
+> payment was on time*. **Paying only the minimum does not hold off
+> interest** - it only avoids a late fee.
+
+The three end-of-cycle outcomes:
+
+| Paid by the due date | Interest | Late fee |
+|---|---|---|
+| Statement balance in full | No | No |
+| At least the minimum, less than full | **Yes**, on the remainder | No |
+| Less than the minimum | **Yes** | **Yes**, plus possible penalty APR |
+
+Interest is estimated as `remaining balance x (APR / 12)`. A real issuer
+computes it on an average daily balance across the cycle, so the app's
+figure is labelled an estimate everywhere it appears and is never applied
+automatically - the user confirms each charge, and it lands in the history
+as an undoable row.
+
+Two types are deliberately excluded from this math
+(`GRACE_PERIOD_LIABILITY_TYPES`): a HELOC, personal line of credit, or
+overdraft line accrues interest from the day it is drawn and has no grace
+period to lose, so telling the user "pay in full to avoid interest" would
+be false. Deferred-interest medical/store cards (3.9) are included, but
+note their retroactive-interest trap is *not* modelled - the app cannot
+see the promotional deadline.
+
+### 9b.4 Investment accounts: holdings roll up, and are counted once
+
+An investment account may contain per-ticker holdings (an `assets` row
+with `parent_asset_id` pointing at the account's own asset, see
+`supabase/40_asset_holdings.sql`).
+
+The counting rule:
+
+- A holding's value is **never** counted on its own.
+- The parent account's `value` is maintained as the sum of its holdings.
+- An account with no holdings recorded keeps its own blended value, which
+  is the only figure it has (a plain 401(k) reporting one number).
+
+So an account is worth what its positions are worth, counted exactly once.
+Both the net-worth total and the Assets card go through `topLevelAssets()`,
+and every portfolio total goes through `countableInvestmentAssets()`, which
+drops any parent whose holdings are being counted individually. Bypassing
+either would silently double every invested dollar.
+
+A holding's own value comes from `shares x latest found price` once
+`tools/price-agent.js` has found one, falling back to the manually entered
+value until then. Gain/loss compares that against `purchase_price`, which
+for an investment means **total cost basis**, not price per share (the same
+column means a vehicle's purchase price for depreciation, which is why the
+two are separate form fields that never both apply).
+
+### 9b.5 Special cases worth remembering
+
+| Type | Counting quirk |
+|---|---|
+| Credit-builder loan (4.7) | Genuinely a liability *and* a restricted asset at once; they nearly cancel. Recording only the loan overstates what is owed on net. |
+| Retirement plan loan (4.8) | The user borrowed from themselves. The liability is real, but the interest is paid back into their own account, so it is not a cost in the way other loan interest is. |
+| ESPP (5.9) | Cost basis is not the discounted purchase price, and getting it wrong is a common tax error. |
+| UTMA/UGMA (5.11) | Legally the child's money, irrevocably. Counting it in the parent's net worth overstates what the parent actually controls. |
+| FSA | Use-it-or-lose-it. A year-end balance may be about to vanish, unlike every other asset here. |
+| CD | Locked until maturity, so its value is real but not spendable, which is why it is excluded from payment pickers. |
+| Imported CSV expenses | Never re-applied to a balance. They are history that already happened, so the account's current balance already reflects them (`CLAUDE.md`, `app/csvImport.js`). |
+
 ## 10. Mapping to this app's data model
 
 ### 10.1 What exists today
 
-From `supabase/01_schema.sql` and `supabase/15_add_savings_type.sql`, the
-live check constraints are:
+*Rewritten 2026-08-12. This section previously described the pre-expansion
+schema (six account types) and had been stale since
+`17_expand_account_types.sql` landed.*
 
-- `accounts.type`: `checking`, `credit`, `debit`, `cash`, `other`,
-  `savings` (in practice, per `app/app.js`'s `ACCOUNT_TYPE_NAME`, the app
-  only ever writes `debit`, `savings`, `credit`, or `cash`; `checking`
-  and `other` exist at the database level but are not reachable through
-  the current UI).
-- `assets.type`: `cash`, `bank`, `investment`, `property`, `vehicle`,
-  `other`, `savings`.
-- `liabilities.type`: `credit_card`, `loan`, `mortgage`, `other`.
+The catalog below is no longer aspirational: `app/app.js`'s
+`ACCOUNT_TYPES` object is the single source of truth and now carries **55
+selectable types** across the same five categories this document uses, with
+`supabase/17_expand_account_types.sql` and
+`supabase/37_more_account_types.sql` holding the matching check
+constraints. `AUTO_ASSET_TYPE`, `AUTO_LIABILITY_TYPE`,
+`ACCOUNT_TYPE_NAME`, `LIABILITY_ACCOUNT_TYPES`, `DEBT_TYPE_LABEL` and
+`ASSET_TYPE_LABEL` are all derived from it, so adding a type means adding
+one entry there plus one migration, not touching every function that
+mentions account types.
 
-Matched against sections 2 through 6 above, that already covers:
+Sections 2 through 6 are therefore essentially fully implemented. The
+notable per-type decisions that do *not* follow category lines, each
+recorded as its own explicit set in `app.js`:
+
+- `BANK_VALIDATED_TYPES` - which types must match a real FDIC bank name.
+  Not per-category: BNPL sits under Credit accounts but Affirm and Klarna
+  are not banks, and no Retirement/Specialty institution is one.
+- `NON_SPENDABLE_ACCOUNT_TYPES` - which types are excluded from the "how
+  did you pay for this" pickers. Grounded in whether the real product has
+  a card or check access, so Specialty is a deliberate mix (HSA/FSA/ABLE
+  do; Coverdell/Treasury Direct/crypto do not).
+- `GRACE_PERIOD_LIABILITY_TYPES` - which liabilities the credit-cycle
+  interest math applies to (see 9b.3).
+- `INVESTMENT_ASSET_TYPES` - which assets appear on the Investments tab.
+- `LEGACY_ACCOUNT_TYPES` - `ira` and `retirement_employer`, the coarse
+  buckets that predate the Traditional/Roth and 401(k)/403(b)/457 splits.
+  Still valid in the database so existing rows keep a readable label, but
+  hidden from the pickers so nothing new is created against them.
+
+Two types from this document remain deliberately unimplemented: **business
+accounts** (out of scope per `CLAUDE.md`'s personal-finance framing) and
+**escrow accounts** (6.16 - a sub-ledger belonging to a mortgage servicer,
+not something an individual opens or pays from).
+
+Matched against sections 2 through 6 above, the coverage is now
+essentially complete. A representative sample:
 
 | Real-world type | Covered by |
 |---|---|
 | Checking account | `accounts.type = 'debit'` -> `assets.type = 'bank'` |
-| Savings account | `accounts.type = 'savings'` -> `assets.type = 'savings'` |
+| Savings / money market / cash management | `savings`, `money_market`, `cash_management` |
 | Cash on hand | `accounts.type = 'cash'` -> `assets.type = 'cash'` (auto-managed, singleton per user) |
-| Credit card | `accounts.type = 'credit'` -> `liabilities.type = 'credit_card'` |
-| Mortgage | `liabilities.type = 'mortgage'` (standalone only, no account link modeled) |
-| Generic loan | `liabilities.type = 'loan'` (standalone only) |
-| Brokerage / property / vehicle as a static value | `assets.type` already has `investment`, `property`, `vehicle` as manually-valued, standalone assets with no linked account |
+| Certificate of deposit | `cd`, with a maturity date (`23_asset_maturity_date.sql`) |
+| Credit card and its variants | `credit`, `charge_card`, `secured_credit_card`, `store_card`, `medical_credit_card` |
+| HELOC | `heloc`, with draw-vs-repayment phase derived from `draw_period_end` (`28_heloc_draw_period.sql`) |
+| Installment loans | `personal_loan`, `auto_loan`, `mortgage`, `home_equity_loan`, `student_loan`, `payday_loan`, `title_loan`, `credit_builder_loan`, `retirement_plan_loan` |
+| Employer retirement plans | `traditional_401k`, `roth_401k`, `plan_403b`, `plan_457b`, `solo_401k`, `tsp` |
+| IRAs | `traditional_ira`, `roth_ira`, `sep_ira`, `simple_ira`, `rollover_inherited_ira` |
+| Other investment | `brokerage`, `espp`, `pension`, `custodial_utma`, `plan_529`, `annuity`, `crypto` |
+| Health and care accounts | `hsa`, `fsa`, `hra`, `dependent_care_fsa` |
+| Other specialty | `coverdell_esa`, `able_account`, `prepaid_card`, `payroll_card`, `second_chance_checking`, `digital_wallet`, `treasury_direct`, `multi_currency`, `life_insurance_cash_value`, `trust_account` |
+| Property / vehicle | `assets.type` `property` / `vehicle`, the latter with depreciation (`24_vehicle_depreciation.sql`) |
 
-### 10.2 Gaps: real-world types with no current home
+### 10.2 What is still not modeled
 
-| Real-world type | Nearest existing fit | Gap |
-|---|---|---|
-| Money market deposit account | `assets.type = 'bank'` or `'savings'` could stand in loosely | No dedicated type; also no way to flag the informal 6-withdrawal soft limit, though that is arguably not worth modeling |
-| Certificate of deposit | Nothing | No maturity date field, no early-withdrawal-penalty concept, no auto-renew behavior |
-| HELOC | `liabilities.type = 'other'` | No distinction between the draw period (interest-only, revolving) and repayment period (amortizing); no linked-account concept for a HELOC the way `credit` accounts link to `credit_card` liabilities |
-| Home equity loan / auto loan / student loan / personal loan | `liabilities.type = 'loan'` or `'other'` | All installment loans currently collapse into one generic `loan` type with no distinction; no interest-rate-type (fixed/variable) field |
-| Overdraft line of credit | Nothing | No concept of a credit line attached to a checking account; today an app-level guard (`assetDeltaError`) explicitly blocks any account from going negative, which is the opposite behavior |
-| Retirement accounts (401(k), IRA) | `assets.type = 'investment'` could stand in | No distinction from a taxable brokerage account; no tax-treatment field; value still has to be entered manually (see `docs/asset-depreciation-proposal.md` for the same live-value problem already identified for vehicles) |
-| 529 plan | `assets.type = 'investment'` or `'other'` | No beneficiary concept |
-| HSA / FSA / HRA / Dependent Care FSA | Nothing | No concept of a healthcare- or dependent-care-earmarked balance, and the use-it-or-lose-it timing FSA/HRA can have has no analog anywhere in the schema |
-| BNPL plan | `liabilities.type = 'other'` could stand in | No concept of a short, fixed-installment plan tied to a single purchase rather than a standing balance |
-| Payday / title loan | `liabilities.type = 'loan'` or `'other'` | Same granularity gap as other installment loans (row above); also no way to flag an unusually high cost/rate if that is ever wanted |
-| TSP / Solo 401(k) / rollover / inherited IRA | `assets.type = 'investment'` could stand in | Same gap as the retirement accounts row above; these are all sub-varieties of the same underlying problem (no retirement-specific type, no tax-treatment field) |
-| Annuity / life insurance cash value | Nothing | No fit at all today; also the only two product types in this whole document not backed by FDIC, NCUA, or SIPC, only by state guaranty associations, which arguably deserves its own note if ever modeled |
-| Coverdell ESA / ABLE account | `assets.type = 'investment'` or `'other'` | Same gap as the 529 row above; no beneficiary concept |
-| Treasury Direct holdings (I bonds, T-bills, and similar) | `assets.type = 'investment'` could stand in | No dedicated type; unlike a brokerage holding, value is not really "market-priced" for something held to maturity, which does not cleanly fit `investment`'s existing framing |
-| Cryptocurrency exchange / wallet balance | `assets.type = 'investment'` or `'other'` | No dedicated type; also the most volatile, least-insured value source in this entire document, which is a meaningfully different risk profile from every existing asset type |
-| Multi-currency / foreign currency account | Nothing | The schema has no currency concept at all beyond a hardcoded `'USD'` default on `expenses.currency`; a real multi-currency account would need that rethought from the ground up, not just a new `type` value |
-| Charge card / secured credit card / store charge card | `accounts.type = 'credit'` -> `liabilities.type = 'credit_card'` | Not actually a gap: this app never tracks APR or revolving-vs-full-payoff behavior in the first place, only balance owed, so all three already behave identically to a normal credit card in the current model |
-| Payroll card | `accounts.type = 'cash'` or a `debit`-like account could stand in | Minor gap at most; functionally just a prepaid balance, which the app has no dedicated type for either, but also has little reason to distinguish from cash for a personal-finance use case |
-| Second-chance checking account | `accounts.type = 'debit'` -> `assets.type = 'bank'` | Not a gap; behaves identically to a normal checking account from a balance-tracking point of view |
-| Escrow account | Nothing | No concept of a third-party-held balance tied to another liability (a mortgage); today a mortgage's `liabilities` row has no relationship to anything escrow-like |
-| Business accounts | N/A | Explicitly out of scope per `CLAUDE.md`'s personal-finance framing |
+The original version of this section was a long table of missing types.
+Nearly all of them have since been built, so what remains is the shorter
+list of things deliberately left alone:
+
+| Concept | Why it is still absent |
+|---|---|
+| Multi-currency amounts | `multi_currency` exists as an account *type*, but the schema still has no real currency concept beyond a hardcoded `'USD'` default on `expenses.currency`. Handling this properly means rethinking every stored amount, not adding a type. |
+| Escrow accounts | A sub-ledger held by a mortgage servicer, not an account an individual opens or pays from (6.16). |
+| Business accounts | Out of scope per `CLAUDE.md`'s personal-finance framing. |
+| Deferred-interest deadlines | Medical/store card retroactive interest (3.9) is documented but not tracked - the app has no visibility of the promotional deadline. |
+| Overdraft lines as true negative balances | `overdraft_line` exists as a liability-linked type, but no account is ever allowed to go negative; that guard (`assetDeltaError`) is intentional and unchanged. |
+| Beneficiary tracking | 529, Coverdell, ABLE and UTMA accounts all have a beneficiary in real life; none is recorded, since nothing in the app would currently use it. |
+| Tax-treatment-aware net worth | Traditional vs Roth is now recorded as separate types, but net worth still counts both at face value. See 9b.2 for why. |
+
 
 ## 11. Suggested prioritization for future work
+
+> **Historical, as of 2026-08-12.** Everything this section proposes has
+> since been built (see 10.1). It is kept because the *reasoning* about
+> sequencing and structural cost is still a useful record of why the types
+> were added in the order they were, but do not read it as a to-do list.
 
 This section is a starting recommendation, not a decision. Any of it
 should be discussed and confirmed before being built, the same way the

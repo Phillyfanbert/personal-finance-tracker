@@ -12,6 +12,7 @@ import {
 import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
+import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget } from "./investments.js";
 import {
@@ -95,7 +96,7 @@ let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESH
 let investmentTargets = []; // per-bucket allocation targets (Investments tab)
 let assets = [];      // net-worth assets (Log page)
 let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (Log page)
-let accountActivity = []; // non-expense money movements (asset adjust, liability pay) - Recent Transactions
+let accountActivity = []; // non-expense money movements (asset adjust, liability pay) - Recent History
 let editing = null;   // expense row currently in the edit modal
 let editingSub = null; // subscription row currently in the sub form
 let userId = null;    // signed-in user's uuid
@@ -266,6 +267,8 @@ const ACCOUNT_TYPES = {
   overdraft_line:         { label: "Overdraft Line of Credit",    category: "Credit accounts",          kind: "liability", linkType: "overdraft_line" },
   bnpl:                   { label: "Buy Now, Pay Later",          category: "Credit accounts",          kind: "liability", linkType: "bnpl" },
 
+  medical_credit_card:    { label: "Medical / Deferred-Interest Card", category: "Credit accounts",     kind: "liability", linkType: "medical_credit_card" },
+
   personal_loan:          { label: "Personal Loan",               category: "Loans",                    kind: "liability", linkType: "personal_loan" },
   auto_loan:              { label: "Auto Loan",                   category: "Loans",                    kind: "liability", linkType: "auto_loan" },
   mortgage:               { label: "Mortgage",                    category: "Loans",                    kind: "liability", linkType: "mortgage" },
@@ -273,15 +276,38 @@ const ACCOUNT_TYPES = {
   student_loan:           { label: "Student Loan",                category: "Loans",                    kind: "liability", linkType: "student_loan" },
   payday_loan:            { label: "Payday Loan",                 category: "Loans",                    kind: "liability", linkType: "payday_loan" },
   title_loan:             { label: "Title Loan",                  category: "Loans",                    kind: "liability", linkType: "title_loan" },
+  credit_builder_loan:    { label: "Credit-Builder Loan",         category: "Loans",                    kind: "liability", linkType: "credit_builder_loan" },
+  retirement_plan_loan:   { label: "Retirement Plan Loan",        category: "Loans",                    kind: "liability", linkType: "retirement_plan_loan" },
 
-  retirement_employer:    { label: "401(k) / 403(b) / 457",       category: "Retirement & investment",  kind: "asset",     linkType: "retirement_employer" },
-  ira:                    { label: "IRA",                         category: "Retirement & investment",  kind: "asset",     linkType: "ira" },
+  // Traditional vs. Roth is the single most consequential split in this
+  // whole table and it is NOT cosmetic: a traditional balance is pre-tax
+  // (a future withdrawal owes income tax, so the number shown overstates
+  // what the money is actually worth) while a Roth balance is post-tax
+  // (qualified withdrawals owe nothing, so the number is what you keep).
+  // Both still count into net worth at face value here - see
+  // docs/bank-account-types-research.md for why that is the honest default
+  // rather than applying a guessed tax haircut.
+  traditional_401k:       { label: "401(k) (Traditional)",        category: "Retirement & investment",  kind: "asset",     linkType: "traditional_401k" },
+  roth_401k:              { label: "401(k) (Roth)",               category: "Retirement & investment",  kind: "asset",     linkType: "roth_401k" },
+  plan_403b:              { label: "403(b)",                      category: "Retirement & investment",  kind: "asset",     linkType: "plan_403b" },
+  plan_457b:              { label: "457(b)",                      category: "Retirement & investment",  kind: "asset",     linkType: "plan_457b" },
+  traditional_ira:        { label: "Traditional IRA",             category: "Retirement & investment",  kind: "asset",     linkType: "traditional_ira" },
+  roth_ira:               { label: "Roth IRA",                    category: "Retirement & investment",  kind: "asset",     linkType: "roth_ira" },
+  sep_ira:                { label: "SEP IRA",                     category: "Retirement & investment",  kind: "asset",     linkType: "sep_ira" },
+  simple_ira:             { label: "SIMPLE IRA",                  category: "Retirement & investment",  kind: "asset",     linkType: "simple_ira" },
   brokerage:              { label: "Brokerage",                   category: "Retirement & investment",  kind: "asset",     linkType: "brokerage" },
+  espp:                   { label: "Employee Stock Purchase Plan",category: "Retirement & investment",  kind: "asset",     linkType: "espp" },
+  pension:                { label: "Pension (Defined Benefit)",   category: "Retirement & investment",  kind: "asset",     linkType: "pension" },
+  custodial_utma:         { label: "UTMA / UGMA Custodial",       category: "Retirement & investment",  kind: "asset",     linkType: "custodial_utma" },
   plan_529:               { label: "529 Plan",                    category: "Retirement & investment",  kind: "asset",     linkType: "plan_529" },
   tsp:                    { label: "Thrift Savings Plan (TSP)",   category: "Retirement & investment",  kind: "asset",     linkType: "tsp" },
   solo_401k:              { label: "Solo 401(k)",                 category: "Retirement & investment",  kind: "asset",     linkType: "solo_401k" },
   rollover_inherited_ira: { label: "Rollover / Inherited IRA",    category: "Retirement & investment",  kind: "asset",     linkType: "rollover_inherited_ira" },
   annuity:                { label: "Annuity",                     category: "Retirement & investment",  kind: "asset",     linkType: "annuity" },
+  // Superseded by the split-out types above, kept so existing rows still
+  // resolve to a readable label - see LEGACY_ACCOUNT_TYPES.
+  retirement_employer:    { label: "401(k) / 403(b) / 457",       category: "Retirement & investment",  kind: "asset",     linkType: "retirement_employer" },
+  ira:                    { label: "IRA (unspecified)",           category: "Retirement & investment",  kind: "asset",     linkType: "ira" },
 
   hsa:                    { label: "HSA",                         category: "Specialty",                kind: "asset",     linkType: "hsa" },
   fsa:                    { label: "FSA",                         category: "Specialty",                kind: "asset",     linkType: "fsa" },
@@ -297,7 +323,18 @@ const ACCOUNT_TYPES = {
   crypto:                 { label: "Cryptocurrency",              category: "Specialty",                kind: "asset",     linkType: "crypto" },
   multi_currency:         { label: "Multi-Currency Account",      category: "Specialty",                kind: "asset",     linkType: "multi_currency" },
   life_insurance_cash_value: { label: "Life Insurance Cash Value",category: "Specialty",                kind: "asset",     linkType: "life_insurance_cash_value" },
+  trust_account:          { label: "Trust Account",               category: "Specialty",                kind: "asset",     linkType: "trust_account" },
 };
+// Types that predate a finer-grained split and are no longer offered when
+// creating something new, but must stay in ACCOUNT_TYPES so rows already
+// stored against them still render a real label instead of a raw enum
+// value. 'ira' and 'retirement_employer' were single buckets before
+// Traditional/Roth/SEP/SIMPLE and 401(k)/403(b)/457 were split out above -
+// the distinction is a genuine tax difference, not a naming preference, so
+// new accounts should always pick the specific one. Hidden from the
+// pickers only (populateAcctTypeSelect / populateAssetTypeSelect); every
+// other code path treats them normally.
+const LEGACY_ACCOUNT_TYPES = new Set(["ira", "retirement_employer"]);
 const ACCOUNT_CATEGORIES = ["Deposit accounts", "Credit accounts", "Loans", "Retirement & investment", "Specialty"];
 // Per-type, not per-category - "is this realistically an FDIC/NCUA bank or
 // credit union" doesn't follow category lines cleanly. Every Deposit
@@ -358,11 +395,20 @@ const LIABILITY_ACCOUNT_TYPES = new Set(Object.keys(AUTO_LIABILITY_TYPE));
 // of Deposit accounts (except CD, which is locked until maturity) and all
 // of Credit accounts remain spendable - a credit card, HELOC, or even
 // BNPL is still something you'd genuinely select at checkout.
+// A medical/deferred-interest card (CareCredit and friends) is deliberately
+// NOT here - it is a real card you hand over at a clinic or vet, so it
+// belongs in the payment-method pickers exactly like a store card does.
+// Every Retirement & investment type is excluded (you cannot swipe a Roth
+// IRA), as is a trust account - a trustee may well have checkbook access in
+// real life, but it is not this app's user's personal payment method.
 const NON_SPENDABLE_ACCOUNT_TYPES = new Set([
   "cd",
   "personal_loan", "auto_loan", "mortgage", "home_equity_loan", "student_loan", "payday_loan", "title_loan",
-  "retirement_employer", "ira", "brokerage", "plan_529", "tsp", "solo_401k", "rollover_inherited_ira", "annuity",
-  "coverdell_esa", "treasury_direct", "crypto", "life_insurance_cash_value",
+  "credit_builder_loan", "retirement_plan_loan",
+  "retirement_employer", "ira", "traditional_401k", "roth_401k", "plan_403b", "plan_457b",
+  "traditional_ira", "roth_ira", "sep_ira", "simple_ira", "espp", "pension", "custodial_utma",
+  "brokerage", "plan_529", "tsp", "solo_401k", "rollover_inherited_ira", "annuity",
+  "coverdell_esa", "treasury_direct", "crypto", "life_insurance_cash_value", "trust_account",
 ]);
 // Which asset types populate the Investments tab. Derived from
 // ACCOUNT_TYPES' own category grouping (every "Retirement & investment"
@@ -376,28 +422,108 @@ const INVESTMENT_ASSET_TYPES = new Set([
   ...Object.entries(ACCOUNT_TYPES).filter(([, cfg]) => cfg.category === "Retirement & investment").map(([type]) => type),
   "crypto",
 ]);
-// BANK_NAMES (bankNames.js) is ~3,750 real FDIC-insured banks plus a few
+// BANK_NAMES (bankNames.js) is ~3,570 real FDIC-insured banks plus a few
 // well-known credit unions/brands FDIC doesn't cover - not a hardcoded
-// seed list anymore. isKnownBank() is what actually enforces "type a real
-// bank" (saveAcctBtn below); the datalist (loadAccounts()) is just this
-// same source made pickable instead of typed blind.
+// seed list anymore. isKnownBank() is a soft gate (saveAcctBtn below): a
+// no-match asks for confirmation rather than blocking outright, since the
+// list is comprehensive but not exhaustive - see saveAcctBtn's override.
+// The datalist (rankBankMatches(), just below) is this same source made
+// pickable and ranked instead of typed blind.
 //
 // Matching is deliberately loose, not exact-equals: official FDIC names
 // are legal-entity names ("JPMorgan Chase Bank, National Association"),
 // not brand names ("Chase") - a strict match would reject the name
-// everyone actually uses. One direction only, though - "does a real
-// bank's name contain what was typed" (catches "Chase" inside the legal
-// name, and the full legal name typed verbatim, since a string contains
-// itself). The reverse ("does what was typed contain a real bank's
-// name") looked equally reasonable but isn't safe: FDIC's data includes
-// an institution literally named "BANK", so it matched *any* gibberish
-// that happened to contain the word "bank" - which is most made-up bank
-// names. Caught by testing actual gibberish input before shipping this,
-// not just the happy path.
+// everyone actually uses. Both sides are reduced to the same normalized
+// key first (bankKey), so the legal-entity noise that differs between what
+// FDIC stores and what a person types stops mattering at all.
+//
+// Matching runs in BOTH directions, which the pre-dedup version could not
+// safely do. Forward ("a real bank's name contains what was typed") catches
+// "Chase". Reverse ("what was typed contains a real bank's name") is what
+// keeps the deduplicated list from rejecting real input - BANK_NAMES now
+// holds one canonical spelling per bank, so a charter-specific name typed
+// verbatim ("Wells Fargo Bank South Central") only matches by finding the
+// canonical "Wells Fargo Bank" inside it. The reverse direction was unsafe
+// before purely because FDIC charters an institution literally named
+// "BANK", which matched any made-up name containing that word; those
+// generic-only entries are now dropped from the list outright, and the
+// reverse direction additionally ignores any key that is nothing but
+// generic banking words. Re-tested against real brands, full legal names,
+// small community banks, and constructed gibberish ("Made Up Savings
+// Bank", "Community Bank of Fakeville") before shipping - not just the
+// happy path, which is what caught the original one-direction bug too.
+const BANK_GENERIC_WORDS = new Set([
+  "bank", "banks", "savings", "trust", "national", "first", "state",
+  "community", "federal", "credit", "union", "financial", "of", "and",
+  "the", "company", "co",
+]);
+const bankKey = (s) =>
+  String(s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^the\b/, " ")
+    .replace(/\b(national association|n a|inc|incorporated|ssb|fsb|llc|ltd|co|company|corporation|corp)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+const bankGenericOnly = (key) => {
+  const tokens = key.split(" ").filter(Boolean);
+  return tokens.length > 0 && tokens.every((t) => BANK_GENERIC_WORDS.has(t));
+};
+// Word-boundary containment, not raw substring - so "American Bank" can't
+// match inside "Pan American Bankers" on a partial word.
+const containsWords = (haystack, needle) => ` ${haystack} `.includes(` ${needle} `);
+const BANK_KEYS = BANK_NAMES.map(bankKey);
+// Only keys distinctive enough to identify a bank on their own are allowed
+// to match in the reverse direction.
+const BANK_REVERSE_KEYS = BANK_KEYS.filter(
+  (k) => k.length >= 8 && k.split(" ").length >= 2 && !bankGenericOnly(k)
+);
+// All ~3,570 FDIC-insured banks plus every bank_name a real account of
+// this user's has ever used - kept as a plain array, not written to the
+// DOM, since dumping all of it into the datalist at once produced the
+// unusable wall of "Capital Bank" / "Capital Bank, National Association" /
+// "Capital City Bank" / ... seen live when typing "capital" (native
+// datalist shows every match, alphabetically, with no ranking or cap).
+// Updated in loadAccounts(); read by rankBankMatches() below.
+let knownBankNames = BANK_NAMES;
+
+// Ranked, capped suggestions for the acctBank datalist - recomputed on
+// every keystroke (see acctBank.oninput) rather than shown as one static
+// list. A match whose normalized key STARTS WITH what was typed ("Chase"
+// typing "chase") ranks above one where a later WORD starts with it
+// ("JPMorgan Chase Bank" typing "chase"), which in turn ranks above a
+// mid-word substring match; ties break toward the shorter, more
+// brand-like spelling. Capped at 25 so the dropdown stays scannable
+// instead of scrolling for a screen and a half.
+function rankBankMatches(query, limit = 25) {
+  const typed = bankKey(query);
+  if (typed.length < 2) return [];
+  const scored = [];
+  for (const name of knownBankNames) {
+    const key = bankKey(name);
+    if (!key.includes(typed)) continue;
+    const words = key.split(" ");
+    const score = key.startsWith(typed) ? 0 : words.some((w) => w.startsWith(typed)) ? 1 : 2;
+    scored.push({ name, score });
+  }
+  scored.sort((a, b) => a.score - b.score || a.name.length - b.name.length || a.name.localeCompare(b.name));
+  return scored.slice(0, limit).map((s) => s.name);
+}
+$("acctBank").oninput = () => {
+  const matches = rankBankMatches($("acctBank").value);
+  $("bankSuggestions").innerHTML = matches.map((b) => `<option value="${esc(b)}"></option>`).join("");
+};
+
 function isKnownBank(name) {
-  const typed = name.trim().toLowerCase();
+  const typed = bankKey(name);
   if (typed.length < 3) return false; // too short to mean anything either way
-  return BANK_NAMES.some((b) => b.toLowerCase().includes(typed));
+  const tokens = typed.split(" ").filter(Boolean);
+  // A lone generic word ("bank") or a very short single token is not a name.
+  if (tokens.length === 1 && (bankGenericOnly(typed) || typed.length < 5)) return false;
+  if (BANK_KEYS.some((k) => containsWords(k, typed))) return true;
+  return BANK_REVERSE_KEYS.some((k) => containsWords(typed, k));
 }
 
 // With ~40 types across 5 categories, a 3-button toggle (the original
@@ -412,7 +538,7 @@ function populateAcctTypeSelect() {
   const sel = $("acctType");
   sel.innerHTML = ACCOUNT_CATEGORIES.map((cat) => {
     const opts = Object.entries(ACCOUNT_TYPES)
-      .filter(([, cfg]) => cfg.category === cat)
+      .filter(([type, cfg]) => cfg.category === cat && !LEGACY_ACCOUNT_TYPES.has(type))
       .map(([type, cfg]) => `<option value="${type}">${cfg.label}</option>`)
       .join("");
     return `<optgroup label="${cat}">${opts}</optgroup>`;
@@ -432,7 +558,27 @@ function setAcctType(type) {
     : "Institution name (e.g. Fidelity, Affirm, Coinbase)";
 }
 $("acctType").onchange = () => setAcctType($("acctType").value);
+
+// The Accounts card has one "add" panel and three "edit an existing account"
+// panels (adjust an asset balance, adjust what's owed, edit liability
+// details), all of which render inline in the same card. Letting two sit
+// open at once was genuinely confusing: tapping an account circle while the
+// add form was open dropped its edit panel *below* the add form, so the
+// screen showed a half-filled "Adding: Checking" form directly above an
+// unrelated account's balance editor, with no indication which one a tap on
+// Save would act on. Opening any one of them now closes the others, so the
+// card only ever shows a single active form.
+function closeAcctForm() {
+  $("acctForm").classList.add("hidden");
+}
+function closeAccountEditPanels() {
+  closeAssetAdjust();
+  closeDebtBalanceForm();
+  closeDebtDetailsForm();
+}
 $("addAcctBtn").onclick = () => {
+  const opening = $("acctForm").classList.contains("hidden");
+  if (opening) closeAccountEditPanels();
   $("acctForm").classList.toggle("hidden");
   populateAcctTypeSelect();
   setAcctType("debit"); // every fresh open starts from the same visible state
@@ -451,8 +597,19 @@ $("saveAcctBtn").onclick = async () => {
   const name = ACCOUNT_TYPE_NAME[type];
   const bankLabel = BANK_VALIDATED_TYPES.has(type) ? "Bank" : "Institution";
   if (!bank_name) return toast(`${bankLabel} name required`);
+  // isKnownBank() checks against ~3,570 real FDIC-insured banks plus a
+  // handful of well-known non-FDIC brands - comprehensive, but genuinely
+  // not exhaustive (a small credit union, a newer neobank, a foreign
+  // bank). A no-match is no longer a hard stop: it's a confirmation, the
+  // same "are you sure" bar as any other deliberate override in this app,
+  // rather than a wall with no way through for someone who typed a real
+  // name we just don't carry.
   if (BANK_VALIDATED_TYPES.has(type) && !isKnownBank(bank_name)) {
-    return toast("Enter a real bank name, or pick one from the list.");
+    const ok = await confirmModal(
+      `"${bank_name}" isn't in our list of FDIC-insured banks and well-known credit unions. If this is a real bank or credit union we're just missing, you can add it as typed.`,
+      { title: "Bank not recognized", confirmLabel: "Add anyway" }
+    );
+    if (!ok) return;
   }
 
   let linked_asset_id = null;
@@ -474,12 +631,22 @@ $("saveAcctBtn").onclick = async () => {
     autoMsg = "Account added - linked to a new $0 asset, edit its value below";
   }
 
-  const { error } = await sb.from("accounts").insert({ name, bank_name, type, linked_asset_id, linked_liability_id });
+  const { data: newAccount, error } = await sb.from("accounts")
+    .insert({ name, bank_name, type, linked_asset_id, linked_liability_id })
+    .select().single();
   if (error) return toast(error.message);
+  // Opening an account is the one history entry that moves no money - it's
+  // there so the log can explain where an account came from, rather than a
+  // balance appearing to materialise from nowhere. Amount 0, no undo (see
+  // NON_UNDOABLE_ACTIVITY_KINDS).
+  await logActivity(
+    "account_created", `Opened ${bank_name} ${name}`, 0, undefined, newAccount.id
+  );
   $("acctBank").value = ""; $("acctForm").classList.add("hidden");
   // loadAccounts first - loadDebts reads `accounts` to know which
   // liabilities are now account-linked (hides their delete button).
   await loadAccounts(); await loadAssets(); await loadDebts();
+  renderRecentTransactions(); // surface the account_created row straight away
   toast(autoMsg || "Account added");
 };
 
@@ -493,14 +660,15 @@ function renderAccountsList() {
   // Grouped by bank so a Checking and a Savings at the same bank sit next
   // to each other, rather than wherever creation order happened to put
   // them. Cash has no bank_name, so it's pinned first explicitly instead
-  // of relying on null/empty-string sorting first. Archived accounts sort
-  // last (active-first), same idea as subscriptions' is_active ordering.
-  const sorted = [...accounts].sort((a, b) => {
+  // of relying on null/empty-string sorting first. Archived accounts are
+  // excluded entirely (not sorted last and dimmed, as they used to be) -
+  // see the archived modal below.
+  const sorted = accounts.filter((a) => !a.archived_at).sort((a, b) => {
     if (a.type === "cash") return -1;
     if (b.type === "cash") return 1;
-    return (!!a.archived_at - !!b.archived_at) ||
-      (a.bank_name || "").localeCompare(b.bank_name || "") || a.name.localeCompare(b.name);
+    return (a.bank_name || "").localeCompare(b.bank_name || "") || a.name.localeCompare(b.name);
   });
+  renderArchivedAccounts();
   $("acctList").innerHTML = sorted.length
     ? sorted.map((a, i) => {
         // Bank/cash-type accounts link to an asset (tap opens the asset-adjust
@@ -531,33 +699,32 @@ function renderAccountsList() {
         // on one element isn't valid HTML, and the browser silently drops
         // the second one, so a clickable *and* archived account would
         // otherwise never actually render dimmed.
-        const styleParts = [clickAttr ? "cursor:pointer" : "", a.archived_at ? "opacity:.5" : ""].filter(Boolean);
-        const styleAttr = styleParts.length ? ` style="${styleParts.join(";")}"` : "";
+        const styleAttr = clickAttr ? ` style="cursor:pointer"` : "";
         return `
       <div class="acct-circle-item" ${clickAttr}${styleAttr}>
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : esc((bankLabel.trim()[0] || "?").toUpperCase())}</div>
         ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
         <div class="name">${esc(bankLabel)}</div>
-        <div class="type">${a.name}${a.archived_at ? " (archived)" : ""}</div>
+        <div class="type">${a.name}</div>
         ${balance != null ? `<div class="balance">${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}</div>` : ""}
-        ${a.type === "cash" ? "" : `<div class="muted" data-archive-acct="${a.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">${a.archived_at ? "Unarchive" : "Archive"}</div>`}
+        ${a.type === "cash" ? "" : `<div class="muted" data-archive-acct="${a.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Archive</div>`}
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
-  // Archive/unarchive - a reversible toggle, unlike delete below. Leaves
-  // the linked asset/liability completely untouched (see
-  // 22_account_archive.sql) - archiving never changes net worth.
+  // Archive - reversible, unlike delete below. Leaves the linked asset/
+  // liability completely untouched (see 22_account_archive.sql), so
+  // archiving never changes net worth. Only one direction here now: this
+  // list holds active accounts only, so unarchiving lives in the archived
+  // modal instead (renderArchivedAccounts).
   document.querySelectorAll("[data-archive-acct]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
-      const acct = accounts.find((a) => a.id === el.dataset.archiveAcct);
-      const archiving = !acct.archived_at;
       const { error } = await sb.from("accounts")
-        .update({ archived_at: archiving ? new Date().toISOString() : null })
+        .update({ archived_at: new Date().toISOString() })
         .eq("id", el.dataset.archiveAcct);
       if (error) return toast(error.message);
       await loadAccounts();
-      toast(archiving ? "Account archived" : "Account unarchived");
+      toast("Account archived");
     };
   });
   // delete handlers - expenses keep their history (account_id -> null on delete, per schema)
@@ -592,6 +759,49 @@ function renderAccountsList() {
   });
 }
 
+// Archived accounts live only here, behind the Accounts card's "View
+// archived" link - keeping them in the main circle list crowded out the
+// accounts actually in use, since a closed account is never deleted. Listed
+// as plain rows rather than circles: this is a recovery screen, not
+// something to browse, and the only actions are unarchiving or deleting.
+function renderArchivedAccounts() {
+  const archived = accounts.filter((a) => a.archived_at);
+  const toggle = $("archivedAcctToggle");
+  toggle.classList.toggle("hidden", archived.length === 0);
+  toggle.textContent = `View archived (${archived.length})`;
+  if (!archived.length) {
+    $("archivedAcctModal").classList.add("hidden"); // last one unarchived while open
+    return;
+  }
+  $("archivedAcctList").innerHTML = archived
+    .sort((a, b) => (a.bank_name || "").localeCompare(b.bank_name || "") || a.name.localeCompare(b.name))
+    .map((a) => {
+      const balance = a.linked_asset_id
+        ? assets.find((x) => x.id === a.linked_asset_id)?.value
+        : a.linked_liability_id
+        ? debts.find((x) => x.id === a.linked_liability_id)?.balance
+        : null;
+      return `
+      <div class="exp" style="cursor:default">
+        <div>
+          <div>${esc(a.bank_name || a.name)}</div>
+          <div class="meta">${esc(a.name)}${balance != null ? ` · ${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}` : ""}</div>
+        </div>
+        <span class="amt"><button class="secondary" data-unarchive-acct="${a.id}" style="width:auto;padding:4px 10px;font-size:12px">Unarchive</button></span>
+      </div>`;
+    }).join("");
+  document.querySelectorAll("[data-unarchive-acct]").forEach((el) => {
+    el.onclick = async () => {
+      const { error } = await sb.from("accounts").update({ archived_at: null }).eq("id", el.dataset.unarchiveAcct);
+      if (error) return toast(error.message);
+      await loadAccounts();
+      toast("Account unarchived");
+    };
+  });
+}
+$("archivedAcctToggle").onclick = () => $("archivedAcctModal").classList.remove("hidden");
+$("archivedAcctClose").onclick = () => $("archivedAcctModal").classList.add("hidden");
+
 async function loadAccounts() {
   const { data } = await sb.from("accounts").select("*").order("created_at");
   accounts = data || [];
@@ -608,13 +818,17 @@ async function loadAccounts() {
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
-  const bankNames = [...new Set([...BANK_NAMES, ...accounts.map((a) => a.bank_name).filter(Boolean)])].sort();
-  $("bankSuggestions").innerHTML = bankNames.map((b) => `<option value="${esc(b)}"></option>`).join("");
+  // A previously-typed bank_name (including one added via the "not
+  // recognized, add anyway" override in saveAcctBtn) becomes just as
+  // suggestable as a seeded FDIC name next time - rankBankMatches reads
+  // this, the datalist itself is populated per-keystroke, not here.
+  knownBankNames = [...new Set([...BANK_NAMES, ...accounts.map((a) => a.bank_name).filter(Boolean)])];
+  $("bankSuggestions").innerHTML = "";
   populateTxnTypeFilter();
   populateTxnAccountFilter();
 }
 
-// Shared by all four Recent Transactions filters below - rebuilds a
+// Shared by all four Recent History filters below - rebuilds a
 // <select>'s options and restores whatever was selected before, if it's
 // still a valid choice, rather than silently resetting the filter back to
 // "All ..." every time the underlying data reloads (e.g. after adding an
@@ -675,7 +889,8 @@ function populateAssetTypeSelect() {
   sel.dataset.populated = "1";
   for (const cat of STANDALONE_ONLY_ASSET_CATEGORIES) {
     const opts = Object.entries(ACCOUNT_TYPES)
-      .filter(([type, cfg]) => cfg.category === cat && cfg.kind === "asset" && !ACCOUNT_ONLY_SPECIALTY_TYPES.has(type))
+      .filter(([type, cfg]) => cfg.category === cat && cfg.kind === "asset" &&
+        !ACCOUNT_ONLY_SPECIALTY_TYPES.has(type) && !LEGACY_ACCOUNT_TYPES.has(type))
       .map(([type, cfg]) => `<option value="${cfg.linkType}">${cfg.label}</option>`)
       .join("");
     sel.insertAdjacentHTML("beforeend", `<optgroup label="${cat}">${opts}</optgroup>`);
@@ -802,6 +1017,33 @@ function staleAssets(monthsThreshold = 6, today = new Date()) {
     .sort((a, b) => b.monthsSince - a.monthsSince);
 }
 
+// Assets that stand on their own, i.e. everything except per-ticker holdings
+// nested inside an investment account (40_asset_holdings.sql). A holding's
+// value belongs to its parent account and is counted there, so anywhere that
+// totals or lists "your assets" must go through this rather than the raw
+// `assets` array - net worth, the Assets card, and the snapshot writer all
+// do. The Investments tab is the deliberate exception: it wants the
+// individual positions, which is the entire point of the tab.
+function topLevelAssets() {
+  return assets.filter((a) => !a.parent_asset_id);
+}
+// Holdings roll up: an investment account is worth the sum of the positions
+// inside it. Written back to the parent's own `value` rather than computed
+// on the fly so that every existing reader (the account circle's balance
+// line, net worth, the trend snapshots, the Assets card) keeps working off
+// the same single column it always has, with no idea holdings exist.
+async function syncParentAssetValue(parentAssetId) {
+  if (!parentAssetId) return;
+  const holdings = assets.filter((a) => a.parent_asset_id === parentAssetId);
+  if (!holdings.length) return; // last holding removed - leave the manual value alone
+  const priced = investmentHoldings(holdings, assetPriceFindings);
+  const total = holdings.reduce((sum, h) => {
+    const live = priced.find((p) => p.asset.id === h.id);
+    return sum + (live ? live.currentValue : Number(h.value || 0));
+  }, 0);
+  await sb.from("assets").update({ value: Math.round(total * 100) / 100 }).eq("id", parentAssetId);
+}
+
 async function loadAssets() {
   const { data } = await sb.from("assets").select("*").order("created_at");
   assets = data || [];
@@ -819,8 +1061,9 @@ async function loadAssets() {
   // amount is the live depreciation estimate for a vehicle with full
   // purchase info (effectiveAssetValue, depreciation.js), not the stored
   // value - every other asset type is unaffected.
-  $("assetsList").innerHTML = assets.length
-    ? assets.map((a) => `
+  const listedAssets = topLevelAssets(); // holdings show on the Investments tab, not here
+  $("assetsList").innerHTML = listedAssets.length
+    ? listedAssets.map((a) => `
       <div class="exp" ${linkedAssetIds.has(a.id) ? "" : `data-edit-asset="${a.id}" style="cursor:pointer"`}>
         <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}</div>`}${esc(a.name)}</div>
         <span class="amt">${fmt(effectiveAssetValue(a))}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
@@ -995,7 +1238,7 @@ async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
 }
 
 // ---- ACCOUNT ACTIVITY (non-expense money movements) ---------------------
-// Expenses already show up in Recent Transactions since they're rows in
+// Expenses already show up in Recent History since they're rows in
 // `expenses`. Everything else that moves money around - a manual asset
 // balance adjustment, paying down a liability - has no row anywhere, so it
 // never appeared there. This is a separate, append-only log just for that,
@@ -1009,7 +1252,17 @@ async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
 // impossible to undo correctly. liability_payment's amount is always
 // positive - a payment only ever moves money one direction (out of the
 // asset, off the liability), so there's no sign to lose there.
-const ACTIVITY_LABEL = { asset_adjust: "Balance update", liability_payment: "Debt payment" };
+const ACTIVITY_LABEL = {
+  asset_adjust: "Balance update",
+  liability_payment: "Debt payment",
+  owed_adjust: "Owed correction",
+  account_created: "Account opened",
+};
+// The one activity kind that moves no money and so has nothing to reverse -
+// "undoing" it would mean deleting the account, which is what the Accounts
+// card's own delete button is for. renderExpenseList checks this to decide
+// whether a row gets an undo affordance at all.
+const NON_UNDOABLE_ACTIVITY_KINDS = new Set(["account_created"]);
 
 async function loadAccountActivity() {
   const since = lastMonths(12)[0] + "-01";
@@ -1020,7 +1273,7 @@ async function loadAccountActivity() {
 }
 
 // accountId is the account whose own balance changed (required, so this
-// always shows up when filtering Recent Transactions by that account -
+// always shows up when filtering Recent History by that account -
 // omitting it was a real bug caught live: adjusting Cash's balance didn't
 // show up when filtering by the Cash account, since nothing recorded
 // which account it was). relatedAccountId is only for a liability_payment
@@ -1031,7 +1284,11 @@ async function loadAccountActivity() {
 // account, so relatedAccountId is null for it) well enough to reverse it.
 async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null) {
   const rounded = Math.round(Number(amount) * 100) / 100;
-  if (!rounded) return; // no actual change (e.g. "set" to the same value) - nothing to log
+  // A zero amount normally means nothing actually changed (a "set" to the
+  // same value), so there is nothing worth a history row. account_created is
+  // the deliberate exception - it is an audit breadcrumb, not a money
+  // movement, so its amount is always 0 and it must still be recorded.
+  if (!rounded && kind !== "account_created") return;
   const { error } = await sb.from("account_activity").insert({
     kind, description, amount: rounded, occurred_at: occurred_at || new Date().toISOString().slice(0, 10),
     account_id: accountId, related_account_id: relatedAccountId, liability_id: liabilityId,
@@ -1077,6 +1334,7 @@ function openAssetAdjust(accountId) {
     adjustingAccountId = null;
     return;
   }
+  closeAcctForm(); // never leave the add-account panel stacked behind this
   adjustingAssetId = asset.id;
   adjustingAccountId = accountId;
   $("adjustAssetLabel").textContent = asset.name;
@@ -1190,6 +1448,19 @@ for (const cfg of Object.values(ACCOUNT_TYPES)) {
 }
 DEBT_TYPE_LABEL.credit_card = "Credit"; // shorter than ACCOUNT_TYPES' "Credit Card" - fits the existing card layout better
 
+// Liability types with a real grace period - the ones where paying the
+// statement balance in full by the due date means no interest at all, which
+// is what creditCycle.js's math assumes. A HELOC, personal line of credit or
+// overdraft line is deliberately excluded: those accrue interest from the day
+// they are drawn, with no grace period to lose, so showing a "pay in full to
+// avoid interest" status against them would state something untrue. BNPL is
+// excluded for the same reason from the other direction - a typical pay-in-4
+// plan has its own fixed instalment schedule rather than a revolving cycle.
+// Per-type, not per-category, same rule as BANK_VALIDATED_TYPES.
+const GRACE_PERIOD_LIABILITY_TYPES = new Set([
+  "credit_card", "charge_card", "secured_credit_card", "store_card", "medical_credit_card",
+]);
+
 // The phase is always derived from today vs draw_period_end, never stored
 // as its own enum - see 28_heloc_draw_period.sql. null (not a HELOC, or a
 // HELOC with no draw_period_end set yet) means "don't show anything."
@@ -1227,6 +1498,32 @@ async function loadDebts() {
     if (p.months <= 0) return "";
     return `<div class="meta">Payoff in ${p.months}mo (${p.payoffDate}) · ${fmt(p.totalInterest)} interest</div>`;
   };
+  // The plain-language version of creditCycle.js's three end-of-cycle
+  // outcomes. Deliberately explicit that paying the minimum does not stop
+  // interest - that misunderstanding is the whole reason this exists, so the
+  // wording says so outright rather than just showing a number.
+  const cycleLine = (d) => {
+    if (!GRACE_PERIOD_LIABILITY_TYPES.has(d.type)) return "";
+    const s = cycleStatus(d, accountActivity);
+    if (s.state === "no_cycle") return "";
+    if (s.state === "no_statement") {
+      return `<div class="meta">Statement due ${s.dueDate} - add a statement balance in Edit details to track interest</div>`;
+    }
+    const interest = s.interestEstimate != null
+      ? ` Interest so far about ${fmt(s.interestEstimate)}/mo at ${d.interest_rate}% APR.` : "";
+    const logBtn = s.interestEstimate
+      ? `<span class="muted" data-log-interest="${d.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-left:6px">Log interest charge</span>` : "";
+    if (s.state === "paid_in_full") {
+      return `<div class="meta" style="color:var(--ok)">Statement paid in full - no interest this cycle</div>`;
+    }
+    if (s.state === "due_soon") {
+      return `<div class="meta">${fmt(s.remaining)} of the ${fmt(s.statementBalance)} statement still unpaid, due ${s.dueDate} (${s.daysUntilDue}d). Pay it all to avoid interest.</div>`;
+    }
+    if (s.state === "carrying_balance") {
+      return `<div class="meta" style="color:var(--err)">Carrying ${fmt(s.remaining)} past the ${s.dueDate} due date - interest applies even though the minimum was paid.${interest}${logBtn}</div>`;
+    }
+    return `<div class="meta" style="color:var(--err)">Under the ${fmt(s.minimum)} minimum by the ${s.dueDate} due date - interest applies and a late fee is likely.${interest}${logBtn}</div>`;
+  };
   const rowHtml = (d) => {
     const heloc = helocPhaseInfo(d);
     return `
@@ -1236,6 +1533,7 @@ async function loadDebts() {
         ${d.due_date ? `<div class="meta">due ${d.due_date}</div>` : ""}
         ${heloc ? `<div class="meta">${heloc.label}</div>` : ""}
         ${heloc?.phase === "draw" ? "" : payoffLine(d)}
+        ${cycleLine(d)}
         <div class="muted" data-edit-debt="${d.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Edit details</div>
       </div>
       <span class="amt">
@@ -1272,6 +1570,38 @@ async function loadDebts() {
   document.querySelectorAll("[data-edit-debt]").forEach((el) => {
     el.onclick = (ev) => { ev.stopPropagation(); openDebtDetailsForm(debts.find((d) => d.id === el.dataset.editDebt)); };
   });
+  // Never automatic. An interest charge is real money added to what is owed,
+  // so it goes through the same confirm-then-log path a person would use for
+  // any other charge, lands in the history as an undoable row, and shows the
+  // exact figure before it is applied. Auto-accruing it on a timer was
+  // considered and rejected: nothing here runs on a schedule (static PWA, no
+  // server), so a "monthly" job would actually fire whenever the app happened
+  // to be opened, silently double-charging or skipping months.
+  document.querySelectorAll("[data-log-interest]").forEach((el) => {
+    el.onclick = async (ev) => {
+      ev.stopPropagation();
+      const debt = debts.find((d) => d.id === el.dataset.logInterest);
+      if (!debt) return;
+      const s = cycleStatus(debt, accountActivity);
+      if (!s.interestEstimate) return toast("No interest to log for this cycle");
+      const ok = await confirmModal(
+        `Adds ${fmt(s.interestEstimate)} of interest to ${debt.name}, based on ${fmt(s.remaining)} unpaid at ${debt.interest_rate}% APR. This is an estimate - a real issuer uses your average daily balance, so check your statement for the exact figure.`,
+        { title: "Log this interest charge?", confirmLabel: "Add charge" }
+      );
+      if (!ok) return;
+      const newBalance = Math.round((Number(debt.balance) + s.interestEstimate) * 100) / 100;
+      const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
+      if (error) return toast(error.message);
+      const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
+      await logActivity(
+        "owed_adjust", `Interest charge on ${debt.name} (${debt.interest_rate}% APR)`,
+        s.interestEstimate, undefined, debtAccountId, null, debt.id
+      );
+      await loadDebts();
+      renderRecentTransactions();
+      toast("Interest charge logged");
+    };
+  });
   renderNetWorth();
   renderAccountsList(); // a changed liability balance may be a linked account's balance line
 }
@@ -1285,10 +1615,23 @@ async function loadDebts() {
 let editingDebtDetails = null;
 function openDebtDetailsForm(debt) {
   if (!debt) return;
+  closeAcctForm(); // never leave the add-account panel stacked behind this
   editingDebtDetails = debt;
   $("debtDetailsRate").value = debt.interest_rate ?? "";
   $("debtDetailsMinPay").value = debt.minimum_payment ?? "";
   $("debtDetailsDue").value = debt.due_date ?? "";
+  const hasCycle = GRACE_PERIOD_LIABILITY_TYPES.has(debt.type);
+  $("debtDetailsCycleSection").classList.toggle("hidden", !hasCycle);
+  if (hasCycle) {
+    $("debtDetailsStatementDay").value = debt.statement_day ?? "";
+    $("debtDetailsDueDay").value = debt.due_day ?? "";
+    $("debtDetailsStatementBalance").value = debt.last_statement_balance ?? "";
+    $("debtDetailsStatementDate").value = debt.last_statement_date ?? "";
+    const dates = cycleDates(debt.statement_day, debt.due_day);
+    $("debtDetailsCycleInfo").textContent = dates
+      ? `Current cycle closed ${dates.statementDate}, payment due ${dates.dueDate}. Paying the statement balance in full by the due date avoids interest entirely; paying only the minimum does not.`
+      : "Set both days to track whether this card is about to be charged interest.";
+  }
   const isHeloc = debt.type === "heloc";
   $("debtDetailsDrawSection").classList.toggle("hidden", !isHeloc);
   if (isHeloc) {
@@ -1314,6 +1657,23 @@ $("debtDetailsSaveBtn").onclick = async () => {
   if (editingDebtDetails.type === "heloc") {
     patch.draw_period_end = $("debtDetailsDrawEnd").value || null;
   }
+  if (GRACE_PERIOD_LIABILITY_TYPES.has(editingDebtDetails.type)) {
+    const day = (id) => ($(id).value !== "" ? parseInt($(id).value, 10) : null);
+    const statementDay = day("debtDetailsStatementDay");
+    const dueDay = day("debtDetailsDueDay");
+    for (const [label, v] of [["Statement closes", statementDay], ["Payment due", dueDay]]) {
+      if (v !== null && (!Number.isInteger(v) || v < 1 || v > 31)) return toast(`${label} must be a day from 1 to 31`);
+    }
+    const stmtBalance = $("debtDetailsStatementBalance").value !== ""
+      ? parseFloat($("debtDetailsStatementBalance").value) : null;
+    if (stmtBalance !== null && (!Number.isFinite(stmtBalance) || stmtBalance < 0)) {
+      return toast("Statement balance can't be negative");
+    }
+    patch.statement_day = statementDay;
+    patch.due_day = dueDay;
+    patch.last_statement_balance = stmtBalance;
+    patch.last_statement_date = $("debtDetailsStatementDate").value || null;
+  }
   const { error } = await sb.from("liabilities").update(patch).eq("id", editingDebtDetails.id);
   if (error) return toast(error.message);
   closeDebtDetailsForm();
@@ -1323,13 +1683,25 @@ $("debtDetailsSaveBtn").onclick = async () => {
 
 // ---- ADJUST A LIABILITY'S BALANCE (owed vs. paying it down) -------------
 // "Paying balance" (transfer: asset down, liability down, never a new
-// expense) is always available. "Owed" (direct set + add-a-charge) only
-// shows for a liability with NO linked credit account - one linked to a
-// credit account skips the tabs entirely and opens straight to Paying,
-// since its owed amount can now only move through an actual credit
-// expense (quick-add/edit, account type credit - applyLiabilityDelta),
-// never a typed number. A standalone Loan/Mortgage/Other liability has no
-// purchase trail to reconcile against, so it keeps manual Owed editing.
+// expense) and "Owed" (direct set + add-a-charge) are both available for
+// every liability, account-linked or standalone.
+//
+// This reverses an earlier deliberate rule, at the user's explicit request.
+// Previously an account-linked liability (a credit card, a HELOC) could only
+// move through real dated expenses, on the reasoning that its balance should
+// always be reconstructable from its purchase trail. In practice the trail
+// drifts from reality - a charge logged late, a refund, a fee or an interest
+// charge the app never saw - and there was no way to reconcile against the
+// actual statement short of inventing fake expenses, which corrupts the
+// history far worse than a typed correction does.
+//
+// What keeps the reversal safe is that every manual correction is now
+// written to account_activity as an 'owed_adjust' row (see
+// 39_account_activity_kinds.sql): it shows up in the Log page's history, it
+// says who moved the number and by how much, and it is undoable. The old
+// rule's real goal was "an owed balance should never change without a
+// traceable reason" - a logged adjustment satisfies that, an untracked
+// typed number would not.
 let activeDebtId = null;
 
 function currentDebtTab() {
@@ -1345,8 +1717,7 @@ function setDebtTab(tab) {
 
 function openDebtBalanceForm(debtId, tab) {
   const modal = $("debtBalanceForm");
-  const isCreditLinked = accounts.some((a) => a.linked_liability_id === debtId);
-  const effectiveTab = isCreditLinked ? "paying" : tab;
+  const effectiveTab = tab;
   // Tapping the same entry point again (same debt, same tab already showing)
   // while the modal is open closes it; anything else switches to it instead.
   if (activeDebtId === debtId && effectiveTab === currentDebtTab() && !modal.classList.contains("hidden")) {
@@ -1356,10 +1727,11 @@ function openDebtBalanceForm(debtId, tab) {
   }
   const debt = debts.find((d) => d.id === debtId);
   if (!debt) return;
+  closeAcctForm(); // never leave the add-account panel stacked behind this
   activeDebtId = debtId;
   $("debtBalanceLabel").textContent = debt.name;
   $("debtBalanceCurrent").textContent = fmt(debt.balance);
-  $("debtTabRow").classList.toggle("hidden", isCreditLinked);
+  $("debtTabRow").classList.remove("hidden");
   $("debtOwedSet").value = String(debt.balance);
   $("debtOwedAmount").value = "";
   $("payAmount").value = "";
@@ -1378,15 +1750,31 @@ $("debtBalanceClose").onclick = closeDebtBalanceForm;
 // charge that was missed or double-logged), not for a new charge (that's
 // debtOwedConfirm below, which adds instead of replacing). Only reachable
 // for a standalone liability - see openDebtBalanceForm.
+// The delta is what gets logged, not the new total - an owed_adjust row
+// carries a SIGNED amount exactly like asset_adjust, so undoing it is the
+// same "subtract whatever the original delta was" operation whether the
+// correction raised or lowered the balance. Storing the typed total instead
+// would make a "set" impossible to reverse, which is the bug asset_adjust
+// already had once and had to be fixed for.
+async function logOwedAdjust(debt, delta, reason) {
+  if (!delta) return; // no actual change, nothing worth a history row
+  const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
+  await logActivity("owed_adjust", reason, delta, undefined, debtAccountId, null, debt.id);
+}
+
 $("debtOwedSetConfirm").onclick = async () => {
   const newBalance = parseFloat($("debtOwedSet").value);
   if (!Number.isFinite(newBalance)) return toast("Enter a valid amount");
   if (newBalance < 0) return toast("Amount owed can't be negative");
   const debt = debts.find((d) => d.id === activeDebtId);
   if (!debt) return;
-  const { error } = await sb.from("liabilities").update({ balance: Math.round(newBalance * 100) / 100 }).eq("id", debt.id);
+  const rounded = Math.round(newBalance * 100) / 100;
+  const delta = Math.round((rounded - Number(debt.balance)) * 100) / 100;
+  const { error } = await sb.from("liabilities").update({ balance: rounded }).eq("id", debt.id);
   if (error) return toast(error.message);
+  await logOwedAdjust(debt, delta, `Corrected ${debt.name} owed to ${fmt(rounded)}`);
   await loadDebts();
+  renderRecentTransactions();
   closeDebtBalanceForm();
   toast("Amount owed updated");
 };
@@ -1399,8 +1787,10 @@ $("debtOwedConfirm").onclick = async () => {
   const newBalance = Math.round((Number(debt.balance) + amount) * 100) / 100;
   const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
   if (error) return toast(error.message);
+  await logOwedAdjust(debt, amount, `Added ${fmt(amount)} charge to ${debt.name}`);
   $("debtOwedAmount").value = "";
   await loadDebts();
+  renderRecentTransactions();
   closeDebtBalanceForm();
   toast("Added to balance owed");
 };
@@ -1446,7 +1836,10 @@ function renderNetWorth() {
   // Depreciation-adjusted at the call site, not inside computeNetWorth -
   // networth.js stays pure aggregation with no idea depreciation exists
   // (see its own header comment on scope).
-  const depreciatedAssets = assets.map((a) => ({ ...a, value: effectiveAssetValue(a) }));
+  // Child holdings are excluded, never summed on their own - their value is
+  // already rolled into the parent account's asset (see topLevelAssets).
+  // Counting both would double every invested dollar.
+  const depreciatedAssets = topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) }));
   const nw = computeNetWorth(depreciatedAssets, debts);
 
   $("netWorthTotal").textContent = fmt(nw.netWorth);
@@ -1477,7 +1870,10 @@ function renderNetWorth() {
 // renderNetWorth() (which runs many times per session) - one write per
 // day is the point, not one per render.
 async function snapshotNetWorthIfNeeded() {
-  const depreciatedAssets = assets.map((a) => ({ ...a, value: effectiveAssetValue(a) }));
+  // Child holdings are excluded, never summed on their own - their value is
+  // already rolled into the parent account's asset (see topLevelAssets).
+  // Counting both would double every invested dollar.
+  const depreciatedAssets = topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) }));
   const nw = computeNetWorth(depreciatedAssets, debts);
   const snapshot_date = new Date().toISOString().slice(0, 10);
   await sb.from("net_worth_snapshots").upsert(
@@ -1799,7 +2195,7 @@ $("csvUndoImportBtn").onclick = async () => {
 
 // ---- EXPENSE LIST ----------------------------------------------------------
 // Shared row template + click-to-edit wiring for any expense/transaction
-// list - the Log page's Recent Transactions (expenses + account_activity
+// list - the Log page's Recent History (expenses + account_activity
 // merged, see recentTransactions below) and the Reports page's per-month
 // expense log (expenses only) both use this, scoped to their own container
 // so the two lists (each with their own `rows` array/index) never cross-wire.
@@ -1813,7 +2209,7 @@ $("csvUndoImportBtn").onclick = async () => {
 // fat-fingered, a payment made against the wrong debt - can be corrected
 // from the list directly instead of hunting down the right form to
 // reverse it by hand. See undoTransaction() below.
-// `selectable` (Recent Transactions only, not the Reports month log - see
+// `selectable` (Recent History only, not the Reports month log - see
 // callers) adds a checkbox to expense rows for bulkApplyBtn/bulkClearBtn
 // below; account_activity rows never get one, since category doesn't
 // apply to them. selectedTxnIds is checked, not just set, on render so a
@@ -1827,7 +2223,11 @@ function renderExpenseList(containerId, rows, emptyMsg, { selectable = false } =
         <div>${esc(r.description)}</div>
         <div class="meta">${r.occurred_at} · ${ACTIVITY_LABEL[r.kind] || "Account activity"}</div>
       </div>
-      <span class="amt">${fmt(Math.abs(r.amount))}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span></span>
+      <span class="amt">${NON_UNDOABLE_ACTIVITY_KINDS.has(r.kind) ? "" : fmt(Math.abs(r.amount))}${
+        NON_UNDOABLE_ACTIVITY_KINDS.has(r.kind)
+          ? ""
+          : `<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span>`
+      }</span>
     </div>` : `
     <div class="exp" data-idx="${i}">
       <div style="display:flex;align-items:center;gap:8px;min-width:0">
@@ -1860,7 +2260,7 @@ function renderExpenseList(containerId, rows, emptyMsg, { selectable = false } =
   });
 }
 
-// Selected ids persist across a Recent Transactions re-render (filter
+// Selected ids persist across a Recent History re-render (filter
 // change, new data) - cleared only by Clear, a successful Apply, or
 // signing out. Keyed by expenses.id, so it only ever holds expense rows,
 // never account_activity ones (see renderExpenseList above).
@@ -1887,7 +2287,7 @@ $("bulkApplyBtn").onclick = async () => {
   toast(`Recategorized ${n} expense${n === 1 ? "" : "s"} to ${category}`);
 };
 
-// Reverses a transaction picked from Recent Transactions (or the Reports
+// Reverses a transaction picked from Recent History (or the Reports
 // monthly log, which shares this same list renderer) - an expense gets
 // deleted with its asset/liability effect reversed, exactly like the edit
 // modal's Delete button; an account_activity row (a balance adjustment or
@@ -1933,6 +2333,16 @@ async function undoActivity(row) {
     const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
     if (newValue < 0) return toast(`Can't undo - would take ${asset.name} below $0.`);
     const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+    if (error) return toast(error.message);
+  } else if (row.kind === "owed_adjust") {
+    // Signed delta, same convention as asset_adjust - reversing is always
+    // "subtract what was applied," correct whether the original correction
+    // raised the balance (a missed charge, an interest charge) or lowered it.
+    const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
+    if (!debt) return toast("Can't undo - the liability no longer exists.");
+    const newBalance = Math.round((Number(debt.balance) - Number(row.amount)) * 100) / 100;
+    if (newBalance < 0) return toast(`Can't undo - would take ${debt.name} below $0 owed.`);
+    const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
     if (error) return toast(error.message);
   } else if (row.kind === "liability_payment") {
     const account = accounts.find((a) => a.id === row.account_id);
@@ -2001,8 +2411,8 @@ function renderRecentTransactions() {
   };
   const anyFilterActive = Object.values(filters).some((v) => v !== "" && v !== null);
   const emptyMsg = anyFilterActive
-    ? "No transactions match these filters."
-    : "No transactions yet - add an expense above.";
+    ? "No history matches these filters."
+    : "No history yet - add an expense above.";
   renderExpenseList("expList", recentTransactions(50, filters), emptyMsg, { selectable: true });
   updateBulkActionBar();
 }
@@ -2026,6 +2436,7 @@ async function loadExpenses() {
   $("monthCount").textContent = monthRows.length;
   renderNetWorth();
   renderBudgetWarnings();
+  renderBudgets(); // Log-page card now, so it refreshes with the expense list
 
   populateTxnCategoryFilter();
   renderRecentTransactions();
@@ -2169,15 +2580,15 @@ async function loadBudgets() {
   budgets = data || [];
 }
 
-// Proactive Log-page banner, unlike renderBudgets() (Reports page) which
-// only shows anything to a user who's already navigated there - same
-// "surface it without being asked" pattern assetMaturityNotice/
-// assetStaleNotice already use. Always scoped to the current calendar
-// month (monthKey(), no month-selector input) since that's what "am I
-// about to go over budget right now" actually means, unlike the Reports
-// charts which can look at any past month. Called from loadExpenses()
-// (a new expense can change this) and whenever budgets themselves change
-// (saveBudgetBtn, the delete handler in renderBudgets).
+// The compact at-a-glance banner at the top of the Log page, distinct from
+// the Budgets card further down (renderBudgets) which lists every limit and
+// is where they're set - this one only ever appears when something is
+// actually at or over its limit, the same "surface it without being asked"
+// pattern assetMaturityNotice/assetStaleNotice already use. Both are scoped
+// to the current calendar month (monthKey(), no month-selector input), since
+// that's what "am I about to go over budget right now" means. Called from
+// loadExpenses() (a new expense can change this) and whenever budgets
+// themselves change (saveBudgetBtn, the delete handler in renderBudgets).
 function renderBudgetWarnings() {
   const byCat = sumBy(allExpenses, "category", monthKey());
   budgetWarnings = budgetStatus(budgets, byCat).filter((s) => s.warn);
@@ -2198,10 +2609,14 @@ function budgetWarningToastSuffix(category) {
   return w.over ? ` · ${category} is over budget` : ` · ${category} is at ${w.pct}% of budget`;
 }
 
-// Called from renderReports() with that render's own byCat, rather than
-// recomputing sumBy() a second time - scoped to whatever month monthSel
-// has selected, unlike the account-history/net-worth-trend charts.
-function renderBudgets(byCat) {
+// Lives on the Log page now, not Reports, so it is always scoped to the
+// CURRENT month rather than following the Reports month selector - a limit
+// you are setting is about the month you are in, and a budget bar that
+// silently reported some other month's spend because a selector three
+// screens away was left on it would be actively misleading. Called from
+// loadExpenses() alongside renderBudgetWarnings(), which already computes
+// the same current-month sumBy for the warning banner.
+function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
   const statuses = budgetStatus(budgets, byCat);
   $("budgetsList").innerHTML = statuses.length
     ? statuses.map((s) => {
@@ -2227,7 +2642,7 @@ function renderBudgets(byCat) {
       const { error } = await sb.from("budgets").delete().eq("category", el.dataset.delBudget);
       if (error) return toast(error.message);
       await loadBudgets();
-      renderReports();
+      renderBudgets();
       renderBudgetWarnings(); // a removed budget can also remove a Log-page warning
       toast("Budget removed");
     };
@@ -2244,7 +2659,7 @@ $("saveBudgetBtn").onclick = async () => {
   if (error) return toast(error.message);
   $("budgetLimit").value = "";
   await loadBudgets();
-  renderReports();
+  renderBudgets();
   renderBudgetWarnings(); // a changed limit can newly trigger (or clear) a Log-page warning
   toast("Budget set");
 };
@@ -2259,7 +2674,7 @@ async function loadInvestmentTargets() {
 // reasoning and shape as snapshotNetWorthIfNeeded above - no cron/server
 // trigger exists for a static PWA.
 async function snapshotPortfolioIfNeeded() {
-  const investmentAssets = assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type));
+  const investmentAssets = countableInvestmentAssets();
   const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
   const totals = portfolioTotals(holdings, investmentAssets);
   const snapshot_date = new Date().toISOString().slice(0, 10);
@@ -2284,55 +2699,111 @@ async function renderInvestmentsTrend() {
 const gainColor = (n) => (n == null ? "" : n >= 0 ? "var(--ok)" : "var(--err)");
 const signedPct = (n) => (n >= 0 ? "+" : "") + n + "%";
 
+// Every investment-flavoured asset, parents and per-ticker holdings alike.
+// Fine for DISPLAY, where the grouping wants both, but never for totalling -
+// see countableInvestmentAssets.
+function allInvestmentAssets() {
+  return assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type));
+}
+// The set that may be summed without double-counting. An account whose value
+// is the roll-up of its own holdings (syncParentAssetValue) is dropped, since
+// those holdings are each counted individually here; an account with no
+// holdings recorded keeps its own blended value, which is the only figure it
+// has. Getting this wrong doubles the portfolio total, so every totalling
+// call (portfolioTotals, allocationVsTarget, the daily snapshot) goes
+// through this rather than filtering inline.
+function countableInvestmentAssets() {
+  const investmentAssets = allInvestmentAssets();
+  const parentsWithHoldings = new Set(
+    investmentAssets.filter((a) => a.parent_asset_id).map((a) => a.parent_asset_id)
+  );
+  return investmentAssets.filter((a) => !parentsWithHoldings.has(a.id));
+}
+
 function renderInvestments() {
-  const investmentAssets = assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type));
+  const investmentAssets = allInvestmentAssets();          // display: parents + holdings
+  const countable = countableInvestmentAssets();           // maths: never both
   const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
-  const totals = portfolioTotals(holdings, investmentAssets);
+  const totals = portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable);
 
   $("investTotalValue").textContent = fmt(totals.totalValue);
   $("investTotalCostBasis").textContent = fmt(totals.totalCostBasis);
   $("investTotalGainLoss").textContent = totals.totalGainLoss != null
-    ? `${fmt(totals.totalGainLoss)} (${signedPct(totals.totalGainLossPct)})` : "—";
+    ? `${fmt(totals.totalGainLoss)} (${signedPct(totals.totalGainLossPct)})` : "-";
   $("investTotalGainLoss").style.color = gainColor(totals.totalGainLoss);
   $("investTodayChangeEmpty").classList.toggle("hidden", totals.todayChange != null);
   $("investTodayChange").textContent = totals.todayChange != null
-    ? `${fmt(totals.todayChange)} (${signedPct(totals.todayChangePct)})` : "—";
+    ? `${fmt(totals.todayChange)} (${signedPct(totals.todayChangePct)})` : "-";
   $("investTodayChange").style.color = gainColor(totals.todayChange);
 
-  $("investHoldingsList").innerHTML = investmentAssets.length ? investmentAssets.map((a) => {
+  // Grouped account-first: each investment account, then the individual
+  // tickers held inside it (assets with parent_asset_id set). An account
+  // with no holdings still shows its own blended value, which is what a
+  // plain 401(k) with no per-ticker detail actually is.
+  const parents = investmentAssets.filter((a) => !a.parent_asset_id);
+  const holdingRow = (a) => {
     const h = holdings.find((x) => x.asset.id === a.id);
     if (!h) {
-      // Symbol-less investment asset (a blended 401(k), say) - value only,
-      // nothing to compute gain/loss or a day-change against.
       return `
-        <div class="exp" style="cursor:default">
-          <div>
-            <div>${esc(a.name)}</div>
-            <div class="meta">${assetTypeLabel(a.type)}</div>
-          </div>
-          <span class="amt">${fmt(effectiveAssetValue(a))}</span>
+        <div class="exp" data-edit-holding="${a.id}" style="cursor:pointer;padding-left:12px">
+          <div><div>${esc(a.name)}</div><div class="meta">no symbol set</div></div>
+          <span class="amt">${fmt(effectiveAssetValue(a))}<span class="x" data-del-holding="${a.id}" style="margin-left:8px">✕</span></span>
         </div>`;
     }
     return `
-      <div class="exp" style="cursor:default;flex-direction:column;align-items:stretch;gap:4px">
+      <div class="exp" data-edit-holding="${a.id}" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px;padding-left:12px">
         <div style="display:flex;justify-content:space-between;gap:10px">
           <div>
-            <div>${esc(h.symbol)} <span class="muted" style="font-size:12px">${esc(a.name)}</span></div>
+            <div>${esc(h.symbol)}</div>
             <div class="meta">${h.quantity ?? "?"} @ ${h.latestPrice != null ? fmt(h.latestPrice) : "no live price yet"}</div>
           </div>
           <div style="text-align:right">
-            <div class="amt">${fmt(h.currentValue)}</div>
+            <div class="amt">${fmt(h.currentValue)}<span class="x" data-del-holding="${a.id}" style="margin-left:8px">✕</span></div>
             <div style="font-size:12px;color:${gainColor(h.gainLoss)}">${h.gainLoss != null ? `${fmt(h.gainLoss)} (${signedPct(h.gainLossPct)})` : "no cost basis set"}</div>
             ${h.dayChange != null ? `<div style="font-size:12px;color:${gainColor(h.dayChange)}">today ${fmt(h.dayChange)} (${signedPct(h.dayChangePct)})</div>` : ""}
           </div>
         </div>
         ${h.explanation ? `<div class="muted" style="font-size:12px">${esc(h.explanation)}</div>` : ""}
       </div>`;
+  };
+  $("investHoldingsList").innerHTML = parents.length ? parents.map((p) => {
+    const children = investmentAssets.filter((a) => a.parent_asset_id === p.id);
+    return `
+      <div style="margin-bottom:14px">
+        <div class="exp" style="cursor:default">
+          <div><div><strong>${esc(p.name)}</strong></div><div class="meta">${assetTypeLabel(p.type)}${children.length ? ` · ${children.length} holding${children.length === 1 ? "" : "s"}` : ""}</div></div>
+          <span class="amt">${fmt(effectiveAssetValue(p))}</span>
+        </div>
+        ${children.length
+          ? children.map(holdingRow).join("")
+          : `<p class="muted" style="font-size:12px;padding-left:12px;margin:6px 0 0">No specific holdings recorded - use "+ Add stock" to enter tickers.</p>`}
+      </div>`;
   }).join("") : `<p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p>`;
+  document.querySelectorAll("[data-edit-holding]").forEach((el) => {
+    el.onclick = () => openHoldingForm(assets.find((a) => a.id === el.dataset.editHolding));
+  });
+  document.querySelectorAll("[data-del-holding]").forEach((el) => {
+    el.onclick = async (ev) => {
+      ev.stopPropagation(); // don't also open the edit form
+      const holding = assets.find((a) => a.id === el.dataset.delHolding);
+      if (!holding) return;
+      if (!(await confirmModal(`Removes ${holding.name} from this account. Its account total is recalculated from the remaining holdings.`,
+        { title: "Delete this holding?" }))) return;
+      const parentId = holding.parent_asset_id;
+      const { error } = await sb.from("assets").delete().eq("id", holding.id);
+      if (error) return toast(error.message);
+      await loadAssets();
+      await syncParentAssetValue(parentId);
+      await loadAssets();
+      renderInvestments();
+      renderNetWorth();
+      toast("Holding deleted");
+    };
+  });
 
   $("investRiskLabel").value = profile?.risk_label ?? "";
 
-  const allocation = allocationVsTarget(investmentAssets, holdings, investmentTargets);
+  const allocation = allocationVsTarget(countable, holdings, investmentTargets);
   $("investTargetsList").innerHTML = allocation.length ? allocation.map((a) => {
     const pctClamped = Math.min(100, a.currentPct);
     const barColor = a.currentPct > a.targetPercent ? "var(--err)" : "var(--ok)";
@@ -2361,6 +2832,93 @@ function renderInvestments() {
     };
   });
 }
+
+// ---- HOLDINGS (specific tickers inside an investment account) -----------
+// The gap this closes: price_symbol/quantity were only reachable from the
+// standalone-asset form, so an investment account created from the Accounts
+// card had no way to record what was actually bought in it - it tracked one
+// blended number and nothing else. A holding is an `assets` row with
+// parent_asset_id pointing at the account's asset (40_asset_holdings.sql).
+let editingHolding = null;
+
+// Only accounts that can actually contain positions. An investment account
+// created from the Accounts card has a linked asset; a standalone investment
+// asset added from the Assets card can hold tickers too, so both are offered
+// as parents. A holding itself is never a parent (no nesting).
+function holdingParentAssets() {
+  return assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type) && !a.parent_asset_id);
+}
+
+function openHoldingForm(holding) {
+  editingHolding = holding || null;
+  const parents = holdingParentAssets();
+  if (!parents.length) {
+    return toast("Add an investment account first (Accounts or Assets card on the Log page).");
+  }
+  $("holdingAccount").innerHTML = parents
+    .map((a) => `<option value="${a.id}">${esc(a.name)} (${assetTypeLabel(a.type)})</option>`).join("");
+  $("holdingAccount").value = holding?.parent_asset_id ?? parents[0].id;
+  $("holdingSymbol").value = holding?.price_symbol ?? "";
+  $("holdingQuantity").value = holding?.quantity ?? "";
+  $("holdingCostBasis").value = holding?.purchase_price ?? "";
+  $("holdingValue").value = holding?.value ?? "";
+  $("holdingBucket").value = holding?.investment_bucket ?? "";
+  $("holdingForm").classList.remove("hidden");
+  $("holdingForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function closeHoldingForm() {
+  $("holdingForm").classList.add("hidden");
+  editingHolding = null;
+}
+$("addHoldingBtn").onclick = () => {
+  if ($("holdingForm").classList.contains("hidden")) openHoldingForm(null);
+  else closeHoldingForm();
+};
+$("cancelHoldingBtn").onclick = closeHoldingForm;
+
+$("saveHoldingBtn").onclick = async () => {
+  const parentId = $("holdingAccount").value;
+  const symbol = $("holdingSymbol").value.trim().toUpperCase();
+  if (!parentId) return toast("Pick the account this sits in");
+  if (!symbol) return toast("Enter a ticker or symbol");
+  const quantity = $("holdingQuantity").value !== "" ? parseFloat($("holdingQuantity").value) : null;
+  if (quantity !== null && (!Number.isFinite(quantity) || quantity <= 0)) return toast("Shares must be a positive number");
+  const costBasis = $("holdingCostBasis").value !== "" ? parseFloat($("holdingCostBasis").value) : null;
+  if (costBasis !== null && (!Number.isFinite(costBasis) || costBasis < 0)) return toast("Cost basis can't be negative");
+  const value = $("holdingValue").value !== "" ? parseFloat($("holdingValue").value) : null;
+  if (value !== null && (!Number.isFinite(value) || value < 0)) return toast("Current value can't be negative");
+
+  const parent = assets.find((a) => a.id === parentId);
+  const row = {
+    // A holding inherits its parent's type so INVESTMENT_ASSET_TYPES keeps
+    // matching it and the Investments tab picks it up with no special case.
+    name: symbol,
+    type: parent?.type ?? "investment",
+    parent_asset_id: parentId,
+    price_symbol: symbol,
+    quantity,
+    purchase_price: costBasis,
+    value: value ?? 0,
+    investment_bucket: $("holdingBucket").value.trim() || null,
+  };
+  // Captured before closeHoldingForm() clears editingHolding below.
+  const wasEditing = !!editingHolding;
+  // Moving a holding between accounts changes BOTH totals, so the old
+  // parent is resynced too, not just the new one.
+  const previousParentId = editingHolding?.parent_asset_id;
+  const { error } = editingHolding
+    ? await sb.from("assets").update(row).eq("id", editingHolding.id)
+    : await sb.from("assets").insert(row);
+  if (error) return toast(error.message);
+  closeHoldingForm();
+  await loadAssets();
+  await syncParentAssetValue(parentId);
+  if (previousParentId && previousParentId !== parentId) await syncParentAssetValue(previousParentId);
+  await loadAssets();
+  renderInvestments();
+  renderNetWorth();
+  toast(wasEditing ? "Holding updated" : "Holding added");
+};
 
 $("saveInvestTargetBtn").onclick = async () => {
   const bucket = $("investTargetBucket").value.trim();
@@ -2478,7 +3036,6 @@ async function renderReports() {
 
   const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
   renderExpenseList("rptExpList", monthRows, "No expenses this month.");
-  renderBudgets(byCat);
 
   renderBreakdownBar($("catChart"), byCat);
   renderBreakdownBar($("acctChart"), byAcct);

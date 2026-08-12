@@ -51,7 +51,7 @@
       padding: 12px 0; border-bottom: 1px solid var(--border); gap: 10px; cursor: pointer; }
     .exp:last-child { border-bottom: none; }
     /* Caps a long expense list instead of letting it push everything below
-       it down the page - Recent Transactions (Log) and the Reports month log. */
+       it down the page - Recent History (Log) and the Reports month log. */
     .scroll-list { max-height: 360px; overflow-y: auto; }
     .exp .meta { font-size: 13px; color: var(--muted); }
     .exp .amt { font-weight: 700; white-space: nowrap; }
@@ -178,7 +178,7 @@
 
       <!-- Expense list -->
       <div class="card">
-        <strong>Recent Transactions</strong>
+        <strong>Recent History</strong>
         <!-- Four independent filters, all AND-ed together (see
              filteredTransactions in app.js). A label above each one names
              what it filters by, so the option text itself can just say
@@ -245,6 +245,26 @@
         <div id="expList" class="scroll-list" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
 
+      <!-- An ongoing monthly limit per category, not per-month-varying - set
+           once, applies every month until changed. Lives on the Log page,
+           beside the spending it constrains, so that Reports stays purely
+           analytics of data recorded elsewhere; setting a budget is an input,
+           not a report. Always scoped to the CURRENT month here, unlike when
+           it sat on Reports and followed that page's month selector - a
+           limit you are deciding right now is about the month you are in.
+           renderBudgets() is called from loadExpenses (app.js), not from
+           renderReports, for the same reason. -->
+      <div class="card">
+        <strong>Budgets</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Monthly limit per category, for the current month.</p>
+        <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
+        <div class="row" style="margin-top:10px">
+          <select id="budgetCategory" style="flex:1"></select>
+          <input id="budgetLimit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1" />
+          <button id="saveBudgetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
+        </div>
+      </div>
+
       <!-- Net worth overview -->
       <div class="card" id="netWorthCard">
         <div class="muted" style="font-size:12px">Net worth</div>
@@ -263,6 +283,12 @@
         <div id="acctList" class="acct-circles">
           <p class="muted" style="font-size:13px">No accounts yet.</p>
         </div>
+        <!-- Archived accounts are removed from the circles above entirely
+             rather than dimmed in place. A closed account keeps its history
+             forever, so over time the dimmed ones crowd out the accounts
+             actually in use. This link is the only way back to them and is
+             hidden outright when there are none (renderAccountsList). -->
+        <div id="archivedAcctToggle" class="muted hidden" style="font-size:12px;cursor:pointer;text-decoration:underline;margin-top:8px"></div>
         <div id="acctForm" class="hidden" style="margin-top:10px">
           <!-- No separate "account name" field - it was always just the
                type in practice (Checking, Savings, Credit), so the name is
@@ -500,6 +526,24 @@
           </div>
           <label>Due date (optional)</label>
           <input id="debtDetailsDue" type="date" />
+          <!-- Credit-account-only (openDebtDetailsForm, app.js). Interest on
+               a card is decided by the grace period, not by lateness: pay
+               the statement balance in full by the due date and no interest
+               is charged; carry any of it and interest accrues even if you
+               paid the minimum on time. That needs the cycle days plus the
+               statement balance to judge, which is what these fields are
+               for - see creditCycle.js. -->
+          <div id="debtDetailsCycleSection" class="hidden" style="margin-top:8px">
+            <div class="row">
+              <div><label>Statement closes (day)</label><input id="debtDetailsStatementDay" type="number" min="1" max="31" step="1" inputmode="numeric" placeholder="e.g. 5" /></div>
+              <div><label>Payment due (day)</label><input id="debtDetailsDueDay" type="number" min="1" max="31" step="1" inputmode="numeric" placeholder="e.g. 2" /></div>
+            </div>
+            <div class="row">
+              <div><label>Statement balance</label><input id="debtDetailsStatementBalance" type="number" step="0.01" inputmode="decimal" placeholder="From your latest statement" /></div>
+              <div><label>Statement date</label><input id="debtDetailsStatementDate" type="date" /></div>
+            </div>
+            <p class="muted" id="debtDetailsCycleInfo" style="font-size:12px;margin-top:6px"></p>
+          </div>
           <!-- HELOC-only (openDebtDetailsForm, app.js). -->
           <div id="debtDetailsDrawSection" class="hidden" style="margin-top:8px">
             <label>Draw period ends (optional)</label>
@@ -548,7 +592,7 @@
       </div>
 
       <!-- Every expense in the selected month - subscriptions, credit, and
-           debit alike - same row style as the Log page's Recent Transactions,
+           debit alike - same row style as the Log page's Recent History,
            tap to edit. Deliberately expenses only, unlike the Log page's list
            (no account activity) - this card is about spending for the month,
            not every balance change. Scrollable so a busy month doesn't push
@@ -568,22 +612,6 @@
       <div class="card">
         <strong>By category</strong>
         <div class="chartbox"><canvas id="catChart"></canvas></div>
-      </div>
-
-      <!-- An ongoing monthly limit per category, not per-month-varying -
-           set once, applies every month until changed. Scoped to the
-           month selector above, unlike the account-history/net-worth-
-           trend charts, since "over/under budget" is inherently about a
-           specific month's actual spend (docs/ROADMAP.md Reports & Net
-           Worth #2). -->
-      <div class="card">
-        <strong>Budgets</strong>
-        <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
-        <div class="row" style="margin-top:10px">
-          <select id="budgetCategory" style="flex:1"></select>
-          <input id="budgetLimit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1" />
-          <button id="saveBudgetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
-        </div>
       </div>
 
       <div class="card">
@@ -765,7 +793,37 @@
            one (a blended 401(k), say) just shows its value. Explanation
            text (if tools/price-agent.js found one) shows under the row. -->
       <div class="card">
-        <strong>Holdings</strong>
+        <div class="topbar" style="margin-bottom:4px">
+          <strong>Holdings</strong>
+          <button class="secondary" id="addHoldingBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add stock</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin:0 0 8px">Record the specific stocks, funds or coins you bought. An account's value is the total of its holdings.</p>
+        <!-- A holding is an `assets` row pointing at its account's asset via
+             parent_asset_id (40_asset_holdings.sql), not a separate table -
+             so the gain/loss and allocation math in investments.js reads it
+             with no changes. Cost basis is the TOTAL paid, not per share,
+             matching how assets.purchase_price is already used everywhere
+             else. -->
+        <div id="holdingForm" class="hidden" style="margin-bottom:12px;padding:12px;background:var(--panel-2);border-radius:10px">
+          <label>Account this sits in</label>
+          <select id="holdingAccount"></select>
+          <div class="row">
+            <div><label>Ticker / symbol</label><input id="holdingSymbol" placeholder="AAPL" autocapitalize="characters" /></div>
+            <div><label>Shares / units</label><input id="holdingQuantity" type="number" step="any" inputmode="decimal" placeholder="10" /></div>
+          </div>
+          <div class="row">
+            <div><label>Total cost basis</label><input id="holdingCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you paid in total" /></div>
+            <div><label>Current value</label><input id="holdingValue" type="number" step="0.01" inputmode="decimal" placeholder="Worth today" /></div>
+          </div>
+          <label>Bucket (optional, for target allocation)</label>
+          <input id="holdingBucket" list="investBucketSuggestions" placeholder="Stocks, Bonds, Crypto..." />
+          <p class="muted" style="font-size:12px;margin:8px 0 0">Current value is used until the price agent finds a live price for this symbol, after which shares x live price takes over.</p>
+          <div style="height:8px"></div>
+          <div class="row">
+            <button id="saveHoldingBtn">Save holding</button>
+            <button class="secondary" id="cancelHoldingBtn">Cancel</button>
+          </div>
+        </div>
         <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p></div>
       </div>
 
@@ -814,6 +872,19 @@
         <button class="secondary" id="confirmModalCancel">Cancel</button>
         <button class="secondary" id="confirmModalOk" style="color:var(--err);border-color:var(--err)">Delete</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ============ ARCHIVED ACCOUNTS MODAL ============ -->
+  <!-- Archiving never touches the linked asset/liability, so an archived
+       account's balance still counts toward net worth exactly as before
+       (22_account_archive.sql) - that's why each row still shows its
+       balance here rather than reading as a deleted account. -->
+  <div id="archivedAcctModal" class="modal hidden">
+    <div class="sheet">
+      <div class="topbar"><strong>Archived accounts</strong><button class="secondary" id="archivedAcctClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <p class="muted" style="font-size:12px;margin:6px 0 10px">Closed accounts, hidden from the Accounts card and from expense payment pickers. Their balances still count toward net worth.</p>
+      <div id="archivedAcctList"></div>
     </div>
   </div>
 

@@ -2042,14 +2042,60 @@ async function snapshotNetWorthIfNeeded() {
 // There's no separate "Payment" field anymore - an expense's payment type
 // IS whatever type the chosen Account is (cash/debit/credit values match
 // exactly), so there's nothing left to derive it from independently, and
-// no way for the two to disagree. A payment-type word in the free text
-// (e.g. "debit") still auto-picks the matching account, but only when
-// there's exactly one of that type - picking the wrong one silently would
-// be worse than leaving it for the user to choose.
-function selectAccountByType(type) {
-  if (!type) return;
-  const matches = accounts.filter((a) => a.type === type);
-  if (matches.length === 1) $("fAccount").value = matches[0].id;
+// no way for the two to disagree.
+//
+// A payment-type word ("debit") and/or a bank name ("bank of america") in
+// the free text can each narrow which account is meant, and combine rather
+// than compete when both appear - only an account matching every signal
+// actually found in the text survives. That means "chase debit" can
+// resolve to the one Chase debit account even with a second (Chase credit)
+// account present, which "chase" alone would leave ambiguous. Bank-name
+// matching is a plain case-insensitive substring check against the user's
+// own already-saved accounts (a small, exact list) - not the fuzzy,
+// FDIC-wide isKnownBank() logic used to validate a bank name when adding
+// an account elsewhere; that one is answering a different question ("is
+// this a real bank"), this one is "which of MY accounts does this refer
+// to." Auto-selects only when exactly one account survives every filter
+// that matched something - typing nothing recognizable, or something that
+// matches 2+ accounts (two accounts at the same bank), leaves Account on
+// "None" for the user to pick themselves. Silently guessing wrong here
+// would be worse than not guessing at all.
+function accountsMatchingBankName(text) {
+  if (!text) return [];
+  const lower = text.toLowerCase();
+  return accounts.filter((a) => a.bank_name && lower.includes(a.bank_name.toLowerCase()));
+}
+function selectAccountFromText(text, type) {
+  let candidates = accounts;
+  let matchedSomething = false;
+  if (type) {
+    candidates = candidates.filter((a) => a.type === type);
+    matchedSomething = true;
+  }
+  const bankMatches = accountsMatchingBankName(text);
+  if (bankMatches.length) {
+    const bankMatchIds = new Set(bankMatches.map((a) => a.id));
+    candidates = candidates.filter((a) => bankMatchIds.has(a.id));
+    matchedSomething = true;
+  }
+  if (matchedSomething && candidates.length === 1) $("fAccount").value = candidates[0].id;
+}
+
+// Live "still needs to be filled in" signal, not a submit-attempt-only
+// flash - a red border (`.field-required`, index.html) on whichever of the
+// four fields saveBtn actually requires (same order it validates in) is
+// currently empty, clearing itself the moment that field gets a value from
+// either the user or a parse. Re-run after every keyword/Gemma auto-fill
+// and on direct edits to any of the four, so it always reflects current
+// state rather than only appearing after a rejected Save.
+const REQUIRED_QUICK_ADD_FIELDS = ["fAmount", "fAccount", "fCategory", "fDate"];
+function updateRequiredFieldHighlighting() {
+  for (const id of REQUIRED_QUICK_ADD_FIELDS) {
+    $(id).classList.toggle("field-required", !$(id).value);
+  }
+}
+for (const id of REQUIRED_QUICK_ADD_FIELDS) {
+  $(id).addEventListener("input", updateRequiredFieldHighlighting);
 }
 
 $("quick").addEventListener("input", (e) => {
@@ -2059,11 +2105,12 @@ $("quick").addEventListener("input", (e) => {
   // Layer 1: instant keyword parse (always on, README §3.5).
   const p = quickParse(raw);
   $("fAmount").value = p.amount ?? "";
-  selectAccountByType(p.payment_type);
+  selectAccountFromText(raw, p.payment_type);
   $("fDesc").value = p.rest;
   const guessed = categorize(raw, userRules);
   if (guessed) $("fCategory").value = guessed;
   entrySource = "manual";
+  updateRequiredFieldHighlighting();
   // Layer 2: best-effort Gemma enrichment, debounced (README §3.6).
   scheduleGemma(raw);
 });
@@ -2103,12 +2150,13 @@ function scheduleGemma(raw) {
       // Only apply if the user hasn't typed something new in the meantime.
       if ($("quick").value !== sent) { $("parseStatus").textContent = ""; return; }
       if (g.amount != null) $("fAmount").value = g.amount;
-      selectAccountByType(g.payment_type);
+      selectAccountFromText(sent, g.payment_type);
       if (g.merchant) $("fDesc").value = g.merchant;
       if (g.category) $("fCategory").value = g.category;
       if (g.occurred_at) $("fDate").value = g.occurred_at;
       entrySource = "parsed";
       $("parseStatus").textContent = "Parsed by Gemma - confirm & save";
+      updateRequiredFieldHighlighting();
     } catch (err) {
       // Home machine asleep / unreachable - keep the keyword guess.
       $("parseStatus").textContent = "Gemma unavailable - using quick parse";
@@ -2117,6 +2165,7 @@ function scheduleGemma(raw) {
 }
 
 $("saveBtn").onclick = async () => {
+  updateRequiredFieldHighlighting(); // guaranteed-fresh red border right as Save is attempted
   const amount = parseFloat($("fAmount").value);
   if (!amount || amount <= 0) return toast("Enter a valid amount");
   const accountId = $("fAccount").value || null;

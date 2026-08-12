@@ -33,6 +33,11 @@
       border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
     }
     input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); }
+    /* Applied/removed live by app.js (updateRequiredFieldHighlighting) on
+       Quick Add's Amount/Account/Category/Date - a still-empty required
+       field, not a submitted-and-rejected one, so this reflects current
+       state rather than only flashing after a failed Save. */
+    input.field-required, select.field-required { border-color: var(--err); }
     label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
     button { background: var(--accent-2); border: none; color: #002233; font-weight: 700; cursor: pointer; }
     button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 500; }

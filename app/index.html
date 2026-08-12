@@ -425,13 +425,14 @@
                holding has no depreciation date/rate to pair it with, just
                a total amount originally paid, used for the Investments
                tab's gain/loss math. Bucket feeds that tab's target-
-               allocation calculator, same free-text-plus-suggestions
-               pattern accounts.bank_name/subscriptions.category use. -->
+               allocation calculator - a fixed <select>, not free text
+               (INVESTMENT_BUCKETS, app.js), so a typo can't silently
+               create a second bucket that a target never matches. -->
           <div id="assetInvestmentSection" class="hidden" style="margin-top:8px">
             <label>Cost basis - total paid (optional)</label>
             <input id="assetCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you originally paid, in total" />
             <label>Allocation bucket (optional)</label>
-            <input id="assetInvestBucket" list="investBucketSuggestions" placeholder="Stocks, Bonds, Cash..." />
+            <select id="assetInvestBucket"></select>
           </div>
 
           <div style="height:8px"></div>
@@ -826,7 +827,7 @@
             <div><label>Current value</label><input id="holdingValue" type="number" step="0.01" inputmode="decimal" placeholder="Worth today" /></div>
           </div>
           <label>Bucket (optional, for target allocation)</label>
-          <input id="holdingBucket" list="investBucketSuggestions" placeholder="Stocks, Bonds, Crypto..." />
+          <select id="holdingBucket"></select>
           <p class="muted" style="font-size:12px;margin:8px 0 0">Current value is used until the price agent finds a live price for this symbol, after which shares x live price takes over.</p>
           <div style="height:8px"></div>
           <div class="row">
@@ -852,19 +853,11 @@
         </select>
         <div id="investTargetsList" style="margin-top:12px"><p class="muted" style="font-size:13px">No targets set yet.</p></div>
         <div class="row" style="margin-top:10px">
-          <input id="investTargetBucket" list="investBucketSuggestions" placeholder="Bucket (Stocks, Bonds...)" style="flex:1" />
+          <select id="investTargetBucket" style="flex:1"></select>
           <input id="investTargetPercent" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />
           <button id="saveInvestTargetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
         </div>
       </div>
-
-      <datalist id="investBucketSuggestions">
-        <option value="Stocks"></option>
-        <option value="Bonds"></option>
-        <option value="Cash"></option>
-        <option value="Crypto"></option>
-        <option value="Real Estate"></option>
-      </datalist>
     </div>
 
   </div>

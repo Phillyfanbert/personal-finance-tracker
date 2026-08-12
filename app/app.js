@@ -422,6 +422,32 @@ const INVESTMENT_ASSET_TYPES = new Set([
   ...Object.entries(ACCOUNT_TYPES).filter(([, cfg]) => cfg.category === "Retirement & investment").map(([type]) => type),
   "crypto",
 ]);
+// A fixed set, not free text - the allocation calculator (allocationVsTarget,
+// investments.js) groups an asset/holding's investment_bucket against a
+// investment_targets.bucket by exact string match, so a typo used to create
+// a second, orphaned bucket a target could never match ("Stock" vs
+// "Stocks"). Every picker that sets one of these values (the standalone
+// Assets-card form, a holding, and the Target-allocation form itself) reads
+// from this single list via populateInvestBucketSelects() below, so the
+// three can never drift out of sync with each other. "Other" is the
+// deliberate catch-all for anything not covered by the rest, rather than
+// leaving no option for it.
+const INVESTMENT_BUCKETS = ["Stocks", "Bonds", "Cash", "Crypto", "Real Estate", "Other"];
+// A plain flat list with no dependency on fetched data, unlike
+// populateAcctTypeSelect/populateAssetTypeSelect/populateDebtTypeSelect
+// (which lazily populate on first form-open) - safe to populate once,
+// eagerly, at module load instead of needing a trigger per select.
+// assetInvestBucket/holdingBucket get a blank "Not set" first option since
+// a bucket is optional there (an investment asset can exist outside the
+// allocation calculator entirely); investTargetBucket does not, since
+// setting a target with no bucket chosen isn't a meaningful action.
+function populateInvestBucketSelects() {
+  const opts = INVESTMENT_BUCKETS.map((b) => `<option value="${b}">${b}</option>`).join("");
+  $("assetInvestBucket").innerHTML = `<option value="">Not set</option>${opts}`;
+  $("holdingBucket").innerHTML = `<option value="">Not set</option>${opts}`;
+  $("investTargetBucket").innerHTML = opts;
+}
+populateInvestBucketSelects();
 // BANK_NAMES (bankNames.js) is ~3,570 real FDIC-insured banks plus a few
 // well-known credit unions/brands FDIC doesn't cover - not a hardcoded
 // seed list anymore. isKnownBank() is a soft gate (saveAcctBtn below): a
@@ -3061,14 +3087,15 @@ $("saveHoldingBtn").onclick = async () => {
 };
 
 $("saveInvestTargetBtn").onclick = async () => {
-  const bucket = $("investTargetBucket").value.trim();
+  // investTargetBucket is a fixed select with no blank option (see
+  // populateInvestBucketSelects) - always a real bucket, nothing to
+  // validate as "missing" the way a free-text field would need.
+  const bucket = $("investTargetBucket").value;
   const target_percent = parseFloat($("investTargetPercent").value);
-  if (!bucket) return toast("Enter a bucket name");
   if (!Number.isFinite(target_percent) || target_percent < 0 || target_percent > 100) return toast("Enter a valid target percent (0-100)");
   const { error } = await sb.from("investment_targets")
     .upsert({ bucket, target_percent }, { onConflict: "user_id,bucket" });
   if (error) return toast(error.message);
-  $("investTargetBucket").value = "";
   $("investTargetPercent").value = "";
   await loadInvestmentTargets();
   renderInvestments();

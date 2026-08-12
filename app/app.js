@@ -77,10 +77,18 @@ $("confirmModalOk").onclick = () => closeConfirmModal(true);
 const acctLabel = (a) => (a ? (a.bank_name ? `${a.bank_name} ${a.name}` : a.name) : "");
 const acctName = (id) => acctLabel(accounts.find((a) => a.id === id));
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-// A stable keyword to learn from (first meaningful token of merchant/description).
+// A stable keyword to learn from (first meaningful token of merchant/
+// description). Strips leading/trailing punctuation from each candidate
+// word before the length check - categorize.js now matches keywords as
+// whole words (\b...\b), and a keyword ending in a trailing comma/period
+// picked up from raw typed text ("at walmart, bought milk" -> "walmart,")
+// would never match anything again, since \b's behavior right at a
+// punctuation edge is unreliable, not a silent no-op.
 function learnKeyword(row) {
   const src = (row.merchant || row.description || "").toLowerCase().trim();
-  const tok = src.split(/\s+/).filter((w) => w.length >= 3)[0];
+  const tok = src.split(/\s+/)
+    .map((w) => w.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
+    .filter((w) => w.length >= 3)[0];
   return tok || null;
 }
 
@@ -226,7 +234,22 @@ async function loadAssetPriceFindings() {
   assetPriceFindings = data || [];
   renderAssetPriceFindings();
 }
-function fillCategorySelect(sel) { sel.innerHTML = CATEGORIES.map((c) => `<option>${c}</option>`).join(""); }
+// A blank "None" first option, not just the real categories - so a select
+// that's never been explicitly set (fCategory on a fresh Quick Add) starts
+// genuinely empty rather than silently defaulting to CATEGORIES[0] ("Food")
+// the way an <select> with no blank option always does. That default was
+// masking category as a de-facto optional field: the saveBtn/editSave
+// validation already checked `if (!category) return toast(...)`, but the
+// check could never actually fire since the select could never BE empty.
+// Every caller (fCategory, eCategory, bulkCategorySelect, budgetCategory)
+// already has that same guard, so this one change makes "required" real
+// everywhere at once rather than needing a per-caller fix. eCategory's own
+// `.value = row.category ?? CATEGORIES[0]` (openEdit, below) still
+// explicitly selects a real category for an existing expense regardless -
+// an already-saved expense always has one, so it never lands on "None".
+function fillCategorySelect(sel) {
+  sel.innerHTML = `<option value="">None</option>` + CATEGORIES.map((c) => `<option>${c}</option>`).join("");
+}
 
 async function loadRules() {
   const { data } = await sb.from("category_rules").select("keyword,category");

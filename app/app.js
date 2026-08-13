@@ -4238,6 +4238,33 @@ $("profileBtn").onclick = () => {
 };
 $("profileClose").onclick = () => $("profileModal").classList.add("hidden");
 
+// ---- HELP MODAL --------------------------------------------------------
+// One shared modal (index.html) for all 4 pages' documentation - openHelp
+// swaps which #helpContent* block and pill is active rather than opening
+// four separate modals, so browsing another page's help doesn't need a
+// close/reopen. Static content, no data to load - unlike every other
+// modal in this file, this one has no corresponding loadX()/renderX().
+const HELP_PAGES = ["log", "subs", "reports", "invest"];
+const HELP_TITLES = { log: "Log page help", subs: "Subscriptions/Bills help", reports: "Reports help", invest: "Investments help" };
+function openHelp(page) {
+  $("helpModalTitle").textContent = HELP_TITLES[page];
+  for (const p of HELP_PAGES) {
+    $(`helpContent${cap(p)}`).classList.toggle("hidden", p !== page);
+  }
+  document.querySelectorAll("[data-help-page]").forEach((el) => {
+    el.classList.toggle("active", el.dataset.helpPage === page);
+  });
+  $("helpModal").classList.remove("hidden");
+}
+$("helpLogBtn").onclick = () => openHelp("log");
+$("helpSubsBtn").onclick = () => openHelp("subs");
+$("helpReportsBtn").onclick = () => openHelp("reports");
+$("helpInvestBtn").onclick = () => openHelp("invest");
+$("helpClose").onclick = () => $("helpModal").classList.add("hidden");
+document.querySelectorAll("[data-help-page]").forEach((el) => {
+  el.onclick = () => openHelp(el.dataset.helpPage);
+});
+
 // parseInt returns NaN on empty/invalid input - toNullableInt keeps that
 // out of the row entirely (null) rather than writing NaN, same
 // reasoning as the pre-existing graduation_year handling below.

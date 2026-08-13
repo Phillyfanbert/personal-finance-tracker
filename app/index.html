@@ -85,12 +85,16 @@
       display: flex; background: var(--panel); border-bottom: 1px solid var(--border);
       padding-top: env(safe-area-inset-top); }
     .nav button { flex: 1; background: transparent; border: none; color: var(--muted);
-      font-weight: 600; padding: 16px 0; border-radius: 0; }
+      font-weight: 600; padding: 16px 0; border-radius: 0;
+      transition: background-color .15s, color .15s, text-shadow .15s; }
     /* Adjacent-sibling selector so only the borders BETWEEN buttons show -
        a plain border on every button would double up at each shared edge
-       and add an unwanted one on the far left/right too. */
-    .nav button + button { border-left: 1px solid var(--border); }
-    .nav button.active { color: var(--accent); }
+       and add an unwanted one on the far left/right too. Muted-tinted
+       rgba rather than --border - --border reads almost invisibly close
+       to --panel's own background at this small a swatch. */
+    .nav button + button { border-left: 1.5px solid rgba(148, 163, 184, .45); }
+    .nav button.active { color: var(--accent); background: rgba(56, 189, 248, .14);
+      text-shadow: 0 0 12px rgba(56, 189, 248, .6); }
     /* Modal */
     .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 70;
       display: flex; align-items: flex-end; justify-content: center; }

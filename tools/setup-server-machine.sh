@@ -17,6 +17,14 @@
 #      deliberately staggered - both scripts bring up/tear down the SAME
 #      named SearXNG container, so running them concurrently would have one
 #      script's cleanup trap kill SearXNG out from under the other mid-run.
+#   5. An hourly launchd schedule for embed-expenses.js (RAG retrieval for
+#      the Reports page's "Ask about your spending" Q&A - see
+#      supabase/45_expense_embeddings.sql) - much tighter than the weekly
+#      deal/price cadence on purpose: its content-hash delta detection
+#      makes an unchanged expense cost one comparison, not a search+fetch+
+#      Gemma round trip, so a frequent run is cheap, and new expenses
+#      should become searchable soon after they're added rather than up to
+#      a week later.
 #
 # Usage:
 #   cd tools
@@ -30,6 +38,8 @@
 #                           would silently stop matching them.
 #   DEAL_AGENT_HOUR/MIN, PRICE_AGENT_HOUR/MIN - launchd schedule (defaults
 #                           Sunday 03:00 and Sunday 05:00, local time)
+#   EMBED_EXPENSES_INTERVAL_SECONDS - how often embed-expenses.js runs
+#                           (default 3600 = hourly)
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -42,6 +52,7 @@ DEAL_AGENT_HOUR="${DEAL_AGENT_HOUR:-3}"
 DEAL_AGENT_MIN="${DEAL_AGENT_MIN:-0}"
 PRICE_AGENT_HOUR="${PRICE_AGENT_HOUR:-5}"
 PRICE_AGENT_MIN="${PRICE_AGENT_MIN:-0}"
+EMBED_EXPENSES_INTERVAL_SECONDS="${EMBED_EXPENSES_INTERVAL_SECONDS:-3600}"
 
 log() { echo "== $* =="; }
 
@@ -74,6 +85,7 @@ SEARXNG_URL=http://localhost:8080
 
 GEMMA_ENDPOINT=http://localhost:11434/api/generate
 GEMMA_MODEL=gemma4:e4b
+GEMMA_EMBED_MODEL=nomic-embed-text
 EOF
   chmod 600 "$ENV_FILE"
   echo "Wrote $ENV_FILE (mode 600)."
@@ -241,7 +253,42 @@ EOF
 install_weekly_agent "com.deal-agent.weekly" "${TOOLS_DIR}/run-deal-agent.sh" "$DEAL_AGENT_HOUR" "$DEAL_AGENT_MIN"
 install_weekly_agent "com.price-agent.weekly" "${TOOLS_DIR}/run-price-agent.sh" "$PRICE_AGENT_HOUR" "$PRICE_AGENT_MIN"
 
+# ---- 5. Frequent scheduling for embed-expenses.js (RAG retrieval) ---------
+# StartInterval (seconds, repeating) rather than StartCalendarInterval
+# (a single fixed time) - the whole point of the content-hash delta design
+# is that a frequent no-op run is cheap, unlike deal/price-agent which
+# genuinely do real search+fetch+Gemma work worth staggering to once a week.
+install_interval_agent() {
+  local label="$1" script="$2" interval_seconds="$3"
+  local plist="$LAUNCH_AGENTS_DIR/${label}.plist"
+  log "Installing ${label} (every ${interval_seconds}s)"
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>${script}</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>${interval_seconds}</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/${label}.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/${label}.log</string>
+</dict>
+</plist>
+EOF
+  launchctl bootout "$UID_GUI/${label}" 2>/dev/null || true
+  launchctl bootstrap "$UID_GUI" "$plist"
+}
+install_interval_agent "com.embed-expenses.hourly" "${TOOLS_DIR}/run-embed-expenses.sh" "$EMBED_EXPENSES_INTERVAL_SECONDS"
+
 log "Done"
-echo "Scheduled: deal-agent Sundays ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent Sundays ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN") (staggered on purpose - both scripts share one SearXNG container and tear it down on exit, so overlapping runs would kill each other's SearXNG mid-run)."
-echo "Test either agent right now with: DRY_RUN=1 ./run-deal-agent.sh   (or run-price-agent.sh)"
-echo "Remember to flip DEAL_FINDINGS_ENABLED / PRICE_FINDINGS_ENABLED to true in app/config.js and the Cloudflare dashboard once you're ready to surface results in the UI."
+echo "Scheduled: deal-agent Sundays ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent Sundays ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN") (staggered on purpose - both scripts share one SearXNG container and tear it down on exit, so overlapping runs would kill each other's SearXNG mid-run). embed-expenses every ${EMBED_EXPENSES_INTERVAL_SECONDS}s (cheap thanks to content-hash delta detection - most runs do nothing)."
+echo "Test any agent right now with: DRY_RUN=1 ./run-deal-agent.sh   (or run-price-agent.sh / run-embed-expenses.sh)"
+echo "Remember to flip DEAL_FINDINGS_ENABLED / PRICE_FINDINGS_ENABLED to true in app/config.js and the Cloudflare dashboard once you're ready to surface results in the UI. RAG retrieval for the Q&A needs no such flag - it's best-effort and just silently contributes nothing until embed-expenses.js has actually run once."

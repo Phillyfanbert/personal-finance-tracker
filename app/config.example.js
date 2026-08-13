@@ -17,6 +17,14 @@ window.APP_CONFIG = {
   // In production: your Cloudflare Tunnel HTTPS URL in front of Ollama.
   GEMMA_ENDPOINT: "",
   GEMMA_MODEL: "gemma",
+  // Model used to embed a question for RAG retrieval (Reports Q&A's
+  // relevant_history - supabase/45_expense_embeddings.sql) - separate from
+  // GEMMA_MODEL since embedding and generation are different model
+  // families. Must match tools/embed-expenses.js's GEMMA_EMBED_MODEL (same
+  // env var name, see tools/.env.deal-agent.example) - if these ever
+  // diverge, questions get embedded in a different vector space than the
+  // expenses were, and retrieval silently returns nonsense matches.
+  GEMMA_EMBED_MODEL: "nomic-embed-text",
   // Shared secret the tunnel's gemma-auth-proxy.js requires on every request
   // (X-Gemma-Key header) - without it, anyone who finds the Cloudflare Tunnel
   // URL could send free requests to the home GPU, since Ollama itself has no

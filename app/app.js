@@ -25,12 +25,18 @@ import {
   detectRecurringExpenses,
 } from "./subscriptions.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService } from "./discounts.js";
-import { parseWithGemma, askGemma } from "./gemma.js";
+import { parseWithGemma, askGemma, warmUpGemma, embedText } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 
-const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, GEMMA_AUTH_KEY, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
+const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, GEMMA_EMBED_MODEL, GEMMA_AUTH_KEY, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
+// Ollama's embeddings endpoint, derived from GEMMA_ENDPOINT (the full
+// /api/generate URL) rather than a second config field for a value that's
+// mechanically the same host/port - kept in sync with tools/embed-
+// expenses.js's identical derivation by hand, same category as
+// MARKET_INDEXES. Used only by retrieveRelevantHistory() below.
+const GEMMA_EMBED_ENDPOINT = (GEMMA_ENDPOINT || "").replace(/\/api\/generate$/, "/api/embeddings");
 if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR-PROJECT")) {
   alert("Set your Supabase URL and anon key in config.js (see SETUP.md §4).");
 }
@@ -2902,6 +2908,10 @@ $("editDelete").onclick = async () => {
 
 // ---- REPORTS ---------------------------------------------------------------
 async function loadReports() {
+  // Fire-and-forget: loads the model into memory in the background so it's
+  // likely already warm by the time the user finishes reading this page and
+  // clicks Ask - see warmUpGemma()'s own comment in gemma.js for why.
+  if (GEMMA_ENDPOINT) warmUpGemma({ endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY });
   if (!allExpenses.length) await loadExpenses();
   // Build month selector from the last 12 months.
   const months = lastMonths(12).reverse(); // newest first for the dropdown
@@ -3692,6 +3702,38 @@ async function loadInsights() {
 }
 
 // ---- INTERACTIVE Q&A (Gemma, optional/best-effort like Phase 3) -----------
+
+// RAG retrieval, additive to buildQaContext's recent-window data (see
+// supabase/45_expense_embeddings.sql's header for the full rationale).
+// Embeds the question, vector-searches expense_embeddings for whatever's
+// semantically relevant, and only ever looks at transactions strictly
+// older than `sinceDate` (buildQaContext's own recent-window boundary) so
+// nothing gets double-counted between the two sources. Best-effort by
+// design, matching every other Gemma call in this app: a retrieval
+// failure (embeddings not indexed yet, home machine unreachable, RPC
+// error) must never block the actual answer, so any failure here just
+// returns an empty array rather than throwing.
+async function retrieveRelevantHistory(question, sinceDate) {
+  try {
+    const vector = await embedText(question, { endpoint: GEMMA_EMBED_ENDPOINT, model: GEMMA_EMBED_MODEL || "nomic-embed-text", key: GEMMA_AUTH_KEY });
+    const { data: matches } = await sb.rpc("match_expense_embeddings", {
+      query_embedding: vector, match_count: 10, before_date: sinceDate,
+    });
+    if (!matches?.length) return [];
+    const ids = matches.map((m) => m.expense_id);
+    const { data: rows } = await sb.from("expenses").select("*").in("id", ids);
+    return (rows || []).map((e) => ({
+      date: e.occurred_at,
+      amount: Number(e.amount),
+      category: e.category || null,
+      description: e.description || e.merchant || null,
+      payment_type: e.payment_type || null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 $("qaAskBtn").onclick = async () => {
   const question = $("qaQuestion").value.trim();
   if (!question) { flagField("qaQuestion"); return toast("Type a question first"); }
@@ -3701,14 +3743,26 @@ $("qaAskBtn").onclick = async () => {
   }
   $("qaAskBtn").disabled = true;
   $("qaAnswer").classList.add("hidden");
-  $("qaStatus").textContent = "Thinking…";
+  // Sets an honest expectation up front rather than a bare "Thinking…" -
+  // the home model can take up to ~20s (askGemma's own timeout) if it
+  // wasn't already warmed up by loadReports() opening this page.
+  $("qaStatus").textContent = "Thinking… (can take up to ~20s on the home model, less if you've had this page open a bit)";
   try {
     if (!allExpenses.length) await loadExpenses();
-    const context = buildQaContext(allExpenses, subscriptions, 6, profile);
+    const since = lastMonths(6)[0] + "-01"; // same boundary buildQaContext computes internally
+    const relevantHistory = await retrieveRelevantHistory(question, since);
+    const context = buildQaContext(allExpenses, subscriptions, 6, profile, relevantHistory);
     const answer = await askGemma(question, context, { endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY });
     $("qaAnswer").textContent = answer;
     $("qaAnswer").classList.remove("hidden");
-    $("qaStatus").textContent = "";
+    // Transparency, matching this app's existing "state the real math/
+    // scope, don't blend in silently" conventions (the ticker/bank-list
+    // "comprehensive but not exhaustive" caveats, Daily health check's
+    // real-numbers-only stance) - the user can see when older history
+    // actually contributed to the answer, not just trust it happened.
+    $("qaStatus").textContent = relevantHistory.length
+      ? `Also found ${relevantHistory.length} older transaction${relevantHistory.length === 1 ? "" : "s"} related to this question.`
+      : "";
   } catch (err) {
     $("qaStatus").textContent = "Couldn't get an answer - is Gemma reachable? (" + err.message + ")";
   } finally {

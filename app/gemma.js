@@ -10,6 +10,15 @@
 import { CATEGORIES } from "./categorize.js";
 
 const PAYMENTS = ["credit", "debit", "cash"];
+// Ollama's per-request override for how long a model stays loaded after
+// this call - deliberately NOT the home machine's own OLLAMA_KEEP_ALIVE
+// env var, which is global and would also affect any other model sharing
+// that machine (e.g. a coding-assistant model). Set here instead so only
+// this app's own usage gets a longer keep-alive, without touching the
+// machine's own tuning for its other uses. Doesn't help a genuinely cold
+// first request (that one still has to wait out the load), just makes a
+// second call shortly after the first skip the reload.
+const GEMMA_KEEP_ALIVE = "10m";
 
 /** Build the strict-JSON extraction prompt sent to Gemma. */
 export function buildPrompt(text, today) {
@@ -79,7 +88,7 @@ export async function parseWithGemma(text, opts = {}) {
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt: buildPrompt(text, today), stream: false, format: "json" }),
+      body: JSON.stringify({ model, prompt: buildPrompt(text, today), stream: false, format: "json", keep_alive: GEMMA_KEEP_ALIVE }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
@@ -128,7 +137,7 @@ export async function askGemma(question, context, opts = {}) {
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt: buildQaPrompt(question, context), stream: false }),
+      body: JSON.stringify({ model, prompt: buildQaPrompt(question, context), stream: false, keep_alive: GEMMA_KEEP_ALIVE }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);

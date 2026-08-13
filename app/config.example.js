@@ -17,6 +17,16 @@ window.APP_CONFIG = {
   // In production: your Cloudflare Tunnel HTTPS URL in front of Ollama.
   GEMMA_ENDPOINT: "",
   GEMMA_MODEL: "gemma",
+  // Shared secret the tunnel's gemma-auth-proxy.js requires on every request
+  // (X-Gemma-Key header) - without it, anyone who finds the Cloudflare Tunnel
+  // URL could send free requests to the home GPU, since Ollama itself has no
+  // auth and a quick tunnel (no owned domain) can't use Cloudflare Access.
+  // Leave empty when GEMMA_ENDPOINT points at a local mock/dev server that
+  // has no proxy in front of it. NOT truly secret once set here - this file
+  // is public client-side config, same caveat as GEMMA_ENDPOINT itself; it
+  // only stops someone who merely finds the tunnel URL, not someone reading
+  // this app's own source.
+  GEMMA_AUTH_KEY: "",
 
   // F6 stretch - live deal discovery (docs/F6-live-deals-proposal.md).
   // Off by default: the deal_findings table stays dormant until you stand up

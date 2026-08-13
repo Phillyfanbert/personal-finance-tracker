@@ -30,7 +30,7 @@ import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 
-const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
+const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, GEMMA_AUTH_KEY, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR-PROJECT")) {
   alert("Set your Supabase URL and anon key in config.js (see SETUP.md §4).");
 }
@@ -2268,7 +2268,7 @@ function scheduleGemma(raw) {
     $("parseStatus").textContent = "Asking Gemma…";
     try {
       const g = await parseWithGemma(sent, {
-        endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, today: $("fDate").value,
+        endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY, today: $("fDate").value,
       });
       // Only apply if the user hasn't typed something new in the meantime.
       if ($("quick").value !== sent) { $("parseStatus").textContent = ""; return; }
@@ -3674,7 +3674,7 @@ $("qaAskBtn").onclick = async () => {
   try {
     if (!allExpenses.length) await loadExpenses();
     const context = buildQaContext(allExpenses, subscriptions, 6, profile);
-    const answer = await askGemma(question, context, { endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL });
+    const answer = await askGemma(question, context, { endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY });
     $("qaAnswer").textContent = answer;
     $("qaAnswer").classList.remove("hidden");
     $("qaStatus").textContent = "";

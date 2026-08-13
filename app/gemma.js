@@ -75,10 +75,10 @@ function extractPayload(data) {
  * Parse free text via Gemma. Resolves to a normalized expense object, or throws
  * (caller falls back to keyword parsing). Times out so it never blocks the UI.
  * @param {string} text
- * @param {{endpoint:string, model?:string, timeoutMs?:number, today?:string}} opts
+ * @param {{endpoint:string, model?:string, key?:string, timeoutMs?:number, today?:string}} opts
  */
 export async function parseWithGemma(text, opts = {}) {
-  const { endpoint, model = "gemma", timeoutMs = 4000 } = opts;
+  const { endpoint, model = "gemma", key, timeoutMs = 4000 } = opts;
   const today = opts.today || new Date().toISOString().slice(0, 10);
   if (!endpoint) throw new Error("Gemma endpoint not configured");
 
@@ -87,7 +87,7 @@ export async function parseWithGemma(text, opts = {}) {
   try {
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(key ? { "X-Gemma-Key": key } : {}) },
       body: JSON.stringify({ model, prompt: buildPrompt(text, today), stream: false, format: "json", keep_alive: GEMMA_KEEP_ALIVE }),
       signal: controller.signal,
     });
@@ -127,7 +127,7 @@ export function buildQaPrompt(question, context) {
  * plain-text answer, or throws (caller shows a friendly error).
  */
 export async function askGemma(question, context, opts = {}) {
-  const { endpoint, model = "gemma", timeoutMs = 20000 } = opts;
+  const { endpoint, model = "gemma", key, timeoutMs = 20000 } = opts;
   if (!endpoint) throw new Error("Gemma endpoint not configured");
   if (!question || !question.trim()) throw new Error("Ask a question first");
 
@@ -136,7 +136,7 @@ export async function askGemma(question, context, opts = {}) {
   try {
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(key ? { "X-Gemma-Key": key } : {}) },
       body: JSON.stringify({ model, prompt: buildQaPrompt(question, context), stream: false, keep_alive: GEMMA_KEEP_ALIVE }),
       signal: controller.signal,
     });

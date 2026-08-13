@@ -22,7 +22,7 @@
     body {
       margin: 0; font-family: -apple-system, system-ui, sans-serif;
       background: var(--bg); color: var(--text);
-      padding: env(safe-area-inset-top) 0 calc(72px + env(safe-area-inset-bottom));
+      padding: calc(72px + env(safe-area-inset-top)) 0 env(safe-area-inset-bottom);
     }
     .wrap { max-width: 560px; margin: 0 auto; padding: 16px; }
     h1 { font-size: 20px; margin: 8px 0 16px; }
@@ -80,12 +80,16 @@
     .chartbox { position: relative; height: 240px; }
     .chartbox.short { height: 200px; }
     .chartbox.tiny { height: 110px; }
-    /* Bottom nav */
-    .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-      display: flex; background: var(--panel); border-top: 1px solid var(--border);
-      padding-bottom: env(safe-area-inset-bottom); }
+    /* Top nav */
+    .nav { position: fixed; left: 0; right: 0; top: 0; z-index: 40;
+      display: flex; background: var(--panel); border-bottom: 1px solid var(--border);
+      padding-top: env(safe-area-inset-top); }
     .nav button { flex: 1; background: transparent; border: none; color: var(--muted);
       font-weight: 600; padding: 16px 0; border-radius: 0; }
+    /* Adjacent-sibling selector so only the borders BETWEEN buttons show -
+       a plain border on every button would double up at each shared edge
+       and add an unwanted one on the far left/right too. */
+    .nav button + button { border-left: 1px solid var(--border); }
     .nav button.active { color: var(--accent); }
     /* Modal */
     .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 70;
@@ -752,7 +756,25 @@
         <div id="dealFindingsList"></div>
       </div>
 
-      <!-- Add / edit form (hidden until used) -->
+      <div class="card">
+        <strong>Upcoming renewals (30 days)</strong>
+        <div id="subUpcoming" style="margin-top:8px"><p class="muted">None in the next 30 days.</p></div>
+      </div>
+
+      <div class="card">
+        <strong>All subscriptions/bills</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
+        <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
+        <button class="secondary" id="addSubBtnBottom" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
+      </div>
+
+      <!-- Add / edit form (hidden until used) - placed below the full list
+           rather than up near the top of the page, so both "+ Add" entry
+           points (the topbar button and this list's own button) open it
+           somewhere already in view instead of scrolling all the way back
+           up past Savings found/Found online. openSubForm's scrollIntoView
+           (app.js) already scrolls to wherever this sits in the DOM, so
+           moving it here needed no JS change. -->
       <div class="card hidden" id="subForm">
         <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription/bill</strong></div>
         <label>Service name</label>
@@ -790,18 +812,6 @@
         </div>
         <div style="height:8px"></div>
         <button class="secondary hidden" id="deleteSubBtn" style="color:var(--err)">Delete subscription/bill</button>
-      </div>
-
-      <div class="card">
-        <strong>Upcoming renewals (30 days)</strong>
-        <div id="subUpcoming" style="margin-top:8px"><p class="muted">None in the next 30 days.</p></div>
-      </div>
-
-      <div class="card">
-        <strong>All subscriptions/bills</strong>
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
-        <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
-        <button class="secondary" id="addSubBtnBottom" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
       </div>
     </div>
 
@@ -1475,7 +1485,7 @@
     </div>
   </div>
 
-  <!-- Bottom nav -->
+  <!-- Top nav -->
   <nav id="nav" class="nav hidden">
     <button id="navLog" class="active">Log</button>
     <button id="navSubs">Subscriptions/Bills</button>

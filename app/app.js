@@ -2449,7 +2449,7 @@ $("csvStep2Next").onclick = () => {
     ? csvPreviewRows.map((r, i) => `
       <div class="exp" style="cursor:default">
         <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          <input type="checkbox" class="csv-row-select" data-csv-idx="${i}" ${r.duplicate ? "" : "checked"} style="flex-shrink:0" />
+          <input type="checkbox" class="csv-row-select" data-csv-idx="${i}" ${r.duplicate ? "" : "checked"} style="width:auto;flex-shrink:0" />
           <div style="min-width:0">
             <div>${esc(r.normalized.description || "(no description)")}${r.duplicate ? ` <span class="muted" style="font-size:11px">possible duplicate</span>` : ""}</div>
             <div class="meta">${r.normalized.occurred_at}${r.normalized.category ? " · " + esc(r.normalized.category) : ""}</div>
@@ -2560,7 +2560,7 @@ function renderExpenseList(containerId, rows, emptyMsg, { selectable = false } =
     </div>` : `
     <div class="exp" data-idx="${i}">
       <div style="display:flex;align-items:center;gap:8px;min-width:0">
-        ${selectable ? `<input type="checkbox" class="txn-select" data-sel-idx="${i}" style="flex-shrink:0" ${selectedTxnIds.has(r.id) ? "checked" : ""} />` : ""}
+        ${selectable ? `<input type="checkbox" class="txn-select" data-sel-idx="${i}" style="width:auto;flex-shrink:0" ${selectedTxnIds.has(r.id) ? "checked" : ""} />` : ""}
         <div style="min-width:0">
           <div>${esc(r.description || r.merchant || "(no description)")}</div>
           <div class="meta">${r.occurred_at} · ${esc(r.category || "Uncategorized")}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + esc(acctName(r.account_id)) : ""}</div>

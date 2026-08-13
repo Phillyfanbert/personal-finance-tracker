@@ -320,3 +320,24 @@ export function marketIndexSummary(indexes, findings) {
     return { label, price, change, changePct, explanation: latest?.explanation || null };
   });
 }
+
+/**
+ * Today's biggest movers from a fixed stock watchlist (app.js's
+ * MARKET_MOVERS_WATCHLIST) - same "public market data, not tied to any
+ * user" category as marketIndexSummary above, and literally reuses it
+ * (the watchlist is just another label list against the same findings)
+ * rather than re-deriving price/change math a second time. Ranked by the
+ * size of the move regardless of direction, so a big drop shows up here
+ * just as readily as a big gain. A symbol with no day-over-day change yet
+ * (price-agent has only found it once so far, or not at all) has nothing
+ * to rank it by, so it's excluded rather than sorted in as a false 0%.
+ * @param {string[]} watchlist MARKET_MOVERS_WATCHLIST from app.js
+ * @param {object[]} findings rows from market_index_findings
+ * @param {number} n how many movers to return
+ */
+export function topMarketMovers(watchlist, findings, n = 3) {
+  return marketIndexSummary(watchlist, findings)
+    .filter((m) => m.changePct != null)
+    .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
+    .slice(0, n);
+}

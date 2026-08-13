@@ -830,18 +830,27 @@
       </div>
 
       <!-- Market overview: a fixed set of major US indexes (S&P 500, Dow,
-           NASDAQ, Russell 2000 - app.js's MARKET_INDEXES), genuinely NOT
-           tied to anything the user owns, unlike every other card on this
-           tab. Same dormant SearXNG+Gemma pipeline as the rest of live
-           pricing (tools/price-agent.js), gated by the same
-           PRICE_FINDINGS_ENABLED flag - hidden entirely (not shown with an
-           empty/placeholder state) until that's on and the agent has
-           actually written rows, since there's no manual-entry fallback
-           for a market index the way there is for the user's own assets. -->
+           NASDAQ, Russell 2000 - app.js's MARKET_INDEXES) plus today's top
+           3 movers from a fixed large-cap watchlist (MARKET_MOVERS_
+           WATCHLIST) - both genuinely NOT tied to anything the user owns,
+           unlike every other card on this tab. Same dormant SearXNG+Gemma
+           pipeline as the rest of live pricing (tools/price-agent.js),
+           gated by the same PRICE_FINDINGS_ENABLED flag - hidden entirely
+           (not shown with an empty/placeholder state) until that's on and
+           the agent has actually written rows, since there's no manual-
+           entry fallback for either an index or a watchlist stock the way
+           there is for the user's own assets. The movers subsection hides
+           itself independently (there may be indexes but no rankable
+           movers yet, or vice versa). -->
       <div class="card hidden" id="marketOverviewCard">
         <strong>Market overview</strong>
         <p class="muted" style="font-size:12px;margin:4px 0 8px">Major US indexes, updated once tools/price-agent.js has run.</p>
         <div id="marketOverviewList"></div>
+        <div id="marketMoversSection" class="hidden" style="margin-top:14px">
+          <strong style="font-size:13px">Today's top movers</strong>
+          <p class="muted" style="font-size:12px;margin:4px 0 8px">Biggest moves (up or down) from a fixed watchlist of well-known large-cap stocks - not a scan of the whole market, and not a recommendation.</p>
+          <div id="marketMoversList"></div>
+        </div>
       </div>
 
       <!-- Daily health check: a short compilation of numbers already
@@ -1440,7 +1449,7 @@
         <div class="help-diagram">
           <svg viewBox="0 0 680 336" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="39" fill="var(--text)" font-size="14">Market overview (dormant feature)</text>
+            <text x="40" y="39" fill="var(--text)" font-size="14">Market overview + top movers (dormant feature)</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="93" fill="var(--text)" font-size="14">Daily health check + totals</text>
             <rect x="10" y="118" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1458,6 +1467,7 @@
         <div class="help-topic">
           <h3>Market overview</h3>
           <p>Today's level and day-over-day change for a handful of major US indexes (S&P 500, Dow Jones, NASDAQ Composite, Russell 2000) - genuinely separate from your own holdings below, this is broad market context, not anything you own. A dormant, optional feature: hidden entirely until a household server is running to look prices up (the same $0-cost search-based pipeline the live-holding prices below use), and even then, an individual index just shows "not available yet" until it's actually been found once.</p>
+          <p>Below the indexes, "Today's top movers" ranks the biggest day-over-day price swings (up or down) from a fixed watchlist of 20 well-known large-cap stocks, each with a short plain-English explanation of why it moved when one's been found. This is informational only, purely about stocks already on the fixed watchlist - not a scan of the whole market, and never a suggestion of what to buy or sell. It appears independently of the indexes above it, so it's possible to see one without the other depending on what the agent has found so far.</p>
         </div>
 
         <div class="help-topic">

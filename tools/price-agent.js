@@ -395,6 +395,21 @@ async function processSymbol(symbol) {
 // word.
 const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Composite", "Russell 2000"];
 
+// ---- Market movers watchlist (Investments tab, "Today's top movers") -----
+// A fixed, curated list of well-known large-cap stocks - NOT each user's
+// own holdings (that's the per-user watchlist above) - so the UI can rank
+// "today's biggest movers" even for a user who holds nothing. Same category
+// as MARKET_INDEXES immediately above (public market data, tied to no
+// user), so it's searched the same way and written to the SAME
+// market_index_findings table rather than a new one - that table's real
+// meaning was always "public market data," not literally "indexes only."
+// Must match app.js's own MARKET_MOVERS_WATCHLIST constant, kept in sync by
+// hand for the same reason MARKET_INDEXES already is.
+const MARKET_MOVERS_WATCHLIST = [
+  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "UNH",
+  "XOM", "JNJ", "WMT", "PG", "MA", "HD", "DIS", "NFLX", "AMD", "KO",
+];
+
 // ---- Main ----------------------------------------------------------------
 async function main() {
   requireEnv();
@@ -402,8 +417,9 @@ async function main() {
   const watchlist = await loadWatchlist();
   console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
   console.log(`Market indexes (${MARKET_INDEXES.length}): ${MARKET_INDEXES.join(", ")}`);
+  console.log(`Market movers watchlist (${MARKET_MOVERS_WATCHLIST.length}): ${MARKET_MOVERS_WATCHLIST.join(", ")}`);
 
-  if (!watchlist.length && !MARKET_INDEXES.length) {
+  if (!watchlist.length && !MARKET_INDEXES.length && !MARKET_MOVERS_WATCHLIST.length) {
     console.log("Nothing to search for. Exiting.");
     return;
   }
@@ -432,11 +448,17 @@ async function main() {
     console.log(`  -> ${findings.length} finding(s)`);
     allIndexFindings.push(...findings);
   }
+  for (const symbol of MARKET_MOVERS_WATCHLIST) {
+    console.log(`Searching mover: ${symbol}`);
+    const findings = await processSymbol(symbol);
+    console.log(`  -> ${findings.length} finding(s)`);
+    allIndexFindings.push(...findings);
+  }
   if (allIndexFindings.length) {
     await sbInsert("market_index_findings", allIndexFindings);
-    console.log(`Wrote ${allIndexFindings.length} finding(s) to market_index_findings.`);
+    console.log(`Wrote ${allIndexFindings.length} finding(s) to market_index_findings (indexes + movers watchlist).`);
   } else {
-    console.log("No market index findings this run.");
+    console.log("No market index or movers findings this run.");
   }
 }
 

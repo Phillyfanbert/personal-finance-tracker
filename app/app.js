@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -527,6 +527,22 @@ const INVESTMENT_BUCKETS = ["Stocks", "Bonds", "Cash", "Crypto", "Real Estate", 
 // to a row here) - that file has no import/export machinery to share this
 // list from a single source, so the two are kept in sync by hand.
 const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Composite", "Russell 2000"];
+// A fixed, curated watchlist of well-known large-cap stocks (not each
+// user's own holdings) so the Investments tab can surface "today's biggest
+// movers" even for a user who holds nothing at all - same "public market
+// data, not tied to any user" category as MARKET_INDEXES above, and
+// deliberately written to the SAME market_index_findings table rather than
+// a new one, since that table's real meaning was always "public market
+// data," not literally "indexes only." Must match tools/price-agent.js's
+// own MARKET_MOVERS_WATCHLIST constant, kept in sync by hand for the same
+// reason MARKET_INDEXES already is. Comprehensive-but-not-exhaustive by
+// design (20 large caps across sectors) - the same honesty caveat as
+// tickers.js/BANK_NAMES: this is a fixed watchlist, not a live scan of
+// "every stock," since there's no $0 feed that could do that.
+const MARKET_MOVERS_WATCHLIST = [
+  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "UNH",
+  "XOM", "JNJ", "WMT", "PG", "MA", "HD", "DIS", "NFLX", "AMD", "KO",
+];
 // A plain flat list with no dependency on fetched data, unlike
 // populateAcctTypeSelect/populateAssetTypeSelect/populateDebtTypeSelect
 // (which lazily populate on first form-open) - safe to populate once,
@@ -3292,6 +3308,21 @@ function renderMarketOverview() {
       <span class="amt" style="text-align:right">
         ${idx.price != null ? fmtNum(idx.price) : `<span class="muted" style="font-size:12px">not available yet</span>`}
         ${idx.change != null ? `<div style="font-size:12px;color:${gainColor(idx.change)}">${signedPct(idx.changePct)}</div>` : ""}
+      </span>
+    </div>`).join("");
+
+  const movers = topMarketMovers(MARKET_MOVERS_WATCHLIST, marketIndexFindings, 3);
+  const moversSection = $("marketMoversSection");
+  if (moversSection) moversSection.classList.toggle("hidden", !movers.length);
+  $("marketMoversList").innerHTML = movers.map((m) => `
+    <div class="exp" style="cursor:default">
+      <div>
+        <div>${esc(m.label)}</div>
+        ${m.explanation ? `<div class="meta">${esc(m.explanation)}</div>` : ""}
+      </div>
+      <span class="amt" style="text-align:right">
+        ${fmtNum(m.price)}
+        <div style="font-size:12px;color:${gainColor(m.change)}">${signedPct(m.changePct)}</div>
       </span>
     </div>`).join("");
 }

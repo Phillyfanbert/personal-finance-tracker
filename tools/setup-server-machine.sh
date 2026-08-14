@@ -56,6 +56,24 @@ EMBED_EXPENSES_INTERVAL_SECONDS="${EMBED_EXPENSES_INTERVAL_SECONDS:-3600}"
 
 log() { echo "== $* =="; }
 
+# launchctl bootout is asynchronous - an immediate bootstrap of the same
+# label right after can fail with "Bootstrap failed: 5: Input/output error"
+# even though the exact same bootstrap call succeeds a moment later
+# (confirmed live: every one of this script's 4 bootout+bootstrap sites hit
+# this on a real run, and a manual retry a couple seconds afterward worked
+# every time with no other change). One retry after a short pause is enough
+# in practice - this isn't launchd behaving randomly, just not being fully
+# unloaded yet at the instant bootout's own command returns.
+bootout_and_bootstrap() {
+  local label="$1" plist="$2"
+  launchctl bootout "$UID_GUI/${label}" 2>/dev/null || true
+  sleep 1
+  if ! launchctl bootstrap "$UID_GUI" "$plist" 2>/dev/null; then
+    sleep 2
+    launchctl bootstrap "$UID_GUI" "$plist"
+  fi
+}
+
 log "Checking prerequisites"
 command -v docker >/dev/null || { echo "docker not found - install Docker Desktop or OrbStack first."; exit 1; }
 command -v node >/dev/null || { echo "node not found - install Node 18+ first (e.g. brew install node)."; exit 1; }
@@ -103,6 +121,17 @@ if [ -f "$SETTINGS" ]; then
     echo "settings.yml already has a formats: line - leaving it."
   else
     log "Enabling JSON output format in settings.yml"
+    # The bundled settings.yml a fresh docker-compose bootstrap produces has
+    # gotten much slimmer across SearXNG image versions than this script
+    # originally assumed - confirmed live it can be as little as
+    # use_default_settings: true plus a server: block, with no top-level
+    # search: key at all to insert under. use_default_settings: true means
+    # any top-level key added here (search:, same as server: already is)
+    # gets merged with the image's real defaults rather than replacing them
+    # wholesale - verified live (a real docker compose up + a real
+    # ?format=json query against a freshly-appended search: block returned
+    # real JSON results), so appending a brand new section when none exists
+    # is the correct fix, not just a fallback guess.
     python3 - "$SETTINGS" <<'PYEOF'
 import sys
 path = sys.argv[1]
@@ -117,9 +146,17 @@ for line in lines:
         out.append("    - html\n")
         out.append("    - json\n")
         inserted = True
+if not inserted:
+    if out and out[-1].strip() != "":
+        out.append("\n")
+    out.append("search:\n")
+    out.append("  formats:\n")
+    out.append("    - html\n")
+    out.append("    - json\n")
+    inserted = True
 with open(path, "w") as f:
     f.writelines(out)
-print("inserted formats: [html, json]" if inserted else "WARNING: no top-level 'search:' key found - add formats: [html, json] under it by hand")
+print("inserted formats: [html, json]")
 PYEOF
   fi
 
@@ -179,8 +216,7 @@ cat > "$PROXY_PLIST" <<EOF
 </dict>
 </plist>
 EOF
-launchctl bootout "$UID_GUI/com.gemma-auth-proxy" 2>/dev/null || true
-launchctl bootstrap "$UID_GUI" "$PROXY_PLIST"
+bootout_and_bootstrap "com.gemma-auth-proxy" "$PROXY_PLIST"
 sleep 1
 if curl -sf -m 3 -o /dev/null -w '' -X POST http://localhost:11435/api/generate -H 'Content-Type: application/json' -H "X-Gemma-Key: ${GEMMA_PROXY_SECRET}" -d '{"model":"gemma4:e4b","prompt":"ping","stream":false}'; then
   echo "Proxy is up and forwarding real requests on :11435."
@@ -194,8 +230,7 @@ if [ -f "$TUNNEL_PLIST" ]; then
     log "Repointing the Cloudflare Tunnel at the proxy (11434 -> 11435)"
     cp "$TUNNEL_PLIST" "$TUNNEL_PLIST.bak"
     sed -i '' 's#localhost:11434#localhost:11435#' "$TUNNEL_PLIST"
-    launchctl bootout "$UID_GUI/com.cloudflared.gemma-tunnel" 2>/dev/null || true
-    launchctl bootstrap "$UID_GUI" "$TUNNEL_PLIST"
+    bootout_and_bootstrap "com.cloudflared.gemma-tunnel" "$TUNNEL_PLIST"
     sleep 3
     NEW_URL="$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' /tmp/cloudflared-gemma.log | tail -1 || true)"
     if [ -n "$NEW_URL" ]; then
@@ -247,8 +282,7 @@ install_weekly_agent() {
 </dict>
 </plist>
 EOF
-  launchctl bootout "$UID_GUI/${label}" 2>/dev/null || true
-  launchctl bootstrap "$UID_GUI" "$plist"
+  bootout_and_bootstrap "${label}" "$plist"
 }
 install_weekly_agent "com.deal-agent.weekly" "${TOOLS_DIR}/run-deal-agent.sh" "$DEAL_AGENT_HOUR" "$DEAL_AGENT_MIN"
 install_weekly_agent "com.price-agent.weekly" "${TOOLS_DIR}/run-price-agent.sh" "$PRICE_AGENT_HOUR" "$PRICE_AGENT_MIN"
@@ -283,8 +317,7 @@ install_interval_agent() {
 </dict>
 </plist>
 EOF
-  launchctl bootout "$UID_GUI/${label}" 2>/dev/null || true
-  launchctl bootstrap "$UID_GUI" "$plist"
+  bootout_and_bootstrap "${label}" "$plist"
 }
 install_interval_agent "com.embed-expenses.hourly" "${TOOLS_DIR}/run-embed-expenses.sh" "$EMBED_EXPENSES_INTERVAL_SECONDS"
 

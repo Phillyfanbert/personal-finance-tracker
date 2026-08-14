@@ -923,7 +923,13 @@
              a per-share figure. No separate "current value" input - a real
              purchase doesn't have one either, and the live-price pipeline
              (app.js's findLivePrice(), Finnhub-backed) already fills in
-             today's price automatically once the ticker is typed. -->
+             today's price automatically once the ticker is typed. The
+             optional "Paid from" funding account reuses Quick Add's own
+             assetDeltaError()/applyAssetDelta() unchanged - only the
+             POSITIVE delta between the new and previous total cost basis
+             is validated/deducted, so this correctly covers both a brand
+             new holding and buying more shares of one you already have,
+             while never "charging" an edit that lowers quantity/price. -->
         <div id="holdingForm" class="hidden" style="margin-bottom:12px;padding:12px;background:var(--panel-2);border-radius:10px">
           <label>Account this sits in</label>
           <select id="holdingAccount"></select>
@@ -935,6 +941,9 @@
             <div><label>Price per share</label><input id="holdingCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you paid per share" /></div>
           </div>
           <p class="muted" id="holdingTotalCost" style="font-size:12px;margin:2px 0 8px"></p>
+          <label>Paid from (optional)</label>
+          <select id="holdingFundingAccount"></select>
+          <p class="muted" style="font-size:12px;margin:2px 0 8px">If selected, this purchase is deducted from and checked against that account's balance - only for money actually being added (buying more shares), never for editing a holding down.</p>
           <label>Bucket (optional, for target allocation)</label>
           <select id="holdingBucket"></select>
           <p class="muted" style="font-size:12px;margin:8px 0 0">Price per share fills in automatically once a live price is available for the ticker - edit it if you paid a different amount. Once priced, shares x live price is what actually shows as this holding's value.</p>
@@ -1506,7 +1515,9 @@
 
         <div class="help-topic">
           <h3>Holdings</h3>
-          <p>Every investment-type asset, grouped by account: a plain account (like a 401(k) with no per-ticker detail) shows just its own value, while "+ Add stock" lets you record the actual tickers/coins bought inside any eligible account (Brokerage, IRA, crypto, and similar) - modeled after a real trade ticket: ticker, shares, and price per share, with the total cost shown live as you type. If a live price is already available for the ticker, price per share fills in automatically (edit it if you actually paid a different amount) - once a symbol is priced, shares x live price is what actually shows as the holding's value, gain/loss, a day-change figure, and sometimes a short note on why the price moved. A ticker you type is checked against a large built-in list; a genuine miss offers an "add it anyway" confirmation rather than blocking you. "Log contribution" under any account records new money you actually put in (as opposed to the account simply growing in value) - this is what the Contribution limits card below is measured against, so it deliberately only counts real deposits, never market gains.</p>
+          <p>Every investment-type asset, grouped by account: a plain account (like a 401(k) with no per-ticker detail) shows just its own value, while "+ Add stock" lets you record the actual tickers/coins bought inside any eligible account (Brokerage, IRA, crypto, and similar) - modeled after a real trade ticket: ticker, shares, and price per share, with the total cost shown live as you type. If a live price is already available for the ticker, price per share fills in automatically (edit it if you actually paid a different amount) - once a symbol is priced, shares x live price is what actually shows as the holding's value, gain/loss, a day-change figure, and sometimes a short note on why the price moved. A ticker you type is checked against a large built-in list; a genuine miss offers an "add it anyway" confirmation rather than blocking you.</p>
+          <p>"Paid from (optional)" lets you fund the purchase from a real account (Checking, Savings, Cash, and similar) - if you pick one, the amount is checked against and deducted from that account's actual balance, the same way any other spending is, and shows up in Recent History as an undoable entry. It only ever applies to money actually being added (a brand new holding, or increasing shares/price on one you already have) - editing a holding down never touches a funding account, since there's no way to tell a correction apart from a real partial sale. Leave it on "None" to record a holding without tracking where the money came from.</p>
+          <p>"Log contribution" under any account records new money you actually put in (as opposed to the account simply growing in value) - this is what the Contribution limits card below is measured against, so it deliberately only counts real deposits, never market gains.</p>
         </div>
 
         <div class="help-topic">

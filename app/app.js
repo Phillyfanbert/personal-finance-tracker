@@ -1084,6 +1084,7 @@ async function loadAccounts() {
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
+  $("holdingFundingAccount").innerHTML = opts;
   // A previously-typed bank_name (including one added via the "not
   // recognized, add anyway" override in saveAcctBtn) becomes just as
   // suggestable as a seeded FDIC name next time - rankBankMatches reads
@@ -3627,6 +3628,10 @@ function openHoldingForm(holding) {
   $("holdingCostBasis").value = holding && holding.quantity
     ? Math.round((holding.purchase_price / holding.quantity) * 100) / 100
     : "";
+  // Always blank, add or edit - this represents a one-shot action taken
+  // at save time, not a stored fact about the holding, so there's nothing
+  // on the holding row to pre-fill it from.
+  $("holdingFundingAccount").value = "";
   $("holdingBucket").value = holding?.investment_bucket ?? "";
   updateHoldingFieldHighlighting();
   updateHoldingTotalCost();
@@ -3664,6 +3669,29 @@ $("saveHoldingBtn").onclick = async () => {
   const pricePerShare = parseFloat($("holdingCostBasis").value);
   if (!Number.isFinite(pricePerShare) || pricePerShare < 0) { flagField("holdingCostBasis"); return toast("Price per share can't be negative"); }
 
+  // The form takes a PER-SHARE price (matches a real trade ticket), but
+  // assets.purchase_price stores the TOTAL - every reader of that column
+  // (investments.js's investmentHoldings(), gain/loss math) already
+  // expects a total, so convert here rather than changing that contract.
+  const totalCostBasis = Math.round(pricePerShare * quantity * 100) / 100;
+  // Only a POSITIVE delta is money actually being spent right now - a new
+  // holding starts from 0, editing one compares against its existing
+  // total. Editing quantity/price DOWN (a correction, not a sale - this
+  // app has no "sell" workflow) yields a delta <= 0, which deliberately
+  // skips funding entirely below - there's no reliable way to tell a
+  // correction apart from a real partial sale, so guessing would be worse
+  // than doing nothing.
+  const previousCostBasis = editingHolding ? Number(editingHolding.purchase_price) : 0;
+  const costBasisDelta = Math.round((totalCostBasis - previousCostBasis) * 100) / 100;
+  const fundingAccountId = $("holdingFundingAccount").value || null;
+  // Checked up front, before the async ticker-confirm dialog below - fail
+  // fast on insufficient funds rather than making someone confirm an
+  // unusual ticker only to then find out they can't afford it.
+  if (fundingAccountId && costBasisDelta > 0) {
+    const fundingErr = assetDeltaError([{ accountId: fundingAccountId, amount: costBasisDelta, sign: -1 }]);
+    if (fundingErr) { flagField("holdingFundingAccount"); return toast(fundingErr); }
+  }
+
   const parent = assets.find((a) => a.id === parentId);
   // isKnownTicker() checks a hand-curated, necessarily incomplete list
   // (tickers.js) - a no-match is a confirmation, not a hard stop, same
@@ -3680,11 +3708,6 @@ $("saveHoldingBtn").onclick = async () => {
     holdingSymbolOverrideConfirmedFor = symbol;
   }
 
-  // The form takes a PER-SHARE price (matches a real trade ticket), but
-  // assets.purchase_price stores the TOTAL - every reader of that column
-  // (investments.js's investmentHoldings(), gain/loss math) already
-  // expects a total, so convert here rather than changing that contract.
-  const totalCostBasis = Math.round(pricePerShare * quantity * 100) / 100;
   const row = {
     // A holding inherits its parent's type so INVESTMENT_ASSET_TYPES keeps
     // matching it and the Investments tab picks it up with no special case.
@@ -3711,6 +3734,18 @@ $("saveHoldingBtn").onclick = async () => {
     ? await sb.from("assets").update(row).eq("id", editingHolding.id)
     : await sb.from("assets").insert(row);
   if (error) { flagField("holdingSymbol"); return toast(error.message); }
+  // Mirrors exactly where Quick Add calls applyAssetDelta after its own
+  // expenses.insert - re-checked against fundingAccountId/costBasisDelta
+  // (not just "was a funding account selected") since a decrease must
+  // never reach here even if a funding account happens to still be set.
+  if (fundingAccountId && costBasisDelta > 0) {
+    await applyAssetDelta(fundingAccountId, null, costBasisDelta, -1);
+    await logActivity(
+      "asset_adjust",
+      `Bought ${quantity} ${symbol} - funded from ${acctName(fundingAccountId)}`,
+      -costBasisDelta, undefined, fundingAccountId
+    );
+  }
   closeHoldingForm();
   await loadAssets();
   await syncParentAssetValue(parentId);

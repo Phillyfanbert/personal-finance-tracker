@@ -2,73 +2,118 @@
 // ============================================================================
 // Live asset price agent (docs/ROADMAP.md Assets #4). Same architecture as
 // tools/deal-agent.js (F6), reused rather than duplicated conceptually -
-// runs on the SERVER MACHINE ONLY, alongside SearXNG and Ollama. Never runs
-// in the browser, never ships in the PWA, needs the Supabase SERVICE_ROLE
-// key - keep that out of the repo (env var only).
+// runs on the SERVER MACHINE ONLY, needs the Supabase SERVICE_ROLE key -
+// keep that out of the repo (env var only).
 //
-// Built on this dormant pipeline instead of a real market-data API by
-// explicit choice: virtually every stock/crypto price API is either paid,
-// rate-limited without a key, or both - a hard conflict with this project's
-// $0/no-card constraint (README §1.4). SearXNG+Gemma is $0 and already
-// running on the server machine for F6.
+// Uses Tavily for live web search and the Gemini API (plain generateContent,
+// no grounding tool) for extraction - not local Ollama, deliberately, and
+// not as a fallback alongside it. This script only ever handles public
+// market data (a ticker symbol's price, a market index level) - never a
+// specific user's personal financial data - so it doesn't need to stay on
+// the home-hosted model the way app/gemma.js's real expense/Q&A paths must.
+// See CLAUDE.md's data model section for the durable version of this
+// privacy boundary - which scripts may use a cloud LLM and which must
+// never.
+//
+// Two providers, not one, and this is a deliberate reversal of an earlier
+// version of this script that used Gemini's own Google Search grounding
+// tool for both search and extraction in a single call. That was dropped
+// after live testing (see docs/SESSION-NOTES.md) found grounding requires
+// a billing account linked to the Google Cloud project to get ANY quota at
+// all - even the portion Google's own docs describe as a free monthly
+// allowance - which conflicts with this project's hard $0/no-card
+// constraint. Splitting the two concerns instead: Tavily does real live
+// search (confirmed free tier, no card required to sign up -
+// docs.tavily.com), and Gemini's plain generateContent (confirmed live,
+// this session, to work with no billing account at all) only ever reasons
+// over the real search-result content Tavily already fetched - never its
+// own general knowledge. This is the same two-step shape the original
+// SearXNG+local-Gemma pipeline always had, just with different providers
+// for each half, and it happens to also solve the original motivation for
+// moving off the home Mac at all: extraction now runs in Google's cloud
+// instead of competing with the home Ollama instance's generation model
+// for RAM.
 //
 // What it does, per distinct assets.price_symbol in use across all users
 // (a symbol's price is a public fact, not user-specific - same reasoning
 // deal_findings already uses for service prices):
-//   1. Query SearXNG for the symbol's current price, keeping only results
-//      on a small hardcoded allowlist of reputable finance-data domains
-//      (TRUSTED_PRICE_DOMAINS below) - same "never guess a domain" posture
-//      docs/F6-live-deals-proposal.md's Option C already established,
-//      just a fixed list instead of a per-service table, since price
-//      sources are generic rather than per-symbol the way subscription
-//      pricing pages are per-service.
-//   2. Fetch each surviving page's text and ask Gemma to extract a price as
-//      strict JSON (same pattern as app/gemma.js's parseWithGemma).
-//   3. If a price was found, one more best-effort step: search for recent
-//      news on the symbol (TRUSTED_NEWS_DOMAINS, a superset of the price
-//      allowlist) and ask Gemma for a short neutral explanation of why the
-//      price moved (Investments tab). One attempt per symbol per run, not
-//      per price-finding row - the news search doesn't depend on which
-//      allowlisted page happened to produce the price. Failure here
-//      (search, fetch, or Gemma) never blocks the price write itself;
-//      explanation just stays null, same failure-tolerance as step 2.
-//   4. Write validated findings to asset_price_findings via the REST API
+//   1. For each of a few query angles, search Tavily for real, current web
+//      results.
+//   2. Filter those results down to ones on TRUSTED_PRICE_DOMAINS BEFORE
+//      Gemini ever sees them - the same "never trust an unverified source"
+//      posture docs/F6-live-deals-proposal.md's Option C established,
+//      applied as a pre-filter here (Tavily returns real result URLs
+//      directly, unlike a grounding tool's internal search).
+//   3. Ask Gemini to extract strict JSON price data ONLY from the real,
+//      trusted-domain content just fetched - explicitly instructed not to
+//      draw on anything else.
+//   4. If a price was found, one more best-effort step: ask for a short
+//      neutral explanation of why the price moved today
+//      (TRUSTED_NEWS_DOMAINS, a superset of the price allowlist). One
+//      attempt per symbol per run, not per price-finding row. Failure here
+//      never blocks the price write itself; explanation just stays null.
+//   5. Write validated findings to asset_price_findings via the REST API
 //      using the service_role key (bypasses RLS by design).
 //
-// Also runs the exact same 4-step pipeline against a small FIXED list of
-// major market indexes (MARKET_INDEXES below - S&P 500, NASDAQ, ...),
-// writing to a separate market_index_findings table instead (Investments
-// tab's Daily overview) - see that constant's own comment for why this
-// reuses processSymbol()/findExplanation() unchanged rather than forking.
+// Also runs the exact same pipeline against a small FIXED list of major
+// market indexes (MARKET_INDEXES below) and a curated large-cap watchlist
+// (MARKET_MOVERS_WATCHLIST), writing to market_index_findings instead
+// (Investments tab).
 //
-// Setup (on the server machine, next to Ollama and deal-agent.js):
+// Setup (on the server machine):
 //   Shares tools/.env.deal-agent (same env vars, see that file's header) -
 //   no separate env file needed. Run directly:
 //   node tools/price-agent.js            # writes findings
 //   DRY_RUN=1 node tools/price-agent.js  # prints what it would write, no DB writes
-//   Or via tools/run-price-agent.sh, which brings SearXNG up/down around it,
-//   same as tools/run-deal-agent.sh does for the deal agent.
+//   Or via tools/run-price-agent.sh, a thin env-loading wrapper - no
+//   SearXNG/Docker step, this script doesn't need either.
 //
-// Scheduling: not wired up yet (see docs/ROADMAP.md's F6 Phase D item,
-// same unresolved question applies here) - run manually or via your own
-// cron/systemd timer for now. A price goes stale far faster than a
-// subscription plan price does, so this probably wants a tighter interval
-// than deal-agent.js's weekly cadence once that's set up - daily, maybe,
-// not continuously (same hammering-SearXNG concern deal-agent.js's own
-// header already raises).
+// Scheduling: tools/setup-server-machine.sh installs this as a WEEKLY
+// launchd job (com.price-agent.weekly), same cadence as deal-agent.js -
+// deliberately not daily, despite an earlier version of this comment
+// musing that a price probably wants a tighter interval. Verified real
+// math instead of going with that guess: at current watchlist sizes (1
+// user-owned asset symbol + 4 fixed indexes + 20 fixed movers, 2 price
+// queries each + up to 1 explanation query each = up to 75 Tavily calls
+// worst case per run) plus deal-agent.js's own usage, combined monthly
+// Tavily usage on the weekly schedule comes out around 200-370
+// credits/month even in the worst case - comfortably under Tavily's free
+// 1,000/month, with real margin for MARKET_MOVERS_WATCHLIST or a user's
+// own asset list growing later. MAX_TAVILY_CALLS_PER_RUN below is a hard
+// safety cap for that future-growth case specifically, not because
+// today's sizes are actually close to the limit. If this ever moves to a
+// tighter interval, redo this math first - don't just switch the plist.
 // ============================================================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const SEARXNG_URL = process.env.SEARXNG_URL;
-const GEMMA_ENDPOINT = process.env.GEMMA_ENDPOINT;
-const GEMMA_MODEL = process.env.GEMMA_MODEL || "gemma";
 const DRY_RUN = !!process.env.DRY_RUN;
 
+// Tavily - real web search, confirmed free tier (1,000 credits/month, no
+// credit card to sign up) as of this writing. https://tavily.com
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+const TAVILY_URL = "https://api.tavily.com/search";
+
+// Gemini - plain generateContent, no tools. Deliberately NOT the Google
+// Search grounding tool (see header comment above for why) and
+// deliberately NOT a hardcoded version number as the default - a
+// hardcoded "gemini-2.5-flash" default here was live-broken within days of
+// being written ("no longer available to new users"), so gemini-flash-
+// latest (a stable rotating alias, not an experimental/-preview tag) is
+// the more robust default for an unattended job going forward. Override
+// via GEMINI_MODEL to pin a specific version if you want that instead. Key
+// must still be created with NO billing account attached - confirmed live
+// that plain generateContent works fine on a no-billing key.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+function geminiUrl(model) {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+}
+
 // A small, deliberately conservative allowlist - reputable finance-data
-// sources only, not "any page that mentions a price." Extend this list
-// rather than removing the allowlist entirely if a legitimate source keeps
-// getting filtered out.
+// sources only, not "anything a search happens to turn up." Extend this
+// list rather than removing the allowlist entirely if a legitimate source
+// keeps getting filtered out.
 const TRUSTED_PRICE_DOMAINS = [
   "finance.yahoo.com",
   "marketwatch.com",
@@ -84,15 +129,33 @@ const TRUSTED_PRICE_DOMAINS = [
 // which a pure price-quote page usually doesn't have.
 const TRUSTED_NEWS_DOMAINS = [...TRUSTED_PRICE_DOMAINS, "reuters.com", "cnbc.com"];
 
-const RESULTS_PER_QUERY = 2;
-const PAGE_TEXT_LIMIT = 4000;
-const FETCH_TIMEOUT_MS = 8000;
-const GEMMA_TIMEOUT_MS = 60000;
-const REQUEST_DELAY_MS = 1000;
+const FETCH_TIMEOUT_MS = 8000;      // Supabase REST calls
+const SEARCH_TIMEOUT_MS = 15000;    // Tavily search
+const GEMINI_TIMEOUT_MS = 30000;    // extraction over already-fetched content
+const REQUEST_DELAY_MS = 1200;      // spacing between calls - raised from 500ms after a live
+                                     // test run hit a real Gemini 429 mid-run at that spacing
+const RESULTS_PER_QUERY = 5;        // Tavily max_results per search
+const MAX_429_RETRIES = 2;          // per call, exponential backoff (3s, 6s)
+
+// Hard safety cap on Tavily calls in a single run - not because current
+// watchlist sizes are actually close to the free tier's 1,000
+// credits/month (they aren't: this script + deal-agent.js together run
+// well under 400/month at current sizes on the weekly launchd schedule
+// setup-server-machine.sh installs - see the real math in this file's
+// header), but because nothing today stops MARKET_MOVERS_WATCHLIST or a
+// user's own asset watchlist from growing later. 100 calls/run x 2
+// scripts x ~4.33 weekly runs/month = ~866/month worst case even if both
+// scripts hit their cap every run - still under budget with margin. Once
+// hit, the run stops starting new symbols and writes whatever findings it
+// already has rather than continuing to burn quota.
+const MAX_TAVILY_CALLS_PER_RUN = 100;
+let tavilyCallCount = 0;
 
 function requireEnv() {
-  const missing = ["SUPABASE_URL", "SEARXNG_URL", "GEMMA_ENDPOINT"].filter((k) => !process.env[k]);
+  const missing = ["SUPABASE_URL"].filter((k) => !process.env[k]);
   if (!DRY_RUN) missing.push(...(!SERVICE_ROLE_KEY ? ["SUPABASE_SERVICE_ROLE_KEY"] : []));
+  if (!TAVILY_API_KEY) missing.push("TAVILY_API_KEY");
+  if (!GEMINI_API_KEY) missing.push("GEMINI_API_KEY");
   if (missing.length) {
     console.error(`Missing required env var(s): ${missing.join(", ")}`);
     process.exit(1);
@@ -109,6 +172,26 @@ async function fetchWithTimeout(url, opts = {}, timeoutMs = FETCH_TIMEOUT_MS) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Retries specifically on 429 (rate-limited), not other error codes - a
+// 4xx like a bad request or an auth failure retrying won't fix, only a
+// transient rate limit will. Confirmed live this session that a burst of
+// calls at the previous 500ms spacing was enough to trip Gemini's
+// free-tier RPM ceiling mid-run - this is what actually recovers a run
+// from that instead of just failing every remaining query.
+async function fetchWithRetry(url, opts, timeoutMs, maxRetries = MAX_429_RETRIES) {
+  let res;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    res = await fetchWithTimeout(url, opts, timeoutMs);
+    if (res.status !== 429) return res;
+    if (attempt < maxRetries) {
+      const backoffMs = 3000 * 2 ** attempt;
+      console.warn(`  429 rate-limited, retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries})`);
+      await sleep(backoffMs);
+    }
+  }
+  return res;
 }
 
 // ---- Supabase REST helpers (PostgREST, no SDK dependency) ------------------
@@ -149,15 +232,6 @@ function buildQueries(symbol) {
   return [`${symbol} price today`, `${symbol} current price USD`];
 }
 
-// ---- SearXNG -----------------------------------------------------------
-async function searchSearxng(query) {
-  const url = `${SEARXNG_URL}/search?format=json&q=${encodeURIComponent(query)}`;
-  const res = await fetchWithTimeout(url);
-  if (!res.ok) throw new Error(`SearXNG HTTP ${res.status}`);
-  const data = await res.json();
-  return data.results || [];
-}
-
 function hostAllowed(urlStr, domains) {
   try {
     const host = new URL(urlStr).hostname.replace(/^www\./, "");
@@ -167,30 +241,113 @@ function hostAllowed(urlStr, domains) {
   }
 }
 
-// ---- Page fetch + strip -----------------------------------------------
-async function fetchPageText(url) {
-  const res = await fetchWithTimeout(url, { headers: { "User-Agent": "personal-finance-agent-price-checker/0.1" } });
-  if (!res.ok) throw new Error(`Page fetch HTTP ${res.status}`);
-  const html = await res.text();
-  const text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return text.slice(0, PAGE_TEXT_LIMIT);
+// ---- Tavily: real live web search -----------------------------------------
+async function tavilySearch(query) {
+  if (tavilyCallCount >= MAX_TAVILY_CALLS_PER_RUN) {
+    throw new Error(`Tavily call budget (${MAX_TAVILY_CALLS_PER_RUN}/run) exceeded - skipping`);
+  }
+  tavilyCallCount++;
+  const res = await fetchWithRetry(TAVILY_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${TAVILY_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query, max_results: RESULTS_PER_QUERY, search_depth: "basic" }),
+  }, SEARCH_TIMEOUT_MS);
+  if (!res.ok) throw new Error(`Tavily HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  return (data.results || [])
+    .map((r) => ({
+      url: typeof r.url === "string" ? r.url : "",
+      title: typeof r.title === "string" ? r.title : "",
+      content: typeof r.content === "string" ? r.content : "",
+    }))
+    .filter((r) => r.url);
 }
 
-// ---- Gemma extraction (same strict-JSON contract style as app/gemma.js) ----
-function buildExtractionPrompt(symbol, pageText) {
+// ---- Gemini: extraction only, no search tool -------------------------------
+async function extractWithGemini(prompt) {
+  const res = await fetchWithRetry(geminiUrl(GEMINI_MODEL), {
+    method: "POST",
+    headers: { "x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+  }, GEMINI_TIMEOUT_MS);
+  if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const candidate = (data.candidates || [])[0];
+  const textPart = (candidate?.content?.parts || []).find((p) => typeof p.text === "string");
+  if (!textPart) throw new Error("Gemini response had no text content");
+  return textPart.text;
+}
+
+function buildSourcesBlock(results) {
+  return results.map((r, i) => `[Source ${i + 1}: ${r.url}]\n${r.content}`).join("\n\n");
+}
+
+// Search via Tavily, filter to an allowed domain list, then ask Gemini to
+// extract structured JSON purely from the real fetched content of those
+// trusted results - never from Gemini's own general knowledge (the prompt
+// says so explicitly). Returns citations already filtered to the allowed
+// list, so callers don't need a second trust check.
+async function searchAndExtract(query, domains, instructionsPrompt) {
+  const results = await tavilySearch(query);
+  const trusted = results.filter((r) => hostAllowed(r.url, domains));
+  if (!trusted.length) {
+    return { text: null, citations: [] };
+  }
+  const prompt = [
+    instructionsPrompt,
+    "",
+    "Base your answer ONLY on the real search results below. Do not use any",
+    "other knowledge you may have. If the answer isn't in these results, say",
+    "so via the null value specified above rather than guessing.",
+    "",
+    buildSourcesBlock(trusted),
+  ].join("\n");
+  const text = await extractWithGemini(prompt);
+  return { text, citations: trusted.map((r) => r.url) };
+}
+
+// Gemini has no confirmed equivalent to Ollama's format:"json" constrained
+// decoding - ask clearly for pure JSON in the prompt, but parse
+// defensively: strip a possible code fence, and treat a parse failure as
+// "no finding" rather than crashing the run, same failure-tolerance every
+// extraction call here already has.
+function parseJsonLoose(text) {
+  const stripped = text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "");
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    // Occasionally adds stray prose around the JSON despite being asked
+    // for pure JSON - recover by pulling out the first balanced {...}
+    // substring instead of discarding the finding.
+    const start = stripped.indexOf("{");
+    if (start === -1) return null;
+    let depth = 0;
+    for (let i = start; i < stripped.length; i++) {
+      if (stripped[i] === "{") depth++;
+      else if (stripped[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(stripped.slice(start, i + 1));
+          } catch {
+            return null;
+          }
+        }
+      }
+    }
+    return null;
+  }
+}
+
+function buildExtractionPrompt(symbol) {
   return [
-    "You extract a current market price from webpage text. Respond with ONLY",
-    'a JSON object, no prose, no code fences. Use this exact shape:',
+    `You are extracting a current market price for the symbol "${symbol}"`,
+    "from the real search results provided below.",
+    "Respond with ONLY a JSON object, no prose, no code fences. Use this exact shape:",
     '{ "price": number|null, "currency": string|null, "confidence": number }',
-    `The symbol is "${symbol}". confidence is 0..1, how sure you are this is`,
-    "the current price of this exact symbol (not a different, similarly-named one).",
-    "If you cannot find a clear current price, set price to null.",
-    `Page text: ${JSON.stringify(pageText)}`,
+    "confidence is 0..1, how sure you are this is the current price of this exact",
+    "symbol (not a different, similarly-named one).",
+    "If you cannot find a clear current price in the results, set price to null.",
   ].join("\n");
 }
 
@@ -205,52 +362,19 @@ function validateFinding(raw) {
   return { price: Math.round(price * 10000) / 10000, currency, confidence };
 }
 
-async function extractWithGemma(symbol, pageText) {
-  const res = await fetchWithTimeout(GEMMA_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: GEMMA_MODEL,
-      prompt: buildExtractionPrompt(symbol, pageText),
-      stream: false,
-      format: "json",
-    }),
-  }, GEMMA_TIMEOUT_MS);
-  if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
-  const data = await res.json();
-  const payload = "response" in data ? JSON.parse(data.response) : data;
-  return validateFinding(payload);
-}
-
-async function warmUpGemma() {
-  const start = Date.now();
-  const res = await fetchWithTimeout(GEMMA_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: GEMMA_MODEL, prompt: "ping", stream: false }),
-  }, GEMMA_TIMEOUT_MS);
-  if (!res.ok) throw new Error(`Gemma warm-up HTTP ${res.status}`);
-  await res.json();
-  console.log(`Gemma warm-up took ${((Date.now() - start) / 1000).toFixed(1)}s`);
-}
-
 // ---- "Why did this move" explanation (Investments tab, best-effort) -------
-function buildNewsQuery(symbol) {
-  return `${symbol} stock price today news`;
-}
-
-function buildExplanationPrompt(symbol, pageText) {
+function buildExplanationPrompt(symbol) {
   return [
-    "You explain why a stock or crypto price moved, based on webpage text.",
+    `You explain why a stock or crypto price moved, based only on the real`,
+    "search results provided below.",
     'Respond with ONLY a JSON object, no prose, no code fences. Use this',
     'exact shape: { "explanation": string|null, "confidence": number }',
     `The symbol is "${symbol}". explanation should be a short, neutral,`,
-    "1-2 sentence summary of why the price moved today, only if the text",
-    "actually gives a reason (earnings, news, a market-wide move, etc).",
+    "1-2 sentence summary of why the price moved today, only if the results",
+    "give an actual reason (earnings, news, a market-wide move, etc).",
     "confidence is 0..1, how sure you are this reason is real and specific",
-    "to this exact symbol. If the text gives no clear reason, set",
+    "to this exact symbol. If there's no clear reason in the results, set",
     "explanation to null rather than guessing.",
-    `Page text: ${JSON.stringify(pageText)}`,
   ].join("\n");
 }
 
@@ -264,105 +388,60 @@ function validateExplanation(raw) {
   return { explanation, confidence };
 }
 
-async function extractExplanationWithGemma(symbol, pageText) {
-  const res = await fetchWithTimeout(GEMMA_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: GEMMA_MODEL,
-      prompt: buildExplanationPrompt(symbol, pageText),
-      stream: false,
-      format: "json",
-    }),
-  }, GEMMA_TIMEOUT_MS);
-  if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
-  const data = await res.json();
-  const payload = "response" in data ? JSON.parse(data.response) : data;
-  return validateExplanation(payload);
-}
-
 // One attempt per symbol per run (not per price-finding row - see the
-// header comment). Every failure mode here (search, fetch, Gemma) is
-// caught and logged, never thrown - this must never take down a run that
-// otherwise found a valid price.
+// header comment). Every failure mode here is caught and logged, never
+// thrown - this must never take down a run that otherwise found a valid
+// price.
 async function findExplanation(symbol) {
-  let results;
+  let result;
   try {
-    results = await searchSearxng(buildNewsQuery(symbol));
+    result = await searchAndExtract(`${symbol} stock price today news`, TRUSTED_NEWS_DOMAINS, buildExplanationPrompt(symbol));
   } catch (err) {
-    console.warn(`[${symbol}] news search failed: ${err.message}`);
+    console.warn(`[${symbol}] explanation search failed: ${err.message}`);
     return null;
   }
   await sleep(REQUEST_DELAY_MS);
 
-  const allowed = results.filter((r) => hostAllowed(r.url, TRUSTED_NEWS_DOMAINS)).slice(0, 2);
-  for (const result of allowed) {
-    let pageText;
-    try {
-      pageText = await fetchPageText(result.url);
-    } catch (err) {
-      console.warn(`[${symbol}] news page fetch failed for ${result.url}: ${err.message}`);
-      continue;
-    }
-    await sleep(REQUEST_DELAY_MS);
-
-    let extracted;
-    try {
-      extracted = await extractExplanationWithGemma(symbol, pageText);
-    } catch (err) {
-      console.warn(`[${symbol}] explanation extraction failed for ${result.url}: ${err.message}`);
-      continue;
-    }
-    if (extracted) return extracted.explanation;
+  if (!result.text) {
+    console.warn(`[${symbol}] no trusted-domain result for explanation - discarding`);
+    return null;
   }
-  return null;
+  const extracted = validateExplanation(parseJsonLoose(result.text));
+  return extracted ? extracted.explanation : null;
 }
 
 // ---- Per-symbol pipeline ----------------------------------------------
 async function processSymbol(symbol) {
   const findings = [];
   for (const query of buildQueries(symbol)) {
-    let results;
+    let result;
     try {
-      results = await searchSearxng(query);
+      result = await searchAndExtract(query, TRUSTED_PRICE_DOMAINS, buildExtractionPrompt(symbol));
     } catch (err) {
-      console.warn(`[${symbol}] search failed for "${query}": ${err.message}`);
+      console.warn(`[${symbol}] search+extract failed for "${query}": ${err.message}`);
       continue;
     }
     await sleep(REQUEST_DELAY_MS);
 
-    const allowed = results.filter((r) => hostAllowed(r.url, TRUSTED_PRICE_DOMAINS)).slice(0, RESULTS_PER_QUERY);
-    for (const result of allowed) {
-      let pageText;
-      try {
-        pageText = await fetchPageText(result.url);
-      } catch (err) {
-        console.warn(`[${symbol}] page fetch failed for ${result.url}: ${err.message}`);
-        continue;
-      }
-      await sleep(REQUEST_DELAY_MS);
-
-      let extracted;
-      try {
-        extracted = await extractWithGemma(symbol, pageText);
-      } catch (err) {
-        console.warn(`[${symbol}] extraction failed for ${result.url}: ${err.message}`);
-        continue;
-      }
-      if (!extracted) continue;
-
-      findings.push({
-        symbol,
-        price: extracted.price,
-        currency: extracted.currency,
-        url: result.url,
-        source_query: query,
-        raw_snippet: (result.content || "").slice(0, 500),
-        confidence: extracted.confidence,
-        extracted_by: "gemma",
-        explanation: null,
-      });
+    if (!result.text) {
+      console.warn(`[${symbol}] no trusted-domain result for "${query}" - discarding`);
+      continue;
     }
+
+    const extracted = validateFinding(parseJsonLoose(result.text));
+    if (!extracted) continue;
+
+    findings.push({
+      symbol,
+      price: extracted.price,
+      currency: extracted.currency,
+      url: result.citations[0],
+      source_query: query,
+      raw_snippet: null,
+      confidence: extracted.confidence,
+      extracted_by: "gemini",
+      explanation: null,
+    });
   }
 
   if (findings.length) {
@@ -381,18 +460,6 @@ async function processSymbol(symbol) {
 // app.js's own MARKET_INDEXES if it ever changes - this file has no
 // import/export machinery to share it with app/*.js, same as
 // TRUSTED_PRICE_DOMAINS already has no client-side counterpart either.
-//
-// Deliberately reuses processSymbol()/findExplanation() unchanged rather
-// than forking parallel index-specific query/prompt builders: passing a
-// full plain-English label ("S&P 500") as the "symbol" already produces
-// sensible search queries and a sensible Gemma extraction target (the
-// prompts don't hard-require a ticker shape), and market_index_findings'
-// columns deliberately mirror asset_price_findings' for exactly this
-// reuse. The wording in buildExplanationPrompt ("why a stock or crypto
-// price moved") is slightly imprecise for an index - accepted as
-// best-effort, same honesty stance the rest of this file already takes on
-// explanation quality, rather than forking the whole pipeline to fix one
-// word.
 const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Composite", "Russell 2000"];
 
 // ---- Market movers watchlist (Investments tab, "Today's top movers") -----
@@ -401,10 +468,8 @@ const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Compo
 // "today's biggest movers" even for a user who holds nothing. Same category
 // as MARKET_INDEXES immediately above (public market data, tied to no
 // user), so it's searched the same way and written to the SAME
-// market_index_findings table rather than a new one - that table's real
-// meaning was always "public market data," not literally "indexes only."
-// Must match app.js's own MARKET_MOVERS_WATCHLIST constant, kept in sync by
-// hand for the same reason MARKET_INDEXES already is.
+// market_index_findings table rather than a new one. Must match app.js's
+// own MARKET_MOVERS_WATCHLIST constant, kept in sync by hand.
 const MARKET_MOVERS_WATCHLIST = [
   "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "UNH",
   "XOM", "JNJ", "WMT", "PG", "MA", "HD", "DIS", "NFLX", "AMD", "KO",
@@ -424,11 +489,25 @@ async function main() {
     return;
   }
 
-  console.log("Warming up Gemma...");
-  await warmUpGemma();
+  // Shared across all three loops below - once the run-wide Tavily budget
+  // is hit, stop starting new symbols anywhere and write whatever findings
+  // already exist rather than letting every remaining symbol fail
+  // one-by-one with the same error.
+  let budgetHit = false;
+  function checkBudget() {
+    if (tavilyCallCount >= MAX_TAVILY_CALLS_PER_RUN) {
+      if (!budgetHit) {
+        console.warn(`Tavily call budget (${MAX_TAVILY_CALLS_PER_RUN}/run) reached - stopping early, writing what was already found.`);
+        budgetHit = true;
+      }
+      return true;
+    }
+    return false;
+  }
 
   const allFindings = [];
   for (const symbol of watchlist) {
+    if (checkBudget()) break;
     console.log(`Searching: ${symbol}`);
     const findings = await processSymbol(symbol);
     console.log(`  -> ${findings.length} finding(s)`);
@@ -436,19 +515,21 @@ async function main() {
   }
   if (allFindings.length) {
     await sbInsert("asset_price_findings", allFindings);
-    console.log(`Wrote ${allFindings.length} finding(s) to asset_price_findings.`);
+    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allFindings.length} finding(s) to asset_price_findings.`);
   } else {
     console.log("No asset findings this run.");
   }
 
   const allIndexFindings = [];
   for (const label of MARKET_INDEXES) {
+    if (checkBudget()) break;
     console.log(`Searching index: ${label}`);
     const findings = await processSymbol(label);
     console.log(`  -> ${findings.length} finding(s)`);
     allIndexFindings.push(...findings);
   }
   for (const symbol of MARKET_MOVERS_WATCHLIST) {
+    if (checkBudget()) break;
     console.log(`Searching mover: ${symbol}`);
     const findings = await processSymbol(symbol);
     console.log(`  -> ${findings.length} finding(s)`);
@@ -456,7 +537,7 @@ async function main() {
   }
   if (allIndexFindings.length) {
     await sbInsert("market_index_findings", allIndexFindings);
-    console.log(`Wrote ${allIndexFindings.length} finding(s) to market_index_findings (indexes + movers watchlist).`);
+    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allIndexFindings.length} finding(s) to market_index_findings (indexes + movers watchlist).`);
   } else {
     console.log("No market index or movers findings this run.");
   }

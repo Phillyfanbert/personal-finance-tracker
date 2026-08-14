@@ -175,6 +175,57 @@ async function sbInsert(table, rows) {
   if (!res.ok) throw new Error(`Supabase INSERT ${table} -> HTTP ${res.status}: ${await res.text()}`);
 }
 
+async function sbUpsert(table, row, conflictColumn) {
+  if (DRY_RUN) {
+    console.log(`[dry-run] would upsert into ${table}:`);
+    console.log(JSON.stringify(row, null, 2));
+    return;
+  }
+  const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${conflictColumn}`, {
+    method: "POST",
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(row),
+  });
+  if (!res.ok) throw new Error(`Supabase UPSERT ${table} -> HTTP ${res.status}: ${await res.text()}`);
+}
+
+// Best-effort - a failure to write run status must never crash the run or
+// mask whatever real findings were already written. See
+// tools/price-agent.js's identical function for the full reasoning.
+async function writeRunStatus(crashError) {
+  let status, detail;
+  if (crashError) {
+    status = "failed";
+    detail = `Run crashed: ${crashError.message}`;
+  } else if (queryAttempts === 0 || queryFailures === 0) {
+    status = "ok";
+    detail = null;
+  } else if (queryFailures < queryAttempts) {
+    status = "degraded";
+    detail = `${queryFailures} of ${queryAttempts} live searches failed this run (rate limits or timeouts) - some data may be stale or incomplete.`;
+  } else {
+    status = "failed";
+    detail = `All ${queryAttempts} live searches failed this run - data may be significantly stale.`;
+  }
+  try {
+    await sbUpsert("agent_run_status", {
+      agent: "deal-agent",
+      status,
+      detail,
+      queries_attempted: queryAttempts,
+      queries_failed: queryFailures,
+      ran_at: new Date().toISOString(),
+    }, "agent");
+  } catch (err) {
+    console.warn(`Failed to write run status: ${err.message}`);
+  }
+}
+
 // ---- Watchlist: only services the user actually subscribes to --------------
 async function loadWatchlist() {
   const rows = await sbGet("subscriptions?select=name&is_active=eq.true");
@@ -254,23 +305,36 @@ function buildSourcesBlock(results) {
 // trusted results - never from Gemini's own general knowledge (the prompt
 // says so explicitly). Returns citations already filtered to the allowed
 // list, so callers don't need a second trust check.
+// queryAttempts/queryFailures track every real call through this function
+// for the run's agent_run_status row (see main()) - see
+// tools/price-agent.js's identical comment for why only a thrown error
+// counts as a failure, not "no trusted-domain result."
+let queryAttempts = 0;
+let queryFailures = 0;
+
 async function searchAndExtract(query, domains, instructionsPrompt) {
-  const results = await tavilySearch(query);
-  const trusted = results.filter((r) => hostAllowed(r.url, domains));
-  if (!trusted.length) {
-    return { text: null, citations: [] };
+  queryAttempts++;
+  try {
+    const results = await tavilySearch(query);
+    const trusted = results.filter((r) => hostAllowed(r.url, domains));
+    if (!trusted.length) {
+      return { text: null, citations: [] };
+    }
+    const prompt = [
+      instructionsPrompt,
+      "",
+      "Base your answer ONLY on the real search results below. Do not use any",
+      "other knowledge you may have. If the answer isn't in these results, say",
+      "so via the null value specified above rather than guessing.",
+      "",
+      buildSourcesBlock(trusted),
+    ].join("\n");
+    const text = await extractWithGemini(prompt);
+    return { text, citations: trusted.map((r) => r.url) };
+  } catch (err) {
+    queryFailures++;
+    throw err;
   }
-  const prompt = [
-    instructionsPrompt,
-    "",
-    "Base your answer ONLY on the real search results below. Do not use any",
-    "other knowledge you may have. If the answer isn't in these results, say",
-    "so via the null value specified above rather than guessing.",
-    "",
-    buildSourcesBlock(trusted),
-  ].join("\n");
-  const text = await extractWithGemini(prompt);
-  return { text, citations: trusted.map((r) => r.url) };
 }
 
 function parseJsonLoose(text) {
@@ -400,13 +464,16 @@ async function main() {
 
   if (!allFindings.length) {
     console.log("No findings this run.");
-    return;
+  } else {
+    await sbInsert("deal_findings", allFindings);
+    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allFindings.length} finding(s) to deal_findings.`);
   }
-  await sbInsert("deal_findings", allFindings);
-  console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allFindings.length} finding(s) to deal_findings.`);
+
+  await writeRunStatus();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("Agent run failed:", err);
+  await writeRunStatus(err);
   process.exit(1);
 });

@@ -222,6 +222,59 @@ async function sbInsert(table, rows) {
   if (!res.ok) throw new Error(`Supabase INSERT ${table} -> HTTP ${res.status}: ${await res.text()}`);
 }
 
+async function sbUpsert(table, row, conflictColumn) {
+  if (DRY_RUN) {
+    console.log(`[dry-run] would upsert into ${table}:`);
+    console.log(JSON.stringify(row, null, 2));
+    return;
+  }
+  const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${conflictColumn}`, {
+    method: "POST",
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(row),
+  });
+  if (!res.ok) throw new Error(`Supabase UPSERT ${table} -> HTTP ${res.status}: ${await res.text()}`);
+}
+
+// Best-effort - a failure to write run status must never crash the run or
+// mask whatever real findings were already written. See queryAttempts/
+// queryFailures above (tracked inside searchAndExtract()) for what this
+// is based on; "no trusted-domain result" doesn't count as a failure
+// here, only a real thrown API/network error does.
+async function writeRunStatus(crashError) {
+  let status, detail;
+  if (crashError) {
+    status = "failed";
+    detail = `Run crashed: ${crashError.message}`;
+  } else if (queryAttempts === 0 || queryFailures === 0) {
+    status = "ok";
+    detail = null;
+  } else if (queryFailures < queryAttempts) {
+    status = "degraded";
+    detail = `${queryFailures} of ${queryAttempts} live searches failed this run (rate limits or timeouts) - some data may be stale or incomplete.`;
+  } else {
+    status = "failed";
+    detail = `All ${queryAttempts} live searches failed this run - data may be significantly stale.`;
+  }
+  try {
+    await sbUpsert("agent_run_status", {
+      agent: "price-agent",
+      status,
+      detail,
+      queries_attempted: queryAttempts,
+      queries_failed: queryFailures,
+      ran_at: new Date().toISOString(),
+    }, "agent");
+  } catch (err) {
+    console.warn(`Failed to write run status: ${err.message}`);
+  }
+}
+
 // ---- Watchlist: every symbol in use across all users -----------------------
 async function loadWatchlist() {
   const rows = await sbGet("assets?select=price_symbol&price_symbol=not.is.null");
@@ -287,23 +340,40 @@ function buildSourcesBlock(results) {
 // trusted results - never from Gemini's own general knowledge (the prompt
 // says so explicitly). Returns citations already filtered to the allowed
 // list, so callers don't need a second trust check.
+// queryAttempts/queryFailures track every real call through this function
+// for the run's agent_run_status row (see main()) - only a thrown error
+// (a real API/network failure) counts as a failure. "No trusted-domain
+// result" is a normal, working-as-intended outcome (the domain allowlist
+// doing its job), not a limit/API problem, so it's deliberately NOT
+// counted here - counting it would make the freshness indicator warn
+// users every time a search legitimately finds nothing trustworthy,
+// which isn't what "results may be stale" should mean.
+let queryAttempts = 0;
+let queryFailures = 0;
+
 async function searchAndExtract(query, domains, instructionsPrompt) {
-  const results = await tavilySearch(query);
-  const trusted = results.filter((r) => hostAllowed(r.url, domains));
-  if (!trusted.length) {
-    return { text: null, citations: [] };
+  queryAttempts++;
+  try {
+    const results = await tavilySearch(query);
+    const trusted = results.filter((r) => hostAllowed(r.url, domains));
+    if (!trusted.length) {
+      return { text: null, citations: [] };
+    }
+    const prompt = [
+      instructionsPrompt,
+      "",
+      "Base your answer ONLY on the real search results below. Do not use any",
+      "other knowledge you may have. If the answer isn't in these results, say",
+      "so via the null value specified above rather than guessing.",
+      "",
+      buildSourcesBlock(trusted),
+    ].join("\n");
+    const text = await extractWithGemini(prompt);
+    return { text, citations: trusted.map((r) => r.url) };
+  } catch (err) {
+    queryFailures++;
+    throw err;
   }
-  const prompt = [
-    instructionsPrompt,
-    "",
-    "Base your answer ONLY on the real search results below. Do not use any",
-    "other knowledge you may have. If the answer isn't in these results, say",
-    "so via the null value specified above rather than guessing.",
-    "",
-    buildSourcesBlock(trusted),
-  ].join("\n");
-  const text = await extractWithGemini(prompt);
-  return { text, citations: trusted.map((r) => r.url) };
 }
 
 // Gemini has no confirmed equivalent to Ollama's format:"json" constrained
@@ -541,9 +611,12 @@ async function main() {
   } else {
     console.log("No market index or movers findings this run.");
   }
+
+  await writeRunStatus();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("Agent run failed:", err);
+  await writeRunStatus(err);
   process.exit(1);
 });

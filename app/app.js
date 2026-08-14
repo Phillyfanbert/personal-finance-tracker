@@ -134,6 +134,7 @@ let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
 let marketIndexFindings = []; // shared, machine-found market index levels (Investments tab's Market overview)
+let agentRunStatus = {}; // { "deal-agent": {...}, "price-agent": {...} } - last-run freshness/health (agent_run_status)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
 let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
 let investmentTargets = []; // per-bucket allocation targets (Investments tab)
@@ -248,7 +249,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadAgentRunStatus(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
   await autoLogDueSubscriptions();
   await snapshotNetWorthIfNeeded();
@@ -278,6 +279,62 @@ async function loadDealFindings() {
   if (!DEAL_FINDINGS_ENABLED) { dealFindings = []; return; }
   const { data } = await sb.from("deal_findings").select("*").gt("expires_at", new Date().toISOString());
   dealFindings = data || [];
+}
+
+// Last-run health for deal-agent.js/price-agent.js (agent_run_status,
+// migration 48) - loaded unconditionally (cheap, at most 2 rows) rather
+// than gated by DEAL_FINDINGS_ENABLED/PRICE_FINDINGS_ENABLED, since the
+// render functions that use it already check those flags themselves
+// before showing anything. Previously a rate-limited or failed agent run
+// was completely invisible to anyone without SSH access to the server
+// machine's raw log file - this is what actually surfaces that to a
+// signed-in user instead. Re-renders both dependent cards on its own
+// completion (same "whichever parallel load finishes last wins" pattern
+// loadAssetPriceFindings() already documents) since loadDealFindings()/
+// loadSubscriptions()/loadMarketIndexFindings() all run in parallel with
+// this and each also trigger their own render of the same cards.
+async function loadAgentRunStatus() {
+  const { data } = await sb.from("agent_run_status").select("*");
+  agentRunStatus = {};
+  for (const row of data || []) agentRunStatus[row.agent] = row;
+  renderDealFindings();
+  renderMarketOverview();
+}
+
+function timeAgo(dateStr) {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+// Shared by renderDealFindings()/renderMarketOverview() below - both
+// cards have an identical freshness-line + warning-banner shape, just
+// against a different agent name and pair of element ids.
+function renderAgentFreshness(agent, freshnessId, warningId) {
+  const status = agentRunStatus[agent];
+  const freshnessEl = $(freshnessId);
+  const warningEl = $(warningId);
+  if (!freshnessEl || !warningEl) return;
+
+  if (!status) {
+    freshnessEl.textContent = "";
+    warningEl.classList.add("hidden");
+    return;
+  }
+  freshnessEl.textContent = `Last updated ${timeAgo(status.ran_at)}`;
+
+  if (status.status === "ok" || !status.detail) {
+    warningEl.classList.add("hidden");
+  } else {
+    warningEl.classList.remove("hidden");
+    warningEl.style.color = status.status === "failed" ? "var(--err)" : "var(--warn)";
+    warningEl.textContent = status.detail; // .textContent, not innerHTML - no esc() needed
+  }
 }
 
 // Dormant until PRICE_FINDINGS_ENABLED is flipped on (config.js) and
@@ -3308,6 +3365,7 @@ function renderMarketOverview() {
   if (!card) return;
   if (!PRICE_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
   card.classList.remove("hidden");
+  renderAgentFreshness("price-agent", "marketOverviewFreshness", "marketOverviewWarning");
   const indexes = marketIndexSummary(MARKET_INDEXES, marketIndexFindings);
   $("marketOverviewList").innerHTML = indexes.map((idx) => `
     <div class="exp" style="cursor:default">
@@ -4081,6 +4139,7 @@ function renderDealFindings() {
   if (!card) return;
   if (!DEAL_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
   card.classList.remove("hidden");
+  renderAgentFreshness("deal-agent", "dealFindingsFreshness", "dealFindingsWarning");
 
   const activeNames = subscriptions.filter((s) => s.is_active).map((s) => s.name);
   const matches = dealFindings.filter((f) => activeNames.some((name) => matchService(name, f.service)));

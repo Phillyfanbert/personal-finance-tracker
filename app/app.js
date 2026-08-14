@@ -3501,10 +3501,12 @@ function holdingParentAssets() {
 }
 
 // Required fields on the holding form: an explicit account, a ticker, share
-// count, and cost basis - the same "starts blank, red border while empty"
-// treatment as REQUIRED_QUICK_ADD_FIELDS, reused rather than reinvented
-// (CLAUDE.md's rule for this pattern). holdingValue is deliberately absent -
-// it stays genuinely optional (falls back to cost basis, see saveHoldingBtn).
+// count, and price per share - the same "starts blank, red border while
+// empty" treatment as REQUIRED_QUICK_ADD_FIELDS, reused rather than
+// reinvented (CLAUDE.md's rule for this pattern). holdingCostBasis holds a
+// PER-SHARE price now (see saveHoldingBtn for the conversion to the
+// TOTAL actually stored in assets.purchase_price) - same id, changed
+// meaning, so this list and the highlighting wiring below needed no change.
 const REQUIRED_HOLDING_FIELDS = ["holdingAccount", "holdingSymbol", "holdingQuantity", "holdingCostBasis"];
 // Tracks the exact symbol text the user has already confirmed via the
 // "not recognized, add anyway" override, so re-showing that confirm on
@@ -3549,6 +3551,53 @@ for (const id of REQUIRED_HOLDING_FIELDS) {
 // re-checked, not silently inherit the earlier confirmation.
 $("holdingSymbol").addEventListener("input", () => { holdingSymbolOverrideConfirmedFor = null; });
 
+// Checks both already-loaded findings arrays - a user's own tracked
+// symbols (assetPriceFindings) AND the fixed movers watchlist
+// (marketIndexFindings), since a brand-new ticker being entered for the
+// first time won't be in the former yet but might already be priced via
+// the latter. No new network call - both are already in module state.
+function findLivePrice(symbol) {
+  const upper = symbol.trim().toUpperCase();
+  const rows = [...assetPriceFindings, ...marketIndexFindings]
+    .filter((f) => (f.symbol || "").trim().toUpperCase() === upper);
+  if (!rows.length) return null;
+  const latest = rows.sort((a, b) => new Date(b.found_at) - new Date(a.found_at))[0];
+  return latest.price != null ? Number(latest.price) : null;
+}
+
+// Live "estimated total" line, same shape a real trade ticket shows as you
+// type quantity/price - purely a display confirmation, not itself saved.
+function updateHoldingTotalCost() {
+  const quantity = parseFloat($("holdingQuantity").value);
+  const pricePerShare = parseFloat($("holdingCostBasis").value);
+  const el = $("holdingTotalCost");
+  if (Number.isFinite(quantity) && quantity > 0 && Number.isFinite(pricePerShare) && pricePerShare >= 0) {
+    el.textContent = `Total: ${fmt(quantity * pricePerShare)}`;
+  } else {
+    el.textContent = "";
+  }
+}
+$("holdingQuantity").addEventListener("input", updateHoldingTotalCost);
+$("holdingCostBasis").addEventListener("input", updateHoldingTotalCost);
+
+// Only for a NEW holding (editing one means the user already has a real
+// price basis set - never silently overwrite that just because they
+// touched the ticker field) and only if price-per-share is still empty
+// (never clobber something the user already typed). Fires on blur, not
+// every keystroke, so it doesn't fight with someone still mid-typing a
+// ticker.
+$("holdingSymbol").addEventListener("blur", () => {
+  if (editingHolding || $("holdingCostBasis").value !== "") return;
+  const symbol = $("holdingSymbol").value.trim();
+  if (!symbol) return;
+  const price = findLivePrice(symbol);
+  if (price == null) return;
+  $("holdingCostBasis").value = price;
+  updateHoldingTotalCost();
+  updateHoldingFieldHighlighting();
+  toast(`Filled with today's live price (${fmt(price)}) - edit if you paid differently`);
+});
+
 function openHoldingForm(holding) {
   editingHolding = holding || null;
   holdingSymbolOverrideConfirmedFor = null;
@@ -3571,10 +3620,16 @@ function openHoldingForm(holding) {
   $("holdingAccount").value = holding?.parent_asset_id ?? "";
   $("holdingSymbol").value = holding?.price_symbol ?? "";
   $("holdingQuantity").value = holding?.quantity ?? "";
-  $("holdingCostBasis").value = holding?.purchase_price ?? "";
-  $("holdingValue").value = holding?.value ?? "";
+  // assets.purchase_price stores the TOTAL paid, but this field shows a
+  // PER-SHARE price (matches a real trade ticket) - convert back for
+  // display. Guarded against a zero/missing quantity even though it's
+  // already required and should never be 0 on a saved holding.
+  $("holdingCostBasis").value = holding && holding.quantity
+    ? Math.round((holding.purchase_price / holding.quantity) * 100) / 100
+    : "";
   $("holdingBucket").value = holding?.investment_bucket ?? "";
   updateHoldingFieldHighlighting();
+  updateHoldingTotalCost();
   $("holdingForm").classList.remove("hidden");
   $("holdingForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -3599,16 +3654,15 @@ $("saveHoldingBtn").onclick = async () => {
   if (!parentId) { flagField("holdingAccount"); return toast("Choose the account this sits in"); }
   const symbol = $("holdingSymbol").value.trim().toUpperCase();
   if (!symbol) { flagField("holdingSymbol"); return toast("Enter a ticker or symbol"); }
-  // Shares and cost basis are required, not optional - a holding without
-  // them was previously just a name with no actual position behind it.
+  // Shares and price per share are required, not optional - a holding
+  // without them was previously just a name with no actual position
+  // behind it.
   if ($("holdingQuantity").value === "") { flagField("holdingQuantity"); return toast("Enter the number of shares"); }
   const quantity = parseFloat($("holdingQuantity").value);
   if (!Number.isFinite(quantity) || quantity <= 0) { flagField("holdingQuantity"); return toast("Shares must be a positive number"); }
-  if ($("holdingCostBasis").value === "") { flagField("holdingCostBasis"); return toast("Enter what you paid in total"); }
-  const costBasis = parseFloat($("holdingCostBasis").value);
-  if (!Number.isFinite(costBasis) || costBasis < 0) { flagField("holdingCostBasis"); return toast("Cost basis can't be negative"); }
-  const value = $("holdingValue").value !== "" ? parseFloat($("holdingValue").value) : null;
-  if (value !== null && (!Number.isFinite(value) || value < 0)) { flagField("holdingValue"); return toast("Current value can't be negative"); }
+  if ($("holdingCostBasis").value === "") { flagField("holdingCostBasis"); return toast("Enter what you paid per share"); }
+  const pricePerShare = parseFloat($("holdingCostBasis").value);
+  if (!Number.isFinite(pricePerShare) || pricePerShare < 0) { flagField("holdingCostBasis"); return toast("Price per share can't be negative"); }
 
   const parent = assets.find((a) => a.id === parentId);
   // isKnownTicker() checks a hand-curated, necessarily incomplete list
@@ -3626,6 +3680,11 @@ $("saveHoldingBtn").onclick = async () => {
     holdingSymbolOverrideConfirmedFor = symbol;
   }
 
+  // The form takes a PER-SHARE price (matches a real trade ticket), but
+  // assets.purchase_price stores the TOTAL - every reader of that column
+  // (investments.js's investmentHoldings(), gain/loss math) already
+  // expects a total, so convert here rather than changing that contract.
+  const totalCostBasis = Math.round(pricePerShare * quantity * 100) / 100;
   const row = {
     // A holding inherits its parent's type so INVESTMENT_ASSET_TYPES keeps
     // matching it and the Investments tab picks it up with no special case.
@@ -3634,12 +3693,13 @@ $("saveHoldingBtn").onclick = async () => {
     parent_asset_id: parentId,
     price_symbol: symbol,
     quantity,
-    purchase_price: costBasis,
-    // A blank Current Value no longer means "worth $0" (that's a real,
-    // false claim about a position that was just paid costBasis for) - it
-    // means "not priced yet," which is honestly closer to costBasis than
-    // to zero until a live price arrives (syncParentAssetValue/price-agent).
-    value: value ?? costBasis,
+    purchase_price: totalCostBasis,
+    // No separate "current value" input anymore (removed - a real
+    // purchase doesn't have one either, and it only ever mattered as a
+    // fallback until a live price arrived). Starting value is just what
+    // was paid - not a false "worth $0" claim, and syncParentAssetValue/
+    // price-agent takes over the moment a live price actually exists.
+    value: totalCostBasis,
     investment_bucket: $("holdingBucket").value.trim() || null,
   };
   // Captured before closeHoldingForm() clears editingHolding below.

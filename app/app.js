@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -134,6 +134,7 @@ let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
 let marketIndexFindings = []; // shared, machine-found market index levels (Investments tab's Market overview)
+let marketNewsFindings = []; // shared, machine-found daily market news digest + sentiment (market_news_findings)
 let agentRunStatus = {}; // { "deal-agent": {...}, "price-agent": {...} } - last-run freshness/health (agent_run_status)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
 let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
@@ -249,7 +250,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadAgentRunStatus(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
   await Promise.all([loadExpenses(), loadSubscriptions()]);
   await autoLogDueSubscriptions();
   await snapshotNetWorthIfNeeded();
@@ -358,6 +359,15 @@ async function loadMarketIndexFindings() {
   if (!PRICE_FINDINGS_ENABLED) { marketIndexFindings = []; renderMarketOverview(); return; }
   const { data } = await sb.from("market_index_findings").select("*").gt("expires_at", new Date().toISOString());
   marketIndexFindings = data || [];
+  renderMarketOverview();
+}
+
+// Same dormant-until-flag shape as loadMarketIndexFindings above, same
+// PRICE_FINDINGS_ENABLED flag - one switch for the whole dormant pipeline.
+async function loadMarketNewsFindings() {
+  if (!PRICE_FINDINGS_ENABLED) { marketNewsFindings = []; renderMarketOverview(); return; }
+  const { data } = await sb.from("market_news_findings").select("*").gt("expires_at", new Date().toISOString());
+  marketNewsFindings = data || [];
   renderMarketOverview();
 }
 // A blank "None" first option, not just the real categories - so a select
@@ -3360,6 +3370,14 @@ function renderInvestmentHealth(totals, allocation, limitUsage, holdings) {
 // real facts about the user's own entered data to show), there's no
 // manual-entry fallback for a market index - an empty "not available yet"
 // card forever would be pure clutter, not a fact worth stating.
+//
+// Reuses HEALTH_TONE_COLOR's ok/warn/neutral vocabulary for the daily
+// news digest's sentiment dot below, rather than inventing a new color
+// map - bullish maps to the same green "ok" already means elsewhere,
+// bearish to the same red "warn."
+const SENTIMENT_TONE = { bullish: "ok", neutral: "neutral", bearish: "warn" };
+const SENTIMENT_LABEL = { bullish: "Bullish", neutral: "Neutral", bearish: "Bearish" };
+
 function renderMarketOverview() {
   const card = $("marketOverviewCard");
   if (!card) return;
@@ -3393,6 +3411,22 @@ function renderMarketOverview() {
         <div style="font-size:12px;color:${gainColor(m.change)}">${signedPct(m.changePct)}</div>
       </span>
     </div>`).join("");
+
+  const digest = latestNewsDigest(marketNewsFindings);
+  const newsSection = $("marketNewsSection");
+  if (newsSection) newsSection.classList.toggle("hidden", !digest);
+  if (digest) {
+    $("marketSentimentDot").style.background = HEALTH_TONE_COLOR[SENTIMENT_TONE[digest.sentiment]];
+    $("marketSentimentLabel").textContent = SENTIMENT_LABEL[digest.sentiment];
+    $("marketSentimentReason").textContent = digest.sentimentReason || "";
+    $("marketNewsList").innerHTML = digest.headlines.map((h) => `
+      <div class="exp" style="cursor:default">
+        <a href="${esc(h.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
+          <div>${esc(h.title)}</div>
+          ${h.source ? `<div class="meta">${esc(h.source)}</div>` : ""}
+        </a>
+      </div>`).join("");
+  }
 }
 
 // ---- HOLDINGS (specific tickers inside an investment account) -----------

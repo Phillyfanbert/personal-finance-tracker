@@ -341,3 +341,20 @@ export function topMarketMovers(watchlist, findings, n = 3) {
     .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
     .slice(0, n);
 }
+
+/**
+ * Most recent valid daily market news digest (headlines + overall
+ * sentiment), or null if there's nothing usable yet. Defensive even
+ * though tools/price-agent.js already validates before writing - matches
+ * this module's existing "no DOM/fetch, tolerate partial data" style.
+ * @param {object[]} findings rows from market_news_findings
+ */
+export function latestNewsDigest(findings) {
+  if (!findings.length) return null;
+  const latest = [...findings].sort((a, b) => new Date(b.found_at) - new Date(a.found_at))[0];
+  const headlines = Array.isArray(latest.headlines)
+    ? latest.headlines.filter((h) => h && h.title && h.url).slice(0, 5)
+    : [];
+  if (!headlines.length || !latest.sentiment) return null;
+  return { headlines, sentiment: latest.sentiment, sentimentReason: latest.sentiment_reason || null, foundAt: latest.found_at };
+}

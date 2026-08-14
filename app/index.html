@@ -855,6 +855,16 @@
           <p class="muted" style="font-size:12px;margin:4px 0 8px">Biggest moves (up or down) from a fixed watchlist of well-known large-cap stocks - not a scan of the whole market, and not a recommendation.</p>
           <div id="marketMoversList"></div>
         </div>
+        <div id="marketNewsSection" class="hidden" style="margin-top:14px">
+          <strong style="font-size:13px">Today's market news</strong>
+          <p class="muted" style="font-size:12px;margin:4px 0 8px">A short read of today's general market news coverage - not a prediction, and not a recommendation.</p>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span id="marketSentimentDot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
+            <span id="marketSentimentLabel" style="font-weight:600"></span>
+          </div>
+          <p class="muted" id="marketSentimentReason" style="font-size:12px;margin:0 0 10px"></p>
+          <div id="marketNewsList"></div>
+        </div>
       </div>
 
       <!-- Daily health check: a short compilation of numbers already
@@ -1475,6 +1485,7 @@
           <p>Today's level and day-over-day change for a handful of major US indexes (S&P 500, Dow Jones, NASDAQ Composite, Russell 2000) - genuinely separate from your own holdings below, this is broad market context, not anything you own. A dormant, optional feature: hidden entirely until a household server is running to look prices up (the same $0-cost search-based pipeline the live-holding prices below use), and even then, an individual index just shows "not available yet" until it's actually been found once.</p>
           <p>Below the indexes, "Today's top movers" ranks the biggest day-over-day price swings (up or down) from a fixed watchlist of 20 well-known large-cap stocks, each with a short plain-English explanation of why it moved when one's been found. This is informational only, purely about stocks already on the fixed watchlist - not a scan of the whole market, and never a suggestion of what to buy or sell. It appears independently of the indexes above it, so it's possible to see one without the other depending on what the agent has found so far.</p>
           <p>Once turned on, a small "Last updated" line shows how recently the search agent last ran. If that run hit a problem (a rate limit, a timeout), a warning line explains what happened instead of leaving you to guess why a price looks stale or missing - amber for a partial run, red if the whole run failed.</p>
+          <p>Below the movers, "Today's market news" shows a short daily read of general market news coverage - up to 5 real headlines you can tap through to the source, plus an overall sentiment (Bullish/Neutral/Bearish) with a one-line reason grounded in that same coverage. This is a summary of what real news outlets are reporting that day, never a prediction and never a recommendation to buy or sell - the same boundary the rest of this app holds everywhere else. It's derived only from real search results, never invented, and appears independently of the indexes/movers above it.</p>
         </div>
 
         <div class="help-topic">

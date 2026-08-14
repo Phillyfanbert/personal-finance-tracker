@@ -60,6 +60,14 @@
 // (MARKET_MOVERS_WATCHLIST), writing to market_index_findings instead
 // (Investments tab).
 //
+// One more step, also genuinely NOT tied to any user or symbol: a single
+// daily search+extract for general market news, producing up to 5
+// headlines plus an overall sentiment read (bullish/neutral/bearish) with
+// a one-line grounded reason - written to market_news_findings. This is a
+// summary of what real news coverage says that day, never a prediction or
+// a recommendation to buy/sell anything - enforced in the extraction
+// prompt itself, not just the UI copy (see findNewsDigest() below).
+//
 // Setup (on the server machine):
 //   Shares tools/.env.deal-agent (same env vars, see that file's header) -
 //   no separate env file needed. Run directly:
@@ -74,14 +82,16 @@
 // musing that a price probably wants a tighter interval. Verified real
 // math instead of going with that guess: at current watchlist sizes (1
 // user-owned asset symbol + 4 fixed indexes + 20 fixed movers, 2 price
-// queries each + up to 1 explanation query each = up to 75 Tavily calls
-// worst case per run) plus deal-agent.js's own usage, combined monthly
-// Tavily usage on the weekly schedule comes out around 200-370
-// credits/month even in the worst case - comfortably under Tavily's free
-// 1,000/month, with real margin for MARKET_MOVERS_WATCHLIST or a user's
-// own asset list growing later. MAX_TAVILY_CALLS_PER_RUN below is a hard
-// safety cap for that future-growth case specifically, not because
-// today's sizes are actually close to the limit. If this ever moves to a
+// queries each + up to 1 explanation query each = up to 75 Tavily calls,
+// plus 1 more fixed call/run for the daily market news digest below = up
+// to 76 Tavily calls worst case per run) plus deal-agent.js's own usage,
+// combined monthly Tavily usage on the weekly schedule comes out around
+// 200-370 credits/month even in the worst case - comfortably under
+// Tavily's free 1,000/month, with real margin for
+// MARKET_MOVERS_WATCHLIST or a user's own asset list growing later.
+// MAX_TAVILY_CALLS_PER_RUN below is a hard safety cap for that
+// future-growth case specifically, not because today's sizes are
+// actually close to the limit. If this ever moves to a
 // tighter interval, redo this math first - don't just switch the plist.
 // ============================================================================
 
@@ -480,6 +490,68 @@ async function findExplanation(symbol) {
   return extracted ? extracted.explanation : null;
 }
 
+// ---- Daily market news digest + sentiment (Investments tab, best-effort) --
+// Genuinely NOT tied to any user or symbol - general market news, not a
+// per-stock explanation. One query, one extraction call covers both the
+// headlines and the overall sentiment read, since sentiment here IS the
+// overall tone of that same day's headline coverage - splitting this into
+// two calls would double the cost for no real benefit.
+function buildNewsDigestPrompt() {
+  return [
+    "You are summarizing today's general stock market news and overall",
+    "sentiment, based only on the real search results provided below.",
+    'Respond with ONLY a JSON object, no prose, no code fences. Use this',
+    'exact shape: { "headlines": [{ "title": string, "url": string,',
+    '"source": string|null }], "sentiment": "bullish"|"neutral"|"bearish",',
+    '"sentiment_reason": string }',
+    "headlines: up to 5 real headlines actually present in the results",
+    "below, about the broad market (not a single company). sentiment: your",
+    "read of the OVERALL tone of the results below, not a prediction.",
+    "sentiment_reason: one short, neutral sentence citing what in the",
+    "results supports that read. If the results don't give a clear enough",
+    "picture to pick a sentiment, use \"neutral\". This is a summary of",
+    "existing news coverage, never a recommendation to buy or sell.",
+  ].join("\n");
+}
+
+const NEWS_SENTIMENTS = new Set(["bullish", "neutral", "bearish"]);
+const MAX_NEWS_HEADLINES = 5;
+
+function validateNewsDigest(raw, sourceQuery) {
+  if (!raw || typeof raw !== "object") return null;
+  const headlines = Array.isArray(raw.headlines)
+    ? raw.headlines
+        .filter((h) => h && typeof h.title === "string" && h.title.trim() && typeof h.url === "string" && h.url.trim())
+        .map((h) => ({
+          title: h.title.trim(),
+          url: h.url.trim(),
+          source: typeof h.source === "string" && h.source.trim() ? h.source.trim() : null,
+        }))
+        .slice(0, MAX_NEWS_HEADLINES)
+    : [];
+  const sentiment = NEWS_SENTIMENTS.has(raw.sentiment) ? raw.sentiment : null;
+  const sentiment_reason = typeof raw.sentiment_reason === "string" && raw.sentiment_reason.trim() ? raw.sentiment_reason.trim() : null;
+  if (!headlines.length || !sentiment || !sentiment_reason) return null;
+  return { headlines, sentiment, sentiment_reason, source_query: sourceQuery, extracted_by: "gemini" };
+}
+
+async function findNewsDigest() {
+  const query = "stock market news and sentiment today";
+  let result;
+  try {
+    result = await searchAndExtract(query, TRUSTED_NEWS_DOMAINS, buildNewsDigestPrompt());
+  } catch (err) {
+    console.warn(`News digest search failed: ${err.message}`);
+    return null;
+  }
+  await sleep(REQUEST_DELAY_MS);
+  if (!result.text) {
+    console.warn("No trusted-domain result for news digest - discarding");
+    return null;
+  }
+  return validateNewsDigest(parseJsonLoose(result.text), query);
+}
+
 // ---- Per-symbol pipeline ----------------------------------------------
 async function processSymbol(symbol) {
   const findings = [];
@@ -610,6 +682,17 @@ async function main() {
     console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allIndexFindings.length} finding(s) to market_index_findings (indexes + movers watchlist).`);
   } else {
     console.log("No market index or movers findings this run.");
+  }
+
+  if (!checkBudget()) {
+    console.log("Searching: market news digest");
+    const digest = await findNewsDigest();
+    if (digest) {
+      await sbInsert("market_news_findings", [digest]);
+      console.log(`${DRY_RUN ? "Would have written" : "Wrote"} market news digest.`);
+    } else {
+      console.log("No market news digest this run.");
+    }
   }
 
   await writeRunStatus();

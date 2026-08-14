@@ -5,15 +5,23 @@
 // runs on the SERVER MACHINE ONLY, needs the Supabase SERVICE_ROLE key -
 // keep that out of the repo (env var only).
 //
-// Uses Tavily for live web search and the Gemini API (plain generateContent,
-// no grounding tool) for extraction - not local Ollama, deliberately, and
-// not as a fallback alongside it. This script only ever handles public
-// market data (a ticker symbol's price, a market index level) - never a
-// specific user's personal financial data - so it doesn't need to stay on
-// the home-hosted model the way app/gemma.js's real expense/Q&A paths must.
-// See CLAUDE.md's data model section for the durable version of this
-// privacy boundary - which scripts may use a cloud LLM and which must
-// never.
+// Three providers, not local Ollama, deliberately and not as a fallback
+// alongside it. This script only ever handles public market data (a
+// ticker symbol's price, a market index level) - never a specific user's
+// personal financial data - so it doesn't need to stay on the home-hosted
+// model the way app/gemma.js's real expense/Q&A paths must. See CLAUDE.md's
+// data model section for the durable version of this privacy boundary -
+// which scripts may use a cloud service and which must never.
+//
+// Real stock-ticker quotes (a user's own asset watchlist,
+// MARKET_MOVERS_WATCHLIST) go straight to Finnhub - a plain GET returning
+// the price directly as JSON, no search or LLM step needed at all
+// (fetchFinnhubQuote()/processSymbolViaFinnhub() below). MARKET_INDEXES
+// stays on Tavily+Gemini instead (see the comment above the
+// FINNHUB_API_KEY constant for why - Finnhub's free-tier index access is
+// unconfirmed). The "why did it move" explanation step
+// runs on Tavily+Gemini regardless of which pipeline found the price,
+// since Finnhub has no narrative capability.
 //
 // Two providers, not one, and this is a deliberate reversal of an earlier
 // version of this script that used Gemini's own Google Search grounding
@@ -37,6 +45,20 @@
 // What it does, per distinct assets.price_symbol in use across all users
 // (a symbol's price is a public fact, not user-specific - same reasoning
 // deal_findings already uses for service prices):
+//   1. Fetch the current price directly from Finnhub (processSymbolViaFinnhub()).
+//      No search, no LLM extraction, no domain-trust filtering needed - this
+//      is a direct, authoritative numeric API response, not scraped text a
+//      model has to read.
+//   2. One more best-effort step, still Tavily+Gemini: ask for a short
+//      neutral explanation of why the price moved today (findExplanation(),
+//      TRUSTED_NEWS_DOMAINS). One attempt per symbol per run, not per
+//      price-finding row. Failure here never blocks the price write itself;
+//      explanation just stays null.
+//   3. Write validated findings to asset_price_findings via the REST API
+//      using the service_role key (bypasses RLS by design).
+//
+// MARKET_INDEXES follows the OLDER Tavily+Gemini pipeline instead
+// (processSymbol() - see the FINNHUB_API_KEY comment above for why):
 //   1. For each of a few query angles, search Tavily for real, current web
 //      results.
 //   2. Filter those results down to ones on TRUSTED_PRICE_DOMAINS BEFORE
@@ -47,18 +69,14 @@
 //   3. Ask Gemini to extract strict JSON price data ONLY from the real,
 //      trusted-domain content just fetched - explicitly instructed not to
 //      draw on anything else.
-//   4. If a price was found, one more best-effort step: ask for a short
-//      neutral explanation of why the price moved today
-//      (TRUSTED_NEWS_DOMAINS, a superset of the price allowlist). One
-//      attempt per symbol per run, not per price-finding row. Failure here
-//      never blocks the price write itself; explanation just stays null.
-//   5. Write validated findings to asset_price_findings via the REST API
-//      using the service_role key (bypasses RLS by design).
+//   4. Same explanation step as above, same TRUSTED_NEWS_DOMAINS.
+//   5. Write validated findings to market_index_findings via the REST API.
 //
-// Also runs the exact same pipeline against a small FIXED list of major
-// market indexes (MARKET_INDEXES below) and a curated large-cap watchlist
-// (MARKET_MOVERS_WATCHLIST), writing to market_index_findings instead
-// (Investments tab).
+// MARKET_MOVERS_WATCHLIST (a curated large-cap stock list, Investments
+// tab's "Today's top movers") follows the Finnhub pipeline above, same as
+// a user's own asset watchlist - real tickers, not index names - just
+// writing to market_index_findings alongside the indexes instead of
+// asset_price_findings.
 //
 // One more step, also genuinely NOT tied to any user or symbol: a single
 // daily search+extract for general market news, producing up to 5
@@ -80,19 +98,25 @@
 // launchd job (com.price-agent.weekly), same cadence as deal-agent.js -
 // deliberately not daily, despite an earlier version of this comment
 // musing that a price probably wants a tighter interval. Verified real
-// math instead of going with that guess: at current watchlist sizes (1
-// user-owned asset symbol + 4 fixed indexes + 20 fixed movers, 2 price
-// queries each + up to 1 explanation query each = up to 75 Tavily calls,
-// plus 1 more fixed call/run for the daily market news digest below = up
-// to 76 Tavily calls worst case per run) plus deal-agent.js's own usage,
-// combined monthly Tavily usage on the weekly schedule comes out around
-// 200-370 credits/month even in the worst case - comfortably under
-// Tavily's free 1,000/month, with real margin for
-// MARKET_MOVERS_WATCHLIST or a user's own asset list growing later.
-// MAX_TAVILY_CALLS_PER_RUN below is a hard safety cap for that
+// math instead of going with that guess, RECOMPUTED after the Finnhub
+// swap below dropped real-ticker price lookups off Tavily entirely: at
+// current watchlist sizes, Tavily calls/run are now just 4 fixed indexes
+// x (2 price angles + 1 explanation) = 12, plus 1 explanation call each
+// for the 1 user-owned asset symbol and the 20 fixed movers (price comes
+// from Finnhub now, only the "why did it move" step still touches
+// Tavily) = 21 more, plus 1 fixed call/run for the daily market news
+// digest below = up to 34 Tavily calls worst case per run - roughly half
+// what it was before this swap. Finnhub calls/run are separate: 1 user
+// asset + 20 movers = up to 21, comfortably under Finnhub's 60/min free
+// limit with no daily cap. Combined monthly Tavily usage (this script +
+// deal-agent.js's own ~10/run) on the weekly schedule comes out around
+// 190/month even in the worst case - comfortably under Tavily's free
+// 1,000/month, with real margin for MARKET_MOVERS_WATCHLIST or a user's
+// own asset list growing later. MAX_TAVILY_CALLS_PER_RUN/
+// MAX_FINNHUB_CALLS_PER_RUN below are hard safety caps for that
 // future-growth case specifically, not because today's sizes are
-// actually close to the limit. If this ever moves to a
-// tighter interval, redo this math first - don't just switch the plist.
+// actually close to either limit. If this ever moves to a tighter
+// interval, redo this math first - don't just switch the plist.
 // ============================================================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -119,6 +143,20 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 function geminiUrl(model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 }
+
+// Finnhub - real-time US stock quotes, confirmed free tier (60 calls/min,
+// no credit card) as of this writing. https://finnhub.io/register - a
+// plain GET returning the price directly as JSON, no search step and no
+// LLM extraction needed, so this replaces Tavily+Gemini for real stock-
+// ticker lookups specifically (the user's own asset watchlist and
+// MARKET_MOVERS_WATCHLIST below). Deliberately NOT used for MARKET_INDEXES
+// - Finnhub's index data has been reported moved behind a paid tier at
+// some point, genuinely unconfirmed either way from public sources, so
+// indexes stay on the already-verified Tavily+Gemini pipeline rather than
+// risk the same "assumed free, actually needs billing" mistake that
+// already happened once this session with Gemini's own grounding tool.
+const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+const FINNHUB_URL = "https://finnhub.io/api/v1/quote";
 
 // A small, deliberately conservative allowlist - reputable finance-data
 // sources only, not "anything a search happens to turn up." Extend this
@@ -161,11 +199,20 @@ const MAX_429_RETRIES = 2;          // per call, exponential backoff (3s, 6s)
 const MAX_TAVILY_CALLS_PER_RUN = 100;
 let tavilyCallCount = 0;
 
+// Separate cap/counter from Tavily's above - two independent services
+// with independent free-tier budgets, conflating their counters would
+// make the cap meaningless for either one. Finnhub's 60/min free limit
+// is generous relative to this project's ~25-symbol watchlist, so this
+// is future-growth headroom, same reasoning as MAX_TAVILY_CALLS_PER_RUN.
+const MAX_FINNHUB_CALLS_PER_RUN = 100;
+let finnhubCallCount = 0;
+
 function requireEnv() {
   const missing = ["SUPABASE_URL"].filter((k) => !process.env[k]);
   if (!DRY_RUN) missing.push(...(!SERVICE_ROLE_KEY ? ["SUPABASE_SERVICE_ROLE_KEY"] : []));
   if (!TAVILY_API_KEY) missing.push("TAVILY_API_KEY");
   if (!GEMINI_API_KEY) missing.push("GEMINI_API_KEY");
+  if (!FINNHUB_API_KEY) missing.push("FINNHUB_API_KEY");
   if (missing.length) {
     console.error(`Missing required env var(s): ${missing.join(", ")}`);
     process.exit(1);
@@ -552,7 +599,61 @@ async function findNewsDigest() {
   return validateNewsDigest(parseJsonLoose(result.text), query);
 }
 
-// ---- Per-symbol pipeline ----------------------------------------------
+// ---- Finnhub: direct stock-ticker quotes, no search/LLM needed --------
+async function fetchFinnhubQuote(symbol) {
+  if (finnhubCallCount >= MAX_FINNHUB_CALLS_PER_RUN) {
+    throw new Error(`Finnhub call budget (${MAX_FINNHUB_CALLS_PER_RUN}/run) exceeded - skipping`);
+  }
+  finnhubCallCount++;
+  const url = `${FINNHUB_URL}?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_API_KEY}`;
+  const res = await fetchWithRetry(url, {}, SEARCH_TIMEOUT_MS);
+  if (!res.ok) throw new Error(`Finnhub HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  return res.json(); // { c, d, dp, h, l, o, pc, t }
+}
+
+// Finnhub returns c: 0 (not an error status) for an invalid/unknown
+// symbol - a real, documented behavior, not a hypothetical edge case.
+function validateFinnhubQuote(raw) {
+  const price = Number(raw && raw.c);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  return { price: Math.round(price * 10000) / 10000 };
+}
+
+// Real stock tickers only (the user's own asset watchlist and
+// MARKET_MOVERS_WATCHLIST) - see the header comment for why
+// MARKET_INDEXES stays on processSymbol()/Tavily+Gemini below instead.
+async function processSymbolViaFinnhub(symbol) {
+  queryAttempts++;
+  let raw;
+  try {
+    raw = await fetchFinnhubQuote(symbol);
+  } catch (err) {
+    queryFailures++;
+    console.warn(`[${symbol}] Finnhub quote failed: ${err.message}`);
+    return [];
+  }
+  const extracted = validateFinnhubQuote(raw);
+  if (!extracted) {
+    console.warn(`[${symbol}] Finnhub returned no valid price - discarding`);
+    return [];
+  }
+  const finding = {
+    symbol,
+    price: extracted.price,
+    currency: "USD",
+    url: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`,
+    source_query: "finnhub:quote",
+    raw_snippet: null,
+    confidence: 1,
+    extracted_by: "finnhub",
+    explanation: null,
+  };
+  const explanation = await findExplanation(symbol); // unchanged, still Tavily+Gemini
+  if (explanation) finding.explanation = explanation;
+  return [finding];
+}
+
+// ---- Per-symbol pipeline (MARKET_INDEXES only - see header comment) ---
 async function processSymbol(symbol) {
   const findings = [];
   for (const query of buildQueries(symbol)) {
@@ -647,11 +748,29 @@ async function main() {
     return false;
   }
 
+  // Separate from checkBudget() above (Tavily) - the watchlist/movers
+  // loops below run on Finnhub as their primary resource now, a fully
+  // independent budget. Tavily exhaustion is still handled gracefully
+  // inside processSymbolViaFinnhub's findExplanation() call (returns
+  // null, logs a warning, doesn't block the price write), so it doesn't
+  // need a second gate here too.
+  let finnhubBudgetHit = false;
+  function checkFinnhubBudget() {
+    if (finnhubCallCount >= MAX_FINNHUB_CALLS_PER_RUN) {
+      if (!finnhubBudgetHit) {
+        console.warn(`Finnhub call budget (${MAX_FINNHUB_CALLS_PER_RUN}/run) reached - stopping early, writing what was already found.`);
+        finnhubBudgetHit = true;
+      }
+      return true;
+    }
+    return false;
+  }
+
   const allFindings = [];
   for (const symbol of watchlist) {
-    if (checkBudget()) break;
+    if (checkFinnhubBudget()) break;
     console.log(`Searching: ${symbol}`);
-    const findings = await processSymbol(symbol);
+    const findings = await processSymbolViaFinnhub(symbol);
     console.log(`  -> ${findings.length} finding(s)`);
     allFindings.push(...findings);
   }
@@ -671,9 +790,9 @@ async function main() {
     allIndexFindings.push(...findings);
   }
   for (const symbol of MARKET_MOVERS_WATCHLIST) {
-    if (checkBudget()) break;
+    if (checkFinnhubBudget()) break;
     console.log(`Searching mover: ${symbol}`);
-    const findings = await processSymbol(symbol);
+    const findings = await processSymbolViaFinnhub(symbol);
     console.log(`  -> ${findings.length} finding(s)`);
     allIndexFindings.push(...findings);
   }

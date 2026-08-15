@@ -3566,6 +3566,29 @@ function findLivePrice(symbol) {
   return latest.price != null ? Number(latest.price) : null;
 }
 
+// Genuinely real-time, on-demand lookup for the Holdings form's "Buying now"
+// mode - unlike findLivePrice() above, which only checks the already-loaded,
+// weekly-refreshed price-agent.js findings. Proxied through this app's own
+// Worker route (worker.js's /api/price) so the Finnhub key never reaches the
+// browser and Finnhub's own lack of CORS support (confirmed live) is never
+// hit directly. Best-effort: returns null on any failure (not signed in,
+// network error, unknown symbol) so the caller can degrade gracefully
+// rather than throwing.
+async function fetchLivePriceOnDemand(symbol) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return null;
+  try {
+    const res = await fetch(`/api/price?symbol=${encodeURIComponent(symbol)}`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.price ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Live "estimated total" line, same shape a real trade ticket shows as you
 // type quantity/price - purely a display confirmation, not itself saved.
 function updateHoldingTotalCost() {
@@ -3581,16 +3604,21 @@ function updateHoldingTotalCost() {
 $("holdingQuantity").addEventListener("input", updateHoldingTotalCost);
 $("holdingCostBasis").addEventListener("input", updateHoldingTotalCost);
 
-// Only for a NEW holding (editing one means the user already has a real
-// price basis set - never silently overwrite that just because they
-// touched the ticker field) and only if price-per-share is still empty
-// (never clobber something the user already typed). Fires on blur, not
-// every keystroke, so it doesn't fight with someone still mid-typing a
-// ticker.
+// "Already own this" (the default): only for a NEW holding (editing one
+// means the user already has a real price basis set - never silently
+// overwrite that just because they touched the ticker field) and only if
+// price-per-share is still empty (never clobber something the user already
+// typed). Fires on blur, not every keystroke, so it doesn't fight with
+// someone still mid-typing a ticker. "Buying now" routes to a genuinely
+// live, on-demand lookup instead - see refreshHoldingLivePrice below.
 $("holdingSymbol").addEventListener("blur", () => {
-  if (editingHolding || $("holdingCostBasis").value !== "") return;
   const symbol = $("holdingSymbol").value.trim();
   if (!symbol) return;
+  if (holdingEntryMode === "buying") {
+    refreshHoldingLivePrice(symbol);
+    return;
+  }
+  if (editingHolding || $("holdingCostBasis").value !== "") return;
   const price = findLivePrice(symbol);
   if (price == null) return;
   $("holdingCostBasis").value = price;
@@ -3598,6 +3626,97 @@ $("holdingSymbol").addEventListener("blur", () => {
   updateHoldingFieldHighlighting();
   toast(`Filled with today's live price (${fmt(price)}) - edit if you paid differently`);
 });
+
+// State for the "Buying now" mode's shares<->dollar-amount conversion -
+// holdingLivePrice is the last on-demand quote fetched for the current
+// ticker (null until one arrives, or if none was found). holdingLiveFetchToken
+// guards against a stale response landing after a newer request was already
+// sent (the user changed the ticker again while the first lookup was still
+// in flight) - only the response matching the current token is applied.
+let holdingEntryMode = "own";
+let holdingBuyBasis = "shares";
+let holdingLivePrice = null;
+let holdingLiveFetchToken = 0;
+
+async function refreshHoldingLivePrice(symbol) {
+  const token = ++holdingLiveFetchToken;
+  holdingLivePrice = null;
+  $("holdingCostBasis").value = "";
+  $("holdingLivePriceStatus").textContent = "Checking live price...";
+  const price = await fetchLivePriceOnDemand(symbol);
+  if (token !== holdingLiveFetchToken) return;
+  if (price == null) {
+    // No live price - degrade to the same manual price-per-share entry
+    // "Already own this" mode already uses, rather than dead-ending the form.
+    $("holdingLivePriceStatus").textContent = "No live price available for this ticker right now - enter the price you're paying manually.";
+    $("holdingCostBasis").readOnly = false;
+    setHoldingBuyBasis("shares");
+  } else {
+    holdingLivePrice = price;
+    $("holdingLivePriceStatus").textContent = `Live price: ${fmt(price)} per share`;
+    $("holdingCostBasis").value = price;
+    $("holdingCostBasis").readOnly = true;
+  }
+  recomputeHoldingBuyFields();
+}
+
+// Only the "By dollar amount" sub-mode derives a field (shares, from the
+// typed dollar amount / the live price) - "By shares" is directly typed and
+// already flows through the existing updateHoldingTotalCost() unchanged.
+function recomputeHoldingBuyFields() {
+  if (holdingEntryMode === "buying" && holdingBuyBasis === "dollars" && holdingLivePrice != null) {
+    const dollars = parseFloat($("holdingDollarAmount").value);
+    $("holdingQuantity").value = Number.isFinite(dollars) && dollars > 0
+      ? Math.round((dollars / holdingLivePrice) * 1e6) / 1e6
+      : "";
+  }
+  updateHoldingTotalCost();
+  updateHoldingFieldHighlighting();
+}
+
+function setHoldingBuyBasis(basis) {
+  holdingBuyBasis = basis;
+  document.querySelectorAll("#holdingBuyModePills [data-holding-buy-basis]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.holdingBuyBasis === basis);
+  });
+  const dollarMode = basis === "dollars";
+  $("holdingDollarAmountRow").classList.toggle("hidden", !dollarMode);
+  $("holdingQuantity").readOnly = holdingEntryMode === "buying" && dollarMode;
+  if (!dollarMode) $("holdingDollarAmount").value = "";
+  recomputeHoldingBuyFields();
+}
+
+function setHoldingEntryMode(mode) {
+  holdingEntryMode = mode;
+  holdingLivePrice = null;
+  document.querySelectorAll("#holdingModePills [data-holding-mode]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.holdingMode === mode);
+  });
+  $("holdingBuyModePills").classList.toggle("hidden", mode !== "buying");
+  $("holdingDollarAmountRow").classList.add("hidden");
+  $("holdingDollarAmount").value = "";
+  $("holdingLivePriceStatus").textContent = "";
+  $("holdingCostBasisLabel").textContent = mode === "buying" ? "Price per share (live)" : "Price per share";
+  $("holdingQuantity").readOnly = false;
+  $("holdingCostBasis").readOnly = false;
+  if (mode === "buying") {
+    holdingBuyBasis = "shares";
+    document.querySelectorAll("#holdingBuyModePills [data-holding-buy-basis]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.holdingBuyBasis === "shares");
+    });
+    const symbol = $("holdingSymbol").value.trim();
+    if (symbol) refreshHoldingLivePrice(symbol);
+  }
+  updateHoldingFieldHighlighting();
+  updateHoldingTotalCost();
+}
+document.querySelectorAll("#holdingModePills [data-holding-mode]").forEach((btn) => {
+  btn.addEventListener("click", () => setHoldingEntryMode(btn.dataset.holdingMode));
+});
+document.querySelectorAll("#holdingBuyModePills [data-holding-buy-basis]").forEach((btn) => {
+  btn.addEventListener("click", () => setHoldingBuyBasis(btn.dataset.holdingBuyBasis));
+});
+$("holdingDollarAmount").addEventListener("input", recomputeHoldingBuyFields);
 
 function openHoldingForm(holding) {
   editingHolding = holding || null;
@@ -3633,6 +3752,10 @@ function openHoldingForm(holding) {
   // on the holding row to pre-fill it from.
   $("holdingFundingAccount").value = "";
   $("holdingBucket").value = holding?.investment_bucket ?? "";
+  // Always resets to "Already own this" on open (add or edit) - the more
+  // common case (entering an existing portfolio) and today's already-shipped
+  // default behavior, unaffected by whatever mode was active last time.
+  setHoldingEntryMode("own");
   updateHoldingFieldHighlighting();
   updateHoldingTotalCost();
   $("holdingForm").classList.remove("hidden");

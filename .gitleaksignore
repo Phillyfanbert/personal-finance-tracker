@@ -1,0 +1,5 @@
+# Supabase publishable/anon key hardcoded in worker.js - not a secret by
+# Supabase's own design (RLS is what protects data, not keeping this
+# string hidden), already shipped client-side via app/config.js. See
+# CLAUDE.md's worker.js entry for the full reasoning.
+worker.js:generic-api-key:12

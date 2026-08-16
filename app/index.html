@@ -318,7 +318,10 @@
       <div class="card">
         <div class="topbar" style="margin-bottom:4px">
           <strong>Accounts</strong>
-          <button class="secondary" id="addAcctBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
+          <div>
+            <button class="secondary" id="transferBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-right:6px">Transfer</button>
+            <button class="secondary" id="addAcctBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
+          </div>
         </div>
         <p class="muted" style="font-size:12px;margin:0 0 10px">Payment methods for tagging expenses - not counted in net worth (see Assets below).</p>
         <div id="acctList" class="acct-circles">
@@ -365,6 +368,30 @@
           </div>
           <div style="height:8px"></div>
           <button id="saveAcctBtn">Save account</button>
+        </div>
+
+        <!-- Move money between two of the user's own accounts - deliberately
+             ASSET-BACKED accounts only (has a linked_asset_id), not the
+             same "spendable" picker Quick Add uses: NON_SPENDABLE_ACCOUNT_TYPES
+             deliberately treats a credit card as spendable (you pay WITH
+             one), but applyAssetDelta/assetDeltaError are silent no-ops
+             for any account with no linked_asset_id, which every credit/
+             liability-linked account is - reusing that filter here would
+             let a "transfer" to/from a card produce a success toast and a
+             logged row with NO balance actually changing. "Pay down a
+             card" stays on the existing Liabilities card Pay flow. -->
+        <div id="transferForm" class="hidden" style="margin-top:10px;padding:12px;background:var(--panel-2);border-radius:10px">
+          <div class="row">
+            <div><label>From</label><select id="transferFrom"></select></div>
+            <div><label>To</label><select id="transferTo"></select></div>
+          </div>
+          <label>Amount</label>
+          <input id="transferAmount" type="number" step="0.01" inputmode="decimal" />
+          <div style="height:8px"></div>
+          <div class="row">
+            <button id="transferConfirmBtn">Transfer</button>
+            <button class="secondary" id="transferCancelBtn">Cancel</button>
+          </div>
         </div>
 
         <!-- Tapping any account circle with a linked asset opens this. Every
@@ -609,6 +636,23 @@
           </div>
         </div>
       </div>
+
+      <!-- Avalanche vs. snowball payoff-order comparison across ALL
+           eligible debts at once (a debt missing rate/minimum, already
+           at $0, or an in-draw-period HELOC is excluded, same gating the
+           Liabilities card's own per-debt payoff line already applies -
+           see compareDebtStrategies(), payoff.js). Purely informational -
+           shows the real math for both orders side by side, never says
+           which to pick, same boundary the Investments tab's allocation
+           calculator already holds for what to buy. -->
+      <div class="card" id="debtStrategyCard">
+        <strong>Debt payoff strategy</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 10px">Compares paying extra toward your highest-interest debt first (avalanche) with paying extra toward your smallest-balance debt first (snowball) - shows the real numbers for both, doesn't tell you which to pick.</p>
+        <label>Extra monthly toward debt (optional)</label>
+        <input id="debtStrategyExtra" type="number" step="0.01" inputmode="decimal" placeholder="0" />
+        <div id="debtStrategyResult" style="margin-top:10px;font-size:13px"></div>
+        <p class="muted" id="debtStrategyExcluded" style="font-size:12px;margin-top:8px"></p>
+      </div>
     </div>
 
     <!-- ============ APP: REPORTS VIEW ============ -->
@@ -625,6 +669,10 @@
       <div class="totals">
         <div class="card"><div class="muted" style="font-size:12px">Selected month</div><div class="big" id="rptTotal">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Subscriptions/Bills</div><div class="big" id="rptSubs">$0</div></div>
+        <!-- Liquid assets / average of the last 3 months' spending - a
+             plain number, deliberately no color or "aim for X months"
+             framing (see networth.js's emergencyFundCoverage()). -->
+        <div class="card"><div class="muted" style="font-size:12px">Emergency fund</div><div class="big" id="rptEmergencyFund">—</div></div>
       </div>
 
       <!-- Interactive spending Q&A (Gemma, optional/best-effort like Phase 3) -->
@@ -682,6 +730,22 @@
         <div class="chartbox short"><canvas id="trendChart"></canvas></div>
       </div>
 
+      <!-- Reads account_activity rows with kind='income' (see the Income
+           sources card, Subscriptions/Bills page) plus the same monthly
+           expense totals every other chart on this page uses - see
+           incomeVsExpense() (charts.js). Not scoped to the month selector
+           for its own trailing-6-months window, matching "Last 6 months"
+           immediately above it; the savings-rate stat below IS scoped to
+           the selected month, matching the page's other stat tiles. -->
+      <div class="card">
+        <strong>Income vs. expense</strong>
+        <div class="chartbox short"><canvas id="incomeExpenseChart"></canvas></div>
+        <!-- Deliberately no color/threshold framing - a plain number, same
+             restraint as the Emergency fund stat above and the Liabilities
+             card's credit-utilization line. -->
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Savings rate (selected month): <strong id="savingsRateStat">—</strong></p>
+      </div>
+
       <!-- Reconstructed from expenses + account_activity (see
            app/accountHistory.js) rather than a stored snapshot - not
            scoped to the month selector above, unlike the other charts on
@@ -693,6 +757,20 @@
           <select id="historyAccountSelect" style="width:auto;font-size:12px"></select>
         </div>
         <div class="chartbox short"><canvas id="historyChart"></canvas></div>
+      </div>
+
+      <!-- Forward-projecting mirror of the balance history card above -
+           see forecastCashFlow() (app/cashflow.js). Known scheduled items
+           only (active subscriptions + income sources tied to the picked
+           account) - deliberately no blended average-spending estimate,
+           same restraint as every other real-math-only card on this page. -->
+      <div class="card">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Cash flow forecast</strong>
+          <select id="forecastAccountSelect" style="width:auto;font-size:12px"></select>
+        </div>
+        <div class="chartbox short"><canvas id="forecastChart"></canvas></div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Next 30 days, based on known upcoming bills and income only - not a spending prediction.</p>
       </div>
 
       <!-- One snapshot per calendar day the app was actually opened
@@ -772,6 +850,61 @@
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
         <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
         <button class="secondary" id="addSubBtnBottom" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
+      </div>
+
+      <!-- Recurring income sources - genuinely separate from everything
+           else on this page (money coming IN, not a bill going out), kept
+           here for now rather than a new page since it's structurally
+           identical to how subscriptions are listed/edited/auto-logged
+           (autoLogDueIncome() mirrors autoLogDueSubscriptions() exactly).
+           See app/income.js for the cadence-stepping logic. -->
+      <div class="card">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Income sources</strong>
+          <button class="secondary" id="addIncomeBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Recurring income (paychecks, etc.) - logged automatically once each one comes due, the same way a bill charge is. Tap one to edit.</p>
+        <div id="incomeList" style="margin-top:8px"><p class="muted">Loading…</p></div>
+      </div>
+
+      <div class="card hidden" id="incomeForm">
+        <div class="topbar" style="margin-bottom:6px"><strong id="incomeFormTitle">New income source</strong></div>
+        <label>Source</label>
+        <input id="incSource" placeholder="Employer paycheck" />
+        <div class="row">
+          <div><label>Amount</label><input id="incAmount" type="number" step="0.01" inputmode="decimal" /></div>
+          <div><label>Cadence</label>
+            <select id="incCadence">
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Biweekly</option>
+              <option value="semimonthly">Semimonthly (2x/month)</option>
+              <option value="monthly">Monthly</option>
+              <option value="annual">Annual</option>
+              <option value="one_time">One time</option>
+            </select>
+          </div>
+        </div>
+        <!-- Only for semimonthly - two FIXED calendar days per month (e.g.
+             1st & 15th), not a fixed day-count interval the way biweekly
+             is - see app/income.js's own comment for why. -->
+        <div class="row hidden" id="incomeSemimonthlyRow">
+          <div><label>First pay day (1-31)</label><input id="incSemimonthlyDay1" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
+          <div><label>Second pay day (1-31)</label><input id="incSemimonthlyDay2" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
+        </div>
+        <div class="row">
+          <div><label>Next expected</label><input id="incNextExpected" type="date" /></div>
+          <div><label>Deposited into</label><select id="incAccount"></select></div>
+        </div>
+        <label><input type="checkbox" id="incActive" style="width:auto;margin-right:8px" checked />Active</label>
+        <label>Notes</label>
+        <input id="incNotes" placeholder="e.g. biweekly on Fridays" />
+        <div style="height:12px"></div>
+        <div class="row">
+          <button id="saveIncomeBtn">Save</button>
+          <button class="secondary" id="cancelIncomeBtn">Cancel</button>
+        </div>
+        <div style="height:8px"></div>
+        <button class="secondary hidden" id="deleteIncomeBtn" style="color:var(--err)">Delete income source</button>
       </div>
 
       <!-- Add / edit form (hidden until used) - placed below the full list
@@ -1312,7 +1445,7 @@
 
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 390" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 680 444" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Expenses Quick Add</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1327,6 +1460,8 @@
             <text x="40" y="309" fill="var(--text)" font-size="14">Assets</text>
             <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="363" fill="var(--text)" font-size="14">Liabilities</text>
+            <rect x="10" y="388" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="417" fill="var(--text)" font-size="14">Debt payoff strategy</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. A budget-warning banner can appear above Quick Add; a Live asset prices card can appear between Assets and Liabilities once that dormant feature is turned on (see Assets below).</p>
@@ -1341,7 +1476,7 @@
 
         <div class="help-topic">
           <h3>Recent History</h3>
-          <p>A combined feed of every expense and every non-expense money movement (a manual balance correction, a liability payment, an investment contribution, a logged interest charge, even an account being opened) - not just expenses. Search by merchant/description text, or narrow with the Type/Account/Category/Kind dropdowns and a min/max dollar range - all filters combine (AND, not OR). "Kind" is the one that separates plain expenses from everything else (account activity has no category or payment type of its own, so it drops out of those two filters automatically unless you pick "Activity only").</p>
+          <p>A combined feed of every expense and every non-expense money movement (a manual balance correction, a liability payment, a transfer between your own accounts, income received, an investment contribution, a logged interest charge, even an account being opened) - not just expenses. Search by merchant/description text, or narrow with the Type/Account/Category/Kind dropdowns and a min/max dollar range - all filters combine (AND, not OR). "Kind" is the one that separates plain expenses from everything else (account activity has no category or payment type of its own, so it drops out of those two filters automatically unless you pick "Activity only").</p>
           <p>Tap an expense row to open it for editing or recategorizing. Account-activity rows (anything that isn't a plain expense) can't be edited that way since most of them have no separate edit form - instead every row, expense or activity, has a small undo icon that reverses exactly what it did (restores the old balance, removes the row) and can't be used twice.</p>
           <p>Check the box on several expense rows at once to recategorize all of them together in one Apply - your checked selection survives changing the filters above it, so you can search, check a few, search again, and check more before applying.</p>
         </div>
@@ -1360,6 +1495,7 @@
           <h3>Accounts</h3>
           <p>Payment methods only - which card, bank, or wallet you paid with. Accounts are <strong>not</strong> counted in net worth by themselves; every account automatically gets its own linked Asset (a debit/deposit-style account) or Liability (a credit-style account) behind the scenes, and that linked balance is what actually counts. "+ Add" walks you through picking a type (this decides the account's name, like Checking or Credit Card) and typing the bank or institution name - for a real bank/credit union this is checked against a large built-in list as you type, and if it's genuinely not on the list you're offered an "add it anyway" option rather than being blocked outright.</p>
           <p>Tap any account circle to adjust its balance directly: type the new total, or use +/- if you only know the change. A credit-type account instead shows Pay/adjust-owed controls from the Liabilities card below, plus a credit-utilization line and (once you've filled in its statement-cycle details there) a paid-in-full / carrying-a-balance / missed-minimum status. Archiving an account (the small "Archive" link under a circle) removes it from every list and total while keeping its full history intact and fully reversible from "View archived" - unlike the ✕ delete, which is permanent and unassigns its past expenses.</p>
+          <p><strong>Transfer</strong> (button next to "+ Add") moves money between two of your own accounts - Checking to Savings, for example. Only accounts with a real balance behind them can be picked (not a credit card or loan - moving money onto a card is paying it down, which stays on the Liabilities card's own Pay flow below). Shows up in Recent History as a single undoable entry, and reduces the "from" account's balance the moment it's confirmed the same way any other spending does.</p>
         </div>
 
         <div class="help-topic">
@@ -1376,13 +1512,18 @@
         </div>
 
         <div class="help-topic">
+          <h3>Debt payoff strategy</h3>
+          <p>Compares two orders for paying extra toward your debts: avalanche (extra goes to whichever has the highest interest rate) and snowball (extra goes to whichever has the smallest balance). Type an optional monthly amount beyond everyone's own minimum, and both strategies show real months-to-debt-free and total-interest numbers side by side - it never tells you which one to actually use, the same "show the math, not advice" line every calculator in this app holds. A liability is left out of the comparison (and counted in the note below the numbers) if it's missing an interest rate or minimum payment, already at $0, or an active HELOC in its draw period - the same conditions that already hide the per-liability payoff line above.</p>
+        </div>
+
+        <div class="help-topic">
           <h3>Profile (top right)</h3>
           <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Subscriptions/Bills page, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else. "Download all my data" exports a plain JSON file of everything in your own tables.</p>
         </div>
       </div>
       <div id="helpContentSubs" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 282" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 680 336" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Recurring expenses found (only when any are detected)</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1393,9 +1534,11 @@
             <text x="40" y="201" fill="var(--text)" font-size="14">Upcoming renewals (30 days)</text>
             <rect x="10" y="226" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="255" fill="var(--text)" font-size="14">All subscriptions/bills</text>
+            <rect x="10" y="280" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="309" fill="var(--text)" font-size="14">Income sources</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">"Recurring expenses found" only appears when the app spots a bill-like pattern in your expense history. "Found online" only appears once a household server for that dormant feature is running - see its own note below.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">"Recurring expenses found" only appears when the app spots a bill-like pattern in your expense history. "Found online" only appears once a household server for that dormant feature is running - see its own note below. "Income sources" is unrelated to the bills above it - money coming in, not going out - kept on this page since it works the same way.</p>
 
         <div class="help-topic">
           <h3>Monthly total / Yearly</h3>
@@ -1428,10 +1571,16 @@
           <h3>Upcoming renewals / All subscriptions</h3>
           <p>Upcoming renewals lists anything due in the next 30 days, for a quick glance - it's read-only here, tap the full list below to actually edit one. All subscriptions/bills is the complete list, active and inactive both; tap any row to open it back in the edit form above.</p>
         </div>
+
+        <div class="help-topic">
+          <h3>Income sources</h3>
+          <p>Recurring income (a paycheck, and similar) - genuinely separate from the bills above, kept on this page because it's logged automatically the same way a bill charge is: source, amount, cadence, which account it's deposited into, when the next one's expected, and an Active checkbox. Cadence covers weekly, biweekly, semimonthly (two fixed pay days a month, like the 1st and 15th - not just "every ~15 days," which would slowly drift off your real payday), monthly, annual, and one-time. A one-time source automatically turns itself inactive right after it's logged, so it never logs twice.</p>
+          <p>Only accounts with a real balance behind them can be picked as the deposit account - not a credit card or loan, the same restriction Transfer (Log page) uses and for the same reason. Each deposit shows up in Recent History as "Income received," undoable like any other entry there.</p>
+        </div>
       </div>
       <div id="helpContentReports" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 498" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 680 606" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Ask about your spending</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1447,16 +1596,20 @@
             <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="363" fill="var(--text)" font-size="14">Last 6 months</text>
             <rect x="10" y="388" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="417" fill="var(--text)" font-size="14">Account balance history</text>
+            <text x="40" y="417" fill="var(--text)" font-size="14">Income vs. expense</text>
             <rect x="10" y="442" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="471" fill="var(--text)" font-size="14">Net worth trend</text>
+            <text x="40" y="471" fill="var(--text)" font-size="14">Account balance history</text>
+            <rect x="10" y="496" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="525" fill="var(--text)" font-size="14">Cash flow forecast</text>
+            <rect x="10" y="550" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="579" fill="var(--text)" font-size="14">Net worth trend</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. The month selector (top right) and its "Selected month" / "Subscriptions/Bills" totals apply to everything except the last three cards - see below for which.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. The month selector (top right) and its "Selected month" / "Subscriptions/Bills" totals apply to everything except the last four cards - see below for which.</p>
 
         <div class="help-topic">
           <h3>Month selector and totals</h3>
-          <p>Everything on this page except the bottom three cards (Account balance history, Net worth trend, and indirectly the Q&A/monthly report below) is scoped to whichever month you pick at the top right. The two totals under it are that month's full expense total and just its Subscriptions category slice.</p>
+          <p>Everything on this page except the bottom four cards (Account balance history, Cash flow forecast, Net worth trend, and indirectly the Q&A/monthly report below) is scoped to whichever month you pick at the top right. The first two totals under it are that month's full expense total and just its Subscriptions category slice. The third, "Emergency fund," is always current rather than scoped to the selected month - it's your liquid account balances (checking, savings, cash, and similar - not retirement, investment, or loan accounts) divided by your average spending over the last 3 months, shown as a plain number of months covered. No color, no "aim for X months" - just the math, the same way this app never turns a real number into advice.</p>
         </div>
 
         <div class="help-topic">
@@ -1486,8 +1639,18 @@
         </div>
 
         <div class="help-topic">
+          <h3>Income vs. expense</h3>
+          <p>Paired bars, income against expense, for the same six months as the chart above it - income comes from whatever you've logged on the Income sources card (Subscriptions/Bills page), either automatically as each recurring source comes due or from a real deposit you entered yourself. Below the chart, "Savings rate" is (income − expense) ÷ income for the selected month specifically - a real percentage, shown plainly with no color or "aim for X%" framing, the same restraint the Emergency fund stat and the Liabilities card's credit-utilization line already hold. Shows "—" for a month with no income logged yet (dividing by zero income isn't a real 0% rate, so it's left blank rather than shown as one) - a month where you genuinely spent more than you earned still shows a real negative percentage, not hidden.</p>
+        </div>
+
+        <div class="help-topic">
           <h3>Account balance history</h3>
           <p>Pick any account from the dropdown to see its balance over time, reconstructed from its actual expense and activity history - not scoped to the month selector, since a balance's history spans the account's whole lifetime, not one month.</p>
+        </div>
+
+        <div class="help-topic">
+          <h3>Cash flow forecast</h3>
+          <p>Pick any account to see its balance projected forward 30 days, built only from what's actually known and scheduled: that account's active subscriptions/bills and active income sources. It deliberately does not blend in an average-spending estimate - a forecast built only from real scheduled items is honest about what it knows, rather than looking more predictive than this app can actually claim to be. A bill or paycheck due today isn't shown as a separate point (it's already reflected in the starting balance); one due tomorrow or later shows up as a change in the line on the day it's expected.</p>
         </div>
 
         <div class="help-topic">

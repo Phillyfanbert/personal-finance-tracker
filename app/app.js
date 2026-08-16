@@ -6,12 +6,12 @@
 // ============================================================================
 import { categorize, quickParse, CATEGORIES } from "./categorize.js";
 import {
-  monthKey, monthLabel, lastMonths, sumBy, monthlyTotals,
+  monthKey, monthLabel, lastMonths, sumBy, monthlyTotals, incomeVsExpense,
   renderBreakdownBar, renderTrendBar, renderLineChart,
 } from "./charts.js";
 import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
-import { payoffProjection } from "./payoff.js";
+import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest } from "./investments.js";
@@ -24,10 +24,12 @@ import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
 } from "./subscriptions.js";
+import { advanceIncomeDate } from "./income.js";
+import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
-import { computeNetWorth } from "./networth.js";
+import { computeNetWorth, emergencyFundCoverage } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 
 const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, GEMMA_EMBED_MODEL, GEMMA_AUTH_KEY, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
@@ -130,6 +132,7 @@ let userRules = {};   // keyword -> category
 let accounts = [];
 let allExpenses = []; // cache for reports (last ~12 months)
 let subscriptions = []; // cache of the user's subscriptions
+let incomeSources = []; // cache of the user's recurring income sources
 let catalog = [];     // shared subscription_catalog reference data
 let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
 let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
@@ -144,6 +147,7 @@ let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (L
 let accountActivity = []; // non-expense money movements (asset adjust, liability pay) - Recent History
 let editing = null;   // expense row currently in the edit modal
 let editingSub = null; // subscription row currently in the sub form
+let editingIncome = null; // income row currently in the income form
 let userId = null;    // signed-in user's uuid
 let userEmail = null; // signed-in user's email, shown read-only in Profile
 let profile = null;   // the user's profiles row
@@ -251,8 +255,9 @@ async function init() {
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
   await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
-  await Promise.all([loadExpenses(), loadSubscriptions()]);
+  await Promise.all([loadExpenses(), loadSubscriptions(), loadIncome()]);
   await autoLogDueSubscriptions();
+  await autoLogDueIncome();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
 }
@@ -799,10 +804,15 @@ $("acctType").onchange = () => setAcctType($("acctType").value);
 function closeAcctForm() {
   $("acctForm").classList.add("hidden");
 }
+function closeTransferForm() {
+  $("transferForm").classList.add("hidden");
+  $("transferAmount").value = "";
+}
 function closeAccountEditPanels() {
   closeAssetAdjust();
   closeDebtBalanceForm();
   closeDebtDetailsForm();
+  closeTransferForm();
 }
 $("addAcctBtn").onclick = () => {
   const opening = $("acctForm").classList.contains("hidden");
@@ -810,6 +820,48 @@ $("addAcctBtn").onclick = () => {
   $("acctForm").classList.toggle("hidden");
   populateAcctTypeSelect();
   setAcctType("debit"); // every fresh open starts from the same visible state
+};
+$("transferBtn").onclick = () => {
+  const opening = $("transferForm").classList.contains("hidden");
+  if (opening) { closeAcctForm(); closeAccountEditPanels(); }
+  $("transferForm").classList.toggle("hidden");
+};
+$("transferCancelBtn").onclick = closeTransferForm;
+// Asset-to-asset only (see transferForm's own comment in index.html) -
+// reuses assetDeltaError/applyAssetDelta exactly as Quick Add already
+// does for an expense, just applied twice (once per leg) instead of
+// once, since a transfer is symmetric rather than expense-shaped.
+$("transferConfirmBtn").onclick = async () => {
+  const amount = parseFloat($("transferAmount").value);
+  if (!amount || amount <= 0) { flagField("transferAmount"); return toast("Enter a valid amount"); }
+  const fromId = $("transferFrom").value;
+  const toId = $("transferTo").value;
+  if (!fromId) { flagField("transferFrom"); return toast("Choose an account to transfer from"); }
+  if (!toId) { flagField("transferTo"); return toast("Choose an account to transfer to"); }
+  const fromAccount = accounts.find((a) => a.id === fromId);
+  const toAccount = accounts.find((a) => a.id === toId);
+  if (!fromAccount || !toAccount) { flagField(["transferFrom", "transferTo"]); return toast("Choose valid accounts"); }
+  // Compares the underlying ASSET, not just the account id - two accounts
+  // could in principle point at the same asset, and two applyAssetDelta
+  // calls against the same asset would net to zero silently instead of
+  // erroring.
+  if (fromAccount.linked_asset_id === toAccount.linked_asset_id) {
+    flagField(["transferFrom", "transferTo"]);
+    return toast("Choose two different accounts");
+  }
+  const err = assetDeltaError([{ accountId: fromId, amount, sign: -1 }]);
+  if (err) { flagField("transferFrom"); return toast(err); }
+
+  await applyAssetDelta(fromId, null, amount, -1);
+  await applyAssetDelta(toId, null, amount, +1);
+  await logActivity(
+    "transfer", `Transferred ${fmt(amount)} from ${acctName(fromId)} to ${acctName(toId)}`,
+    amount, undefined, fromId, toId
+  );
+  closeTransferForm();
+  await loadAssets();
+  renderRecentTransactions();
+  toast("Transfer recorded");
 };
 
 // bank_name is separate from linked_asset_id/linked_liability_id - it's
@@ -1085,6 +1137,20 @@ async function loadAccounts() {
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
   $("holdingFundingAccount").innerHTML = opts;
+  // Deliberately NOT the spendable list above - Transfer needs an
+  // asset-backed account specifically (applyAssetDelta/assetDeltaError
+  // are silent no-ops for a credit/liability-linked one, which the
+  // spendable list above intentionally includes) - see transferForm's
+  // own comment in index.html for why this would otherwise be a real,
+  // silent balance-not-actually-changing bug.
+  const transferable = accounts.filter((a) => a.linked_asset_id && !a.archived_at);
+  const transferOpts = `<option value="">Choose an account</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  $("transferFrom").innerHTML = transferOpts;
+  $("transferTo").innerHTML = transferOpts;
+  // Same asset-backed-only reasoning as Transfer above - an income
+  // deposit needs a real linked_asset_id to actually apply via
+  // applyAssetDelta, which a credit-type account never has.
+  $("incAccount").innerHTML = `<option value="">None</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
   // A previously-typed bank_name (including one added via the "not
   // recognized, add anyway" override in saveAcctBtn) becomes just as
   // suggestable as a seeded FDIC name next time - rankBankMatches reads
@@ -1573,6 +1639,8 @@ const ACTIVITY_LABEL = {
   owed_adjust: "Owed correction",
   account_created: "Account opened",
   contribution: "Contribution",
+  transfer: "Transfer",
+  income: "Income received",
 };
 // The one activity kind that moves no money and so has nothing to reverse -
 // "undoing" it would mean deleting the account, which is what the Accounts
@@ -1654,7 +1722,7 @@ function openAssetAdjust(accountId) {
     adjustingAccountId = null;
     return;
   }
-  closeAcctForm(); // never leave the add-account panel stacked behind this
+  closeAcctForm(); closeTransferForm(); // never leave the add-account/transfer panels stacked behind this
   adjustingAssetId = asset.id;
   adjustingAccountId = accountId;
   $("adjustAssetLabel").textContent = asset.name;
@@ -1960,7 +2028,31 @@ async function loadDebts() {
   });
   renderNetWorth();
   renderAccountsList(); // a changed liability balance may be a linked account's balance line
+  renderDebtStrategy();
 }
+
+// Purely informational - shows real avalanche/snowball numbers side by
+// side, never states which to pick (same boundary the Investments tab's
+// allocation calculator already holds for what to buy). Re-runs live as
+// the "extra monthly" input changes and whenever loadDebts() re-runs, so
+// it always reflects the current liabilities and their real balances.
+function renderDebtStrategy() {
+  const extra = parseFloat($("debtStrategyExtra").value) || 0;
+  const { avalanche, snowball, excludedCount } = compareDebtStrategies(debts, extra);
+  const el = $("debtStrategyResult");
+  if (!avalanche) {
+    el.innerHTML = `<p class="muted">Add an interest rate and minimum payment to at least one liability to see this comparison.</p>`;
+  } else {
+    const line = (label, r) => r.neverPaysOff
+      ? `<div><strong>${esc(label)}:</strong> minimum payment won't cover interest - balance will grow</div>`
+      : `<div><strong>${esc(label)}:</strong> ${r.months}mo to debt-free, ${fmt(r.totalInterest)} total interest</div>`;
+    el.innerHTML = line("Avalanche (highest interest first)", avalanche) + line("Snowball (smallest balance first)", snowball);
+  }
+  $("debtStrategyExcluded").textContent = excludedCount
+    ? `${excludedCount} liabilit${excludedCount === 1 ? "y" : "ies"} not included (missing interest rate/minimum payment, already paid off, or an active HELOC draw period).`
+    : "";
+}
+$("debtStrategyExtra").addEventListener("input", renderDebtStrategy);
 
 // Interest rate / minimum payment / due date / draw period end - never
 // balance, which stays strictly driven by real expenses/payments against
@@ -1971,7 +2063,7 @@ async function loadDebts() {
 let editingDebtDetails = null;
 function openDebtDetailsForm(debt) {
   if (!debt) return;
-  closeAcctForm(); // never leave the add-account panel stacked behind this
+  closeAcctForm(); closeTransferForm(); // never leave the add-account/transfer panels stacked behind this
   editingDebtDetails = debt;
   $("debtDetailsRate").value = debt.interest_rate ?? "";
   $("debtDetailsMinPay").value = debt.minimum_payment ?? "";
@@ -2096,7 +2188,7 @@ function openDebtBalanceForm(debtId, tab) {
   }
   const debt = debts.find((d) => d.id === debtId);
   if (!debt) return;
-  closeAcctForm(); // never leave the add-account panel stacked behind this
+  closeAcctForm(); closeTransferForm(); // never leave the add-account/transfer panels stacked behind this
   activeDebtId = debtId;
   $("debtBalanceLabel").textContent = debt.name;
   $("debtBalanceCurrent").textContent = fmt(debt.balance);
@@ -2788,6 +2880,33 @@ async function undoActivity(row) {
     const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
     if (error) return toast(error.message);
     await syncParentAssetValue(asset.parent_asset_id); // no-op unless asset is itself a holding
+  } else if (row.kind === "transfer") {
+    // Reverses both legs - money goes back from the receiving asset
+    // (related_account_id) to the funding asset (account_id), the exact
+    // mirror of the original transfer.
+    const fromAccount = accounts.find((a) => a.id === row.account_id);
+    const toAccount = accounts.find((a) => a.id === row.related_account_id);
+    const fromAsset = fromAccount ? assets.find((a) => a.id === fromAccount.linked_asset_id) : null;
+    const toAsset = toAccount ? assets.find((a) => a.id === toAccount.linked_asset_id) : null;
+    if (!fromAsset || !toAsset) return toast("Can't undo - one of the accounts no longer exists.");
+    const newToValue = Math.round((Number(toAsset.value) - Number(row.amount)) * 100) / 100;
+    if (newToValue < 0) return toast(`Can't undo - would take ${toAsset.name} below $0.`);
+    const { error: toErr } = await sb.from("assets").update({ value: newToValue }).eq("id", toAsset.id);
+    if (toErr) return toast(toErr.message);
+    const newFromValue = Math.round((Number(fromAsset.value) + Number(row.amount)) * 100) / 100;
+    const { error: fromErr } = await sb.from("assets").update({ value: newFromValue }).eq("id", fromAsset.id);
+    if (fromErr) return toast(fromErr.message);
+  } else if (row.kind === "income") {
+    // Always a positive deposit, so undoing is always a straight
+    // subtraction - never a sign-dependent reversal the way asset_adjust's
+    // undo is.
+    const account = accounts.find((a) => a.id === row.account_id);
+    const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
+    if (!asset) return toast("Can't undo - the linked account no longer exists.");
+    const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
+    if (newValue < 0) return toast(`Can't undo - would take ${asset.name} below $0.`);
+    const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+    if (error) return toast(error.message);
   }
   const { error } = await sb.from("account_activity").delete().eq("id", row.id);
   if (error) return toast(error.message);
@@ -2993,6 +3112,8 @@ async function loadReports() {
   loadInsights();
   populateHistoryAccountSelect();
   renderAccountHistory();
+  populateForecastAccountSelect();
+  renderCashFlowForecast();
   await renderNetWorthTrend();
 }
 
@@ -4002,6 +4123,28 @@ function renderAccountHistory() {
   renderLineChart($("historyChart"), labels, points.map((p) => p.balance));
 }
 
+// Same account-picker shape as populateHistoryAccountSelect above, kept
+// as its own separate select (not shared) since a user may reasonably
+// want to look at a different account's history vs. its forecast at once.
+function populateForecastAccountSelect() {
+  const sel = $("forecastAccountSelect");
+  const prev = sel.value;
+  sel.innerHTML = accounts.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  sel.value = accounts.some((a) => a.id === prev) ? prev : (accounts[0]?.id ?? "");
+}
+$("forecastAccountSelect").onchange = renderCashFlowForecast;
+
+function renderCashFlowForecast() {
+  const account = accounts.find((a) => a.id === $("forecastAccountSelect").value);
+  if (!account) return;
+  const points = forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30);
+  const labels = points.map((p) => {
+    const [y, m, d] = p.date.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  });
+  renderLineChart($("forecastChart"), labels, points.map((p) => p.balance));
+}
+
 // Latest monthly report, generated server-side by tools/monthly-report.js.
 // RLS-scoped: only the signed-in user's own rows are ever returned.
 async function loadInsights() {
@@ -4096,6 +4239,23 @@ async function renderReports() {
   $("rptTotal").textContent = fmt(total);
   $("rptSubs").textContent = fmt(subs);
 
+  // Always "right now," not scoped to the selected month above - liquid
+  // assets are a live current balance, not a historical figure, so
+  // anchoring to today (not ym) keeps this from changing confusingly as
+  // the user browses past months in the dropdown. Same reasoning the
+  // account-history/net-worth-trend cards already use for staying
+  // unscoped to monthSel.
+  const efMonths = lastMonths(3, monthKey());
+  const efAvgSpending = monthlyTotals(allExpenses, efMonths).reduce((s, v) => s + v, 0) / efMonths.length;
+  const efLiquidAssets = accounts
+    .filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at && a.linked_asset_id)
+    .reduce((sum, a) => {
+      const asset = assets.find((x) => x.id === a.linked_asset_id);
+      return sum + (asset ? Number(asset.value) : 0);
+    }, 0);
+  const efCoverage = emergencyFundCoverage(efLiquidAssets, efAvgSpending);
+  $("rptEmergencyFund").textContent = efCoverage != null ? `${efCoverage}mo` : "—";
+
   const empty = total === 0;
   $("rptEmpty").classList.toggle("hidden", !empty);
 
@@ -4107,6 +4267,16 @@ async function renderReports() {
   renderBreakdownBar($("payChart"), byPayment);
   const trailing = lastMonths(6, ym);
   renderTrendBar($("trendChart"), trailing, monthlyTotals(allExpenses, trailing));
+
+  const incomeActivity = accountActivity.filter((a) => a.kind === "income");
+  const ive = incomeVsExpense(incomeActivity, allExpenses, trailing);
+  renderTrendBar($("incomeExpenseChart"), trailing, ive.map((r) => r.expense), {
+    label: "Income", data: ive.map((r) => r.income), color: "#34d399",
+  });
+  const selectedMonth = ive.find((r) => r.month === ym);
+  $("savingsRateStat").textContent = selectedMonth && selectedMonth.savingsRate != null
+    ? signedPct(Math.round(selectedMonth.savingsRate * 1000) / 10)
+    : "—";
 }
 
 // ---- MONTH REPORT EXPORT (docs/ROADMAP.md Reports & Net Worth #3) --------
@@ -4193,6 +4363,13 @@ async function loadSubscriptions() {
   $("subCategorySuggestions").innerHTML = cats.map((c) => `<option value="${esc(c)}"></option>`).join("");
 }
 
+async function loadIncome() {
+  const { data, error } = await sb.from("income").select("*").order("next_expected", { ascending: true });
+  if (error) { $("incomeList").innerHTML = `<p class="muted">${esc(error.message)}</p>`; return; }
+  incomeSources = data || [];
+  renderIncomeList();
+}
+
 // A subscription's next_renewal reaching today means the real-world charge
 // already happened, so - unlike the manual markPaidBtn below, which this
 // shares its logic with - this runs unprompted on every app load and logs
@@ -4267,6 +4444,61 @@ async function autoLogDueSubscriptions() {
     toast(`Logged ${loggedCount} charge${loggedCount === 1 ? "" : "s"} - couldn't cover ${[...blockedNames].join(", ")}`);
   } else if (loggedCount) {
     toast(`Logged ${loggedCount} subscription/bill charge${loggedCount === 1 ? "" : "s"} automatically`);
+  }
+}
+
+// Exact mirror of autoLogDueSubscriptions() above, deliberately - runs
+// unprompted on every app load, no confirm-first step (checked the real
+// subscription auto-logging behavior before assuming otherwise; there
+// isn't one). A received paycheck increases an asset, so this uses
+// applyAssetDelta(+1) instead of the expense-shaped insert + -1 delta
+// subscriptions use, and logs to account_activity (kind: "income") rather
+// than expenses, since income isn't spending - everything else (the
+// per-source catch-up loop, the 36-cycle cap, updating next_expected only
+// if it actually moved) is the same shape.
+async function autoLogDueIncome() {
+  const today = new Date().toISOString().slice(0, 10);
+  let loggedCount = 0;
+
+  for (const src of incomeSources) {
+    if (!src.is_active || !src.next_expected || !src.account_id) continue;
+    const account = accounts.find((a) => a.id === src.account_id);
+    if (!account || account.archived_at || !account.linked_asset_id) continue;
+    const amount = Number(src.amount);
+
+    // one_time never advances (advanceIncomeDate returns it unchanged),
+    // so it's handled as its own single-shot case rather than the
+    // while-loop below - looping it would either infinite-loop (bounded
+    // only by the 36-cycle cap) or double-log the same deposit repeatedly
+    // across future app loads. Deactivating it here is what actually
+    // stops that, not just the cap.
+    if (src.cadence === "one_time") {
+      if (src.next_expected > today) continue;
+      await applyAssetDelta(src.account_id, null, amount, +1);
+      await logActivity("income", src.source, amount, src.next_expected, src.account_id);
+      loggedCount++;
+      await sb.from("income").update({ is_active: false }).eq("id", src.id);
+      continue;
+    }
+
+    let expected = src.next_expected;
+    let cycles = 0;
+    while (expected <= today && cycles < 36) {
+      await applyAssetDelta(src.account_id, null, amount, +1);
+      await logActivity("income", src.source, amount, expected, src.account_id);
+      loggedCount++;
+      expected = advanceIncomeDate(expected, src.cadence, src.semimonthly_day_1, src.semimonthly_day_2);
+      cycles++;
+    }
+    if (expected !== src.next_expected) {
+      await sb.from("income").update({ next_expected: expected }).eq("id", src.id);
+    }
+  }
+
+  if (loggedCount) {
+    await loadAssets();
+    await loadIncome();
+    toast(`Logged ${loggedCount} income deposit${loggedCount === 1 ? "" : "s"} automatically`);
   }
 }
 
@@ -4598,6 +4830,103 @@ $("deleteSubBtn").onclick = async () => {
   closeSubForm();
   await loadSubscriptions();
   toast("Subscription/bill deleted");
+};
+
+// ---- INCOME SOURCES (structurally mirrors subscriptions above) -----------
+function renderIncomeList() {
+  const sorted = [...incomeSources].sort((a, b) => (b.is_active - a.is_active) || a.source.localeCompare(b.source));
+  $("incomeList").innerHTML = sorted.length
+    ? sorted.map((s) => `
+      <div class="exp" data-income="${s.id}" style="${s.is_active ? "" : "opacity:.5"}">
+        <div>
+          <div>${esc(s.source)}${s.is_active ? "" : " · (inactive)"}</div>
+          <div class="meta">${cap(s.cadence.replace("_", " "))}${s.next_expected ? " · next " + s.next_expected : ""}${acctName(s.account_id) ? " · " + esc(acctName(s.account_id)) : ""}</div>
+        </div>
+        <span class="amt">${fmt(s.amount)}</span>
+      </div>`).join("")
+    : `<p class="muted">No income sources yet - add one above.</p>`;
+
+  document.querySelectorAll("#incomeList [data-income]").forEach((el) => {
+    el.onclick = () => {
+      const src = incomeSources.find((x) => x.id === el.dataset.income);
+      if (src) openIncomeForm(src);
+    };
+  });
+}
+
+function updateIncomeSemimonthlyVisibility() {
+  $("incomeSemimonthlyRow").classList.toggle("hidden", $("incCadence").value !== "semimonthly");
+}
+$("incCadence").addEventListener("change", updateIncomeSemimonthlyVisibility);
+
+const openNewIncomeForm = () => openIncomeForm(null);
+$("addIncomeBtn").onclick = openNewIncomeForm;
+$("cancelIncomeBtn").onclick = closeIncomeForm;
+
+function openIncomeForm(src) {
+  editingIncome = src;
+  $("incomeFormTitle").textContent = src ? "Edit income source" : "New income source";
+  $("incSource").value = src?.source ?? "";
+  $("incAmount").value = src?.amount ?? "";
+  $("incCadence").value = src?.cadence ?? "monthly";
+  $("incSemimonthlyDay1").value = src?.semimonthly_day_1 ?? "";
+  $("incSemimonthlyDay2").value = src?.semimonthly_day_2 ?? "";
+  $("incNextExpected").value = src?.next_expected ?? "";
+  $("incAccount").value = src?.account_id ?? "";
+  $("incActive").checked = src ? !!src.is_active : true;
+  $("incNotes").value = src?.notes ?? "";
+  $("deleteIncomeBtn").classList.toggle("hidden", !src);
+  updateIncomeSemimonthlyVisibility();
+  $("incomeForm").classList.remove("hidden");
+  $("incomeForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function closeIncomeForm() { $("incomeForm").classList.add("hidden"); editingIncome = null; }
+
+$("saveIncomeBtn").onclick = async () => {
+  const source = $("incSource").value.trim();
+  const amount = parseFloat($("incAmount").value);
+  if (!source) { flagField("incSource"); return toast("Source required"); }
+  if (!amount || amount <= 0) { flagField("incAmount"); return toast("Enter a valid amount"); }
+  const cadence = $("incCadence").value;
+  let semimonthlyDay1 = null;
+  let semimonthlyDay2 = null;
+  if (cadence === "semimonthly") {
+    semimonthlyDay1 = parseInt($("incSemimonthlyDay1").value, 10) || null;
+    semimonthlyDay2 = parseInt($("incSemimonthlyDay2").value, 10) || null;
+    if (!semimonthlyDay1 || !semimonthlyDay2) {
+      flagField(["incSemimonthlyDay1", "incSemimonthlyDay2"]);
+      return toast("Enter both pay days for a semimonthly source");
+    }
+  }
+  const row = {
+    source, amount, cadence,
+    semimonthly_day_1: semimonthlyDay1,
+    semimonthly_day_2: semimonthlyDay2,
+    next_expected: $("incNextExpected").value || null,
+    account_id: $("incAccount").value || null,
+    is_active: $("incActive").checked,
+    notes: $("incNotes").value.trim() || null,
+  };
+  $("saveIncomeBtn").disabled = true;
+  const q = editingIncome
+    ? sb.from("income").update(row).eq("id", editingIncome.id)
+    : sb.from("income").insert(row);
+  const { error } = await q;
+  $("saveIncomeBtn").disabled = false;
+  if (error) { flagField("incSource"); return toast(error.message); }
+  closeIncomeForm();
+  await loadIncome();
+  toast(editingIncome ? "Income source updated" : "Income source added");
+};
+
+$("deleteIncomeBtn").onclick = async () => {
+  if (!editingIncome) return;
+  if (!(await confirmModal("This can't be undone.", { title: `Delete ${editingIncome.source}?` }))) return;
+  const { error } = await sb.from("income").delete().eq("id", editingIncome.id);
+  if (error) return toast(error.message);
+  closeIncomeForm();
+  await loadIncome();
+  toast("Income source deleted");
 };
 
 // ---- PROFILE (README §1.2, feeds Phase 4 discount matching) ----------------

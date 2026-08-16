@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -255,6 +255,11 @@ async function init() {
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
   await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
+  // Both assets and assetPriceFindings are guaranteed loaded by the
+  // Promise.all above (no race) - this is what keeps Net Worth/the Assets
+  // card/the net-worth trend chart in sync with live prices on every app
+  // open, not just whenever someone happens to manually edit a holding.
+  await syncAllParentAssetValues();
   await Promise.all([loadExpenses(), loadSubscriptions(), loadIncome()]);
   await autoLogDueSubscriptions();
   await autoLogDueIncome();
@@ -341,6 +346,25 @@ function renderAgentFreshness(agent, freshnessId, warningId) {
     warningEl.style.color = status.status === "failed" ? "var(--err)" : "var(--warn)";
     warningEl.textContent = status.detail; // .textContent, not innerHTML - no esc() needed
   }
+}
+
+// Deliberately separate from renderAgentFreshness above, which reflects
+// an AGENT RUN's status (the whole weekly Tavily/Gemini pipeline) - this
+// reflects the literal truth of the specific real-ticker prices on
+// screen, computed straight from their own found_at timestamps
+// (latestFinnhubRefresh, investments.js) rather than a job-level status
+// row. Matters once the two cadences diverge: "Prices as of 12 minutes
+// ago" (Finnhub, FAST_ONLY) and "Last updated 6 days ago" (indexes,
+// Tavily+Gemini) can both be true on the same card at once, and blending
+// them into one line would misstate one or the other.
+const PRICE_REFRESH_WARN_MINUTES = 30; // 2x the 15-min FAST_ONLY interval
+function renderPricesAsOf(elId, foundAt) {
+  const el = $(elId);
+  if (!el) return;
+  if (!foundAt) { el.textContent = ""; return; }
+  const minutesAgo = (Date.now() - new Date(foundAt).getTime()) / 60000;
+  el.textContent = `Prices as of ${timeAgo(foundAt)}`;
+  el.style.color = minutesAgo > PRICE_REFRESH_WARN_MINUTES ? "var(--warn)" : "";
 }
 
 // Dormant until PRICE_FINDINGS_ENABLED is flipped on (config.js) and
@@ -1423,6 +1447,21 @@ async function syncParentAssetValue(parentAssetId) {
   await sb.from("assets").update({ value: Math.round(total * 100) / 100 }).eq("id", parentAssetId);
 }
 
+// Runs syncParentAssetValue for every parent with holdings, not just the
+// one being actively edited - this is what makes Net Worth/the Assets
+// card/the net-worth trend chart pick up a background price-agent.js
+// refresh on the next app open, instead of only ever seeing a live price
+// at the moment someone happens to open a holding's edit form. Each
+// parent's sync targets a distinct row with no interdependency, so these
+// run in parallel; one trailing loadAssets() (mirroring saveHoldingBtn's
+// own pattern) pulls the resynced values into memory and re-renders.
+async function syncAllParentAssetValues() {
+  const parentIds = new Set(assets.filter((a) => a.parent_asset_id).map((a) => a.parent_asset_id));
+  if (!parentIds.size) return;
+  await Promise.all([...parentIds].map((id) => syncParentAssetValue(id)));
+  await loadAssets();
+}
+
 async function loadAssets() {
   const { data } = await sb.from("assets").select("*").order("created_at");
   assets = data || [];
@@ -1499,6 +1538,7 @@ function renderAssetPriceFindings() {
   if (!card) return;
   if (!PRICE_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
   card.classList.remove("hidden");
+  renderPricesAsOf("assetPriceFindingsFreshness", latestFinnhubRefresh(assetPriceFindings));
 
   const bySymbol = new Map();
   for (const a of assets) {
@@ -1534,13 +1574,20 @@ function renderAssetPriceFindings() {
       const finding = matches[Number(el.dataset.applyPriceIdx)];
       const targets = bySymbol.get((finding.symbol || "").trim().toUpperCase()) || [];
       let applied = 0;
+      const parentsToSync = new Set();
       for (const asset of targets) {
         if (!asset.quantity) { toast(`Set a quantity for ${asset.name} first`); continue; }
         const newValue = Math.round(Number(finding.price) * Number(asset.quantity) * 100) / 100;
         const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
         if (error) { toast(error.message); continue; }
         applied++;
+        // A holding's own .value is never read by anything on its own -
+        // only the parent account's rolled-up value matters for net worth
+        // (CLAUDE.md) - without this, "Apply" on a holding looked
+        // successful but changed nothing anywhere.
+        if (asset.parent_asset_id) parentsToSync.add(asset.parent_asset_id);
       }
+      for (const parentId of parentsToSync) await syncParentAssetValue(parentId);
       if (applied) { await loadAssets(); toast(`Applied live price to ${applied} asset${applied === 1 ? "" : "s"}`); }
     };
   });
@@ -3343,13 +3390,24 @@ function renderInvestments() {
   };
   $("investHoldingsList").innerHTML = parents.length ? parents.map((p) => {
     const children = investmentAssets.filter((a) => a.parent_asset_id === p.id);
+    // Log contribution only makes sense for a parent with no holdings under
+    // it - it bumps the parent's own .value directly, but a with-holdings
+    // parent's value is ONLY ever the sum of its holdings (CLAUDE.md: "no
+    // separate uninvested-cash concept"). syncParentAssetValue() would
+    // silently overwrite a logged contribution back to sum(holdings) the
+    // next time it runs for that parent - real "new money in" for a
+    // with-holdings account already has its own path, the Holdings form's
+    // funding-account field.
+    const contributionAffordance = children.length
+      ? ""
+      : `<div class="muted" data-log-contribution="${p.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Log contribution</div>`;
     return `
       <div style="margin-bottom:14px">
         <div class="exp" style="cursor:default">
           <div>
             <div><strong>${esc(p.name)}</strong></div>
             <div class="meta">${assetTypeLabel(p.type)}${children.length ? ` · ${children.length} holding${children.length === 1 ? "" : "s"}` : ""}</div>
-            <div class="muted" data-log-contribution="${p.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Log contribution</div>
+            ${contributionAffordance}
           </div>
           <span class="amt">${fmt(effectiveAssetValue(p))}</span>
         </div>
@@ -3522,6 +3580,7 @@ function renderMarketOverview() {
   const movers = topMarketMovers(MARKET_MOVERS_WATCHLIST, marketIndexFindings, 3);
   const moversSection = $("marketMoversSection");
   if (moversSection) moversSection.classList.toggle("hidden", !movers.length);
+  renderPricesAsOf("marketMoversFreshness", latestFinnhubRefresh(marketIndexFindings));
   $("marketMoversList").innerHTML = movers.map((m) => `
     <div class="exp" style="cursor:default">
       <div>

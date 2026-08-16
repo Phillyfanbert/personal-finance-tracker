@@ -14,9 +14,11 @@
 #      the existing Cloudflare Tunnel LaunchAgent repointed at it instead of
 #      Ollama directly (see the "Gemma tunnel lockdown" session note for why)
 #   4. Weekly launchd schedules for run-deal-agent.sh and run-price-agent.sh,
-#      deliberately staggered - both scripts bring up/tear down the SAME
-#      named SearXNG container, so running them concurrently would have one
-#      script's cleanup trap kill SearXNG out from under the other mid-run.
+#      staggered (Sunday 3am/5am) - purely conventional spacing at this
+#      point, not a hard requirement: neither script has touched SearXNG or
+#      any shared local resource since the 2026-08-14 Tavily+Gemini
+#      migration, an earlier version of this comment's stated reason for
+#      the stagger, since corrected.
 #   5. An hourly launchd schedule for embed-expenses.js (RAG retrieval for
 #      the Reports page's "Ask about your spending" Q&A - see
 #      supabase/45_expense_embeddings.sql) - much tighter than the weekly
@@ -25,6 +27,15 @@
 #      Gemma round trip, so a frequent run is cheap, and new expenses
 #      should become searchable soon after they're added rather than up to
 #      a week later.
+#   6. A tight (default 15-minute) launchd schedule for price-agent.js's
+#      FAST_ONLY mode (com.price-agent.fast, run-price-agent-fast.sh) -
+#      real stock-ticker prices only, straight to Finnhub with no
+#      Tavily/Gemini step at all, so it can run far more often than the
+#      full weekly pipeline without touching either service's constrained
+#      free-tier budget. This is what makes the Investments tab's real
+#      prices/net worth track the market closely instead of up to a week
+#      stale - see price-agent.js's own header comment for the full
+#      before/after call-volume accounting.
 #
 # Usage:
 #   cd tools
@@ -40,6 +51,9 @@
 #                           Sunday 03:00 and Sunday 05:00, local time)
 #   EMBED_EXPENSES_INTERVAL_SECONDS - how often embed-expenses.js runs
 #                           (default 3600 = hourly)
+#   PRICE_AGENT_FAST_INTERVAL_SECONDS - how often price-agent.js's
+#                           FAST_ONLY (Finnhub-only) mode runs (default
+#                           900 = 15 minutes)
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -53,6 +67,10 @@ DEAL_AGENT_MIN="${DEAL_AGENT_MIN:-0}"
 PRICE_AGENT_HOUR="${PRICE_AGENT_HOUR:-5}"
 PRICE_AGENT_MIN="${PRICE_AGENT_MIN:-0}"
 EMBED_EXPENSES_INTERVAL_SECONDS="${EMBED_EXPENSES_INTERVAL_SECONDS:-3600}"
+PRICE_AGENT_FAST_INTERVAL_SECONDS="${PRICE_AGENT_FAST_INTERVAL_SECONDS:-900}"
+MONTHLY_REPORT_DAY="${MONTHLY_REPORT_DAY:-1}"
+MONTHLY_REPORT_HOUR="${MONTHLY_REPORT_HOUR:-6}"
+MONTHLY_REPORT_MIN="${MONTHLY_REPORT_MIN:-0}"
 
 log() { echo "== $* =="; }
 
@@ -321,7 +339,59 @@ EOF
 }
 install_interval_agent "com.embed-expenses.hourly" "${TOOLS_DIR}/run-embed-expenses.sh" "$EMBED_EXPENSES_INTERVAL_SECONDS"
 
+# ---- 6. Frequent scheduling for price-agent.js's FAST_ONLY mode ----------
+# Same install_interval_agent shape as embed-expenses.hourly above - real
+# ticker prices only, straight to Finnhub, cheap enough to run often (see
+# price-agent.js's own header comment for the call-volume accounting).
+install_interval_agent "com.price-agent.fast" "${TOOLS_DIR}/run-price-agent-fast.sh" "$PRICE_AGENT_FAST_INTERVAL_SECONDS"
+
+# ---- 7. Monthly scheduling for monthly-report.js --------------------------
+# A genuine third shape, not a reuse of install_weekly_agent (hardcodes a
+# Weekday key, no day-of-month concept) or install_interval_agent (a plain
+# StartInterval in seconds would drift off real calendar-month boundaries
+# over time, and doesn't map to "the month that just ended" the way a
+# fixed Day-of-month does). Previously had no launchd job at all - its own
+# header comment even said scheduling was "a one-line addition once you're
+# ready," which was never actually added; the Reports page's Monthly
+# report card could never show anything but "No monthly reports yet"
+# without someone running this by hand.
+install_monthly_agent() {
+  local label="$1" script="$2" day="$3" hour="$4" minute="$5"
+  local plist="$LAUNCH_AGENTS_DIR/${label}.plist"
+  log "Installing ${label} (day ${day} of each month, ${hour}:$(printf '%02d' "$minute"))"
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>${script}</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Day</key>
+    <integer>${day}</integer>
+    <key>Hour</key>
+    <integer>${hour}</integer>
+    <key>Minute</key>
+    <integer>${minute}</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/${label}.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/${label}.log</string>
+</dict>
+</plist>
+EOF
+  bootout_and_bootstrap "${label}" "$plist"
+}
+install_monthly_agent "com.monthly-report.monthly" "${TOOLS_DIR}/run-monthly-report.sh" "$MONTHLY_REPORT_DAY" "$MONTHLY_REPORT_HOUR" "$MONTHLY_REPORT_MIN"
+
 log "Done"
-echo "Scheduled: deal-agent Sundays ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent Sundays ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN") (staggered on purpose - both scripts share one SearXNG container and tear it down on exit, so overlapping runs would kill each other's SearXNG mid-run). embed-expenses every ${EMBED_EXPENSES_INTERVAL_SECONDS}s (cheap thanks to content-hash delta detection - most runs do nothing)."
-echo "Test any agent right now with: DRY_RUN=1 ./run-deal-agent.sh   (or run-price-agent.sh / run-embed-expenses.sh)"
+echo "Scheduled: deal-agent Sundays ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent (full) Sundays ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN"). embed-expenses every ${EMBED_EXPENSES_INTERVAL_SECONDS}s (cheap thanks to content-hash delta detection - most runs do nothing). price-agent (FAST_ONLY, Finnhub-only real ticker prices) every ${PRICE_AGENT_FAST_INTERVAL_SECONDS}s. monthly-report day ${MONTHLY_REPORT_DAY} of each month at ${MONTHLY_REPORT_HOUR}:$(printf '%02d' "$MONTHLY_REPORT_MIN")."
+echo "Test any agent right now with: DRY_RUN=1 ./run-deal-agent.sh   (or run-price-agent.sh / run-price-agent-fast.sh / run-embed-expenses.sh / run-monthly-report.sh)"
 echo "Remember to flip DEAL_FINDINGS_ENABLED / PRICE_FINDINGS_ENABLED to true in app/config.js and the Cloudflare dashboard once you're ready to surface results in the UI. RAG retrieval for the Q&A needs no such flag - it's best-effort and just silently contributes nothing until embed-expenses.js has actually run once."

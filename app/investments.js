@@ -343,6 +343,25 @@ export function topMarketMovers(watchlist, findings, n = 3) {
 }
 
 /**
+ * Freshest found_at among Finnhub-sourced findings (real ticker prices,
+ * refreshed on a much tighter cadence - see tools/price-agent.js's
+ * FAST_ONLY mode) - deliberately separate from a row's Gemini-sourced
+ * siblings (market indexes, "why did it move" explanations), which stay
+ * on the slower weekly cadence. Mixing the two into one freshness read
+ * would be misleading once they diverge: a card could say "12 minutes
+ * ago" while its index data is actually a week stale. Works against
+ * either assetPriceFindings (a user's own watchlist) or
+ * marketIndexFindings (movers), both share the same extracted_by/found_at
+ * shape. Returns null when there's nothing Finnhub-sourced yet.
+ * @param {object[]} findings rows from asset_price_findings or market_index_findings
+ */
+export function latestFinnhubRefresh(findings) {
+  const finnhub = findings.filter((f) => f.extracted_by === "finnhub" && f.found_at);
+  if (!finnhub.length) return null;
+  return finnhub.reduce((latest, f) => (new Date(f.found_at) > new Date(latest) ? f.found_at : latest), finnhub[0].found_at);
+}
+
+/**
  * Most recent valid daily market news digest (headlines + overall
  * sentiment), or null if there's nothing usable yet. Defensive even
  * though tools/price-agent.js already validates before writing - matches

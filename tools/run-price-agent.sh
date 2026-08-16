@@ -15,6 +15,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# launchd gives a scheduled job a minimal default PATH
+# (/usr/bin:/bin:/usr/sbin:/sbin) that doesn't include Homebrew's node -
+# confirmed live (2026-08-16) that this silently broke every unattended
+# run of the sibling embed-expenses.hourly job with "node: command not
+# found" (exit 127) since it was installed, with no failure visible
+# anywhere since the crash happens before writeRunStatus() can even run.
+# Both directories cover Apple Silicon and Intel Homebrew installs.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 ENV_FILE=".env.deal-agent"
 if [ -f "$ENV_FILE" ]; then
   set -a

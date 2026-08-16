@@ -141,15 +141,35 @@
 //   Or via tools/run-price-agent.sh, a thin env-loading wrapper - no
 //   SearXNG/Docker step, this script doesn't need either.
 //
-// Scheduling: tools/setup-server-machine.sh installs this as a WEEKLY
-// launchd job (com.price-agent.weekly), same cadence as deal-agent.js.
-// Tavily call volume is essentially unchanged by the Gemini fix above
-// (only which calls get an EXTRACTION step changed, not the searches) -
-// still up to ~34 Tavily calls worst case per run (4 indexes x 2 price
-// angles + 1 explanation call each for the 1 user-owned asset symbol, the
-// 20 fixed movers, and the 4 indexes, plus 1 fixed call/run for the news
-// digest). Finnhub calls/run are separate: 1 user asset + 20 movers = up
-// to 21, comfortably under Finnhub's 60/min free limit with no daily cap.
+// Scheduling: TWO separate cadences, not one, since 2026-08-16 -
+// tools/setup-server-machine.sh installs both. A plain, unattended
+// unattended run of this script (via run-price-agent.sh) is still the
+// weekly com.price-agent.weekly job, same cadence as deal-agent.js, and
+// does everything described above. Separately, FAST_ONLY=1 (set by
+// run-price-agent-fast.sh, installed as com.price-agent.fast on a much
+// tighter interval - 15 minutes by default) skips every Tavily/Gemini-
+// backed step entirely (processAllIndexes(), every findExplanation() call,
+// findNewsDigest()) and runs ONLY the two pure-Finnhub loops (a user's own
+// watchlist and MARKET_MOVERS_WATCHLIST). This split exists because the
+// two halves of this script have wildly different budget headroom: the
+// Finnhub legs cost nothing extra to run often (60 calls/min free, NO
+// daily cap - a full FAST_ONLY run uses ~21 calls total, so even a
+// 15-minute cadence is nowhere near the ceiling), while the Tavily/Gemini
+// legs are genuinely constrained (Gemini's real 20 requests/DAY free
+// limit, shared with deal-agent.js). There's no reason real ticker prices
+// should wait a week to refresh just because market indexes and
+// explanation text do. FAST_ONLY writes to agent_run_status under a
+// SEPARATE agent name ("price-agent-fast", see writeRunStatus() below) so
+// a fast run's own status never clobbers the full weekly run's - the
+// weekly run's agent_run_status row needs to keep accurately reflecting
+// Tavily/Gemini pipeline health specifically, which FAST_ONLY never
+// touches at all.
+//
+// Tavily/Gemini call volume, weekly full run (unchanged by the split
+// above - FAST_ONLY runs don't touch either budget at all): up to ~34
+// Tavily calls worst case per run (4 indexes x 2 price angles + 1
+// explanation call each for the 1 user-owned asset symbol, the 20 fixed
+// movers, and the 4 indexes, plus 1 fixed call/run for the news digest).
 // Combined monthly Tavily usage (this script + deal-agent.js's own
 // ~10/run) on the weekly schedule comes out around 190/month even in the
 // worst case - comfortably under Tavily's free 1,000/month, with real
@@ -167,13 +187,26 @@
 // MAX_FINNHUB_CALLS_PER_RUN/MAX_GEMINI_EXPLANATIONS_PER_RUN below are the
 // levers if this ever needs tightening further - reduce
 // MAX_GEMINI_EXPLANATIONS_PER_RUN first, it's the biggest single lever on
-// the Gemini total. If this ever moves to a tighter interval than weekly,
-// redo this math first - don't just switch the plist.
+// the Gemini total. If the WEEKLY run's own interval ever needs to
+// tighten (not the already-fast FAST_ONLY legs), redo this math first -
+// don't just switch the plist.
+//
+// Finnhub call volume, FAST_ONLY run: 1 user asset + 20 movers = up to 21,
+// at a 15-minute cadence (96 runs/day) that's roughly 2,000 Finnhub
+// calls/day worst case - still trivially inside 60/min free with no daily
+// cap, since they're a short burst every 15 minutes, not sustained
+// traffic. No market-hours gating - Finnhub returns the correct last-
+// known/previous-close price off-hours anyway, so an off-hours run isn't
+// wasted, it just doesn't change.
 // ============================================================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const DRY_RUN = !!process.env.DRY_RUN;
+// See the header comment's "Scheduling" section for the full rationale -
+// top-level (not inside main()) since writeRunStatus() below also needs
+// to branch on it for which agent_run_status row to write to.
+const FAST_ONLY = !!process.env.FAST_ONLY;
 
 // Tavily - real web search, confirmed free tier (1,000 credits/month, no
 // credit card to sign up) as of this writing. https://tavily.com
@@ -372,7 +405,7 @@ async function writeRunStatus(crashError) {
   }
   try {
     await sbUpsert("agent_run_status", {
-      agent: "price-agent",
+      agent: FAST_ONLY ? "price-agent-fast" : "price-agent",
       status,
       detail,
       queries_attempted: queryAttempts,
@@ -882,6 +915,7 @@ const MARKET_MOVERS_WATCHLIST = [
 // ---- Main ----------------------------------------------------------------
 async function main() {
   requireEnv();
+  if (FAST_ONLY) console.log("FAST_ONLY=1: Finnhub-only run, skipping every Tavily/Gemini step.");
 
   const watchlist = await loadWatchlist();
   console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
@@ -933,9 +967,13 @@ async function main() {
   // exists for. If this ever grows large, redo this math the same way the
   // header comment already asks for future watchlist growth generally.
   const watchlistPriced = await fetchFinnhubFindings(watchlist, checkFinnhubBudget);
-  for (const { finding } of watchlistPriced) {
-    const explanation = await findExplanation(finding.symbol);
-    if (explanation) finding.explanation = explanation;
+  if (FAST_ONLY) {
+    console.log("FAST_ONLY: skipping watchlist explanations (Gemini) this run.");
+  } else {
+    for (const { finding } of watchlistPriced) {
+      const explanation = await findExplanation(finding.symbol);
+      if (explanation) finding.explanation = explanation;
+    }
   }
   const allFindings = watchlistPriced.map((r) => r.finding);
   if (allFindings.length) {
@@ -945,14 +983,23 @@ async function main() {
     console.log("No asset findings this run.");
   }
 
-  console.log(`Searching indexes (batched): ${MARKET_INDEXES.join(", ")}`);
-  const allIndexFindings = await processAllIndexes();
-  console.log(`  -> ${allIndexFindings.length} finding(s)`);
+  let allIndexFindings = [];
+  if (FAST_ONLY) {
+    console.log("FAST_ONLY: skipping market indexes (Tavily+Gemini) this run.");
+  } else {
+    console.log(`Searching indexes (batched): ${MARKET_INDEXES.join(", ")}`);
+    allIndexFindings = await processAllIndexes();
+    console.log(`  -> ${allIndexFindings.length} finding(s)`);
+  }
 
   console.log(`Fetching movers (Finnhub): ${MARKET_MOVERS_WATCHLIST.join(", ")}`);
   const moversPriced = await fetchFinnhubFindings(MARKET_MOVERS_WATCHLIST, checkFinnhubBudget);
-  console.log(`  -> ${moversPriced.length} priced, explaining the top ${MAX_GEMINI_EXPLANATIONS_PER_RUN} movers by day change`);
-  await attachTopMoverExplanations(moversPriced);
+  if (FAST_ONLY) {
+    console.log(`  -> ${moversPriced.length} priced. FAST_ONLY: skipping mover explanations (Gemini) this run.`);
+  } else {
+    console.log(`  -> ${moversPriced.length} priced, explaining the top ${MAX_GEMINI_EXPLANATIONS_PER_RUN} movers by day change`);
+    await attachTopMoverExplanations(moversPriced);
+  }
   allIndexFindings.push(...moversPriced.map((r) => r.finding));
   if (allIndexFindings.length) {
     await sbInsert("market_index_findings", allIndexFindings);
@@ -961,7 +1008,9 @@ async function main() {
     console.log("No market index or movers findings this run.");
   }
 
-  if (!checkBudget()) {
+  if (FAST_ONLY) {
+    console.log("FAST_ONLY: skipping market news digest (Tavily+Gemini) this run.");
+  } else if (!checkBudget()) {
     console.log("Searching: market news digest");
     const digest = await findNewsDigest();
     if (digest) {

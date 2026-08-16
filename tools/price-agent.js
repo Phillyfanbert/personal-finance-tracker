@@ -16,12 +16,56 @@
 // Real stock-ticker quotes (a user's own asset watchlist,
 // MARKET_MOVERS_WATCHLIST) go straight to Finnhub - a plain GET returning
 // the price directly as JSON, no search or LLM step needed at all
-// (fetchFinnhubQuote()/processSymbolViaFinnhub() below). MARKET_INDEXES
+// (fetchFinnhubQuote()/fetchFinnhubFinding() below). MARKET_INDEXES
 // stays on Tavily+Gemini instead (see the comment above the
 // FINNHUB_API_KEY constant for why - Finnhub's free-tier index access is
-// unconfirmed). The "why did it move" explanation step
-// runs on Tavily+Gemini regardless of which pipeline found the price,
-// since Finnhub has no narrative capability.
+// unconfirmed).
+//
+// **Gemini's free tier caps at 20 requests/DAY, confirmed live 2026-08-15
+// via the account's own AI Studio rate-limit dashboard - the same 20 RPD
+// ceiling across every viable free-tier text model (2.5 Flash, 3 Flash,
+// 3.7 Flash all identical; 2.5 Flash Lite only raises the per-minute cap,
+// not the daily one; 2.5 Pro shows 0/0, no free quota at all).** This is
+// far tighter than the original design assumed - a single run wanted up to
+// ~34 Gemini calls (one per symbol for "why did it move," plus 8 for
+// per-index price extraction), 70% over the entire daily budget in one
+// run alone, before deal-agent.js's own ~10 calls/run even touches the
+// same shared key. No amount of retry/backoff fixes an exhausted DAILY
+// quota - that's not a transient rate limit, so the fix had to cut call
+// COUNT. Two things landed, in order, the second correcting a real
+// shortcoming found live in the first:
+//   1. Tried taking findExplanation() off Gemini entirely, using a Tavily
+//      search result's own `content` field directly instead of asking
+//      Gemini to synthesize it. This cut calls dramatically, but live
+//      testing (three separate DRY_RUN passes, tuning the approach each
+//      time) found the results unreliable: a generic "{symbol} stock price
+//      today" search mostly surfaces a finance site's own quote-page
+//      dashboard ("arrow_upward", "show_chartLine area_chartArea
+//      candlestick_chartCandle") or a data comparison table, not
+//      narrative - no amount of domain-narrowing or content-pattern
+//      filtering reliably told those apart from genuine article content
+//      the way Gemini's own judgment already did. Reverted.
+//   2. Kept Gemini for findExplanation(), but stopped calling it
+//      unconditionally for all 20 fixed movers-watchlist symbols every
+//      run - MAX_GEMINI_EXPLANATIONS_PER_RUN caps it to the biggest
+//      movers by day change (Finnhub's own `dp` field, already part of
+//      the same quote call - no extra request needed to rank by it). A
+//      stock that barely moved usually has no "why" story worth finding
+//      anyway, so this targets Gemini's real judgment at the cases where
+//      an explanation is actually likely to exist, rather than spending
+//      calls uniformly across symbols regardless of whether they moved.
+//      MARKET_INDEXES price extraction (processAllIndexes()) also batches
+//      all 4 indexes into ONE Gemini call instead of 8 (2 query angles x
+//      4 indexes) - still runs all 8 Tavily searches as before (Tavily
+//      isn't the constraint, its free tier is 1,000 credits/month), just
+//      consolidates the EXTRACTION step into one prompt with every
+//      index's sources labeled.
+// Net result: roughly 1 (batched index price) + up to 4 (index
+// explanations) + 1 (the user's own watchlist, small/personal) +
+// MAX_GEMINI_EXPLANATIONS_PER_RUN (movers) + 1 (news digest) Gemini
+// calls/run - a real, bounded number instead of ~34, with margin left for
+// deal-agent.js's own ~10/run sharing the same key. See main()'s own
+// scheduling comment below for the actual worst-case total.
 //
 // Two providers, not one, and this is a deliberate reversal of an earlier
 // version of this script that used Gemini's own Google Search grounding
@@ -35,17 +79,12 @@
 // docs.tavily.com), and Gemini's plain generateContent (confirmed live,
 // this session, to work with no billing account at all) only ever reasons
 // over the real search-result content Tavily already fetched - never its
-// own general knowledge. This is the same two-step shape the original
-// SearXNG+local-Gemma pipeline always had, just with different providers
-// for each half, and it happens to also solve the original motivation for
-// moving off the home Mac at all: extraction now runs in Google's cloud
-// instead of competing with the home Ollama instance's generation model
-// for RAM.
+// own general knowledge.
 //
 // What it does, per distinct assets.price_symbol in use across all users
 // (a symbol's price is a public fact, not user-specific - same reasoning
 // deal_findings already uses for service prices):
-//   1. Fetch the current price directly from Finnhub (processSymbolViaFinnhub()).
+//   1. Fetch the current price directly from Finnhub (fetchFinnhubFinding()).
 //      No search, no LLM extraction, no domain-trust filtering needed - this
 //      is a direct, authoritative numeric API response, not scraped text a
 //      model has to read.
@@ -53,30 +92,38 @@
 //      neutral explanation of why the price moved today (findExplanation(),
 //      TRUSTED_NEWS_DOMAINS). One attempt per symbol per run, not per
 //      price-finding row. Failure here never blocks the price write itself;
-//      explanation just stays null.
+//      explanation just stays null. Called unconditionally for a user's own
+//      watchlist symbols (small, personal - see MAX_GEMINI_EXPLANATIONS_PER_RUN's
+//      own comment), and only for the biggest movers among
+//      MARKET_MOVERS_WATCHLIST below.
 //   3. Write validated findings to asset_price_findings via the REST API
 //      using the service_role key (bypasses RLS by design).
 //
-// MARKET_INDEXES follows the OLDER Tavily+Gemini pipeline instead
-// (processSymbol() - see the FINNHUB_API_KEY comment above for why):
-//   1. For each of a few query angles, search Tavily for real, current web
-//      results.
+// MARKET_INDEXES follows a separate Tavily+Gemini pipeline instead
+// (processAllIndexes() - see the FINNHUB_API_KEY comment above for why):
+//   1. For each index, for each of a few query angles, search Tavily for
+//      real, current web results.
 //   2. Filter those results down to ones on TRUSTED_PRICE_DOMAINS BEFORE
 //      Gemini ever sees them - the same "never trust an unverified source"
 //      posture docs/F6-live-deals-proposal.md's Option C established,
 //      applied as a pre-filter here (Tavily returns real result URLs
 //      directly, unlike a grounding tool's internal search).
-//   3. Ask Gemini to extract strict JSON price data ONLY from the real,
-//      trusted-domain content just fetched - explicitly instructed not to
-//      draw on anything else.
-//   4. Same explanation step as above, same TRUSTED_NEWS_DOMAINS.
+//   3. ONE Gemini call, covering every index that found at least one
+//      trusted source, extracts strict JSON price data for all of them at
+//      once ONLY from the real, trusted-domain content just fetched -
+//      explicitly instructed not to draw on anything else, and not to mix
+//      sources between indexes.
+//   4. Same explanation step as above, per index (all 4, unconditionally -
+//      a small, fixed list).
 //   5. Write validated findings to market_index_findings via the REST API.
 //
 // MARKET_MOVERS_WATCHLIST (a curated large-cap stock list, Investments
 // tab's "Today's top movers") follows the Finnhub pipeline above, same as
 // a user's own asset watchlist - real tickers, not index names - just
 // writing to market_index_findings alongside the indexes instead of
-// asset_price_findings.
+// asset_price_findings. Unlike the user's own watchlist, this one only
+// gets a Gemini explanation for its biggest movers by day change - see
+// MAX_GEMINI_EXPLANATIONS_PER_RUN's own comment.
 //
 // One more step, also genuinely NOT tied to any user or symbol: a single
 // daily search+extract for general market news, producing up to 5
@@ -95,28 +142,33 @@
 //   SearXNG/Docker step, this script doesn't need either.
 //
 // Scheduling: tools/setup-server-machine.sh installs this as a WEEKLY
-// launchd job (com.price-agent.weekly), same cadence as deal-agent.js -
-// deliberately not daily, despite an earlier version of this comment
-// musing that a price probably wants a tighter interval. Verified real
-// math instead of going with that guess, RECOMPUTED after the Finnhub
-// swap below dropped real-ticker price lookups off Tavily entirely: at
-// current watchlist sizes, Tavily calls/run are now just 4 fixed indexes
-// x (2 price angles + 1 explanation) = 12, plus 1 explanation call each
-// for the 1 user-owned asset symbol and the 20 fixed movers (price comes
-// from Finnhub now, only the "why did it move" step still touches
-// Tavily) = 21 more, plus 1 fixed call/run for the daily market news
-// digest below = up to 34 Tavily calls worst case per run - roughly half
-// what it was before this swap. Finnhub calls/run are separate: 1 user
-// asset + 20 movers = up to 21, comfortably under Finnhub's 60/min free
-// limit with no daily cap. Combined monthly Tavily usage (this script +
-// deal-agent.js's own ~10/run) on the weekly schedule comes out around
-// 190/month even in the worst case - comfortably under Tavily's free
-// 1,000/month, with real margin for MARKET_MOVERS_WATCHLIST or a user's
-// own asset list growing later. MAX_TAVILY_CALLS_PER_RUN/
-// MAX_FINNHUB_CALLS_PER_RUN below are hard safety caps for that
-// future-growth case specifically, not because today's sizes are
-// actually close to either limit. If this ever moves to a tighter
-// interval, redo this math first - don't just switch the plist.
+// launchd job (com.price-agent.weekly), same cadence as deal-agent.js.
+// Tavily call volume is essentially unchanged by the Gemini fix above
+// (only which calls get an EXTRACTION step changed, not the searches) -
+// still up to ~34 Tavily calls worst case per run (4 indexes x 2 price
+// angles + 1 explanation call each for the 1 user-owned asset symbol, the
+// 20 fixed movers, and the 4 indexes, plus 1 fixed call/run for the news
+// digest). Finnhub calls/run are separate: 1 user asset + 20 movers = up
+// to 21, comfortably under Finnhub's 60/min free limit with no daily cap.
+// Combined monthly Tavily usage (this script + deal-agent.js's own
+// ~10/run) on the weekly schedule comes out around 190/month even in the
+// worst case - comfortably under Tavily's free 1,000/month, with real
+// margin for MARKET_MOVERS_WATCHLIST or a user's own asset list growing
+// later. Gemini calls/run, worst case: 1 (batched index price) + 4 (index
+// explanations) + 1 (user watchlist, today's size) + 5
+// (MAX_GEMINI_EXPLANATIONS_PER_RUN movers) + 1 (news digest) = 12 -
+// combined with deal-agent.js's own ~10/run, this is real, worst-case-both-
+// maxed territory around 22, not comfortably clear of 20/day the way
+// Tavily's monthly math is. That's an accepted tradeoff, not an oversight:
+// both scripts already treat an individual Gemini failure as non-fatal
+// (log a warning, skip that one explanation/price, keep going) - a run
+// hitting the ceiling on a busy day degrades gracefully to fewer
+// explanations, it doesn't break. MAX_TAVILY_CALLS_PER_RUN/
+// MAX_FINNHUB_CALLS_PER_RUN/MAX_GEMINI_EXPLANATIONS_PER_RUN below are the
+// levers if this ever needs tightening further - reduce
+// MAX_GEMINI_EXPLANATIONS_PER_RUN first, it's the biggest single lever on
+// the Gemini total. If this ever moves to a tighter interval than weekly,
+// redo this math first - don't just switch the plist.
 // ============================================================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -433,6 +485,23 @@ async function searchAndExtract(query, domains, instructionsPrompt) {
   }
 }
 
+// Tavily-only variant of searchAndExtract() above - no Gemini call. Used
+// wherever a raw search snippet is good enough on its own (findExplanation()
+// below), which is most of this script's Gemini call volume - see that
+// function's own comment for why. Same queryAttempts/queryFailures
+// bookkeeping and domain-trust filtering as searchAndExtract, just without
+// the extraction step.
+async function searchOnly(query, domains) {
+  queryAttempts++;
+  try {
+    const results = await tavilySearch(query);
+    return results.filter((r) => hostAllowed(r.url, domains));
+  } catch (err) {
+    queryFailures++;
+    throw err;
+  }
+}
+
 // Gemini has no confirmed equivalent to Ollama's format:"json" constrained
 // decoding - ask clearly for pure JSON in the prompt, but parse
 // defensively: strip a possible code fence, and treat a parse failure as
@@ -466,18 +535,6 @@ function parseJsonLoose(text) {
   }
 }
 
-function buildExtractionPrompt(symbol) {
-  return [
-    `You are extracting a current market price for the symbol "${symbol}"`,
-    "from the real search results provided below.",
-    "Respond with ONLY a JSON object, no prose, no code fences. Use this exact shape:",
-    '{ "price": number|null, "currency": string|null, "confidence": number }',
-    "confidence is 0..1, how sure you are this is the current price of this exact",
-    "symbol (not a different, similarly-named one).",
-    "If you cannot find a clear current price in the results, set price to null.",
-  ].join("\n");
-}
-
 function validateFinding(raw) {
   if (!raw || typeof raw !== "object") return null;
   const price = Number(raw.price);
@@ -490,6 +547,23 @@ function validateFinding(raw) {
 }
 
 // ---- "Why did this move" explanation (Investments tab, best-effort) -------
+// A real Gemini call, not a raw search-result snippet - tried the
+// Gemini-free route first (2026-08-15) after discovering Gemini's free
+// tier caps at just 20 requests/DAY (confirmed via the account's own AI
+// Studio rate-limit dashboard, same across every viable free-tier text
+// model - switching models doesn't raise it) and this step alone wanted a
+// Gemini call per symbol. A raw Tavily snippet without Gemini's judgment
+// turned out unreliable in practice, though - live testing found most
+// results for a generic "{symbol} stock price today" search are a
+// finance site's own quote-page dashboard chrome ("arrow_upward",
+// "show_chartLine area_chartArea candlestick_chartCandle") or a data
+// comparison table, not narrative, regardless of domain filtering - no
+// amount of pattern-matching reliably told those apart from real article
+// content the way Gemini's own prompt already did ("only if the results
+// give an actual reason... set explanation to null rather than
+// guessing"). Kept the Gemini call, but stopped calling it for every
+// symbol - see MAX_GEMINI_EXPLANATIONS_PER_RUN below for how call volume
+// actually gets kept under budget instead.
 function buildExplanationPrompt(symbol) {
   return [
     `You explain why a stock or crypto price moved, based only on the real`,
@@ -515,10 +589,10 @@ function validateExplanation(raw) {
   return { explanation, confidence };
 }
 
-// One attempt per symbol per run (not per price-finding row - see the
-// header comment). Every failure mode here is caught and logged, never
-// thrown - this must never take down a run that otherwise found a valid
-// price.
+// One attempt per symbol per call (see callers for which symbols actually
+// get one - not every symbol anymore). Every failure mode here is caught
+// and logged, never thrown - this must never take down a run that
+// otherwise found a valid price.
 async function findExplanation(symbol) {
   let result;
   try {
@@ -622,7 +696,15 @@ function validateFinnhubQuote(raw) {
 // Real stock tickers only (the user's own asset watchlist and
 // MARKET_MOVERS_WATCHLIST) - see the header comment for why
 // MARKET_INDEXES stays on processSymbol()/Tavily+Gemini below instead.
-async function processSymbolViaFinnhub(symbol) {
+// Price only, no explanation - split out from the original combined
+// function so main() can fetch every symbol's price first, THEN decide
+// which ones are worth a Gemini explanation call (see
+// MAX_GEMINI_EXPLANATIONS_PER_RUN below). Returns null on any failure,
+// same graceful-skip behavior as before, just without an explanation
+// attached yet. absDayChangePercent (from Finnhub's own `dp` field,
+// already part of the same quote response - no extra call) is what the
+// ranking is based on; it's never written to the DB, only used to sort.
+async function fetchFinnhubFinding(symbol) {
   queryAttempts++;
   let raw;
   try {
@@ -630,56 +712,137 @@ async function processSymbolViaFinnhub(symbol) {
   } catch (err) {
     queryFailures++;
     console.warn(`[${symbol}] Finnhub quote failed: ${err.message}`);
-    return [];
+    return null;
   }
   const extracted = validateFinnhubQuote(raw);
   if (!extracted) {
     console.warn(`[${symbol}] Finnhub returned no valid price - discarding`);
-    return [];
+    return null;
   }
-  const finding = {
-    symbol,
-    price: extracted.price,
-    currency: "USD",
-    url: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`,
-    source_query: "finnhub:quote",
-    raw_snippet: null,
-    confidence: 1,
-    extracted_by: "finnhub",
-    explanation: null,
-  };
-  const explanation = await findExplanation(symbol); // unchanged, still Tavily+Gemini
-  if (explanation) finding.explanation = explanation;
-  return [finding];
-}
-
-// ---- Per-symbol pipeline (MARKET_INDEXES only - see header comment) ---
-async function processSymbol(symbol) {
-  const findings = [];
-  for (const query of buildQueries(symbol)) {
-    let result;
-    try {
-      result = await searchAndExtract(query, TRUSTED_PRICE_DOMAINS, buildExtractionPrompt(symbol));
-    } catch (err) {
-      console.warn(`[${symbol}] search+extract failed for "${query}": ${err.message}`);
-      continue;
-    }
-    await sleep(REQUEST_DELAY_MS);
-
-    if (!result.text) {
-      console.warn(`[${symbol}] no trusted-domain result for "${query}" - discarding`);
-      continue;
-    }
-
-    const extracted = validateFinding(parseJsonLoose(result.text));
-    if (!extracted) continue;
-
-    findings.push({
+  return {
+    finding: {
       symbol,
       price: extracted.price,
+      currency: "USD",
+      url: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`,
+      source_query: "finnhub:quote",
+      raw_snippet: null,
+      confidence: 1,
+      extracted_by: "finnhub",
+      explanation: null,
+    },
+    absDayChangePercent: Number.isFinite(Number(raw.dp)) ? Math.abs(Number(raw.dp)) : 0,
+  };
+}
+
+async function fetchFinnhubFindings(symbols, checkBudgetFn) {
+  const results = [];
+  for (const symbol of symbols) {
+    if (checkBudgetFn && checkBudgetFn()) break;
+    const result = await fetchFinnhubFinding(symbol);
+    if (result) results.push(result);
+  }
+  return results;
+}
+
+// Only the biggest movers get a real Gemini explanation call - a stock
+// that barely moved usually has no "why" story worth finding anyway, so
+// this isn't just a call-volume cut, it's spending the tiny Gemini budget
+// where an explanation is actually likely to exist. Added 2026-08-15
+// after the Gemini-free raw-snippet approach (see findExplanation's own
+// comment) turned out unreliable in practice - restores real Gemini
+// judgment, just no longer unconditionally for all 20 fixed watchlist
+// symbols every run.
+const MAX_GEMINI_EXPLANATIONS_PER_RUN = 5;
+
+async function attachTopMoverExplanations(results) {
+  const ranked = [...results].sort((a, b) => b.absDayChangePercent - a.absDayChangePercent);
+  for (const { finding } of ranked.slice(0, MAX_GEMINI_EXPLANATIONS_PER_RUN)) {
+    const explanation = await findExplanation(finding.symbol);
+    if (explanation) finding.explanation = explanation;
+  }
+}
+
+// ---- Market indexes pipeline (MARKET_INDEXES only - see header comment) --
+// One combined Gemini call for ALL indexes, not one per index x per query
+// angle (8 separate calls in the original design) - this is the other half
+// of the Gemini-quota fix alongside findExplanation() above going Tavily-
+// only. Tavily search itself isn't the constraint (its free tier is
+// 1,000 credits/month, comfortable at this project's size) - only Gemini's
+// 20-requests/day ceiling is, so the searches still run one per index per
+// query angle as before; only the EXTRACTION step is consolidated into a
+// single prompt covering every index at once, each source clearly labeled
+// with which index it's about so Gemini can keep them straight.
+function buildBatchedIndexPrompt(indexes, sourcesByIndex) {
+  const sections = indexes
+    .map((index) => sourcesByIndex[index]
+      .map((r, i) => `[${index} - Source ${i + 1}: ${r.url}]\n${r.content}`)
+      .join("\n\n"))
+    .join("\n\n---\n\n");
+  return [
+    "You are extracting current market price levels for these market indexes:",
+    indexes.map((i) => `"${i}"`).join(", "),
+    "from the real search results below, each one labeled with which index",
+    "it's about.",
+    "Respond with ONLY a JSON object, no prose, no code fences. Use this",
+    "exact shape, with one entry per index name exactly as given above:",
+    `{ ${indexes.map((i) => `"${i}": { "price": number|null, "currency": string|null, "confidence": number }`).join(", ")} }`,
+    "confidence is 0..1, how sure you are this is today's current level of",
+    "that exact index. Base each index's answer ONLY on the results labeled",
+    "for that index below - do not mix sources between indexes, and do not",
+    "use any other knowledge you may have. If an index has no clear current",
+    "price in its labeled results, set that index's price to null rather",
+    "than guessing.",
+    "",
+    sections,
+  ].join("\n");
+}
+
+async function processAllIndexes() {
+  const sourcesByIndex = {};
+  for (const index of MARKET_INDEXES) {
+    sourcesByIndex[index] = [];
+    for (const query of buildQueries(index)) {
+      let trusted;
+      try {
+        trusted = await searchOnly(query, TRUSTED_PRICE_DOMAINS);
+      } catch (err) {
+        console.warn(`[${index}] search failed for "${query}": ${err.message}`);
+        continue;
+      }
+      await sleep(REQUEST_DELAY_MS);
+      sourcesByIndex[index].push(...trusted);
+    }
+  }
+
+  const indexesWithSources = MARKET_INDEXES.filter((index) => sourcesByIndex[index].length);
+  if (!indexesWithSources.length) {
+    console.warn("No trusted-domain results for any market index - skipping extraction.");
+    return [];
+  }
+
+  queryAttempts++;
+  let text;
+  try {
+    text = await extractWithGemini(buildBatchedIndexPrompt(indexesWithSources, sourcesByIndex));
+  } catch (err) {
+    queryFailures++;
+    console.warn(`Batched index price extraction failed: ${err.message}`);
+    return [];
+  }
+  await sleep(REQUEST_DELAY_MS);
+
+  const raw = parseJsonLoose(text);
+  const findings = [];
+  for (const index of indexesWithSources) {
+    const extracted = validateFinding(raw && typeof raw === "object" ? raw[index] : null);
+    if (!extracted) continue;
+    findings.push({
+      symbol: index,
+      price: extracted.price,
       currency: extracted.currency,
-      url: result.citations[0],
-      source_query: query,
+      url: sourcesByIndex[index][0].url,
+      source_query: "batched-index-extraction",
       raw_snippet: null,
       confidence: extracted.confidence,
       extracted_by: "gemini",
@@ -687,11 +850,9 @@ async function processSymbol(symbol) {
     });
   }
 
-  if (findings.length) {
-    const explanation = await findExplanation(symbol);
-    if (explanation) {
-      for (const f of findings) f.explanation = explanation;
-    }
+  for (const finding of findings) {
+    const explanation = await findExplanation(finding.symbol);
+    if (explanation) finding.explanation = explanation;
   }
   return findings;
 }
@@ -749,11 +910,10 @@ async function main() {
   }
 
   // Separate from checkBudget() above (Tavily) - the watchlist/movers
-  // loops below run on Finnhub as their primary resource now, a fully
+  // findings below run on Finnhub as their primary resource now, a fully
   // independent budget. Tavily exhaustion is still handled gracefully
-  // inside processSymbolViaFinnhub's findExplanation() call (returns
-  // null, logs a warning, doesn't block the price write), so it doesn't
-  // need a second gate here too.
+  // inside findExplanation() itself (returns null, logs a warning, doesn't
+  // block the price write), so it doesn't need a second gate here too.
   let finnhubBudgetHit = false;
   function checkFinnhubBudget() {
     if (finnhubCallCount >= MAX_FINNHUB_CALLS_PER_RUN) {
@@ -766,14 +926,18 @@ async function main() {
     return false;
   }
 
-  const allFindings = [];
-  for (const symbol of watchlist) {
-    if (checkFinnhubBudget()) break;
-    console.log(`Searching: ${symbol}`);
-    const findings = await processSymbolViaFinnhub(symbol);
-    console.log(`  -> ${findings.length} finding(s)`);
-    allFindings.push(...findings);
+  // A user's own tracked symbols get a Gemini explanation unconditionally
+  // (not ranked against MAX_GEMINI_EXPLANATIONS_PER_RUN below) - this list
+  // is personal and, realistically, small (today: 1 symbol across all
+  // users), unlike the fixed 20-symbol movers watchlist the ranking below
+  // exists for. If this ever grows large, redo this math the same way the
+  // header comment already asks for future watchlist growth generally.
+  const watchlistPriced = await fetchFinnhubFindings(watchlist, checkFinnhubBudget);
+  for (const { finding } of watchlistPriced) {
+    const explanation = await findExplanation(finding.symbol);
+    if (explanation) finding.explanation = explanation;
   }
+  const allFindings = watchlistPriced.map((r) => r.finding);
   if (allFindings.length) {
     await sbInsert("asset_price_findings", allFindings);
     console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allFindings.length} finding(s) to asset_price_findings.`);
@@ -781,21 +945,15 @@ async function main() {
     console.log("No asset findings this run.");
   }
 
-  const allIndexFindings = [];
-  for (const label of MARKET_INDEXES) {
-    if (checkBudget()) break;
-    console.log(`Searching index: ${label}`);
-    const findings = await processSymbol(label);
-    console.log(`  -> ${findings.length} finding(s)`);
-    allIndexFindings.push(...findings);
-  }
-  for (const symbol of MARKET_MOVERS_WATCHLIST) {
-    if (checkFinnhubBudget()) break;
-    console.log(`Searching mover: ${symbol}`);
-    const findings = await processSymbolViaFinnhub(symbol);
-    console.log(`  -> ${findings.length} finding(s)`);
-    allIndexFindings.push(...findings);
-  }
+  console.log(`Searching indexes (batched): ${MARKET_INDEXES.join(", ")}`);
+  const allIndexFindings = await processAllIndexes();
+  console.log(`  -> ${allIndexFindings.length} finding(s)`);
+
+  console.log(`Fetching movers (Finnhub): ${MARKET_MOVERS_WATCHLIST.join(", ")}`);
+  const moversPriced = await fetchFinnhubFindings(MARKET_MOVERS_WATCHLIST, checkFinnhubBudget);
+  console.log(`  -> ${moversPriced.length} priced, explaining the top ${MAX_GEMINI_EXPLANATIONS_PER_RUN} movers by day change`);
+  await attachTopMoverExplanations(moversPriced);
+  allIndexFindings.push(...moversPriced.map((r) => r.finding));
   if (allIndexFindings.length) {
     await sbInsert("market_index_findings", allIndexFindings);
     console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allIndexFindings.length} finding(s) to market_index_findings (indexes + movers watchlist).`);

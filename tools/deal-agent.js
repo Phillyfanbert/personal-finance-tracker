@@ -44,16 +44,33 @@
 //   2. For each of a few angles (pricing, student, promo, annual, family),
 //      search Tavily for real, current web results.
 //   3. Filter those results down to the service's own allowlisted domains
-//      BEFORE Gemini ever sees them - same "never trust an unverified
+//      BEFORE anything else reads them - same "never trust an unverified
 //      source" posture as before, applied as a pre-filter here (Tavily
 //      returns real result URLs directly, unlike a grounding tool's
 //      internal search).
-//   4. Ask Gemini to extract strict JSON plan data ONLY from the real,
-//      allowlisted-domain content just fetched - explicitly instructed not
-//      to draw on anything else.
+//   4. Try a Gemini-free regex extractor FIRST (extractPriceByRegex(),
+//      added 2026-08-16) - a $X.XX/period pattern scored by distance to
+//      the angle's own plan-type keyword ("family", "student", ...) in
+//      the same real trusted content. Live-tested: unlike an earlier
+//      attempt for stock-price pages (mostly dashboard chrome, reverted -
+//      see price-agent.js's header comment), real subscription pricing
+//      pages are static marketing copy and regex-extract cleanly. Only on
+//      a genuine miss does this fall back to Gemini, reusing the SAME
+//      trusted results (no second Tavily search) to extract strict JSON
+//      plan data - explicitly instructed not to draw on anything else.
+//      This split is what fixed deal-agent.js's real, observed failure
+//      mode: it and price-agent.js's full weekly run previously landed on
+//      the SAME calendar day (Sunday), together wanting more Gemini calls
+//      than the shared 20-requests/day free limit allows - now
+//      deal-agent.js's own Gemini usage is only however many angles regex
+//      misses, and the two scripts' weekly runs are on different days
+//      (see setup-server-machine.sh).
 //   5. Write validated findings to deal_findings via the REST API using
 //      the service_role key (bypasses RLS by design - the PWA can only
-//      read).
+//      read). extracted_by distinguishes "regex" from "gemini" findings -
+//      raw_snippet (the real matched text, for human review) is only ever
+//      populated by the regex path; Gemini's own JSON-only response has no
+//      comparable raw text to keep.
 //
 // Setup (on the server machine):
 //   Preferred: copy tools/.env.deal-agent.example to tools/.env.deal-agent,
@@ -240,13 +257,28 @@ async function loadDomainMap(services) {
 }
 
 // ---- Query generation: multiple angles, not just "pricing" -----------------
+// Angle objects, not bare strings, since 2026-08-16: planTypeHint tags a
+// regex-derived finding with the plan type its OWN angle was searching
+// for, and requireKeyword is what extractPriceByRegex() anchors a
+// candidate price to. "pricing plans" and "promo code" are deliberately
+// generic with planTypeHint: null (not a guessed default like
+// "individual") - live-tested and confirmed live 2026-08-16 that the
+// generic "pricing plans" query can genuinely surface a family-plan page
+// (a service's own subscription name, e.g. "Spotify Family Plan
+// Subscription", biases Tavily's results toward that plan specifically)
+// - a null label here is honest about what the regex path actually knows,
+// where a hardcoded "individual" guess would have been actively wrong in
+// a real observed case, not just theoretically imprecise. The Gemini
+// prompt never made this assumption either (it read the actual page
+// content each time); this only matters for the regex path, which has no
+// comparable semantic understanding to correct a wrong guess with.
 function buildQueries(service) {
   return [
-    `${service} pricing plans`,
-    `${service} student discount`,
-    `${service} promo code`,
-    `${service} annual plan discount`,
-    `${service} family plan price`,
+    { query: `${service} pricing plans`, planTypeHint: null, requireKeyword: null },
+    { query: `${service} student discount`, planTypeHint: "student", requireKeyword: /\bstudent\b/i },
+    { query: `${service} promo code`, planTypeHint: null, requireKeyword: null },
+    { query: `${service} annual plan discount`, planTypeHint: "annual", requireKeyword: /\bannual(ly)?\b/i },
+    { query: `${service} family plan price`, planTypeHint: "family", requireKeyword: /\bfamily\b/i },
   ];
 }
 
@@ -300,11 +332,13 @@ function buildSourcesBlock(results) {
   return results.map((r, i) => `[Source ${i + 1}: ${r.url}]\n${r.content}`).join("\n\n");
 }
 
-// Search via Tavily, filter to an allowed domain list, then ask Gemini to
-// extract structured JSON purely from the real fetched content of those
-// trusted results - never from Gemini's own general knowledge (the prompt
-// says so explicitly). Returns citations already filtered to the allowed
-// list, so callers don't need a second trust check.
+// Search via Tavily, filter to an allowed domain list - no extraction
+// step, unlike this file's own extraction path used to have (see
+// extractPriceByRegex()/processService() below for why: regex now runs
+// first against these same trusted results, and Gemini only ever gets
+// called as a fallback on a genuine regex miss, reusing this exact
+// result set rather than searching again). Verbatim port of
+// tools/price-agent.js's own searchOnly() helper.
 // queryAttempts/queryFailures track every real call through this function
 // for the run's agent_run_status row (see main()) - see
 // tools/price-agent.js's identical comment for why only a thrown error
@@ -312,29 +346,92 @@ function buildSourcesBlock(results) {
 let queryAttempts = 0;
 let queryFailures = 0;
 
-async function searchAndExtract(query, domains, instructionsPrompt) {
+async function searchOnly(query, domains) {
   queryAttempts++;
   try {
     const results = await tavilySearch(query);
-    const trusted = results.filter((r) => hostAllowed(r.url, domains));
-    if (!trusted.length) {
-      return { text: null, citations: [] };
-    }
-    const prompt = [
-      instructionsPrompt,
-      "",
-      "Base your answer ONLY on the real search results below. Do not use any",
-      "other knowledge you may have. If the answer isn't in these results, say",
-      "so via the null value specified above rather than guessing.",
-      "",
-      buildSourcesBlock(trusted),
-    ].join("\n");
-    const text = await extractWithGemini(prompt);
-    return { text, citations: trusted.map((r) => r.url) };
+    return results.filter((r) => hostAllowed(r.url, domains));
   } catch (err) {
     queryFailures++;
     throw err;
   }
+}
+
+// ---- Gemini-free primary extractor: regex against real trusted content ---
+// Live-tested 2026-08-16: unlike an earlier attempt this session for
+// stock-PRICE pages (found mostly dashboard chrome, reverted - see
+// tools/price-agent.js's header comment), a live Tavily search restricted
+// to a real allowlisted subscription-pricing domain (spotify.com) returned
+// clean, real, directly regex-extractable pricing text
+// ("Family\n\n$21.99 / month..."). Subscription pricing pages are static
+// marketing copy, not live-updating dashboards - a meaningfully different
+// content type. Running this FIRST is what cuts deal-agent.js's own
+// Gemini usage from ~10 calls/run down to only however many angles regex
+// genuinely misses - found to matter live: deal-agent.js and
+// price-agent.js's full weekly run previously landed on the SAME
+// calendar day (Sunday), together wanting more than Gemini's real
+// 20-requests/day free limit, which is what caused deal-agent.js to fail
+// 8-9 of 10 queries in real runs. Gemini stays as a FALLBACK here, not
+// fully dropped the way price-agent.js dropped it entirely for real
+// ticker prices - a regex match against scraped marketing copy can
+// legitimately miss a page with prose pricing or an unusual layout,
+// where Gemini's real semantic reading still adds recall a numeric API
+// swap never needed.
+const PRICE_PATTERN = /\$\s?(\d{1,4}(?:\.\d{2})?)\s*(?:\/|per\s+)\s*(mo|month|monthly|yr|year|annually)\b/gi;
+const KEYWORD_PROXIMITY_CHARS = 80;
+const RAW_SNIPPET_CONTEXT_CHARS = 60;
+const REGEX_CONFIDENCE_WITH_KEYWORD = 0.45;
+const REGEX_CONFIDENCE_NO_KEYWORD = 0.3; // below Gemini's own 0.5 default (validateFinding below)
+
+// Distance in characters from a price match's own index to the nearest
+// occurrence of requireKeyword in the same text - null when requireKeyword
+// wasn't given (the "pricing plans"/"promo code" angles have no specific
+// plan-type word to anchor to) or when the keyword never appears at all.
+function nearestKeywordDistance(text, matchIndex, requireKeyword) {
+  if (!requireKeyword) return null;
+  const flags = requireKeyword.flags.includes("g") ? requireKeyword.flags : requireKeyword.flags + "g";
+  const re = new RegExp(requireKeyword.source, flags);
+  let best = null;
+  let m;
+  while ((m = re.exec(text))) {
+    const distance = Math.abs(m.index - matchIndex);
+    if (best === null || distance < best) best = distance;
+  }
+  return best;
+}
+
+// Scans every trusted result's real content for a $X.XX/period price,
+// scoring each candidate by its distance to the nearest requireKeyword
+// occurrence - not just a fixed-window yes/no check, so a page listing
+// "Individual $11.99/month ... Family $23.99/month" close together still
+// correctly attributes each price to its nearer plan-type keyword.
+// Returns null if nothing qualifies (a required keyword given but never
+// found near any price) rather than guessing.
+function extractPriceByRegex(trustedResults, requireKeyword) {
+  let best = null;
+  for (const result of trustedResults) {
+    const text = result.content || "";
+    PRICE_PATTERN.lastIndex = 0;
+    let m;
+    while ((m = PRICE_PATTERN.exec(text))) {
+      const price = Number(m[1]);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const distance = nearestKeywordDistance(text, m.index, requireKeyword);
+      if (requireKeyword && (distance === null || distance > KEYWORD_PROXIMITY_CHARS)) continue;
+      const snippetStart = Math.max(0, m.index - RAW_SNIPPET_CONTEXT_CHARS);
+      const snippetEnd = m.index + m[0].length + RAW_SNIPPET_CONTEXT_CHARS;
+      const candidate = {
+        price: Math.round(price * 100) / 100,
+        url: result.url,
+        raw_snippet: text.slice(snippetStart, snippetEnd).trim(),
+        confidence: distance !== null ? REGEX_CONFIDENCE_WITH_KEYWORD : REGEX_CONFIDENCE_NO_KEYWORD,
+        distance: distance === null ? Infinity : distance,
+      };
+      if (!best || candidate.distance < best.distance) best = candidate;
+    }
+  }
+  if (!best) return null;
+  return { price: best.price, url: best.url, raw_snippet: best.raw_snippet, confidence: best.confidence };
 }
 
 function parseJsonLoose(text) {
@@ -396,22 +493,59 @@ function validateFinding(raw) {
 // ---- Per-service pipeline ----------------------------------------------
 async function processService(service, domains) {
   const findings = [];
-  for (const query of buildQueries(service)) {
-    let result;
+  for (const { query, planTypeHint, requireKeyword } of buildQueries(service)) {
+    let trusted;
     try {
-      result = await searchAndExtract(query, domains, buildExtractionPrompt(service));
+      trusted = await searchOnly(query, domains);
     } catch (err) {
-      console.warn(`[${service}] search+extract failed for "${query}": ${err.message}`);
+      console.warn(`[${service}] search failed for "${query}": ${err.message}`);
       continue;
     }
     await sleep(REQUEST_DELAY_MS);
 
-    if (!result.text) {
+    if (!trusted.length) {
       console.warn(`[${service}] no result on an allowlisted domain for "${query}" - discarding`);
       continue;
     }
 
-    const extracted = validateFinding(parseJsonLoose(result.text));
+    const regexFinding = extractPriceByRegex(trusted, requireKeyword);
+    if (regexFinding) {
+      findings.push({
+        service,
+        plan_type: planTypeHint,
+        price: regexFinding.price,
+        eligibility: null,
+        url: regexFinding.url,
+        source_query: query,
+        raw_snippet: regexFinding.raw_snippet,
+        confidence: regexFinding.confidence,
+        extracted_by: "regex",
+      });
+      continue;
+    }
+
+    // Regex found nothing on this angle - fall back to Gemini, reusing
+    // the SAME trusted results already fetched above (never re-searching
+    // Tavily, which would double-count tavilyCallCount/queryAttempts).
+    let text;
+    try {
+      const prompt = [
+        buildExtractionPrompt(service),
+        "",
+        "Base your answer ONLY on the real search results below. Do not use any",
+        "other knowledge you may have. If the answer isn't in these results, say",
+        "so via the null value specified above rather than guessing.",
+        "",
+        buildSourcesBlock(trusted),
+      ].join("\n");
+      text = await extractWithGemini(prompt);
+    } catch (err) {
+      console.warn(`[${service}] Gemini fallback failed for "${query}": ${err.message}`);
+      continue;
+    }
+    await sleep(REQUEST_DELAY_MS);
+
+    const extracted = validateFinding(parseJsonLoose(text));
     if (!extracted) continue;
 
     findings.push({
@@ -419,7 +553,7 @@ async function processService(service, domains) {
       plan_type: extracted.plan_type,
       price: extracted.price,
       eligibility: extracted.eligibility,
-      url: result.citations[0],
+      url: trusted[0].url,
       source_query: query,
       raw_snippet: null,
       confidence: extracted.confidence,

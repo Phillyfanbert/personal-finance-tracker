@@ -96,6 +96,14 @@
 //      watchlist symbols (small, personal - see MAX_GEMINI_EXPLANATIONS_PER_RUN's
 //      own comment), and only for the biggest movers among
 //      MARKET_MOVERS_WATCHLIST below.
+//   2b. Real per-symbol news headlines (fetchFinnhubCompanyNews(), added
+//      2026-08-16) - Finnhub's own /company-news product, zero LLM step,
+//      gated to roughly once/hour per symbol (shouldFetchNewsThisRun())
+//      rather than every FAST_ONLY run, since the findings tables are
+//      insert-only and headlines don't meaningfully change inside 15
+//      minutes. This is what makes the Investments tab's "why is this
+//      moving" context genuinely live (real links, refreshed hourly)
+//      instead of only the weekly Gemini explanation above.
 //   3. Write validated findings to asset_price_findings via the REST API
 //      using the service_role key (bypasses RLS by design).
 //
@@ -242,6 +250,13 @@ function geminiUrl(model) {
 // already happened once this session with Gemini's own grounding tool.
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
 const FINNHUB_URL = "https://finnhub.io/api/v1/quote";
+// Real per-symbol headlines - confirmed live (2026-08-16) on Finnhub's free
+// tier, real structured {headline, url, source, datetime, summary} JSON,
+// zero LLM step needed. Strictly more grounded than the Gemini-authored
+// explanation field below (real links, no synthesis) - see
+// shouldFetchNewsThisRun()/fetchFinnhubCompanyNews() for how this feeds
+// the new asset_price_findings/market_index_findings.headlines column.
+const FINNHUB_NEWS_URL = "https://finnhub.io/api/v1/company-news";
 
 // A small, deliberately conservative allowlist - reputable finance-data
 // sources only, not "anything a search happens to turn up." Extend this
@@ -291,6 +306,31 @@ let tavilyCallCount = 0;
 // is future-growth headroom, same reasoning as MAX_TAVILY_CALLS_PER_RUN.
 const MAX_FINNHUB_CALLS_PER_RUN = 100;
 let finnhubCallCount = 0;
+
+// Separate again from both counters above - company-news is a different
+// Finnhub endpoint that may have its own rate limit, not independently
+// confirmed beyond a single successful live call. Gated to roughly
+// once/hour per symbol anyway (shouldFetchNewsThisRun) so this cap is
+// unlikely to matter in practice, but keeping its own counter means a
+// tighter real limit on this endpoint specifically degrades gracefully
+// without touching the (already-verified) /quote budget.
+const MAX_FINNHUB_NEWS_CALLS_PER_RUN = 30;
+let finnhubNewsCallCount = 0;
+
+// FAST_ONLY runs every 900s (15 min, tools/setup-server-machine.sh) - four
+// times an hour. Headlines don't meaningfully change inside 15 minutes the
+// way a price does, and asset_price_findings/market_index_findings are
+// insert-only with nothing ever purging old rows (expires_at is a
+// client-side filter only), so fetching+writing a headlines blob on every
+// run would multiply storage growth for content that mostly doesn't
+// change that often. This stateless minute-of-hour check fires on
+// whichever of the four ~15-minute-apart runs happens to land in the
+// first quarter of the clock hour - no persisted state needed, and it
+// self-corrects run to run the same way a simple modulo would, without
+// depending on the job's exact historical fire times.
+function shouldFetchNewsThisRun(now = new Date()) {
+  return now.getMinutes() < 15;
+}
 
 function requireEnv() {
   const missing = ["SUPABASE_URL"].filter((k) => !process.env[k]);
@@ -726,6 +766,41 @@ function validateFinnhubQuote(raw) {
   return { price: Math.round(price * 10000) / 10000 };
 }
 
+// ---- Finnhub: real per-symbol news headlines, no LLM step needed ------
+// This is Finnhub's own curated news product, not an open-web search -
+// same authoritative-source tier as /quote (extracted_by: "finnhub",
+// confidence: 1 already established for the price half of the same row),
+// so no TRUSTED_NEWS_DOMAINS filter is needed here the way findExplanation()
+// needs one for a raw Tavily search.
+const MAX_COMPANY_NEWS_HEADLINES = 3; // distinct from MAX_NEWS_HEADLINES below (unrelated market-wide digest)
+async function fetchFinnhubCompanyNews(symbol) {
+  if (finnhubNewsCallCount >= MAX_FINNHUB_NEWS_CALLS_PER_RUN) {
+    throw new Error(`Finnhub company-news call budget (${MAX_FINNHUB_NEWS_CALLS_PER_RUN}/run) exceeded - skipping`);
+  }
+  finnhubNewsCallCount++;
+  const to = new Date();
+  const from = new Date(to.getTime() - 2 * 24 * 60 * 60 * 1000); // last 2 days
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const url = `${FINNHUB_NEWS_URL}?symbol=${encodeURIComponent(symbol)}&from=${fmt(from)}&to=${fmt(to)}&token=${FINNHUB_API_KEY}`;
+  const res = await fetchWithRetry(url, {}, SEARCH_TIMEOUT_MS);
+  if (!res.ok) throw new Error(`Finnhub company-news HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  return res.json(); // [{ headline, url, source, datetime, summary, category, id }, ...]
+}
+
+function validateFinnhubNews(raw) {
+  if (!Array.isArray(raw)) return null;
+  const headlines = raw
+    .filter((a) => a && typeof a.headline === "string" && a.headline.trim() && typeof a.url === "string" && a.url.trim())
+    .sort((a, b) => Number(b.datetime || 0) - Number(a.datetime || 0))
+    .slice(0, MAX_COMPANY_NEWS_HEADLINES)
+    .map((a) => ({
+      title: a.headline.trim(),
+      url: a.url.trim(),
+      source: typeof a.source === "string" && a.source.trim() ? a.source.trim() : null,
+    }));
+  return headlines.length ? headlines : null;
+}
+
 // Real stock tickers only (the user's own asset watchlist and
 // MARKET_MOVERS_WATCHLIST) - see the header comment for why
 // MARKET_INDEXES stays on processSymbol()/Tavily+Gemini below instead.
@@ -737,7 +812,7 @@ function validateFinnhubQuote(raw) {
 // attached yet. absDayChangePercent (from Finnhub's own `dp` field,
 // already part of the same quote response - no extra call) is what the
 // ranking is based on; it's never written to the DB, only used to sort.
-async function fetchFinnhubFinding(symbol) {
+async function fetchFinnhubFinding(symbol, fetchNews) {
   queryAttempts++;
   let raw;
   try {
@@ -752,6 +827,16 @@ async function fetchFinnhubFinding(symbol) {
     console.warn(`[${symbol}] Finnhub returned no valid price - discarding`);
     return null;
   }
+  // Best-effort, same graceful-degrade posture findExplanation() already
+  // has - a failed/empty news call must never block the price write.
+  let headlines = null;
+  if (fetchNews) {
+    try {
+      headlines = validateFinnhubNews(await fetchFinnhubCompanyNews(symbol));
+    } catch (err) {
+      console.warn(`[${symbol}] Finnhub company-news failed: ${err.message}`);
+    }
+  }
   return {
     finding: {
       symbol,
@@ -763,16 +848,17 @@ async function fetchFinnhubFinding(symbol) {
       confidence: 1,
       extracted_by: "finnhub",
       explanation: null,
+      headlines,
     },
     absDayChangePercent: Number.isFinite(Number(raw.dp)) ? Math.abs(Number(raw.dp)) : 0,
   };
 }
 
-async function fetchFinnhubFindings(symbols, checkBudgetFn) {
+async function fetchFinnhubFindings(symbols, checkBudgetFn, fetchNews) {
   const results = [];
   for (const symbol of symbols) {
     if (checkBudgetFn && checkBudgetFn()) break;
-    const result = await fetchFinnhubFinding(symbol);
+    const result = await fetchFinnhubFinding(symbol, fetchNews);
     if (result) results.push(result);
   }
   return results;
@@ -916,6 +1002,8 @@ const MARKET_MOVERS_WATCHLIST = [
 async function main() {
   requireEnv();
   if (FAST_ONLY) console.log("FAST_ONLY=1: Finnhub-only run, skipping every Tavily/Gemini step.");
+  const fetchNewsThisRun = shouldFetchNewsThisRun();
+  if (fetchNewsThisRun) console.log("Also fetching real per-symbol news headlines this run (Finnhub company-news, roughly hourly).");
 
   const watchlist = await loadWatchlist();
   console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
@@ -966,7 +1054,7 @@ async function main() {
   // users), unlike the fixed 20-symbol movers watchlist the ranking below
   // exists for. If this ever grows large, redo this math the same way the
   // header comment already asks for future watchlist growth generally.
-  const watchlistPriced = await fetchFinnhubFindings(watchlist, checkFinnhubBudget);
+  const watchlistPriced = await fetchFinnhubFindings(watchlist, checkFinnhubBudget, fetchNewsThisRun);
   if (FAST_ONLY) {
     console.log("FAST_ONLY: skipping watchlist explanations (Gemini) this run.");
   } else {
@@ -993,7 +1081,7 @@ async function main() {
   }
 
   console.log(`Fetching movers (Finnhub): ${MARKET_MOVERS_WATCHLIST.join(", ")}`);
-  const moversPriced = await fetchFinnhubFindings(MARKET_MOVERS_WATCHLIST, checkFinnhubBudget);
+  const moversPriced = await fetchFinnhubFindings(MARKET_MOVERS_WATCHLIST, checkFinnhubBudget, fetchNewsThisRun);
   if (FAST_ONLY) {
     console.log(`  -> ${moversPriced.length} priced. FAST_ONLY: skipping mover explanations (Gemini) this run.`);
   } else {

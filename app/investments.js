@@ -67,6 +67,7 @@ export function investmentHoldings(assets, priceFindings) {
         asset: a, symbol, quantity, latestPrice, currentValue, costBasis,
         gainLoss, gainLossPct, priorPrice, dayChange, dayChangePct,
         explanation: latest?.explanation || null,
+        headlines: latestHeadlinesForSymbol(priceFindings, symbol),
       };
     });
 }
@@ -317,7 +318,11 @@ export function marketIndexSummary(indexes, findings) {
     const change = price != null && priorPrice != null ? r2(price - priorPrice) : null;
     const changePct = change != null ? pct(change, priorPrice) : null;
 
-    return { label, price, change, changePct, explanation: latest?.explanation || null };
+    return {
+      label, price, change, changePct,
+      explanation: latest?.explanation || null,
+      headlines: latestHeadlinesForSymbol(findings, label.toUpperCase()),
+    };
   });
 }
 
@@ -359,6 +364,26 @@ export function latestFinnhubRefresh(findings) {
   const finnhub = findings.filter((f) => f.extracted_by === "finnhub" && f.found_at);
   if (!finnhub.length) return null;
   return finnhub.reduce((latest, f) => (new Date(f.found_at) > new Date(latest) ? f.found_at : latest), finnhub[0].found_at);
+}
+
+/**
+ * Most recent real headlines for one symbol, or null if none exist yet.
+ * Deliberately does NOT reuse dailyFindingsForSymbol() above - that picks
+ * each day's single LATEST finding, but tools/price-agent.js only fetches
+ * headlines on roughly 1 of every 4 FAST_ONLY runs
+ * (shouldFetchNewsThisRun()), so the single most-recent row usually has
+ * headlines: null even when a real, still-current set exists from up to
+ * an hour ago. This scans every finding for the symbol instead, so a
+ * fresher price-only row never hides an older row's still-good headlines.
+ * @param {object[]} findings rows from asset_price_findings or market_index_findings
+ * @param {string} symbol already-uppercased ticker
+ */
+export function latestHeadlinesForSymbol(findings, symbol) {
+  const withHeadlines = findings.filter(
+    (f) => (f.symbol || "").trim().toUpperCase() === symbol && Array.isArray(f.headlines) && f.headlines.length && f.found_at
+  );
+  if (!withHeadlines.length) return null;
+  return withHeadlines.reduce((latest, f) => (new Date(f.found_at) > new Date(latest.found_at) ? f : latest)).headlines;
 }
 
 /**

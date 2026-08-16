@@ -14,11 +14,17 @@
 #      the existing Cloudflare Tunnel LaunchAgent repointed at it instead of
 #      Ollama directly (see the "Gemma tunnel lockdown" session note for why)
 #   4. Weekly launchd schedules for run-deal-agent.sh and run-price-agent.sh,
-#      staggered (Sunday 3am/5am) - purely conventional spacing at this
-#      point, not a hard requirement: neither script has touched SearXNG or
-#      any shared local resource since the 2026-08-14 Tavily+Gemini
-#      migration, an earlier version of this comment's stated reason for
-#      the stagger, since corrected.
+#      now on genuinely DIFFERENT calendar days (Sunday / Wednesday,
+#      PRICE_AGENT_WEEKDAY), not just different hours of the same day - an
+#      earlier version of this comment described staggered hours on the
+#      same Sunday as sufficient spacing (leftover from when both scripts
+#      shared a SearXNG container, since removed in the 2026-08-14
+#      Tavily+Gemini migration), but that never addressed the real shared
+#      constraint: Gemini's 20-requests/day free quota resets per calendar
+#      day, not per hours-apart, so both scripts wanting Gemini calls on
+#      the same Sunday could (and, confirmed live 2026-08-16, did) collide
+#      regardless of the hour. See PRICE_AGENT_WEEKDAY's own comment
+#      further down for the full story.
 #   5. An hourly launchd schedule for embed-expenses.js (RAG retrieval for
 #      the Reports page's "Ask about your spending" Q&A - see
 #      supabase/45_expense_embeddings.sql) - much tighter than the weekly
@@ -47,8 +53,12 @@
 #                           defaults to the one already generated for this
 #                           project rather than a fresh random value that
 #                           would silently stop matching them.
-#   DEAL_AGENT_HOUR/MIN, PRICE_AGENT_HOUR/MIN - launchd schedule (defaults
-#                           Sunday 03:00 and Sunday 05:00, local time)
+#   DEAL_AGENT_HOUR/MIN, PRICE_AGENT_HOUR/MIN, PRICE_AGENT_WEEKDAY -
+#                           launchd schedule for the two weekly Gemini-
+#                           using runs (defaults Sunday 03:00 and
+#                           Wednesday 05:00, local time - deliberately
+#                           different days, see PRICE_AGENT_WEEKDAY's own
+#                           comment further down for why)
 #   EMBED_EXPENSES_INTERVAL_SECONDS - how often embed-expenses.js runs
 #                           (default 3600 = hourly)
 #   PRICE_AGENT_FAST_INTERVAL_SECONDS - how often price-agent.js's
@@ -66,6 +76,16 @@ DEAL_AGENT_HOUR="${DEAL_AGENT_HOUR:-3}"
 DEAL_AGENT_MIN="${DEAL_AGENT_MIN:-0}"
 PRICE_AGENT_HOUR="${PRICE_AGENT_HOUR:-5}"
 PRICE_AGENT_MIN="${PRICE_AGENT_MIN:-0}"
+# Deliberately NOT Sunday (deal-agent.js's own day, weekday 0 below) - found
+# live 2026-08-16 that scheduling both weekly Gemini-using scripts on the
+# SAME calendar day meant they competed for one shared 20-requests/day
+# free-tier quota, which is what caused deal-agent.js to fail 8-9 of 10
+# real queries. Gemini's quota resets per calendar day, not per hours-
+# apart, so same-day scheduling can't avoid this regardless of the hour.
+# 3 = Wednesday (launchd Weekday: 0=Sunday...6=Saturday) - conflict-free
+# with everything else scheduled (the interval/day-of-month jobs below
+# don't touch Gemini, or don't care about weekday at all).
+PRICE_AGENT_WEEKDAY="${PRICE_AGENT_WEEKDAY:-3}"
 EMBED_EXPENSES_INTERVAL_SECONDS="${EMBED_EXPENSES_INTERVAL_SECONDS:-3600}"
 PRICE_AGENT_FAST_INTERVAL_SECONDS="${PRICE_AGENT_FAST_INTERVAL_SECONDS:-900}"
 MONTHLY_REPORT_DAY="${MONTHLY_REPORT_DAY:-1}"
@@ -267,11 +287,17 @@ else
   echo "WARNING: ${TUNNEL_PLIST} not found - is the Cloudflare Tunnel LaunchAgent set up under a different name? Repoint it at http://localhost:11435 by hand."
 fi
 
-# ---- 4. Weekly scheduling for deal-agent / price-agent, staggered ---------
+# ---- 4. Weekly scheduling for deal-agent / price-agent, on different days -
+# weekday is a real parameter now, not hardcoded - previously both jobs
+# were pinned to Sunday inside this function regardless of what HOUR/MIN
+# were passed, which is exactly what caused the Gemini-quota collision
+# PRICE_AGENT_WEEKDAY's own comment above explains. Changing just the hour
+# would never have fixed it.
+WEEKDAY_NAMES=(Sun Mon Tue Wed Thu Fri Sat)
 install_weekly_agent() {
-  local label="$1" script="$2" hour="$3" minute="$4"
+  local label="$1" script="$2" weekday="$3" hour="$4" minute="$5"
   local plist="$LAUNCH_AGENTS_DIR/${label}.plist"
-  log "Installing ${label} (Sun ${hour}:$(printf '%02d' "$minute"))"
+  log "Installing ${label} (${WEEKDAY_NAMES[$weekday]} ${hour}:$(printf '%02d' "$minute"))"
   cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -287,7 +313,7 @@ install_weekly_agent() {
   <key>StartCalendarInterval</key>
   <dict>
     <key>Weekday</key>
-    <integer>0</integer>
+    <integer>${weekday}</integer>
     <key>Hour</key>
     <integer>${hour}</integer>
     <key>Minute</key>
@@ -302,8 +328,8 @@ install_weekly_agent() {
 EOF
   bootout_and_bootstrap "${label}" "$plist"
 }
-install_weekly_agent "com.deal-agent.weekly" "${TOOLS_DIR}/run-deal-agent.sh" "$DEAL_AGENT_HOUR" "$DEAL_AGENT_MIN"
-install_weekly_agent "com.price-agent.weekly" "${TOOLS_DIR}/run-price-agent.sh" "$PRICE_AGENT_HOUR" "$PRICE_AGENT_MIN"
+install_weekly_agent "com.deal-agent.weekly" "${TOOLS_DIR}/run-deal-agent.sh" "0" "$DEAL_AGENT_HOUR" "$DEAL_AGENT_MIN"
+install_weekly_agent "com.price-agent.weekly" "${TOOLS_DIR}/run-price-agent.sh" "$PRICE_AGENT_WEEKDAY" "$PRICE_AGENT_HOUR" "$PRICE_AGENT_MIN"
 
 # ---- 5. Frequent scheduling for embed-expenses.js (RAG retrieval) ---------
 # StartInterval (seconds, repeating) rather than StartCalendarInterval
@@ -392,6 +418,6 @@ EOF
 install_monthly_agent "com.monthly-report.monthly" "${TOOLS_DIR}/run-monthly-report.sh" "$MONTHLY_REPORT_DAY" "$MONTHLY_REPORT_HOUR" "$MONTHLY_REPORT_MIN"
 
 log "Done"
-echo "Scheduled: deal-agent Sundays ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent (full) Sundays ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN"). embed-expenses every ${EMBED_EXPENSES_INTERVAL_SECONDS}s (cheap thanks to content-hash delta detection - most runs do nothing). price-agent (FAST_ONLY, Finnhub-only real ticker prices) every ${PRICE_AGENT_FAST_INTERVAL_SECONDS}s. monthly-report day ${MONTHLY_REPORT_DAY} of each month at ${MONTHLY_REPORT_HOUR}:$(printf '%02d' "$MONTHLY_REPORT_MIN")."
+echo "Scheduled: deal-agent ${WEEKDAY_NAMES[0]}s ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent (full) ${WEEKDAY_NAMES[$PRICE_AGENT_WEEKDAY]}s ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN") - deliberately different days, see PRICE_AGENT_WEEKDAY's own comment above for why. embed-expenses every ${EMBED_EXPENSES_INTERVAL_SECONDS}s (cheap thanks to content-hash delta detection - most runs do nothing). price-agent (FAST_ONLY, Finnhub-only real ticker prices) every ${PRICE_AGENT_FAST_INTERVAL_SECONDS}s. monthly-report day ${MONTHLY_REPORT_DAY} of each month at ${MONTHLY_REPORT_HOUR}:$(printf '%02d' "$MONTHLY_REPORT_MIN")."
 echo "Test any agent right now with: DRY_RUN=1 ./run-deal-agent.sh   (or run-price-agent.sh / run-price-agent-fast.sh / run-embed-expenses.sh / run-monthly-report.sh)"
 echo "Remember to flip DEAL_FINDINGS_ENABLED / PRICE_FINDINGS_ENABLED to true in app/config.js and the Cloudflare dashboard once you're ready to surface results in the UI. RAG retrieval for the Q&A needs no such flag - it's best-effort and just silently contributes nothing until embed-expenses.js has actually run once."

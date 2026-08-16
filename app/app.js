@@ -3386,6 +3386,7 @@ function renderInvestments() {
           </div>
         </div>
         ${h.explanation ? `<div class="muted" style="font-size:12px">${esc(h.explanation)}</div>` : ""}
+        ${h.headlines && h.headlines.length ? `<div class="muted" style="font-size:12px"><a href="${esc(h.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(h.headlines[0].title)}</a>${h.headlines[0].source ? " · " + esc(h.headlines[0].source) : ""}</div>` : ""}
       </div>`;
   };
   $("investHoldingsList").innerHTML = parents.length ? parents.map((p) => {
@@ -3586,6 +3587,7 @@ function renderMarketOverview() {
       <div>
         <div>${esc(m.label)}</div>
         ${m.explanation ? `<div class="meta">${esc(m.explanation)}</div>` : ""}
+        ${m.headlines && m.headlines.length ? `<div class="meta"><a href="${esc(m.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headlines[0].title)}</a>${m.headlines[0].source ? " · " + esc(m.headlines[0].source) : ""}</div>` : ""}
       </div>
       <span class="amt" style="text-align:right">
         ${fmtNum(m.price)}
@@ -4704,6 +4706,7 @@ function renderDealFindings() {
         <div>
           <div>${esc(f.service)}${f.plan_type ? " · " + esc(f.plan_type) : ""}</div>
           <div class="meta">${price}${f.eligibility ? " (" + esc(f.eligibility) + ")" : ""} ${link}</div>
+          ${f.status === "candidate" && f.extracted_by === "regex" ? `<div class="muted" style="font-size:11px">pattern match${f.raw_snippet ? " - " + esc(f.raw_snippet) : ""}</div>` : ""}
         </div>
         <span class="amt">${actions}</span>
       </div>`;

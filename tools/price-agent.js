@@ -998,6 +998,23 @@ const MARKET_MOVERS_WATCHLIST = [
   "XOM", "JNJ", "WMT", "PG", "MA", "HD", "DIS", "NFLX", "AMD", "KO",
 ];
 
+// ---- Market index ETF proxies (Investments tab, Market overview, live) ---
+// Added 2026-08-16: MARKET_INDEXES above only ever gets a real price via
+// the constrained weekly Tavily+Gemini pipeline, which can go stale for
+// a while if that pipeline's own Gemini call gets crowded out by
+// deal-agent.js sharing the same daily quota. Confirmed live that raw
+// index tickers (^GSPC/^DJI/^IXIC/^RUT) require a paid Finnhub
+// subscription ("Market data subscription required for CFD indices" - a
+// real API response, not assumed) - but these four highly liquid ETFs
+// that closely track the same four indexes work on the free tier, no
+// search/LLM step needed, same as any real stock ticker. Written to
+// market_index_findings under the ETF's OWN ticker as `symbol` -
+// deliberately never under the index's own plain-English label (see
+// app.js's MARKET_INDEX_ETF_PROXIES comment for why mixing the two would
+// corrupt day-change math). Must match app.js's own copy, kept in sync
+// by hand for the same reason MARKET_INDEXES already is.
+const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Average": "DIA", "NASDAQ Composite": "QQQ", "Russell 2000": "IWM" };
+
 // ---- Main ----------------------------------------------------------------
 async function main() {
   requireEnv();
@@ -1089,6 +1106,18 @@ async function main() {
     await attachTopMoverExplanations(moversPriced);
   }
   allIndexFindings.push(...moversPriced.map((r) => r.finding));
+
+  // ETF proxies for the 4 indexes - real Finnhub quotes, no search/LLM
+  // step, runs every time (FAST_ONLY and full) since it's the same cheap
+  // per-symbol Finnhub cost as any real ticker. No news headlines for
+  // these - out of scope for "does the market overview number update,"
+  // and an ETF isn't a "company" Finnhub's company-news product covers
+  // meaningfully anyway.
+  const etfTickers = Object.values(MARKET_INDEX_ETF_PROXIES);
+  console.log(`Fetching index ETF proxies (Finnhub): ${etfTickers.join(", ")}`);
+  const etfPriced = await fetchFinnhubFindings(etfTickers, checkFinnhubBudget, false);
+  console.log(`  -> ${etfPriced.length} priced`);
+  allIndexFindings.push(...etfPriced.map((r) => r.finding));
   if (allIndexFindings.length) {
     await sbInsert("market_index_findings", allIndexFindings);
     console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allIndexFindings.length} finding(s) to market_index_findings (indexes + movers watchlist).`);

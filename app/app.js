@@ -629,6 +629,22 @@ const INVESTMENT_BUCKETS = ["Stocks", "Bonds", "Cash", "Crypto", "Real Estate", 
 // to a row here) - that file has no import/export machinery to share this
 // list from a single source, so the two are kept in sync by hand.
 const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Composite", "Russell 2000"];
+// A live, Gemini-free stand-in for the exact index-point number above -
+// added 2026-08-16 after confirming live that raw index tickers
+// (^GSPC/^DJI/^IXIC/^RUT) require a paid Finnhub subscription ("Market
+// data subscription required for CFD indices" - a real API response, not
+// an assumption), but these four highly liquid, widely-tracked ETFs work
+// on the free tier and closely track the same four indexes. Written to
+// market_index_findings under the ETF's OWN ticker as `symbol`
+// (tools/price-agent.js), deliberately never under the index's plain-
+// English label - mixing an ETF's dollar price into the same day-series
+// as the index's own point value would corrupt day-change math (a real,
+// ~10x scale difference, not a rounding nuance). QQQ tracks the
+// NASDAQ-100 specifically, not the full NASDAQ Composite - the closest
+// free, liquid option, labeled honestly as such rather than implied to
+// be an exact match. Must match tools/price-agent.js's own copy, kept in
+// sync by hand for the same reason MARKET_INDEXES already is.
+const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Average": "DIA", "NASDAQ Composite": "QQQ", "Russell 2000": "IWM" };
 // A fixed, curated watchlist of well-known large-cap stocks (not each
 // user's own holdings) so the Investments tab can surface "today's biggest
 // movers" even for a user who holds nothing at all - same "public market
@@ -3566,17 +3582,31 @@ function renderMarketOverview() {
   card.classList.remove("hidden");
   renderAgentFreshness("price-agent", "marketOverviewFreshness", "marketOverviewWarning");
   const indexes = marketIndexSummary(MARKET_INDEXES, marketIndexFindings);
-  $("marketOverviewList").innerHTML = indexes.map((idx) => `
-    <div class="exp" style="cursor:default">
-      <div>
-        <div>${esc(idx.label)}</div>
-        ${idx.explanation ? `<div class="meta">${esc(idx.explanation)}</div>` : ""}
+  // Live ETF-proxy prices - marketIndexSummary() works unchanged against
+  // any label list, so this reuses it directly with the ETF tickers
+  // instead of the index names (see MARKET_INDEX_ETF_PROXIES's own
+  // comment for why the two are stored as separate symbols, never mixed).
+  const etfTickers = Object.values(MARKET_INDEX_ETF_PROXIES);
+  const etfByTicker = new Map(marketIndexSummary(etfTickers, marketIndexFindings).map((e) => [e.label, e]));
+  renderPricesAsOf("marketOverviewLiveFreshness", latestFinnhubRefresh(marketIndexFindings));
+  $("marketOverviewList").innerHTML = indexes.map((idx) => {
+    const etfTicker = MARKET_INDEX_ETF_PROXIES[idx.label];
+    const live = etfTicker ? etfByTicker.get(etfTicker) : null;
+    return `
+    <div class="exp" style="cursor:default;flex-direction:column;align-items:stretch;gap:2px">
+      <div style="display:flex;justify-content:space-between;gap:10px">
+        <div>
+          <div>${esc(idx.label)}</div>
+          ${idx.explanation ? `<div class="meta">${esc(idx.explanation)}</div>` : ""}
+        </div>
+        <span class="amt" style="text-align:right">
+          ${idx.price != null ? fmtNum(idx.price) : `<span class="muted" style="font-size:12px">index level not available yet</span>`}
+          ${idx.change != null ? `<div style="font-size:12px;color:${gainColor(idx.change)}">${signedPct(idx.changePct)}</div>` : ""}
+        </span>
       </div>
-      <span class="amt" style="text-align:right">
-        ${idx.price != null ? fmtNum(idx.price) : `<span class="muted" style="font-size:12px">not available yet</span>`}
-        ${idx.change != null ? `<div style="font-size:12px;color:${gainColor(idx.change)}">${signedPct(idx.changePct)}</div>` : ""}
-      </span>
-    </div>`).join("");
+      ${live && live.price != null ? `<div class="meta" style="font-size:12px">Live via ${esc(etfTicker)}: ${fmt(live.price)}${live.changePct != null ? ` <span style="color:${gainColor(live.change)}">${signedPct(live.changePct)}</span>` : ""}</div>` : ""}
+    </div>`;
+  }).join("");
 
   const movers = topMarketMovers(MARKET_MOVERS_WATCHLIST, marketIndexFindings, 3);
   const moversSection = $("marketMoversSection");

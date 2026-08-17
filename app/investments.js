@@ -348,6 +348,42 @@ export function topMarketMovers(watchlist, findings, n = 3) {
 }
 
 /**
+ * A purely computed market-breadth signal - how many of the tracked
+ * large-cap movers are up/down/flat today, and the average change across
+ * the four index ETF proxies (app.js's MARKET_INDEX_ETF_PROXIES) -
+ * deliberately NOT the same thing as market_news_findings.sentiment,
+ * which is a real AI read of actual news coverage and requires a Gemini
+ * call that's constrained by its real daily quota. This needs no
+ * external call at all: every number here is already loaded client-side
+ * (the same Finnhub-only data topMarketMovers/marketIndexSummary already
+ * read), so it's available exactly as often as real prices are - every
+ * 15 minutes, with zero rate-limit exposure. A plain count of real,
+ * already-displayed numbers, not an interpretation of them - stays
+ * strictly on the "show real math" side of this app's established
+ * never-fabricate-a-score line, the same restraint portfolioHealthSummary
+ * and the credit-utilization line already hold. Returns null only when
+ * there's truly nothing to compute from yet (no day-change data at all),
+ * matching this app's "omit rather than fake a number" convention.
+ * @param {string[]} watchlist MARKET_MOVERS_WATCHLIST from app.js
+ * @param {string[]} etfTickers Object.values(MARKET_INDEX_ETF_PROXIES) from app.js
+ * @param {object[]} findings rows from market_index_findings
+ */
+export function marketBreadth(watchlist, etfTickers, findings) {
+  const movers = marketIndexSummary(watchlist, findings).filter((m) => m.changePct != null);
+  const up = movers.filter((m) => m.changePct > 0).length;
+  const down = movers.filter((m) => m.changePct < 0).length;
+  const flat = movers.length - up - down;
+
+  const etfRows = marketIndexSummary(etfTickers, findings).filter((e) => e.changePct != null);
+  const avgEtfChangePct = etfRows.length
+    ? r2(etfRows.reduce((sum, e) => sum + e.changePct, 0) / etfRows.length)
+    : null;
+
+  if (!movers.length && avgEtfChangePct == null) return null;
+  return { up, down, flat, total: movers.length, avgEtfChangePct };
+}
+
+/**
  * Freshest found_at among Finnhub-sourced findings (real ticker prices,
  * refreshed on a much tighter cadence - see tools/price-agent.js's
  * FAST_ONLY mode) - deliberately separate from a row's Gemini-sourced

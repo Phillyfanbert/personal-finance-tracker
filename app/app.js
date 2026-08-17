@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -3589,6 +3589,23 @@ function renderMarketOverview() {
   const etfTickers = Object.values(MARKET_INDEX_ETF_PROXIES);
   const etfByTicker = new Map(marketIndexSummary(etfTickers, marketIndexFindings).map((e) => [e.label, e]));
   renderPricesAsOf("marketOverviewLiveFreshness", latestFinnhubRefresh(marketIndexFindings));
+
+  // A real, computed fact from the same already-loaded live data below -
+  // never an AI-inferred read, so it's available exactly as often as
+  // real prices are, with zero rate-limit exposure. Plain "X of Y up"
+  // wording, not a bullish/bearish label - a count isn't an opinion.
+  const pulse = marketBreadth(MARKET_MOVERS_WATCHLIST, etfTickers, marketIndexFindings);
+  const pulseEl = $("marketPulse");
+  if (pulseEl) {
+    if (!pulse) {
+      pulseEl.textContent = "";
+    } else {
+      const tone = pulse.up > pulse.down ? "var(--ok)" : pulse.down > pulse.up ? "var(--err)" : "var(--text)";
+      pulseEl.style.color = tone;
+      const avgText = pulse.avgEtfChangePct != null ? `, tracked indexes avg ${signedPct(pulse.avgEtfChangePct)}` : "";
+      pulseEl.textContent = `${pulse.up} of ${pulse.total} tracked large-caps up today${avgText}`;
+    }
+  }
   $("marketOverviewList").innerHTML = indexes.map((idx) => {
     const etfTicker = MARKET_INDEX_ETF_PROXIES[idx.label];
     const live = etfTicker ? etfByTicker.get(etfTicker) : null;

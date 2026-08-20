@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -265,6 +265,15 @@ async function init() {
   await autoLogDueIncome();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
+  // The two findings loaders above already pulled a headline batch, so the
+  // slower headline cadence starts from here rather than firing again on
+  // the very first tick.
+  lastHeadlineRefresh = Date.now();
+  startLiveRefresh();
+  // Not awaited: the live overlay is a best-effort enhancement on top of
+  // data that's already rendered, so app startup shouldn't wait on a
+  // round-trip to /api/quotes to finish.
+  refreshLivePrices();
 }
 
 // Every user gets exactly one Cash account + linked Cash asset, auto-created
@@ -362,9 +371,81 @@ function renderPricesAsOf(elId, foundAt) {
   const el = $(elId);
   if (!el) return;
   if (!foundAt) { el.textContent = ""; return; }
+  const { open } = marketStatus();
   const minutesAgo = (Date.now() - new Date(foundAt).getTime()) / 60000;
-  el.textContent = `Prices as of ${timeAgo(foundAt)}`;
-  el.style.color = minutesAgo > PRICE_REFRESH_WARN_MINUTES ? "var(--warn)" : "";
+  // Outside the regular session a price many hours old is the correct,
+  // current fact - the last close really is the latest price there is.
+  // Warn-coloring it would flag ordinary overnight/weekend behavior as a
+  // problem, which is exactly what made this line look broken every
+  // evening. Only the CLOSED case is stated out loud; see marketStatus()'s
+  // own comment for why a wrong "closed" would be worse than silence.
+  el.textContent = open
+    ? `Prices as of ${timeAgo(foundAt)}`
+    : `Market closed - prices as of ${timeAgo(foundAt)}`;
+  el.style.color = open && minutesAgo > PRICE_REFRESH_WARN_MINUTES ? "var(--warn)" : "";
+}
+
+// Only the columns something on this page actually reads, never select("*").
+// source_query/raw_snippet/confidence/expires_at/id are never touched
+// client-side for these two tables, and `headlines` is fetched separately
+// by fetchLatestHeadlines() below rather than inline - see its comment for
+// why pulling it with the price rows costs far more than it looks.
+const PRICE_FINDING_COLS = "symbol,price,found_at,explanation,extracted_by";
+// renderAssetPriceFindings() additionally shows a source link and currency.
+const ASSET_PRICE_FINDING_COLS = `${PRICE_FINDING_COLS},url,currency`;
+
+// A findings row is uniquely identified by symbol + found_at (each agent run
+// writes one row per symbol), so dedup needs no id column of its own -
+// which is the point, since id is a 36-byte uuid on every one of ~4,600 rows.
+const findingKey = (r) => `${r.symbol}|${r.found_at}`;
+// Matches the tables' own `expires_at` default (found_at + 2 days) so a
+// session left open for days keeps the in-memory array bounded the same way
+// the server-side query already bounds the fetch.
+const FINDINGS_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
+
+// Merges any number of findings lists into one deduped, still-fresh array.
+// A row carrying `headlines` wins over the same row without it, since the
+// price query deliberately omits that column.
+function mergeFindings(...lists) {
+  const cutoff = new Date(Date.now() - FINDINGS_RETENTION_MS).toISOString();
+  const byKey = new Map();
+  for (const list of lists) {
+    for (const row of list) {
+      if (row.found_at && row.found_at < cutoff) continue;
+      const existing = byKey.get(findingKey(row));
+      if (!existing || (row.headlines && !existing.headlines)) byKey.set(findingKey(row), row);
+    }
+  }
+  return [...byKey.values()];
+}
+
+// `since` is what makes refreshLivePrices() cheap: a tick asks only for
+// rows newer than the newest one already in memory (~25 rows) instead of
+// re-running the full 2-day query. Narrowing by found_at on the INITIAL
+// load would have been a no-op - expires_at (found_at + 2 days) already
+// bounds that history, and the row count comes from the FAST_ONLY run
+// writing all ~24 symbols every 15 minutes, not from a long tail.
+async function fetchFindings(table, cols, since = null) {
+  let q = sb.from(table).select(cols).gt("expires_at", new Date().toISOString());
+  if (since) q = q.gt("found_at", since);
+  const { data } = await q;
+  return data || [];
+}
+
+// tools/price-agent.js writes headlines on roughly 1 of every 4 FAST_ONLY
+// runs (shouldFetchNewsThisRun()) for every symbol at once, so a 2-day
+// window holds ~950 near-duplicate copies of a blob - over half the whole
+// payload - when latestHeadlinesForSymbol() only ever displays the newest
+// per symbol. Taking the most recent few batches instead gets an identical
+// render for a fraction of the bytes.
+const HEADLINE_ROW_LIMIT = 60;
+async function fetchLatestHeadlines(table, cols) {
+  const { data } = await sb.from(table).select(`${cols},headlines`)
+    .not("headlines", "is", null)
+    .gt("expires_at", new Date().toISOString())
+    .order("found_at", { ascending: false })
+    .limit(HEADLINE_ROW_LIMIT);
+  return data || [];
 }
 
 // Dormant until PRICE_FINDINGS_ENABLED is flipped on (config.js) and
@@ -375,8 +456,11 @@ function renderPricesAsOf(elId, foundAt) {
 // renderRecurringCandidates() already uses for its own two parallel loads.
 async function loadAssetPriceFindings() {
   if (!PRICE_FINDINGS_ENABLED) { assetPriceFindings = []; renderAssetPriceFindings(); return; }
-  const { data } = await sb.from("asset_price_findings").select("*").gt("expires_at", new Date().toISOString());
-  assetPriceFindings = data || [];
+  const [prices, headlines] = await Promise.all([
+    fetchFindings("asset_price_findings", ASSET_PRICE_FINDING_COLS),
+    fetchLatestHeadlines("asset_price_findings", ASSET_PRICE_FINDING_COLS),
+  ]);
+  assetPriceFindings = mergeFindings(prices, headlines);
   renderAssetPriceFindings();
 }
 
@@ -386,8 +470,11 @@ async function loadAssetPriceFindings() {
 // pipeline just writing to a different table for a fixed index list).
 async function loadMarketIndexFindings() {
   if (!PRICE_FINDINGS_ENABLED) { marketIndexFindings = []; renderMarketOverview(); return; }
-  const { data } = await sb.from("market_index_findings").select("*").gt("expires_at", new Date().toISOString());
-  marketIndexFindings = data || [];
+  const [prices, headlines] = await Promise.all([
+    fetchFindings("market_index_findings", PRICE_FINDING_COLS),
+    fetchLatestHeadlines("market_index_findings", PRICE_FINDING_COLS),
+  ]);
+  marketIndexFindings = mergeFindings(prices, headlines);
   renderMarketOverview();
 }
 
@@ -399,6 +486,169 @@ async function loadMarketNewsFindings() {
   marketNewsFindings = data || [];
   renderMarketOverview();
 }
+
+// ---- LIVE PRICE REFRESH ----------------------------------------------------
+// tools/price-agent.js's FAST_ONLY run writes real Finnhub prices every 15
+// minutes, but init() read those tables exactly ONCE - so an installed
+// home-screen icon left open (which is the normal case here, not an edge
+// case: an iOS icon keeps its own storage container and a password session
+// stays signed in for days) kept showing whatever it fetched at the last
+// cold start. The data was never the stale part; the page was.
+//
+// Cheap by construction rather than by luck: a tick asks only for rows
+// newer than the newest already in memory (~25 rows, a few kB), so this
+// never re-runs the full initial 2-day query.
+const LIVE_REFRESH_MS = 60000;
+// Headlines land on only ~1 of every 4 agent runs and are much heavier per
+// row than a price, so they get their own slower cadence instead of riding
+// every tick.
+const HEADLINE_REFRESH_MS = 15 * 60 * 1000;
+let liveRefreshTimer = null;
+let lastHeadlineRefresh = 0;
+
+const newestFoundAt = (rows) =>
+  rows.reduce((max, r) => (r.found_at && (!max || r.found_at > max) ? r.found_at : max), null);
+
+function renderPriceDependentCards() {
+  renderAssetPriceFindings();
+  renderMarketOverview();
+  renderInvestments();
+}
+
+// ---- LIVE QUOTE OVERLAY ----------------------------------------------------
+// The findings tables are only ever as fresh as the server machine's
+// 15-minute FAST_ONLY run, which is a real dependency on one Mac being
+// awake. This asks worker.js's /api/quotes for the same symbols directly,
+// so the numbers on screen are current to the minute and keep working even
+// when that machine is off. The findings rows stay the fallback, and stay
+// the only source of what a live quote doesn't carry - the weekly Gemini
+// explanation and the real Finnhub headlines.
+//
+// Written into the SAME row shape the findings tables use, so every
+// existing render path picks a quote up as "today's latest finding" for
+// that symbol with no changes of its own. Tagged `live` so each tick
+// REPLACES the previous overlay rather than appending to it: the findings
+// tables are insert-only history on purpose, but this is a moving snapshot
+// of right now, not a series worth keeping. Nothing here is ever written
+// back to the database.
+const ownedPriceSymbols = () => [...new Set(
+  assets.filter((a) => a.price_symbol).map((a) => a.price_symbol.trim().toUpperCase())
+)];
+const indexPriceSymbols = () => [...new Set(
+  [...MARKET_MOVERS_WATCHLIST, ...Object.values(MARKET_INDEX_ETF_PROXIES)]
+)];
+
+async function fetchLiveQuotes(symbols) {
+  if (!symbols.length) return null;
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return null;
+  try {
+    const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols.join(","))}`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.quotes || null;
+  } catch {
+    return null;
+  }
+}
+
+// Two rows per symbol, not one. The live price is today's; Finnhub's own
+// `previousClose` rides along on the same call and becomes a synthetic
+// PRIOR-day row, which is what lets dailyFindingsForSymbol() derive an
+// exact day change with no changes to any pure function. Without it the
+// prior day would be whatever row the agent last happened to write, so a
+// day the server machine was off would silently be presented as "today's"
+// change against a two-day-old price.
+//
+// Stamped at the very end of the previous UTC day so it reliably wins that
+// day's bucket (dailyFindingsForSymbol keeps each day's LATEST row, and a
+// real agent row from late yesterday would otherwise outrank it).
+function liveQuoteRows(quotes, symbols, stamp) {
+  const prev = new Date(Date.parse(stamp) - 24 * 60 * 60 * 1000);
+  prev.setUTCHours(23, 59, 59, 999);
+  const prevStamp = prev.toISOString();
+  const rows = [];
+  for (const symbol of symbols) {
+    const quote = quotes[symbol];
+    if (!quote || quote.price == null) continue;
+    rows.push({ symbol, price: quote.price, found_at: stamp, extracted_by: "finnhub", live: true });
+    if (quote.previousClose != null) {
+      rows.push({ symbol, price: quote.previousClose, found_at: prevStamp, extracted_by: "finnhub", live: true });
+    }
+  }
+  return rows;
+}
+
+function applyLiveQuotes(quotes) {
+  const stamp = new Date().toISOString();
+  assetPriceFindings = mergeFindings(
+    assetPriceFindings.filter((r) => !r.live),
+    liveQuoteRows(quotes, ownedPriceSymbols(), stamp)
+  );
+  marketIndexFindings = mergeFindings(
+    marketIndexFindings.filter((r) => !r.live),
+    liveQuoteRows(quotes, indexPriceSymbols(), stamp)
+  );
+}
+
+// Best-effort throughout: a failed refresh leaves the last-known prices on
+// screen rather than blanking a card, the same non-fatal shape the loaders
+// above and retrieveRelevantHistory() already have.
+async function refreshLivePrices() {
+  if (!PRICE_FINDINGS_ENABLED || !userId || document.hidden) return;
+  // Market shut: no fetch at all, since a price genuinely cannot change
+  // between the close and the next open - a tick could only ever re-read
+  // the same last-close rows. Still re-renders, so the freshness lines
+  // pick up "Market closed" at the bell instead of only at the next
+  // navigation, and keep their "X ago" reading current.
+  if (!marketStatus().open) { renderPriceDependentCards(); return; }
+  try {
+    const wantHeadlines = Date.now() - lastHeadlineRefresh > HEADLINE_REFRESH_MS;
+    // newestFoundAt() is read BEFORE the overlay is reapplied below, and the
+    // overlay's own rows are excluded from it - a synthetic row stamped
+    // "now" would otherwise become the incremental cursor and permanently
+    // hide every real agent row written after it.
+    const assetSince = newestFoundAt(assetPriceFindings.filter((r) => !r.live));
+    const indexSince = newestFoundAt(marketIndexFindings.filter((r) => !r.live));
+    const [assetRows, indexRows, assetHeads, indexHeads, quotes] = await Promise.all([
+      fetchFindings("asset_price_findings", ASSET_PRICE_FINDING_COLS, assetSince),
+      fetchFindings("market_index_findings", PRICE_FINDING_COLS, indexSince),
+      wantHeadlines ? fetchLatestHeadlines("asset_price_findings", ASSET_PRICE_FINDING_COLS) : [],
+      wantHeadlines ? fetchLatestHeadlines("market_index_findings", PRICE_FINDING_COLS) : [],
+      fetchLiveQuotes([...new Set([...ownedPriceSymbols(), ...indexPriceSymbols()])]),
+    ]);
+    if (wantHeadlines) lastHeadlineRefresh = Date.now();
+    assetPriceFindings = mergeFindings(assetPriceFindings, assetRows, assetHeads);
+    marketIndexFindings = mergeFindings(marketIndexFindings, indexRows, indexHeads);
+    // Reapplied after the agent rows land, so the overlay always sits on
+    // top of the freshest stored data rather than being merged underneath.
+    if (quotes) applyLiveQuotes(quotes);
+    renderPriceDependentCards();
+  } catch {
+    // Leave the existing prices and their honest "as of" reading in place.
+  }
+}
+
+// Deliberately NOT scoped to the Investments view: the Log page's own
+// "Live asset prices" card reads the same rows, and an incremental tick is
+// cheap enough that gating it per-view would add branching for no real
+// saving. Restarted rather than stacked, since renderAuth() can run init()
+// again on a later auth-state change.
+function startLiveRefresh() {
+  if (liveRefreshTimer) clearInterval(liveRefreshTimer);
+  liveRefreshTimer = setInterval(refreshLivePrices, LIVE_REFRESH_MS);
+}
+
+// A background tab has its timers throttled hard, so returning to the app
+// after hours away needs its own immediate catch-up - this is the path that
+// actually matters for an installed icon, where "reopening" never reloads
+// the page.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshLivePrices();
+});
+
 // A blank "None" first option, not just the real categories - so a select
 // that's never been explicitly set (fCategory on a fresh Quick Add) starts
 // genuinely empty rather than silently defaulting to CATEGORIES[0] ("Food")

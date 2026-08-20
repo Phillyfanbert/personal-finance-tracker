@@ -423,6 +423,53 @@ async function sbUpsert(table, row, conflictColumn) {
   if (!res.ok) throw new Error(`Supabase UPSERT ${table} -> HTTP ${res.status}: ${await res.text()}`);
 }
 
+async function sbDeleteExpired(table) {
+  const now = new Date().toISOString();
+  if (DRY_RUN) {
+    console.log(`[dry-run] would delete rows from ${table} where expires_at < ${now}`);
+    return null;
+  }
+  const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}?expires_at=lt.${now}`, {
+    method: "DELETE",
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      Prefer: "return=minimal,count=exact",
+    },
+  });
+  if (!res.ok) throw new Error(`Supabase DELETE ${table} -> HTTP ${res.status}: ${await res.text()}`);
+  // PostgREST reports the affected count in Content-Range ("*/12") when
+  // asked for count=exact - purely for the log line, so a missing or
+  // unparseable header is not an error.
+  const total = (res.headers.get("content-range") || "").split("/")[1];
+  return Number.isFinite(Number(total)) ? Number(total) : null;
+}
+
+// These three tables are insert-only by design (a real historical price
+// series is what the Investments tab's day-change and trend math read), but
+// nothing ever removed a row once its expires_at passed - so they grew
+// without bound while every reader already filters on expires_at, meaning
+// the extra rows were pure dead weight. At the FAST_ONLY cadence that's
+// roughly 2,300 rows/day into market_index_findings alone, against a free
+// tier that has a real ceiling.
+//
+// Best-effort and deliberately last: a purge failure must never crash the
+// run or mask findings that were already written successfully. Runs on
+// every run rather than on its own schedule - a DELETE bounded by
+// expires_at is cheap, and only ever touches rows no client would fetch.
+const PURGEABLE_TABLES = ["asset_price_findings", "market_index_findings", "market_news_findings"];
+async function purgeExpiredFindings() {
+  for (const table of PURGEABLE_TABLES) {
+    try {
+      const deleted = await sbDeleteExpired(table);
+      if (deleted === null) continue;
+      console.log(`Purged ${deleted} expired row(s) from ${table}.`);
+    } catch (err) {
+      console.warn(`Purge of ${table} failed (non-fatal): ${err.message}`);
+    }
+  }
+}
+
 // Best-effort - a failure to write run status must never crash the run or
 // mask whatever real findings were already written. See queryAttempts/
 // queryFailures above (tracked inside searchAndExtract()) for what this
@@ -1138,6 +1185,7 @@ async function main() {
     }
   }
 
+  await purgeExpiredFindings();
   await writeRunStatus();
 }
 

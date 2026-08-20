@@ -66,7 +66,7 @@ export function investmentHoldings(assets, priceFindings) {
       return {
         asset: a, symbol, quantity, latestPrice, currentValue, costBasis,
         gainLoss, gainLossPct, priorPrice, dayChange, dayChangePct,
-        explanation: latest?.explanation || null,
+        explanation: latestExplanationForSymbol(priceFindings, symbol),
         headlines: latestHeadlinesForSymbol(priceFindings, symbol),
       };
     });
@@ -320,7 +320,7 @@ export function marketIndexSummary(indexes, findings) {
 
     return {
       label, price, change, changePct,
-      explanation: latest?.explanation || null,
+      explanation: latestExplanationForSymbol(findings, label.toUpperCase()),
       headlines: latestHeadlinesForSymbol(findings, label.toUpperCase()),
     };
   });
@@ -414,6 +414,28 @@ export function latestFinnhubRefresh(findings) {
  * @param {object[]} findings rows from asset_price_findings or market_index_findings
  * @param {string} symbol already-uppercased ticker
  */
+/**
+ * Most recent non-null explanation for one symbol, or null if there isn't
+ * one. Same reason latestHeadlinesForSymbol below doesn't reuse
+ * dailyFindingsForSymbol's "that day's latest row" pick: an explanation is
+ * written only by the slow weekly Gemini pass, while price rows land every
+ * 15 minutes (and every minute once app.js's live-quote overlay is
+ * running), so the single most recent row for a symbol essentially never
+ * carries one. Reading `latest.explanation` directly meant a perfectly
+ * good explanation was blanked by the next price-only row - verified
+ * against production, where 0 of 24 symbols had an explanation on their
+ * latest row while one genuinely had a current explanation in the window.
+ * @param {object[]} findings rows from asset_price_findings or market_index_findings
+ * @param {string} symbol already-uppercased ticker
+ */
+export function latestExplanationForSymbol(findings, symbol) {
+  const withExplanation = findings.filter(
+    (f) => (f.symbol || "").trim().toUpperCase() === symbol && f.explanation && f.found_at
+  );
+  if (!withExplanation.length) return null;
+  return withExplanation.reduce((latest, f) => (new Date(f.found_at) > new Date(latest.found_at) ? f : latest)).explanation;
+}
+
 export function latestHeadlinesForSymbol(findings, symbol) {
   const withHeadlines = findings.filter(
     (f) => (f.symbol || "").trim().toUpperCase() === symbol && Array.isArray(f.headlines) && f.headlines.length && f.found_at
@@ -437,4 +459,41 @@ export function latestNewsDigest(findings) {
     : [];
   if (!headlines.length || !latest.sentiment) return null;
   return { headlines, sentiment: latest.sentiment, sentimentReason: latest.sentiment_reason || null, foundAt: latest.found_at };
+}
+
+/**
+ * Whether the US equity market is in its regular session right now
+ * (Mon-Fri, 9:30-16:00 America/New_York). Uses Intl with an explicit
+ * timeZone rather than a fixed UTC offset so the DST shift is handled
+ * without a lookup table of its own.
+ *
+ * Deliberately carries NO market-holiday list. One hardcoded here would
+ * go stale and then state something false on a day it got wrong - the
+ * same honesty caveat tickers.js/BANK_NAMES already carry, and the
+ * reason this app won't fabricate a credit score or a sentiment label
+ * it can't ground. A holiday instead surfaces the truthful way: this
+ * reports open, no new price ever arrives, and app.js's existing
+ * PRICE_REFRESH_WARN_MINUTES coloring flags the data as stale on its
+ * own. That's why the caller only ever states the CLOSED case out loud
+ * ("Market closed - prices as of X") and says nothing while open - a
+ * wrong "closed" would be a false claim, a missing one is just silence.
+ * @param {Date} now
+ */
+export function marketStatus(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  const weekday = get("weekday");
+  const minutesEt = Number(get("hour")) * 60 + Number(get("minute"));
+  const isWeekday = weekday !== "Sat" && weekday !== "Sun";
+  return {
+    open: isWeekday && minutesEt >= 9 * 60 + 30 && minutesEt < 16 * 60,
+    weekday,
+    minutesEt,
+  };
 }

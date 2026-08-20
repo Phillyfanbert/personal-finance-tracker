@@ -980,6 +980,31 @@
            there is for the user's own assets. The movers subsection hides
            itself independently (there may be indexes but no rankable
            movers yet, or vice versa). -->
+      <!-- Daily recap: the day's biggest movers, each with a real linked
+           headline, plus breadth and the index proxies' moves. Stage 1 is
+           deliberately ZERO-LLM - every number comes from daily_prices and
+           every headline from Finnhub's free company-news output already
+           stored on the findings tables, so unlike the (still empty)
+           market news digest below it, nothing here can be rate-limited
+           out of existence. Written once per trading day by
+           tools/price-agent.js's RECAP_ONLY mode into daily_recaps.
+           A headline is presented as the day's COVERAGE, never as the
+           cause of the move - the app doesn't get to assert causation it
+           can't establish, the same line every other card here holds.
+           Hidden entirely until a real recap exists, same convention as
+           Market overview below. -->
+      <div class="card hidden" id="dailyRecapCard">
+        <strong>Daily recap</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 2px" id="dailyRecapDate"></p>
+        <p class="muted" style="font-size:12px;margin:2px 0 4px">The biggest moves among tracked large-caps, each with a real headline from that day's coverage. A headline is what was reported that day, not necessarily why the price moved.</p>
+        <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="dailyRecapBreadth"></p>
+        <p class="muted" id="dailyRecapFreshness" style="font-size:11px;margin:0 0 2px"></p>
+        <p id="dailyRecapWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
+        <p style="font-size:13px;margin:6px 0 8px" id="dailyRecapSummary"></p>
+        <div id="dailyRecapMovers"></div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0" id="dailyRecapIndexes"></p>
+      </div>
+
       <div class="card hidden" id="marketOverviewCard">
         <strong>Market overview</strong>
         <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
@@ -1666,22 +1691,33 @@
       </div>
       <div id="helpContentInvest" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 336" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 680 390" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="39" fill="var(--text)" font-size="14">Market overview + top movers</text>
+            <text x="40" y="39" fill="var(--text)" font-size="14">Daily recap (biggest movers + headlines)</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="93" fill="var(--text)" font-size="14">Daily health check + totals</text>
+            <text x="40" y="93" fill="var(--text)" font-size="14">Market overview + top movers</text>
             <rect x="10" y="118" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="147" fill="var(--text)" font-size="14">Value over time</text>
+            <text x="40" y="147" fill="var(--text)" font-size="14">Daily health check + totals</text>
             <rect x="10" y="172" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="201" fill="var(--text)" font-size="14">Holdings</text>
+            <text x="40" y="201" fill="var(--text)" font-size="14">Value over time</text>
             <rect x="10" y="226" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="255" fill="var(--text)" font-size="14">Contribution limits (only if you have a tracked account type)</text>
+            <text x="40" y="255" fill="var(--text)" font-size="14">Holdings</text>
             <rect x="10" y="280" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="309" fill="var(--text)" font-size="14">Target allocation</text>
+            <text x="40" y="309" fill="var(--text)" font-size="14">Contribution limits (only if you have a tracked account type)</text>
+            <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="363" fill="var(--text)" font-size="14">Target allocation</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. "Market overview" only appears once at least one index/mover/headline has actually been found.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. "Daily recap" and "Market overview" each only appear once there is real data for them - a finished trading day for the first, at least one index/mover/headline for the second.</p>
+
+        <div class="help-topic">
+          <h3>Daily recap</h3>
+          <p>A once-a-day look back at the session that just finished: the five biggest moves among the same fixed watchlist of 20 large-cap stocks, each with its closing price and percentage change, plus how many of the twenty finished up and where the four index-tracking ETFs ended. Written once per trading day after the close, so it describes a completed day rather than a moving number.</p>
+          <p>Where a real, recent headline about that company exists, it appears under the symbol with its source, and you can tap through to read it. <strong>A headline is what was being reported about that company around that day, not a statement of why the price moved.</strong> The app deliberately does not claim to know the cause of a move - it shows you the real number and the real coverage and leaves the connection to you.</p>
+          <p>A mover with no headline shows nothing rather than something unrelated. That is on purpose: the news source often returns generic market round-ups that merely mention a ticker ("which stocks are making waves today"), and putting one of those under a specific stock's move would imply a link that isn't there. Only a headline that actually names the company is used, and the same article is never shown under two different stocks.</p>
+          <p>The numbers and headlines on this card need no AI and no live search of any kind - every figure comes from prices already recorded and every headline from news already fetched. That means they can't be affected by a daily usage limit the way the AI-written pieces elsewhere on this page can, so they should be there every trading day. A "Last updated" line shows when the recap was last built, with a warning if that run had a problem.</p>
+          <p>One short paragraph, clearly labelled "AI-written summary", may appear above the movers. That part <em>is</em> generated - it reads the same numbers and headlines shown below it and writes them up in a sentence or two. It is deliberately the only written element here, and it is an extra rather than the point: if the daily AI limit is used up, or the model writes something that strays into recommending or predicting, the summary is dropped and the rest of the card appears exactly as normal. It never recommends buying or selling and never predicts what a price will do next, the same boundary the whole app holds.</p>
+        </div>
 
         <div class="help-topic">
           <h3>Market overview</h3>

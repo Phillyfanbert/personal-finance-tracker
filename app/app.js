@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -138,6 +138,7 @@ let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-
 let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
 let marketIndexFindings = []; // shared, machine-found market index levels (Investments tab's Market overview)
 let marketNewsFindings = []; // shared, machine-found daily market news digest + sentiment (market_news_findings)
+let dailyRecaps = []; // stored zero-LLM daily market recaps (daily_recaps, 55_daily_recaps.sql)
 let agentRunStatus = {}; // { "deal-agent": {...}, "price-agent": {...} } - last-run freshness/health (agent_run_status)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
 let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
@@ -254,7 +255,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
   // Both assets and assetPriceFindings are guaranteed loaded by the
   // Promise.all above (no race) - this is what keeps Net Worth/the Assets
   // card/the net-worth trend chart in sync with live prices on every app
@@ -485,6 +486,22 @@ async function loadMarketNewsFindings() {
   const { data } = await sb.from("market_news_findings").select("*").gt("expires_at", new Date().toISOString());
   marketNewsFindings = data || [];
   renderMarketOverview();
+}
+
+// The stored daily recap (daily_recaps). Unlike the findings loaders
+// above this is NOT gated by PRICE_FINDINGS_ENABLED: that flag gates the
+// live-pricing pipeline, and a recap is a different thing - it is built
+// entirely from data already in the database, makes no live call of its
+// own, and stays readable even if live pricing were switched off. Only a
+// handful of rows, newest first.
+const RECAP_HISTORY_DAYS = 30;
+async function loadDailyRecaps() {
+  const { data } = await sb.from("daily_recaps")
+    .select("trade_date,movers,breadth,index_moves,summary,generated_by")
+    .order("trade_date", { ascending: false })
+    .limit(RECAP_HISTORY_DAYS);
+  dailyRecaps = data || [];
+  renderDailyRecap();
 }
 
 // ---- LIVE PRICE REFRESH ----------------------------------------------------
@@ -3824,6 +3841,79 @@ function renderInvestmentHealth(totals, allocation, limitUsage, holdings) {
 // bearish to the same red "warn."
 const SENTIMENT_TONE = { bullish: "ok", neutral: "neutral", bearish: "warn" };
 const SENTIMENT_LABEL = { bullish: "Bullish", neutral: "Neutral", bearish: "Bearish" };
+
+// A trade_date is a plain "YYYY-MM-DD" with no timezone in it, so build
+// the Date from its parts - `new Date("2026-08-20")` parses as UTC and
+// renders as the previous day for anyone west of Greenwich.
+const recapDateLabel = (iso) => {
+  const [y, m, d] = (iso || "").split("-").map(Number);
+  if (!y || !m || !d) return "";
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+};
+
+// Stage 1 recap: real numbers and real linked headlines, no generated text
+// anywhere on this card. Deliberately no bullish/bearish label and no
+// causal claim - a headline is shown as that day's COVERAGE of the symbol,
+// which is what it actually is. Asserting it as the reason the price moved
+// would be stating a causation this app can't establish, the same line
+// marketBreadth()'s plain count and the credit-utilization line already
+// hold.
+function renderDailyRecap() {
+  const card = $("dailyRecapCard");
+  if (!card) return;
+  const recap = latestRecap(dailyRecaps);
+  // No manual-entry fallback exists for a market recap, so an empty card
+  // would be clutter rather than a fact worth stating - hidden entirely
+  // until a real one exists, same convention as Market overview.
+  if (!recap) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  renderAgentFreshness("daily-recap", "dailyRecapFreshness", "dailyRecapWarning");
+
+  $("dailyRecapDate").textContent = `Market close, ${recapDateLabel(recap.tradeDate)}`;
+
+  const breadth = recap.breadth;
+  const breadthEl = $("dailyRecapBreadth");
+  if (breadth) {
+    breadthEl.textContent = `${breadth.up} of ${breadth.total} tracked large-caps finished up`;
+    breadthEl.style.color = breadth.up > breadth.down ? "var(--ok)"
+      : breadth.down > breadth.up ? "var(--err)" : "var(--text)";
+  } else {
+    breadthEl.textContent = "";
+  }
+
+  // Stage 2 (a single batched Gemini synthesis) is the only thing that
+  // ever fills this - stays hidden on a rollup-only recap rather than
+  // showing a placeholder for something that may never be generated.
+  // Explicitly labelled as written rather than measured: every other line
+  // on this card is a real number or a real link, and the reader should
+  // never have to guess which is which. Same distinction marketBreadth()
+  // draws when it calls itself "a plain count, not an AI's read."
+  // esc() because this is model output, the exact provenance that rule
+  // exists for.
+  const summaryEl = $("dailyRecapSummary");
+  summaryEl.innerHTML = recap.summary
+    ? `<span class="muted" style="font-size:11px">AI-written summary of the numbers and coverage above</span><br>${esc(recap.summary)}`
+    : "";
+  summaryEl.classList.toggle("hidden", !recap.summary);
+
+  $("dailyRecapMovers").innerHTML = recap.movers.map((m) => `
+    <div class="exp" style="cursor:default">
+      <div>
+        <div>${esc(m.symbol)}</div>
+        ${m.headline
+          ? `<div class="meta"><a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headline.title)}</a>${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>`
+          : `<div class="meta muted">No headline found for this move</div>`}
+      </div>
+      <span class="amt" style="text-align:right">
+        ${fmt(m.close)}
+        <div style="font-size:12px;color:${gainColor(m.change_pct)}">${signedPct(m.change_pct)}</div>
+      </span>
+    </div>`).join("");
+
+  $("dailyRecapIndexes").textContent = recap.indexMoves.length
+    ? "Index proxies: " + recap.indexMoves.map((i) => `${i.symbol} ${signedPct(i.change_pct)}`).join("  ·  ")
+    : "";
+}
 
 function renderMarketOverview() {
   const card = $("marketOverviewCard");

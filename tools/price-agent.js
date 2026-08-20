@@ -215,6 +215,14 @@ const DRY_RUN = !!process.env.DRY_RUN;
 // top-level (not inside main()) since writeRunStatus() below also needs
 // to branch on it for which agent_run_status row to write to.
 const FAST_ONLY = !!process.env.FAST_ONLY;
+// Sibling mode to FAST_ONLY, same reasoning for living at top level.
+// RECAP_ONLY=1 builds the stored daily recap (55_daily_recaps.sql) and
+// does nothing else - no Finnhub quotes, no Tavily, no Gemini, not one
+// outbound call. It reads back what the other modes already wrote
+// (daily_prices + the headlines on the findings tables) and rolls it into
+// one row per trading day. Its own schedule (weekdays after the close),
+// its own agent_run_status row.
+const RECAP_ONLY = !!process.env.RECAP_ONLY;
 
 // Tavily - real web search, confirmed free tier (1,000 credits/month, no
 // credit card to sign up) as of this writing. https://tavily.com
@@ -473,6 +481,275 @@ async function writeDailyCandles(results) {
   }
 }
 
+const RECAP_MOVER_COUNT = 5;
+// Headlines land on roughly one run in four for ~20 symbols at a time, so
+// this covers several batches - enough that every symbol resolves even
+// when the most recent batch was partial.
+const RECAP_HEADLINE_SCAN_LIMIT = 150;
+const r2 = (n) => (Number.isFinite(Number(n)) ? Math.round(Number(n) * 100) / 100 : null);
+
+// Newest headlines per symbol across both findings tables. Deliberately
+// scans for the newest row that actually CARRIES headlines rather than
+// taking each symbol's most recent row - the same distinction
+// app/investments.js's latestHeadlinesForSymbol() makes, and for the same
+// reason: a price-only row from five minutes ago would otherwise hide a
+// perfectly good set from an hour ago.
+async function latestHeadlinesBySymbol() {
+  const bySymbol = new Map();
+  for (const table of ["market_index_findings", "asset_price_findings"]) {
+    const rows = await sbGet(
+      `${table}?select=symbol,headlines,found_at&headlines=not.is.null&order=found_at.desc&limit=${RECAP_HEADLINE_SCAN_LIMIT}`
+    );
+    for (const row of rows) {
+      if (!Array.isArray(row.headlines) || !row.headlines.length) continue;
+      const key = (row.symbol || "").trim().toUpperCase();
+      const existing = bySymbol.get(key);
+      if (!existing || row.found_at > existing.found_at) bySymbol.set(key, row);
+    }
+  }
+  return bySymbol;
+}
+
+const MAX_RECAP_SUMMARY_CHARS = 500;
+
+// Checked at the VALIDATION layer, not just forbidden in the prompt below.
+// Asking a model not to give advice is not the same as it obeying, and
+// "never picks tickers or amounts to buy or sell" is a hard product
+// boundary here, not a preference - so a summary that slips into
+// recommending or forecasting is discarded and the card falls back to its
+// complete zero-LLM form. Rejecting an occasional good summary is the
+// cheap direction to err in.
+const RECAP_ADVICE_PHRASES = [
+  "should buy", "should sell", "should consider", "recommend", "we advise",
+  "buy the dip", "worth buying", "worth selling", "price target",
+  "will rise", "will fall", "will likely", "poised to", "set to climb",
+  "investors should", "you should", "expect further", "expect the",
+];
+
+// One batched call covering the whole day, not one per mover - that
+// distinction is the entire reason stage 2 fits at all. Per-symbol
+// explanations wanted 20+ calls against a 20-request DAILY quota shared
+// with deal-agent; this asks for 1, on weekdays only, which even on
+// Wednesday (price-agent's own weekly ~12) leaves real headroom.
+function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves) {
+  const moverLines = movers.map((m) => {
+    const headline = m.headline
+      ? `headline: "${m.headline.title}" (${m.headline.source || "unknown source"})`
+      : "no headline found";
+    return `- ${m.symbol}: closed ${m.close}, ${m.change_pct > 0 ? "+" : ""}${m.change_pct}% on the day; ${headline}`;
+  });
+  const indexLine = indexMoves.map((i) => `${i.symbol} ${i.change_pct > 0 ? "+" : ""}${i.change_pct}%`).join(", ");
+  return [
+    "You write a short, factual recap of one US trading day, based ONLY on",
+    "the real data listed below. Do not use your own knowledge of these",
+    "companies or of what happened on any date - if it is not listed here,",
+    "you do not know it.",
+    'Respond with ONLY a JSON object, no prose, no code fences, in this',
+    'exact shape: { "summary": string|null }',
+    "",
+    `Trading day: ${tradeDate}`,
+    breadth ? `Breadth: ${breadth.up} of ${breadth.total} tracked large-caps finished up, ${breadth.down} finished down.` : "",
+    indexLine ? `Index-tracking ETFs: ${indexLine}` : "",
+    "Biggest movers:",
+    ...moverLines,
+    "",
+    "Rules for summary:",
+    "- 2 to 3 sentences, plain English, past tense.",
+    "- Describe what happened and what was being REPORTED. Never assert that",
+    "  a headline caused a price move - say coverage focused on it, or that",
+    "  the move came alongside that reporting.",
+    "- Never give advice, never recommend buying or selling, never predict",
+    "  what any price will do next, never give a price target.",
+    "- Only mention a symbol that appears above. Never invent a reason for a",
+    "  mover listed as having no headline - it is fine to say the move came",
+    "  without notable coverage.",
+    "- If the data above is too thin to say anything meaningful, set summary",
+    "  to null rather than padding it out.",
+  ].filter(Boolean).join("\n");
+}
+
+function validateRecapSummary(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const summary = typeof raw.summary === "string" ? raw.summary.trim() : "";
+  if (!summary) return null;
+  if (summary.length > MAX_RECAP_SUMMARY_CHARS) {
+    console.warn(`Discarding recap summary - ${summary.length} chars, over the ${MAX_RECAP_SUMMARY_CHARS} cap.`);
+    return null;
+  }
+  const lower = summary.toLowerCase();
+  const violation = RECAP_ADVICE_PHRASES.find((phrase) => lower.includes(phrase));
+  if (violation) {
+    console.warn(`Discarding recap summary - contains advice/forecast language ("${violation}").`);
+    return null;
+  }
+  return summary;
+}
+
+// Best-effort by contract: any failure here (quota exhausted, timeout,
+// malformed JSON, a summary that broke the advice rule) returns null and
+// the recap is still written in full. A missing summary is the design
+// working as intended, NOT a degraded run - the same reasoning that keeps
+// "no trusted-domain result" out of queryFailures, so this deliberately
+// does not touch those counters and won't turn the card's status amber.
+async function findRecapSummary(tradeDate, movers, breadth, indexMoves) {
+  try {
+    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves));
+    const summary = validateRecapSummary(parseJsonLoose(text));
+    if (!summary) console.warn("No usable recap summary this run - keeping the zero-LLM recap.");
+    return summary;
+  } catch (err) {
+    console.warn(`Recap summary failed (non-fatal, keeping the zero-LLM recap): ${err.message}`);
+    return null;
+  }
+}
+
+// The first stored headline that actually names the symbol or its company
+// and hasn't already been used by another mover in this recap. Returns null
+// rather than falling back to an unrelated article - showing "Trump Could
+// Cut Canadian Auto Tariffs" under a Tesla move would imply a connection
+// that isn't there, which is worse than showing no headline at all.
+function pickRelevantHeadline(symbol, candidates, usedUrls) {
+  if (!Array.isArray(candidates)) return null;
+  const company = MOVER_COMPANY_NAMES[symbol];
+  return candidates.find((h) => {
+    if (!h || !h.title || !h.url || usedUrls.has(h.url)) return false;
+    const title = h.title.toLowerCase();
+    return title.includes(symbol.toLowerCase()) || (company && title.includes(company));
+  }) || null;
+}
+
+// Stage 1 of the daily recap: the day's biggest movers, each with a real
+// linked headline, plus breadth and the index proxies' moves. Makes ZERO
+// outbound calls - every input was already fetched and stored by the
+// FAST_ONLY runs. That's the whole design: nothing here can be rate
+// limited, so unlike market_news_findings (0 rows, ever, because its one
+// Gemini call always lost the race for a 20/day quota) this always
+// produces something real.
+//
+// Keys off the latest trade_date actually present in daily_prices rather
+// than off the calendar, so market holidays need no special-casing and no
+// holiday list - the same call marketStatus() already makes. A weekend run
+// simply rebuilds Friday's recap, which is idempotent.
+async function buildDailyRecap() {
+  queryAttempts++;
+  const dateRows = await sbGet("daily_prices?select=trade_date&order=trade_date.desc&limit=200");
+  const days = [...new Set(dateRows.map((r) => r.trade_date))];
+  if (!days.length) {
+    queryFailures++;
+    console.warn("No daily_prices rows yet - nothing to recap. Run the FAST_ONLY agent first.");
+    return;
+  }
+  const [tradeDate, priorDate] = days;
+
+  const todayRows = await sbGet(`daily_prices?select=symbol,close,previous_close&trade_date=eq.${tradeDate}`);
+  const priorRows = priorDate
+    ? await sbGet(`daily_prices?select=symbol,close&trade_date=eq.${priorDate}`)
+    : [];
+  const priorClose = new Map(priorRows.map((r) => [(r.symbol || "").toUpperCase(), Number(r.close)]));
+
+  // previous_close is null on rows backfilled from the findings stream by
+  // 54_daily_prices.sql, so fall back to the prior trading day's own close.
+  // Returns null rather than a fake 0% when neither is available.
+  const moveFor = (row) => {
+    const close = Number(row.close);
+    const prev = row.previous_close != null
+      ? Number(row.previous_close)
+      : priorClose.get((row.symbol || "").toUpperCase());
+    if (!Number.isFinite(close) || !Number.isFinite(prev) || prev <= 0) return null;
+    return { close: r2(close), change: r2(close - prev), change_pct: r2(((close - prev) / prev) * 100) };
+  };
+
+  const headlines = await latestHeadlinesBySymbol();
+  const etfTickers = new Set(Object.values(MARKET_INDEX_ETF_PROXIES));
+  const watchlist = new Set(MARKET_MOVERS_WATCHLIST);
+
+  const scored = [];
+  for (const row of todayRows) {
+    const symbol = (row.symbol || "").trim().toUpperCase();
+    if (!watchlist.has(symbol)) continue;
+    const move = moveFor(row);
+    if (!move) continue;
+    scored.push({ symbol, ...move });
+  }
+
+  if (!scored.length) {
+    queryFailures++;
+    console.warn(`No usable price moves for ${tradeDate} - not writing an empty recap.`);
+    return;
+  }
+
+  // One generic aggregator article routinely mentions several symbols, so
+  // without this the same URL gets filed under two different movers - which
+  // is both wrong and obviously wrong to a reader.
+  const usedHeadlineUrls = new Set();
+  const movers = [...scored]
+    .sort((a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct))
+    .slice(0, RECAP_MOVER_COUNT)
+    .map((m) => {
+      const found = headlines.get(m.symbol);
+      const top = pickRelevantHeadline(m.symbol, found && found.headlines, usedHeadlineUrls);
+      if (top) usedHeadlineUrls.add(top.url);
+      return {
+        ...m,
+        // A headline is a SOURCE, not a causal claim - the UI states it as
+        // "the day's coverage," never as the reason the price moved.
+        headline: top ? { title: top.title, url: top.url, source: top.source || null } : null,
+      };
+    });
+
+  const up = scored.filter((m) => m.change_pct > 0).length;
+  const down = scored.filter((m) => m.change_pct < 0).length;
+  const breadth = { up, down, flat: scored.length - up - down, total: scored.length };
+
+  const index_moves = todayRows
+    .filter((r) => etfTickers.has((r.symbol || "").trim().toUpperCase()))
+    .map((r) => ({ symbol: (r.symbol || "").trim().toUpperCase(), move: moveFor(r) }))
+    .filter((r) => r.move)
+    .map((r) => ({ symbol: r.symbol, change_pct: r.move.change_pct }));
+
+  // Stage 2: one batched Gemini synthesis, layered on top of a recap that
+  // is already complete without it. Read the existing row first for two
+  // reasons - a re-run the same day must not spend a second call against a
+  // 20/day quota, and the upsert below always sends `summary`, so without
+  // carrying the existing value forward a re-run would blank one that had
+  // already been generated.
+  const existing = await sbGet(`daily_recaps?select=summary,generated_by&trade_date=eq.${tradeDate}`);
+  let summary = existing.length ? existing[0].summary : null;
+  let generatedBy = summary ? (existing[0].generated_by || "rollup+gemini") : "rollup";
+
+  if (summary) {
+    console.log(`Recap for ${tradeDate} already has a summary - reusing it, no Gemini call this run.`);
+  } else if (DRY_RUN) {
+    // A dry run is for checking the zero-LLM half without side effects;
+    // spending a scarce daily quota unit would be a real side effect. Do a
+    // real run to exercise this path.
+    console.log("[dry-run] skipping the Gemini synthesis so no daily quota is spent.");
+  } else {
+    summary = await findRecapSummary(tradeDate, movers, breadth, index_moves);
+    // Only claim Gemini touched this row if it actually produced something
+    // usable - generated_by has to stay an honest record of how the row
+    // was made, since the whole card is built on not overstating itself.
+    if (summary) generatedBy = "rollup+gemini";
+  }
+
+  await sbUpsertRows("daily_recaps", [{
+    trade_date: tradeDate,
+    movers,
+    breadth,
+    index_moves,
+    summary,
+    generated_by: generatedBy,
+    updated_at: new Date().toISOString(),
+  }], "trade_date");
+
+  const withHeadlines = movers.filter((m) => m.headline).length;
+  console.log(
+    `${DRY_RUN ? "Would have written" : "Wrote"} recap for ${tradeDate}: ` +
+    `${movers.length} mover(s), ${withHeadlines} with a headline, breadth ${up} up / ${down} down, ` +
+    `summary ${summary ? "included" : "omitted"}.`
+  );
+}
+
 async function sbDeleteExpired(table) {
   const now = new Date().toISOString();
   if (DRY_RUN) {
@@ -542,7 +819,7 @@ async function writeRunStatus(crashError) {
   }
   try {
     await sbUpsert("agent_run_status", {
-      agent: FAST_ONLY ? "price-agent-fast" : "price-agent",
+      agent: RECAP_ONLY ? "daily-recap" : FAST_ONLY ? "price-agent-fast" : "price-agent",
       status,
       detail,
       queries_attempted: queryAttempts,
@@ -1158,11 +1435,38 @@ const MARKET_MOVERS_WATCHLIST = [
 // app.js's MARKET_INDEX_ETF_PROXIES comment for why mixing the two would
 // corrupt day-change math). Must match app.js's own copy, kept in sync
 // by hand for the same reason MARKET_INDEXES already is.
+// Hand-synced with MARKET_MOVERS_WATCHLIST above, and needed for exactly
+// one job: deciding whether a stored headline is actually ABOUT the symbol
+// it was filed under. Finnhub's /company-news returns articles that merely
+// MENTION a ticker, which in practice is dominated by aggregator filler
+// ("Discover which dow jones stocks are making waves on Thursday"). Checked
+// against real production data: taking the first headline for the day's top
+// 5 movers gave 0 of 5 that actually named the company, including a TSLA
+// row whose headline was about Canadian aluminum tariffs and two different
+// movers sharing one generic listicle. Matching on the company name as well
+// as the ticker took that to 3 of 5 genuinely relevant, with the other 2
+// correctly showing nothing.
+// Lowercase; matched as a substring against a lowercased headline title.
+const MOVER_COMPANY_NAMES = {
+  AAPL: "apple", MSFT: "microsoft", GOOGL: "alphabet", AMZN: "amazon", NVDA: "nvidia",
+  META: "meta", TSLA: "tesla", JPM: "jpmorgan", V: "visa", UNH: "unitedhealth",
+  XOM: "exxon", JNJ: "johnson", WMT: "walmart", PG: "procter", MA: "mastercard",
+  HD: "home depot", DIS: "disney", NFLX: "netflix", AMD: "amd", KO: "coca-cola",
+};
+
 const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Average": "DIA", "NASDAQ Composite": "QQQ", "Russell 2000": "IWM" };
 
 // ---- Main ----------------------------------------------------------------
 async function main() {
   requireEnv();
+  // Returns before any watchlist loading or outbound call - the recap is
+  // built purely from what previous runs already stored.
+  if (RECAP_ONLY) {
+    console.log("RECAP_ONLY=1: building the stored daily recap from existing data, no outbound calls.");
+    await buildDailyRecap();
+    await writeRunStatus();
+    return;
+  }
   if (FAST_ONLY) console.log("FAST_ONLY=1: Finnhub-only run, skipping every Tavily/Gemini step.");
   const fetchNewsThisRun = shouldFetchNewsThisRun();
   if (fetchNewsThisRun) console.log("Also fetching real per-symbol news headlines this run (Finnhub company-news, roughly hourly).");

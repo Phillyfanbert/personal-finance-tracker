@@ -91,6 +91,15 @@ PRICE_AGENT_FAST_INTERVAL_SECONDS="${PRICE_AGENT_FAST_INTERVAL_SECONDS:-900}"
 MONTHLY_REPORT_DAY="${MONTHLY_REPORT_DAY:-1}"
 MONTHLY_REPORT_HOUR="${MONTHLY_REPORT_HOUR:-6}"
 MONTHLY_REPORT_MIN="${MONTHLY_REPORT_MIN:-0}"
+# Weekdays only, after the US close. Unlike every other job here the
+# recap has a real reason to care what time it is: it summarizes a
+# finished trading session, so running it mid-session would recap a
+# half-finished day. 16:30 assumes the server machine's own clock is
+# US Eastern - override if it isn't. It still keys off the latest
+# trade_date actually in daily_prices rather than the calendar, so an
+# early or repeated run is harmless, just less complete.
+DAILY_RECAP_HOUR="${DAILY_RECAP_HOUR:-16}"
+DAILY_RECAP_MIN="${DAILY_RECAP_MIN:-30}"
 
 log() { echo "== $* =="; }
 
@@ -330,6 +339,46 @@ EOF
 }
 install_weekly_agent "com.deal-agent.weekly" "${TOOLS_DIR}/run-deal-agent.sh" "0" "$DEAL_AGENT_HOUR" "$DEAL_AGENT_MIN"
 install_weekly_agent "com.price-agent.weekly" "${TOOLS_DIR}/run-price-agent.sh" "$PRICE_AGENT_WEEKDAY" "$PRICE_AGENT_HOUR" "$PRICE_AGENT_MIN"
+
+# A fourth shape, genuinely not a reuse of the three above:
+# install_weekly_agent hardcodes ONE Weekday integer, and the recap needs
+# to fire Monday through Friday. launchd takes an ARRAY of
+# StartCalendarInterval dicts for exactly this, so this emits five - one
+# per weekday - rather than installing five separate labels.
+install_weekday_agent() {
+  local label="$1" script="$2" hour="$3" minute="$4"
+  local plist="$LAUNCH_AGENTS_DIR/${label}.plist"
+  log "Installing ${label} (weekdays ${hour}:$(printf '%02d' "$minute"))"
+  local entries=""
+  for weekday in 1 2 3 4 5; do
+    entries+="    <dict><key>Weekday</key><integer>${weekday}</integer><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>
+"
+  done
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>${script}</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+${entries}  </array>
+  <key>StandardOutPath</key>
+  <string>/tmp/${label}.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/${label}.log</string>
+</dict>
+</plist>
+EOF
+  bootout_and_bootstrap "${label}" "$plist"
+}
+install_weekday_agent "com.daily-recap.weekday" "${TOOLS_DIR}/run-daily-recap.sh" "$DAILY_RECAP_HOUR" "$DAILY_RECAP_MIN"
 
 # ---- 5. Frequent scheduling for embed-expenses.js (RAG retrieval) ---------
 # StartInterval (seconds, repeating) rather than StartCalendarInterval

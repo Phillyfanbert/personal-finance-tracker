@@ -497,3 +497,39 @@ export function marketStatus(now = new Date()) {
     minutesEt,
   };
 }
+
+/**
+ * The most recent stored daily recap (daily_recaps, 55_daily_recaps.sql),
+ * or null if there's nothing usable yet. Defensive about the jsonb shape
+ * the same way latestNewsDigest() above is - these columns are written by
+ * a server-side script, so a partial or malformed row should render
+ * nothing rather than throw inside a render path.
+ *
+ * `summary` is stage 2's batched Gemini synthesis and is null on every
+ * stage-1 row; a recap is complete and worth showing without it, which is
+ * the entire point of building the zero-LLM half first.
+ * @param {object[]} recaps rows from daily_recaps
+ */
+export function latestRecap(recaps) {
+  if (!recaps.length) return null;
+  const latest = [...recaps].sort((a, b) =>
+    (a.trade_date || "") < (b.trade_date || "") ? 1 : -1
+  )[0];
+  const movers = Array.isArray(latest.movers)
+    ? latest.movers.filter((m) => m && m.symbol && m.change_pct != null)
+    : [];
+  // A recap with no rankable mover has nothing to say - omit it rather
+  // than render an empty card, same convention marketBreadth() and
+  // contributionLimitUsage() already follow.
+  if (!movers.length) return null;
+  return {
+    tradeDate: latest.trade_date,
+    movers,
+    breadth: latest.breadth && Number.isFinite(Number(latest.breadth.total)) ? latest.breadth : null,
+    indexMoves: Array.isArray(latest.index_moves)
+      ? latest.index_moves.filter((i) => i && i.symbol && i.change_pct != null)
+      : [],
+    summary: latest.summary || null,
+    generatedBy: latest.generated_by || "rollup",
+  };
+}

@@ -423,6 +423,56 @@ async function sbUpsert(table, row, conflictColumn) {
   if (!res.ok) throw new Error(`Supabase UPSERT ${table} -> HTTP ${res.status}: ${await res.text()}`);
 }
 
+// Array variant of sbUpsert above, for a composite conflict target
+// ("symbol,trade_date"). Kept separate rather than overloading sbUpsert -
+// that one takes a single row object and every existing caller passes one.
+async function sbUpsertRows(table, rows, conflictColumns) {
+  if (!rows.length) return;
+  if (DRY_RUN) {
+    console.log(`[dry-run] would upsert ${rows.length} row(s) into ${table} on (${conflictColumns}):`);
+    console.log(JSON.stringify(rows.slice(0, 3), null, 2));
+    if (rows.length > 3) console.log(`  ... and ${rows.length - 3} more`);
+    return;
+  }
+  const res = await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${conflictColumns}`, {
+    method: "POST",
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(rows),
+  });
+  if (!res.ok) throw new Error(`Supabase UPSERT ${table} -> HTTP ${res.status}: ${await res.text()}`);
+}
+
+// The durable daily rollup (54_daily_prices.sql). Re-upserting the current
+// day's row every run is what makes this correct with no aggregation of
+// our own: Finnhub maintains h/l as running day extremes and keeps `o`
+// fixed, so `close` simply tracks the latest price and settles on the real
+// close once the session ends. Deliberately NOT in PURGEABLE_TABLES - this
+// table outliving the 2-day findings window is its entire purpose.
+//
+// Best-effort like the purge: a rollup failure must never crash a run or
+// mask the real findings already written.
+async function writeDailyCandles(results) {
+  const candles = results.map((r) => r.dailyCandle).filter(Boolean);
+  if (!candles.length) return;
+  // One symbol can appear in more than one loop (a user's own watchlist
+  // symbol that's also a tracked mover), and PostgREST rejects a payload
+  // containing two rows with the same conflict key - "ON CONFLICT DO
+  // UPDATE command cannot affect row a second time."
+  const byKey = new Map();
+  for (const candle of candles) byKey.set(`${candle.symbol}|${candle.trade_date}`, candle);
+  try {
+    await sbUpsertRows("daily_prices", [...byKey.values()], "symbol,trade_date");
+    console.log(`${DRY_RUN ? "Would have rolled up" : "Rolled up"} ${byKey.size} daily candle(s) into daily_prices.`);
+  } catch (err) {
+    console.warn(`Daily candle rollup failed (non-fatal): ${err.message}`);
+  }
+}
+
 async function sbDeleteExpired(table) {
   const now = new Date().toISOString();
   if (DRY_RUN) {
@@ -807,10 +857,44 @@ async function fetchFinnhubQuote(symbol) {
 
 // Finnhub returns c: 0 (not an error status) for an invalid/unknown
 // symbol - a real, documented behavior, not a hypothetical edge case.
+const r4 = (n) => {
+  const num = Number(n);
+  return Number.isFinite(num) && num > 0 ? Math.round(num * 10000) / 10000 : null;
+};
+
+// The TRADING day for a quote, in America/New_York, derived from Finnhub's
+// own `t` (last-trade epoch seconds) rather than the server's clock. This
+// is what keeps a weekend or after-hours run from inventing a candle: a
+// Saturday run gets Friday's still-current quote back, and keying that to
+// "today" would create a Saturday row for a day that never traded. Returns
+// null rather than guessing when `t` is missing, so the caller can skip the
+// rollup for that symbol instead of writing a row against a wrong date.
+// en-CA formats as YYYY-MM-DD, which is already the shape Postgres wants.
+function tradeDateFromQuote(raw) {
+  const epochSeconds = Number(raw && raw.t);
+  if (!Number.isFinite(epochSeconds) || epochSeconds <= 0) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(epochSeconds * 1000));
+}
+
 function validateFinnhubQuote(raw) {
-  const price = Number(raw && raw.c);
-  if (!Number.isFinite(price) || price <= 0) return null;
-  return { price: Math.round(price * 10000) / 10000 };
+  const price = r4(raw && raw.c);
+  if (price === null) return null;
+  // o/h/l/pc ride along on the same response at no extra cost and are what
+  // daily_prices (54_daily_prices.sql) is built from - this used to keep
+  // only `c` and throw a complete daily candle away on every call. Each is
+  // independently nullable: a thinly traded symbol can legitimately return
+  // 0 for some of them, which r4() maps to null rather than a fake zero.
+  return {
+    price,
+    open: r4(raw.o),
+    high: r4(raw.h),
+    low: r4(raw.l),
+    previousClose: r4(raw.pc),
+    tradeDate: tradeDateFromQuote(raw),
+  };
 }
 
 // ---- Finnhub: real per-symbol news headlines, no LLM step needed ------
@@ -898,6 +982,20 @@ async function fetchFinnhubFinding(symbol, fetchNews) {
       headlines,
     },
     absDayChangePercent: Number.isFinite(Number(raw.dp)) ? Math.abs(Number(raw.dp)) : 0,
+    // Skipped entirely when the quote carried no usable timestamp - a
+    // candle filed against a guessed date is worse than no candle.
+    dailyCandle: extracted.tradeDate
+      ? {
+          symbol,
+          trade_date: extracted.tradeDate,
+          open: extracted.open,
+          high: extracted.high,
+          low: extracted.low,
+          close: extracted.price,
+          previous_close: extracted.previousClose,
+          updated_at: new Date().toISOString(),
+        }
+      : null,
   };
 }
 
@@ -1184,6 +1282,12 @@ async function main() {
       console.log("No market news digest this run.");
     }
   }
+
+  // Every Finnhub-quoted symbol from all three loops above, rolled into
+  // the durable daily series. Runs before the purge, which only ever
+  // touches the short-lived findings tables - this is the data that has
+  // to outlive them.
+  await writeDailyCandles([...watchlistPriced, ...moversPriced, ...etfPriced]);
 
   await purgeExpiredFindings();
   await writeRunStatus();

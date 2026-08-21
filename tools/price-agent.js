@@ -676,6 +676,16 @@ const RECAP_ADVICE_PHRASES = [
   "buy the dip", "worth buying", "worth selling", "price target",
   "will rise", "will fall", "will likely", "poised to", "set to climb",
   "investors should", "you should", "expect further", "expect the",
+  // Added alongside the beginner-friendly rewrite, and deliberately in that
+  // direction: a plain-spoken summary aimed at someone with no investing
+  // background is read more trustingly than a jargon-heavy one, so the
+  // boundary gets STRICTER as the tone gets simpler, never looser. These are
+  // valuation judgments that function as a buy/sell signal even though they
+  // never use the words buy or sell. Multi-word where possible, to keep an
+  // ordinary sentence from tripping them.
+  "good time to", "buying opportunity", "opportunity to buy", "bargain",
+  "undervalued", "overvalued", "safe bet", "can't go wrong", "cannot go wrong",
+  "no-brainer", "too cheap", "looks cheap", "looks expensive",
 ];
 
 // One batched call covering the whole day, not one per mover - that
@@ -683,38 +693,76 @@ const RECAP_ADVICE_PHRASES = [
 // explanations wanted 20+ calls against a 20-request DAILY quota shared
 // with deal-agent; this asks for 1, on weekdays only, which even on
 // Wednesday (price-agent's own weekly ~12) leaves real headroom.
-function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves) {
+// Plain-English gloss for the four index ETFs, so the summary can say what
+// an index actually IS rather than leaving a bare ticker on the page. Fixed,
+// stable, factual reference data - not a market judgment - and small enough
+// to hand-maintain alongside MARKET_INDEX_ETF_PROXIES above it.
+const INDEX_PLAIN_NAMES = {
+  SPY: "the S&P 500, which tracks 500 of the biggest US companies",
+  DIA: "the Dow Jones Industrial Average, which tracks 30 large US companies",
+  QQQ: "the Nasdaq-100, which tracks 100 large US companies, mostly technology",
+  IWM: "the Russell 2000, which tracks around 2,000 smaller US companies",
+};
+
+function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames = {}) {
+  // Company names are passed IN rather than left to the model. The rule
+  // below forbids using its own knowledge of these companies, so without
+  // this it could only ever write bare tickers - and "WMT fell 9%" is
+  // meaningless to someone who has never invested. This makes naming the
+  // company both possible and rule-abiding.
   const moverLines = movers.map((m) => {
+    const name = companyNames[m.symbol];
+    const who = name ? `${name} (${m.symbol})` : m.symbol;
     const headline = m.headline
       ? `headline: "${m.headline.title}" (${m.headline.source || "unknown source"})`
       : "no headline found";
-    return `- ${m.symbol}: closed ${m.close}, ${m.change_pct > 0 ? "+" : ""}${m.change_pct}% on the day; ${headline}`;
+    return `- ${who}: closed ${m.close}, ${m.change_pct > 0 ? "+" : ""}${m.change_pct}% on the day; ${headline}`;
   });
-  const indexLine = indexMoves.map((i) => `${i.symbol} ${i.change_pct > 0 ? "+" : ""}${i.change_pct}%`).join(", ");
+  const indexLines = indexMoves.map((i) => {
+    const gloss = INDEX_PLAIN_NAMES[i.symbol];
+    return `- ${gloss || i.symbol}: ${i.change_pct > 0 ? "+" : ""}${i.change_pct}%`;
+  });
   return [
     "You write a short, factual recap of one US trading day, based ONLY on",
     "the real data listed below. Do not use your own knowledge of these",
     "companies or of what happened on any date - if it is not listed here,",
     "you do not know it.",
+    "",
+    "Your reader is a COMPLETE BEGINNER who has never invested and does not",
+    "follow financial news. Write for them and nobody else.",
     'Respond with ONLY a JSON object, no prose, no code fences, in this',
     'exact shape: { "summary": string|null }',
     "",
     `Trading day: ${tradeDate}`,
-    breadth ? `Breadth: ${breadth.up} of ${breadth.total} tracked large-caps finished up, ${breadth.down} finished down.` : "",
-    indexLine ? `Index-tracking ETFs: ${indexLine}` : "",
-    "Biggest movers:",
+    breadth
+      ? `Of the ${breadth.total} companies this person tracks, ${breadth.up} finished the day higher and ${breadth.down} finished lower.`
+      : "",
+    indexLines.length ? "How the wider market did:" : "",
+    ...indexLines,
+    "Biggest movers among the companies they track:",
     ...moverLines,
     "",
     "Rules for summary:",
-    "- 2 to 3 sentences, plain English, past tense.",
+    "- 2 to 3 short sentences. Everyday words only.",
+    "- Write like you are explaining the day to a friend who knows nothing",
+    "  about investing. No finance-desk phrasing.",
+    "- Say 'fell' or 'rose', never 'declined', 'advanced', 'posted losses',",
+    "  'led the downside', 'closed in the red' or similar.",
+    "- Name the company in plain words, with the ticker in brackets after it",
+    "  the first time, e.g. 'Walmart (WMT) fell about 9%'.",
+    "- NEVER use a term a beginner would not know without explaining it in",
+    "  the same sentence. That includes: ETF, index, large-cap, small-cap,",
+    "  breadth, valuation, P/E, equities, session, benchmark.",
+    "- Round percentages to something readable, e.g. 'about 9%' not 9.71%.",
     "- Describe what happened and what was being REPORTED. Never assert that",
     "  a headline caused a price move - say coverage focused on it, or that",
     "  the move came alongside that reporting.",
     "- Never give advice, never recommend buying or selling, never predict",
-    "  what any price will do next, never give a price target.",
-    "- Only mention a symbol that appears above. Never invent a reason for a",
+    "  what any price will do next, never give a price target, and never",
+    "  call anything cheap, expensive, undervalued or a good opportunity.",
+    "- Only mention a company that appears above. Never invent a reason for a",
     "  mover listed as having no headline - it is fine to say the move came",
-    "  without notable coverage.",
+    "  without much news coverage.",
     "- If the data above is too thin to say anything meaningful, set summary",
     "  to null rather than padding it out.",
   ].filter(Boolean).join("\n");
@@ -743,9 +791,32 @@ function validateRecapSummary(raw) {
 // working as intended, NOT a degraded run - the same reasoning that keeps
 // "no trusted-domain result" out of queryFailures, so this deliberately
 // does not touch those counters and won't turn the card's status amber.
-async function findRecapSummary(tradeDate, movers, breadth, indexMoves) {
+// Proper-cased company names for PROSE ("Walmart Inc"), distinct from the
+// lowercase ones loadMoversWatchlist() returns - those are lowercased on
+// purpose for case-insensitive headline matching and would read wrong in a
+// sentence. Falls back to the watchlist's own name so a symbol with no
+// fundamentals row still gets named rather than showing a bare ticker.
+async function loadDisplayCompanyNames(fallbackNames) {
+  const names = {};
+  for (const [symbol, name] of Object.entries(fallbackNames || {})) {
+    // Title-case the fallback so it is at least presentable.
+    names[symbol] = String(name).replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+  }
   try {
-    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves));
+    const rows = await sbGet("symbol_fundamentals?select=symbol,company_name");
+    for (const row of rows) {
+      const symbol = (row.symbol || "").trim().toUpperCase();
+      if (symbol && row.company_name) names[symbol] = String(row.company_name).trim();
+    }
+  } catch (err) {
+    console.warn(`Could not read company names for the summary (${err.message}) - using watchlist names.`);
+  }
+  return names;
+}
+
+async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames) {
+  try {
+    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames));
     const summary = validateRecapSummary(parseJsonLoose(text));
     if (!summary) console.warn("No usable recap summary this run - keeping the zero-LLM recap.");
     return summary;
@@ -912,7 +983,8 @@ async function buildDailyRecap() {
     // real run to exercise this path.
     console.log("[dry-run] skipping the Gemini synthesis so no daily quota is spent.");
   } else {
-    summary = await findRecapSummary(tradeDate, movers, breadth, index_moves);
+    const displayNames = await loadDisplayCompanyNames(companyNames);
+    summary = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames);
     // Only claim Gemini touched this row if it actually produced something
     // usable - generated_by has to stay an honest record of how the row
     // was made, since the whole card is built on not overstating itself.
@@ -1404,6 +1476,9 @@ function buildNewsSentimentPrompt(headlines) {
     "someone tracks, and characterise the tone of THAT coverage. Use ONLY",
     "the headlines listed below - do not use your own knowledge of what",
     "these companies or the wider market did.",
+    "",
+    "Your reader is a COMPLETE BEGINNER who has never invested and does not",
+    "follow financial news. Write for them and nobody else.",
     'Respond with ONLY a JSON object, no prose, no code fences:',
     '{ "sentiment": "bullish"|"neutral"|"bearish", "sentiment_reason": string }',
     "",
@@ -1419,7 +1494,11 @@ function buildNewsSentimentPrompt(headlines) {
     "  price move, and never say a stock rose or fell - you were not given",
     "  any prices.",
     "- Never recommend buying or selling and never predict what any price",
-    "  will do next, even if a headline itself is phrased that way.",
+    "  will do next, even if a headline itself is phrased that way. Never",
+    "  call anything cheap, expensive, undervalued or a good opportunity.",
+    "- One short sentence in everyday words. No jargon a beginner would not",
+    "  know - no 'equities', 'valuation', 'bullish momentum', 'the street'.",
+    "  If you must use a term like that, explain it in the same breath.",
   ].join("\n");
 }
 

@@ -962,6 +962,12 @@ const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Compo
 // be an exact match. Must match tools/price-agent.js's own copy, kept in
 // sync by hand for the same reason MARKET_INDEXES already is.
 const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Average": "DIA", "NASDAQ Composite": "QQQ", "Russell 2000": "IWM" };
+// The inverse, for display: an ETF ticker is an implementation detail of how
+// the index gets priced (see MARKET_INDEX_ETF_PROXIES' own comment), not
+// something a reader should have to decode. Short forms, since these sit on
+// one line - the fuller "500 of the biggest US companies" phrasing lives in
+// price-agent.js's INDEX_PLAIN_NAMES, where the summary has room for it.
+const INDEX_SHORT_NAMES = { SPY: "S&P 500", DIA: "Dow Jones", QQQ: "Nasdaq-100", IWM: "Russell 2000 (smaller companies)" };
 // A fixed, curated watchlist of well-known large-cap stocks (not each
 // user's own holdings) so the Investments tab can surface "today's biggest
 // movers" even for a user who holds nothing at all - same "public market
@@ -4229,7 +4235,18 @@ function renderFundamentals() {
   if (f.market_cap != null) stats.push(`Market cap ${fmtCompact(Number(f.market_cap))}`);
   if (f.pe_ratio != null) stats.push(`P/E ${Number(f.pe_ratio).toFixed(1)}`);
   if (f.dividend_yield != null) stats.push(`Dividend yield ${Number(f.dividend_yield).toFixed(2)}%`);
-  if (stats.length) bits.push(`<div class="muted" style="font-size:12px">${stats.map(esc).join("  ·  ")}</div>`);
+  if (stats.length) {
+    bits.push(`<div class="muted" style="font-size:12px">${stats.map(esc).join("  ·  ")}</div>`);
+    // These three terms are jargon by definition - there is no plainer way
+    // to name them - so they get defined in place rather than assuming the
+    // reader already knows. Only the definitions for the stats actually
+    // shown, so a company with no dividend doesn't get a dividend lesson.
+    const glossary = [];
+    if (f.market_cap != null) glossary.push("Market cap is what the whole company is worth on the stock market.");
+    if (f.pe_ratio != null) glossary.push("P/E compares the share price to the company's yearly profit - a higher number means you pay more for each dollar it earns.");
+    if (f.dividend_yield != null) glossary.push("Dividend yield is how much cash it pays out to shareholders each year, as a percent of the share price.");
+    bits.push(`<div class="muted" style="font-size:11px;margin-top:4px">${glossary.map(esc).join(" ")}</div>`);
+  }
   el.innerHTML = bits.join("");
 }
 
@@ -4337,7 +4354,7 @@ function renderDailyRecap() {
   const breadth = recap.breadth;
   const breadthEl = $("dailyRecapBreadth");
   if (breadth) {
-    breadthEl.textContent = `${breadth.up} of ${breadth.total} tracked large-caps finished up`;
+    breadthEl.textContent = `${breadth.up} of the ${breadth.total} companies you track finished the day up`;
     breadthEl.style.color = breadth.up > breadth.down ? "var(--ok)"
       : breadth.down > breadth.up ? "var(--err)" : "var(--text)";
   } else {
@@ -4373,8 +4390,13 @@ function renderDailyRecap() {
       </span>
     </div>`).join("");
 
+  // Named plainly rather than by ETF ticker: "Index proxies: IWM -1.32%"
+  // told a beginner nothing, and sat directly under a summary that is now
+  // explicitly forbidden from using words like "index" unexplained.
   $("dailyRecapIndexes").textContent = recap.indexMoves.length
-    ? "Index proxies: " + recap.indexMoves.map((i) => `${i.symbol} ${signedPct(i.change_pct)}`).join("  ·  ")
+    ? "The wider market: " + recap.indexMoves
+        .map((i) => `${INDEX_SHORT_NAMES[i.symbol] || i.symbol} ${signedPct(i.change_pct)}`)
+        .join("  ·  ")
     : "";
 }
 

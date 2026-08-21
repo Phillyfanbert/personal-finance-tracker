@@ -3942,6 +3942,7 @@ function renderInvestments() {
   const contributions = accountActivity.filter((a) => a.kind === "contribution");
   const limitUsage = contributionLimitUsage(assets, contributions, CONTRIBUTION_LIMIT_GROUPS);
   $("contributionLimitsCard").style.display = limitUsage.length ? "" : "none";
+  $("emptyLimits").classList.toggle("hidden", limitUsage.length > 0);
   $("contributionLimitsList").innerHTML = limitUsage.map((u) => {
     const pctClamped = Math.min(100, (u.contributed / u.limit) * 100);
     return `
@@ -4257,8 +4258,9 @@ $("watchlistClose").onclick = () => $("watchlistModal").classList.add("hidden");
 function renderMarketMovers() {
   const card = $("marketMoversCard");
   if (!card) return;
-  if (!marketMovers.length) { card.classList.add("hidden"); return; }
+  if (!marketMovers.length) { card.classList.add("hidden"); $("emptyMovers").classList.remove("hidden"); return; }
   card.classList.remove("hidden");
+  $("emptyMovers").classList.add("hidden");
 
   $("marketMoversDate").textContent = recapDateLabel(marketMovers[0].trade_date);
 
@@ -4321,8 +4323,9 @@ function renderPriceHistory() {
   const symbols = [...new Set(dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()).filter(Boolean))].sort();
   // No manual-entry fallback exists for price history, so an empty card
   // would be clutter - same convention as Market overview.
-  if (!symbols.length) { card.classList.add("hidden"); return; }
+  if (!symbols.length) { card.classList.add("hidden"); $("emptyHistory").classList.remove("hidden"); return; }
   card.classList.remove("hidden");
+  $("emptyHistory").classList.add("hidden");
 
   if (!priceHistorySymbol || !symbols.includes(priceHistorySymbol)) {
     // Default to something the user actually owns before falling back to
@@ -4418,8 +4421,9 @@ function renderRealizedGains() {
   const card = $("realizedGainCard");
   if (!card) return;
   const summary = realizedGainSummary(holdingSales);
-  if (!summary) { card.classList.add("hidden"); return; }
+  if (!summary) { card.classList.add("hidden"); $("emptyRealized").classList.remove("hidden"); return; }
   card.classList.remove("hidden");
+  $("emptyRealized").classList.add("hidden");
 
   const ytd = $("realizedYtd");
   ytd.textContent = summary.ytdCount
@@ -4513,8 +4517,9 @@ function renderDailyRecap() {
   // No manual-entry fallback exists for a market recap, so an empty card
   // would be clutter rather than a fact worth stating - hidden entirely
   // until a real one exists, same convention as Market overview.
-  if (!recap) { card.classList.add("hidden"); return; }
+  if (!recap) { card.classList.add("hidden"); $("emptyRecap").classList.remove("hidden"); return; }
   card.classList.remove("hidden");
+  $("emptyRecap").classList.add("hidden");
   renderAgentFreshness("daily-recap", "dailyRecapFreshness", "dailyRecapWarning");
 
   $("dailyRecapDate").textContent = `Market close, ${recapDateLabel(recap.tradeDate)}`;
@@ -4571,8 +4576,9 @@ function renderDailyRecap() {
 function renderMarketOverview() {
   const card = $("marketOverviewCard");
   if (!card) return;
-  if (!PRICE_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
+  if (!PRICE_FINDINGS_ENABLED) { card.classList.add("hidden"); $("emptyOverview").classList.remove("hidden"); return; }
   card.classList.remove("hidden");
+  $("emptyOverview").classList.add("hidden");
   renderAgentFreshness("price-agent", "marketOverviewFreshness", "marketOverviewWarning");
   const indexes = marketIndexSummary(MARKET_INDEXES, marketIndexFindings);
   // Live ETF-proxy prices - marketIndexSummary() works unchanged against

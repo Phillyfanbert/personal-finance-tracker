@@ -28,6 +28,7 @@
     h1 { font-size: 20px; margin: 8px 0 16px; }
     .muted { color: var(--muted); }
     .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+    .card.empty-state { border-style: dashed; text-align: center; color: var(--muted); font-size: 13.5px; }
     input, select, button, textarea {
       font: inherit; width: 100%; padding: 13px 14px; border-radius: 10px;
       border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
@@ -1013,6 +1014,7 @@
           <button type="button" class="subtab-pill" data-invest-subtab="investSubHistory">Price history</button>
         </div>
         <div id="investSubRecap" data-subtab-label="Daily recap">
+        <div class="card empty-state" id="emptyRecap">No recap yet. This is built once the trading day finishes - check back after the market closes.</div>
   <!-- Daily recap: the day's biggest movers, each with a real linked
                headline, plus breadth and the index proxies' moves. Stage 1 is
                deliberately ZERO-LLM - every number comes from daily_prices and
@@ -1040,6 +1042,7 @@
       </div>
 
         <div id="investSubMovers" class="hidden" data-subtab-label="Movers">
+        <div class="card empty-state" id="emptyMovers">No market-wide movers found yet. This card needs a background job to run at least once - check back later.</div>
   <!-- Market-wide movers, the one card here that can see a stock outside the
           tracked list. Alpha Vantage answers "what moved most today" - Finnhub
           and every other free quote API can only price symbols you already name,
@@ -1059,6 +1062,7 @@
       </div>
 
         <div id="investSubOverview" class="hidden" data-subtab-label="Overview">
+        <div class="card empty-state" id="emptyOverview">Live pricing isn't turned on for this app yet.</div>
   <!-- Market overview: a fixed set of major US indexes (S&P 500, Dow,
                NASDAQ, Russell 2000 - app.js's MARKET_INDEXES) plus today's top
                3 movers from a fixed large-cap watchlist (MARKET_MOVERS_
@@ -1110,6 +1114,7 @@
       </div>
 
         <div id="investSubHistory" class="hidden" data-subtab-label="Price history">
+        <div class="card empty-state" id="emptyHistory">No price history recorded yet. Once a price has been tracked at least once, its chart will appear here.</div>
   <!-- Price history: the per-symbol chart daily_prices was built for.
                Finnhub's real historical-candle endpoint is premium and 403s on
                a free key, so this is drawn from history the app accumulates
@@ -1228,6 +1233,7 @@
       </div>
 
         <div id="investSubRealized" class="hidden" data-subtab-label="Realized">
+        <div class="card empty-state" id="emptyRealized">You haven't recorded a sale yet. Once you sell part or all of a holding, it shows up here.</div>
   <!-- Realized gain/loss - money actually banked on sales, genuinely
                separate from the unrealized gain the totals above show. Average
                cost basis (assets.purchase_price is one blended total for the
@@ -1246,6 +1252,7 @@
       </div>
 
         <div id="investSubLimits" class="hidden" data-subtab-label="Limits">
+        <div class="card empty-state" id="emptyLimits">None of your accounts are a type with a tracked contribution limit, like a 401(k) or IRA.</div>
   <!-- Base 2025 IRS limits only (no catch-up, no income phase-outs) -
                see docs/bank-account-types-research.md §9b.6 for the full
                per-type reasoning and which types share a limit vs. have their
@@ -1889,6 +1896,7 @@
           <p>The page opens on <strong>Market</strong>, which is everything about the wider stock market - none of it depends on what you own. <strong>My portfolio</strong> is the opposite: only your own holdings, gains, limits and targets. The page remembers whichever tab you used last.</p>
           <p>Above both tabs, and always visible, is your <strong>daily health check</strong> and the four totals. That's deliberate - it's the short answer to "how am I doing?", and the tabs underneath hold the detail behind it.</p>
           <p>Within each tab, a row of smaller pill buttons switches between its individual sections - Daily recap, Movers, Overview and Price history under Market; Holdings, Value, Realized, Limits and Target under My portfolio. Only one section shows at a time instead of a long scroll, and the page remembers the last section you had open in each tab too.</p>
+          <p>A section with nothing to show yet displays a dashed rectangle explaining why, rather than sitting blank - "No recap yet, check back after the market closes", "You haven't recorded a sale yet", and so on. Once there is something real to show, that message is replaced by the section itself.</p>
           <p>The <strong>gear icon</strong> at the top right opens Tracked symbols, the list of stocks the market cards are built around. It's tucked away because it's a setting you'll change occasionally, not something to read daily.</p>
         </div>
 

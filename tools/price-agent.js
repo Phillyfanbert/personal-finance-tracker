@@ -261,6 +261,20 @@ function geminiUrl(model) {
 // indexes stay on the already-verified Tavily+Gemini pipeline rather than
 // risk the same "assumed free, actually needs billing" mistake that
 // already happened once this session with Gemini's own grounding tool.
+// Alpha Vantage - the ONLY provider here that answers "what moved most
+// today" rather than "what is the price of X". Free key, no card
+// (verified live against their own demo key). 25 requests/day on the free
+// tier and this uses exactly ONE, so the limit is irrelevant.
+//
+// OPTIONAL: unset, the movers pipeline is skipped entirely and every other
+// part of this script is unaffected - same dormant-until-configured shape
+// as GEMMA_ENDPOINT. requireEnv() deliberately does not demand it.
+const ALPHA_VANTAGE_API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
+const ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query";
+// Top 5 each way. The API returns 20, but this card is for a beginner
+// glancing at the day, not a screener.
+const MOVERS_PER_CATEGORY = 5;
+
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
 const FINNHUB_URL = "https://finnhub.io/api/v1/quote";
 // Real per-symbol headlines - confirmed live (2026-08-16) on Finnhub's free
@@ -855,6 +869,228 @@ function pickRelevantHeadline(symbol, candidates, usedUrls, companyNames) {
     if (!h || !h.title || !h.url || usedUrls.has(h.url)) return false;
     return mentionsWholeWord(h.title, symbol) || (company && mentionsWholeWord(h.title, company));
   }) || null;
+}
+
+// ---- Market-wide movers (Alpha Vantage -> Finnhub -> Gemini) ---------------
+// Three providers, each doing only what it can actually do:
+//   1. Alpha Vantage says WHAT moved (ticker/price/change/volume, no
+//      explanation of any kind - confirmed against a live response).
+//   2. Finnhub supplies the company name and a real headline for each of
+//      those tickers, reusing the exact relevance gate the recap uses.
+//   3. Gemini writes one optional beginner-friendly paragraph on top.
+// Every stage degrades on its own: no Alpha Vantage key skips the whole
+// thing, a missing headline just leaves that mover without one, and a
+// failed Gemini call still leaves real numbers and real links on the card.
+function parseChangePct(raw) {
+  // Alpha Vantage returns change_percentage as a string with a trailing
+  // percent sign, e.g. "113.1547%".
+  const text = String(raw ?? "").replace("%", "").trim();
+  // The empty check is load-bearing, not defensive noise: Number("") is 0,
+  // so without it a mover with a missing percentage would be stored as a
+  // real-looking 0% move instead of being dropped. Same fake-zero trap
+  // validateFinnhubQuote() already avoids by mapping 0 to null.
+  if (!text) return null;
+  const num = Number(text);
+  return Number.isFinite(num) ? Math.round(num * 10000) / 10000 : null;
+}
+
+const avNum = (raw) => {
+  const text = String(raw ?? "").trim();
+  if (!text) return null; // Number("") is 0 - see parseChangePct above.
+  const num = Number(text);
+  return Number.isFinite(num) ? num : null;
+};
+
+async function fetchTopMovers() {
+  const res = await fetchWithRetry(
+    `${ALPHA_VANTAGE_URL}?function=TOP_GAINERS_LOSERS&apikey=${ALPHA_VANTAGE_API_KEY}`,
+    {},
+    SEARCH_TIMEOUT_MS
+  );
+  if (!res.ok) throw new Error(`Alpha Vantage HTTP ${res.status}`);
+  const data = await res.json();
+  // Alpha Vantage answers a bad/exhausted key with HTTP 200 and an
+  // "Information"/"Note" field rather than an error status, so a plain
+  // res.ok check would happily treat a rate-limit notice as success.
+  if (data && (data.Information || data.Note || data["Error Message"])) {
+    throw new Error(String(data.Information || data.Note || data["Error Message"]).slice(0, 200));
+  }
+  const pick = (list, category) => (Array.isArray(list) ? list : [])
+    .slice(0, MOVERS_PER_CATEGORY)
+    .map((row, i) => ({
+      category,
+      rank: i + 1,
+      symbol: String(row.ticker || "").trim().toUpperCase(),
+      price: avNum(row.price),
+      change_amount: avNum(row.change_amount),
+      change_pct: parseChangePct(row.change_percentage),
+      volume: avNum(row.volume),
+    }))
+    .filter((m) => m.symbol && m.change_pct != null);
+  return [...pick(data.top_gainers, "gainer"), ...pick(data.top_losers, "loser")];
+}
+
+// A discovered mover is usually a small company nobody has heard of, so
+// its name matters more here than for a household-name watchlist stock.
+// Reuses refreshFundamentals()' own profile lookup by way of
+// symbol_fundamentals, then the SAME pickRelevantHeadline() gate the recap
+// uses - without it these fill with the identical aggregator listicles.
+async function attachMoverContext(movers) {
+  const symbols = [...new Set(movers.map((m) => m.symbol))];
+  await refreshFundamentals(symbols);
+
+  let names = {};
+  try {
+    const rows = await sbGet("symbol_fundamentals?select=symbol,company_name");
+    for (const row of rows) {
+      const symbol = (row.symbol || "").trim().toUpperCase();
+      if (symbol && row.company_name) names[symbol] = String(row.company_name).trim();
+    }
+  } catch (err) {
+    console.warn(`Could not read mover company names (${err.message}) - headlines will match on ticker alone.`);
+  }
+
+  const usedUrls = new Set();
+  for (const mover of movers) {
+    mover.company_name = names[mover.symbol] || null;
+    if (fundamentalsUnavailable) continue;
+    try {
+      const raw = await fetchFinnhubCompanyNews(mover.symbol);
+      const headlines = validateFinnhubNews(raw);
+      // Lowercased for the matcher, which is case-insensitive but expects
+      // the same shape watchlist_symbols.company_name uses.
+      const matchNames = mover.company_name
+        ? { [mover.symbol]: mover.company_name.toLowerCase() } : {};
+      const picked = pickRelevantHeadline(mover.symbol, headlines, usedUrls, matchNames);
+      if (picked) {
+        usedUrls.add(picked.url);
+        mover.headline = { title: picked.title, url: picked.url, source: picked.source || null };
+      }
+    } catch (err) {
+      console.warn(`[${mover.symbol}] mover news lookup failed (non-fatal): ${err.message}`);
+    }
+    await sleep(REQUEST_DELAY_MS);
+  }
+  return movers;
+}
+
+function buildMoverSummaryPrompt(tradeDate, movers) {
+  const line = (m) => {
+    const who = m.company_name ? `${m.company_name} (${m.symbol})` : m.symbol;
+    const dir = m.change_pct > 0 ? "up" : "down";
+    const news = m.headline ? `headline: "${m.headline.title}"` : "no news coverage found";
+    return `- ${who}: ${dir} ${Math.abs(m.change_pct)}% to ${m.price}; ${news}`;
+  };
+  const gainers = movers.filter((m) => m.category === "gainer").map(line);
+  const losers = movers.filter((m) => m.category === "loser").map(line);
+  return [
+    "You summarise the biggest single-day stock moves in the whole US",
+    "market, based ONLY on the data listed below. Do not use your own",
+    "knowledge of these companies - if it is not listed here, you do not",
+    "know it.",
+    "",
+    "Your reader is a COMPLETE BEGINNER who has never invested and does not",
+    "follow financial news. Write for them and nobody else.",
+    'Respond with ONLY a JSON object, no prose, no code fences, in this',
+    'exact shape: { "summary": string|null }',
+    "",
+    `Trading day: ${tradeDate}`,
+    gainers.length ? "Biggest risers:" : "",
+    ...gainers,
+    losers.length ? "Biggest fallers:" : "",
+    ...losers,
+    "",
+    "Rules for summary:",
+    "- 2 to 3 short sentences. Everyday words only.",
+    "- These are usually small, obscure companies, and big daily swings in",
+    "  them are normal and often reverse. Say so plainly if it fits.",
+    "- Say 'rose' or 'fell', never 'rallied', 'surged', 'plunged',",
+    "  'cratered' or similar dramatic wording.",
+    "- Round percentages, e.g. 'more than doubled' or 'about 40%'.",
+    "- NEVER use a term a beginner would not know without explaining it in",
+    "  the same sentence.",
+    "- Never give advice, never recommend buying or selling, never predict",
+    "  what any price will do next, and never call anything cheap,",
+    "  expensive, undervalued or a good opportunity.",
+    "- Never claim a headline CAUSED a move - say coverage focused on it.",
+    "- If the data is too thin to say anything useful, set summary to null.",
+  ].filter(Boolean).join("\n");
+}
+
+// One optional Gemini call. Same validation gate as every other generated
+// sentence in this app, so an advice-phrased summary is discarded rather
+// than shown.
+async function findMoverSummary(tradeDate, movers) {
+  try {
+    const text = await extractWithGemini(buildMoverSummaryPrompt(tradeDate, movers));
+    const summary = validateRecapSummary(parseJsonLoose(text));
+    if (!summary) console.warn("No usable mover summary this run - keeping the numbers and headlines.");
+    return summary;
+  } catch (err) {
+    console.warn(`Mover summary failed (non-fatal, keeping the numbers): ${err.message}`);
+    return null;
+  }
+}
+
+async function buildMarketMovers(tradeDate) {
+  if (!ALPHA_VANTAGE_API_KEY) {
+    console.log("ALPHA_VANTAGE_API_KEY not set - skipping market-wide movers (everything else is unaffected).");
+    return;
+  }
+  let movers;
+  try {
+    movers = await fetchTopMovers();
+  } catch (err) {
+    console.warn(`Alpha Vantage movers lookup failed (non-fatal): ${err.message}`);
+    return;
+  }
+  if (!movers.length) {
+    console.warn("Alpha Vantage returned no usable movers this run.");
+    return;
+  }
+
+  await attachMoverContext(movers);
+
+  const rows = movers.map((m) => ({
+    trade_date: tradeDate, category: m.category, symbol: m.symbol, rank: m.rank,
+    price: m.price, change_amount: m.change_amount, change_pct: m.change_pct,
+    volume: m.volume, company_name: m.company_name ?? null,
+    headline: m.headline ?? null, fetched_at: new Date().toISOString(),
+  }));
+  try {
+    await sbUpsertRows("market_movers", rows, "trade_date,category,symbol");
+    const withNews = rows.filter((r) => r.headline).length;
+    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${rows.length} market mover(s) for ${tradeDate}, ${withNews} with a headline.`);
+  } catch (err) {
+    console.warn(`Market movers write failed (non-fatal): ${err.message}`);
+    return;
+  }
+
+  // Same reuse guard as the recap summary: a re-run must not spend a
+  // second Gemini call, and must not blank a summary already generated.
+  let summary = null;
+  try {
+    const existing = await sbGet(`market_mover_summaries?select=summary&trade_date=eq.${tradeDate}`);
+    summary = existing.length ? existing[0].summary : null;
+  } catch { /* best-effort - treat as absent and try to generate */ }
+
+  if (summary) {
+    console.log("Mover summary already exists for today - reusing it, no Gemini call.");
+  } else if (DRY_RUN) {
+    console.log("[dry-run] skipping the mover summary so no daily quota is spent.");
+  } else {
+    summary = await findMoverSummary(tradeDate, movers);
+  }
+
+  try {
+    await sbUpsertRows("market_mover_summaries", [{
+      trade_date: tradeDate, summary,
+      generated_by: summary ? "rollup+gemini" : "rollup",
+      updated_at: new Date().toISOString(),
+    }], "trade_date");
+  } catch (err) {
+    console.warn(`Mover summary write failed (non-fatal): ${err.message}`);
+  }
 }
 
 // Stage 1 of the daily recap: the day's biggest movers, each with a real
@@ -1865,6 +2101,17 @@ async function main() {
       }
     } catch (err) {
       console.warn(`News digest failed (non-fatal): ${err.message}`);
+    }
+
+    // Market-wide movers: the one part of this app that can see a stock
+    // outside the tracked list. Runs before fundamentals so the movers'
+    // own symbols are included in that refresh.
+    try {
+      const latest = await sbGet("daily_prices?select=trade_date&order=trade_date.desc&limit=1");
+      const tradeDate = latest.length ? latest[0].trade_date : new Date().toISOString().slice(0, 10);
+      await buildMarketMovers(tradeDate);
+    } catch (err) {
+      console.warn(`Market movers step failed (non-fatal): ${err.message}`);
     }
 
     // Daily matches FUNDAMENTALS_MAX_AGE_MS - quarterly-filing data has no

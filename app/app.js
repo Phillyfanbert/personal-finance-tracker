@@ -143,6 +143,8 @@ let dailyPrices = []; // durable per-symbol daily OHLC history (daily_prices, 54
 let symbolFundamentals = []; // P/E, market cap, dividend yield (symbol_fundamentals, 56)
 let watchlistSymbols = []; // the user's own editable movers watchlist (watchlist_symbols, 56)
 let holdingSales = []; // realized gain/loss from actual sales (holding_sales, 57)
+let marketMovers = []; // market-wide biggest movers, Alpha Vantage (market_movers, 58)
+let marketMoverSummary = null; // the optional beginner-friendly paragraph for them
 let agentRunStatus = {}; // { "deal-agent": {...}, "price-agent": {...} } - last-run freshness/health (agent_run_status)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
 let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
@@ -261,7 +263,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
   // Both assets and assetPriceFindings are guaranteed loaded by the
   // Promise.all above (no race) - this is what keeps Net Worth/the Assets
   // card/the net-worth trend chart in sync with live prices on every app
@@ -272,6 +274,8 @@ async function init() {
   await autoLogDueIncome();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
+  // After loadAssets(), since this reads assets.price_symbol.
+  await syncHoldingsIntoWatchlist();
   // The two findings loaders above already pulled a headline batch, so the
   // slower headline cadence starts from here rather than firing again on
   // the very first tick.
@@ -528,6 +532,24 @@ async function loadWatchlistSymbols() {
   renderWatchlistEditor();
 }
 
+// Market-wide movers for the most recent day we have any. Deliberately
+// keyed off whatever the newest trade_date in the table is rather than
+// today's calendar date, same reasoning buildDailyRecap uses: a weekend or
+// holiday should show the last real trading day, not an empty card.
+async function loadMarketMovers() {
+  const { data: dates } = await sb.from("market_movers")
+    .select("trade_date").order("trade_date", { ascending: false }).limit(1);
+  if (!dates || !dates.length) { marketMovers = []; renderMarketMovers(); return; }
+  const tradeDate = dates[0].trade_date;
+  const [{ data: rows }, { data: summary }] = await Promise.all([
+    sb.from("market_movers").select("*").eq("trade_date", tradeDate).order("rank"),
+    sb.from("market_mover_summaries").select("summary").eq("trade_date", tradeDate).maybeSingle(),
+  ]);
+  marketMovers = rows || [];
+  marketMoverSummary = summary?.summary || null;
+  renderMarketMovers();
+}
+
 async function loadHoldingSales() {
   const { data } = await sb.from("holding_sales").select("*").order("sold_on", { ascending: false });
   holdingSales = data || [];
@@ -542,6 +564,31 @@ async function ensureWatchlistSymbols() {
   if (data && data.length) return;
   const rows = Object.entries(DEFAULT_WATCHLIST).map(([symbol, company_name]) => ({ symbol, company_name }));
   await sb.from("watchlist_symbols").insert(rows);
+}
+
+// Anything you own is automatically something you track - you should never
+// have to re-add a ticker to the watchlist that you already hold. The
+// dependency runs one way on purpose: holdings feed INTO the watchlist,
+// never the reverse, so adding a symbol here never implies owning it.
+//
+// Removing an auto-added symbol only sticks until the next load while you
+// still hold it, which is correct rather than annoying: the movers list,
+// breadth count and recap would otherwise silently stop covering a stock
+// you actually own. renderWatchlistEditor() labels those rows so the
+// reason is visible instead of looking like a bug.
+async function syncHoldingsIntoWatchlist() {
+  const held = ownedPriceSymbols();
+  if (!held.length) return;
+  const tracked = new Set(watchlistSymbols.map((w) => (w.symbol || "").trim().toUpperCase()));
+  const missing = held.filter((s) => !tracked.has(s));
+  if (!missing.length) return;
+  // company_name left null: the agent backfills it from the company
+  // profile, and a null degrades to ticker-only headline matching rather
+  // than breaking anything.
+  const { error } = await sb.from("watchlist_symbols")
+    .insert(missing.map((symbol) => ({ symbol, company_name: null })));
+  if (error) return; // best-effort - never block app load over this
+  await loadWatchlistSymbols();
 }
 
 async function loadDailyRecaps() {
@@ -580,6 +627,7 @@ function renderPriceDependentCards() {
   renderMarketOverview();
   renderInvestments();
   renderPriceHistory();
+  renderMarketMovers();
 }
 
 // ---- LIVE QUOTE OVERLAY ----------------------------------------------------
@@ -4134,6 +4182,79 @@ $("sellConfirmBtn").onclick = async () => {
   toast(`Sale recorded: ${fmt(realized)} realized${remainingQty === 0 ? " - position closed" : ""}`);
 };
 
+// ---- INVESTMENTS TABS + TRACKED-SYMBOLS GEAR -------------------------------
+// Both panels stay in the DOM and are toggled with .hidden rather than being
+// built on demand. That is what lets every existing render function keep
+// writing into its own elements with no knowledge of which tab is showing -
+// switching tabs needs no re-render at all, and a background refresh landing
+// on a hidden tab still lands correctly.
+let investTab = "market";
+function setInvestTab(tab) {
+  investTab = tab === "portfolio" ? "portfolio" : "market";
+  localStorage.setItem("investTab", investTab);
+  $("investTabMarket").classList.toggle("hidden", investTab !== "market");
+  $("investTabPortfolio").classList.toggle("hidden", investTab !== "portfolio");
+  for (const [id, name] of [["investTabMarketBtn", "market"], ["investTabPortfolioBtn", "portfolio"]]) {
+    const active = investTab === name;
+    $(id).style.borderColor = active ? "var(--accent)" : "";
+    $(id).style.color = active ? "var(--accent)" : "";
+    $(id).style.fontWeight = active ? "600" : "";
+  }
+}
+$("investTabMarketBtn").onclick = () => setInvestTab("market");
+$("investTabPortfolioBtn").onclick = () => setInvestTab("portfolio");
+setInvestTab(localStorage.getItem("investTab") || "market");
+
+$("watchlistGearBtn").onclick = () => {
+  renderWatchlistEditor();
+  $("watchlistModal").classList.remove("hidden");
+};
+$("watchlistClose").onclick = () => $("watchlistModal").classList.add("hidden");
+
+// ---- MARKET-WIDE MOVERS ----------------------------------------------------
+// The only card here that can see a stock outside the tracked list. Numbers
+// come from Alpha Vantage, the company name and headline from Finnhub, and
+// the summary from one optional Gemini call - so the card is progressively
+// more useful as each stage succeeds, and still worth showing if only the
+// first one did.
+function renderMarketMovers() {
+  const card = $("marketMoversCard");
+  if (!card) return;
+  if (!marketMovers.length) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  $("marketMoversDate").textContent = recapDateLabel(marketMovers[0].trade_date);
+
+  // Same "AI-written" labelling every other generated sentence in this app
+  // carries - the reader should never have to guess which lines are measured
+  // and which are written. esc()'d, being model output.
+  const summaryEl = $("marketMoversSummary");
+  summaryEl.innerHTML = marketMoverSummary
+    ? `<span class="muted" style="font-size:11px">AI-written summary of the moves below</span><br>${esc(marketMoverSummary)}`
+    : "";
+  summaryEl.classList.toggle("hidden", !marketMoverSummary);
+
+  const row = (m) => `
+    <div class="exp" style="cursor:default">
+      <div>
+        <div>${esc(m.company_name || m.symbol)}${m.company_name ? ` <span class="muted">(${esc(m.symbol)})</span>` : ""}</div>
+        ${m.headline
+          ? `<div class="meta"><a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headline.title)}</a>${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>`
+          : `<div class="meta muted">No news coverage found for this move</div>`}
+      </div>
+      <span class="amt" style="text-align:right">
+        ${m.price != null ? fmt(m.price) : "-"}
+        <div style="font-size:12px;color:${gainColor(m.change_pct)}">${signedPct(m.change_pct)}</div>
+      </span>
+    </div>`;
+
+  const section = (label, list) => list.length
+    ? `<div class="muted" style="font-size:12px;margin-bottom:4px">${label}</div>${list.map(row).join("")}`
+    : "";
+  $("marketMoversGainers").innerHTML = section("Biggest risers", marketMovers.filter((m) => m.category === "gainer"));
+  $("marketMoversLosers").innerHTML = section("Biggest fallers", marketMovers.filter((m) => m.category === "loser"));
+}
+
 // ---- PRICE HISTORY (per-symbol chart, range, fundamentals) -----------------
 // Ranges are offered even when history is shorter than the window - the
 // chart just shows what exists and the caption says so, which is more
@@ -4280,19 +4401,29 @@ function renderRealizedGains() {
 
 // ---- TRACKED SYMBOLS (user-editable watchlist) -----------------------------
 function renderWatchlistEditor() {
-  const card = $("watchlistCard");
-  if (!card) return;
-  if (!userId) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
+  if (!$("watchlistList")) return;
+  // Held symbols are labelled rather than hidden: removing one only sticks
+  // until the next load while you still own it, and seeing why is better
+  // than watching it silently reappear.
+  const held = new Set(ownedPriceSymbols());
   $("watchlistList").innerHTML = watchlistSymbols.length
-    ? watchlistSymbols.map((w) => `
+    ? watchlistSymbols.map((w) => {
+        const symbol = (w.symbol || "").trim().toUpperCase();
+        const owned = held.has(symbol);
+        const sub = owned
+          ? `<div class="meta">${w.company_name ? esc(w.company_name) + " · " : ""}you own this - added automatically</div>`
+          : w.company_name
+            ? `<div class="meta">${esc(w.company_name)}</div>`
+            : `<div class="meta muted">no company name - headlines match on ticker only</div>`;
+        return `
       <div class="exp" style="cursor:default">
         <div>
           <div>${esc(w.symbol)}</div>
-          ${w.company_name ? `<div class="meta">${esc(w.company_name)}</div>` : `<div class="meta muted">no company name - headlines match on ticker only</div>`}
+          ${sub}
         </div>
-        <span class="x" data-del-watch="${w.id}">✕</span>
-      </div>`).join("")
+        ${owned ? "" : `<span class="x" data-del-watch="${w.id}">✕</span>`}
+      </div>`;
+      }).join("")
     : `<p class="muted" style="font-size:13px">No symbols tracked. The market overview and daily recap will be empty until you add some.</p>`;
 
   document.querySelectorAll("[data-del-watch]").forEach((el) => {

@@ -117,6 +117,10 @@
     .help-pill { width: auto; padding: 6px 12px; font-size: 12px; border-radius: 999px;
       background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); cursor: pointer; }
     .help-pill.active { color: var(--text); border-color: var(--accent); }
+    .subtab-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+    .subtab-pill { width: auto; padding: 7px 14px; font-size: 12.5px; border-radius: 999px;
+      background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); cursor: pointer; }
+    .subtab-pill.active { color: var(--text); border-color: var(--accent); font-weight: 600; }
     .help-topic { margin-bottom: 18px; }
     .help-topic:last-child { margin-bottom: 0; }
     .help-topic h3 { font-size: 15px; margin: 0 0 6px; }
@@ -996,257 +1000,288 @@
            and toggle with .hidden, so every existing render function keeps
            writing into its elements whether or not its tab is showing - no
            render call has to know which tab is active. -->
-      <div class="row" id="investTabBar" style="gap:8px;margin:4px 0 14px">
-        <button class="secondary" id="investTabMarketBtn" style="padding:9px 0;font-size:13px">Market</button>
-        <button class="secondary" id="investTabPortfolioBtn" style="padding:9px 0;font-size:13px">My portfolio</button>
+      <div class="row" id="investTabBar" style="gap:10px;margin:6px 0 18px">
+        <button class="secondary" id="investTabMarketBtn" style="padding:16px 0;font-size:16px;font-weight:600">Market</button>
+        <button class="secondary" id="investTabPortfolioBtn" style="padding:16px 0;font-size:16px;font-weight:600">My portfolio</button>
       </div>
 
       <div id="investTabMarket">
-        <!-- Daily recap: the day's biggest movers, each with a real linked
-             headline, plus breadth and the index proxies' moves. Stage 1 is
-             deliberately ZERO-LLM - every number comes from daily_prices and
-             every headline from Finnhub's free company-news output already
-             stored on the findings tables, so unlike the (still empty)
-             market news digest below it, nothing here can be rate-limited
-             out of existence. Written once per trading day by
-             tools/price-agent.js's RECAP_ONLY mode into daily_recaps.
-             A headline is presented as the day's COVERAGE, never as the
-             cause of the move - the app doesn't get to assert causation it
-             can't establish, the same line every other card here holds.
-             Hidden entirely until a real recap exists, same convention as
-             Market overview below. -->
-        <div class="card hidden" id="dailyRecapCard">
-          <strong>Daily recap</strong>
-          <p class="muted" style="font-size:12px;margin:4px 0 2px" id="dailyRecapDate"></p>
-          <p class="muted" style="font-size:12px;margin:2px 0 4px">The biggest moves among tracked large-caps, each with a real headline from that day's coverage. A headline is what was reported that day, not necessarily why the price moved.</p>
-          <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="dailyRecapBreadth"></p>
-          <p class="muted" id="dailyRecapFreshness" style="font-size:11px;margin:0 0 2px"></p>
-          <p id="dailyRecapWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
-          <p style="font-size:13px;margin:6px 0 8px" id="dailyRecapSummary"></p>
-          <div id="dailyRecapMovers"></div>
-          <p class="muted" style="font-size:12px;margin:8px 0 0" id="dailyRecapIndexes"></p>
+        <div class="subtab-pills" id="investSubTabsMarket">
+          <button type="button" class="subtab-pill active" data-invest-subtab="investSubRecap">Daily recap</button>
+          <button type="button" class="subtab-pill" data-invest-subtab="investSubMovers">Movers</button>
+          <button type="button" class="subtab-pill" data-invest-subtab="investSubOverview">Overview</button>
+          <button type="button" class="subtab-pill" data-invest-subtab="investSubHistory">Price history</button>
         </div>
-
-        <!-- Market-wide movers, the one card here that can see a stock outside the
-        tracked list. Alpha Vantage answers "what moved most today" - Finnhub
-        and every other free quote API can only price symbols you already name,
-        which is why this list used to be capped at the ~20 already tracked.
-        Finnhub then supplies each ticker's company name and a real headline;
-        one optional Gemini call writes the plain-English summary. Every stage
-        degrades on its own: no key, no card; no headline, just numbers; no
-        summary, still numbers and links. -->
-        <div class="card hidden" id="marketMoversCard">
-        <strong>Biggest movers today</strong>
-        <p class="muted" style="font-size:12px;margin:4px 0 2px" id="marketMoversDate"></p>
-        <p class="muted" style="font-size:12px;margin:2px 0 8px">The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.</p>
-        <p style="font-size:13px;margin:6px 0 8px" id="marketMoversSummary"></p>
-        <div id="marketMoversGainers"></div>
-        <div id="marketMoversLosers" style="margin-top:10px"></div>
-        </div>
-
-        <!-- Market overview: a fixed set of major US indexes (S&P 500, Dow,
-             NASDAQ, Russell 2000 - app.js's MARKET_INDEXES) plus today's top
-             3 movers from a fixed large-cap watchlist (MARKET_MOVERS_
-             WATCHLIST) - both genuinely NOT tied to anything the user owns,
-             unlike every other card on this tab. Fed by tools/price-agent.js
-             (Tavily+Gemini for indexes, Finnhub for real ticker prices - see
-             its own header comment, not SearXNG/Gemma, which this pipeline
-             never used), gated by the same PRICE_FINDINGS_ENABLED flag -
-             hidden entirely (not shown with an empty/placeholder state)
-             until that's on and the agent has actually written rows, since
-             there's no manual-entry fallback for either an index or a
-             watchlist stock the way
-             there is for the user's own assets. The movers subsection hides
-             itself independently (there may be indexes but no rankable
-             movers yet, or vice versa). -->
-
-
-
-
-
-
-
-
-        <div class="card hidden" id="marketOverviewCard">
-          <strong>Market overview</strong>
-          <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
-          <p class="muted" style="font-size:12px;margin:4px 0 4px">Major US indexes - a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.</p>
-          <p class="muted" id="marketOverviewFreshness" style="font-size:11px;margin:0 0 2px"></p>
-          <p class="muted" id="marketOverviewLiveFreshness" style="font-size:11px;margin:0 0 6px"></p>
-          <p id="marketOverviewWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
-          <div id="marketOverviewList"></div>
-          <div id="marketMoversSection" class="hidden" style="margin-top:14px">
-            <strong style="font-size:13px">Today's top movers</strong>
-            <p class="muted" style="font-size:12px;margin:4px 0 4px">Biggest moves (up or down) from a fixed watchlist of well-known large-cap stocks - not a scan of the whole market, and not a recommendation.</p>
-            <p class="muted" id="marketMoversFreshness" style="font-size:11px;margin:0 0 8px"></p>
-            <div id="marketMoversList"></div>
+        <div id="investSubRecap" data-subtab-label="Daily recap">
+  <!-- Daily recap: the day's biggest movers, each with a real linked
+               headline, plus breadth and the index proxies' moves. Stage 1 is
+               deliberately ZERO-LLM - every number comes from daily_prices and
+               every headline from Finnhub's free company-news output already
+               stored on the findings tables, so unlike the (still empty)
+               market news digest below it, nothing here can be rate-limited
+               out of existence. Written once per trading day by
+               tools/price-agent.js's RECAP_ONLY mode into daily_recaps.
+               A headline is presented as the day's COVERAGE, never as the
+               cause of the move - the app doesn't get to assert causation it
+               can't establish, the same line every other card here holds.
+               Hidden entirely until a real recap exists, same convention as
+               Market overview below. -->
+          <div class="card hidden" id="dailyRecapCard">
+            <strong>Daily recap</strong>
+            <p class="muted" style="font-size:12px;margin:4px 0 2px" id="dailyRecapDate"></p>
+            <p class="muted" style="font-size:12px;margin:2px 0 4px">The biggest moves among tracked large-caps, each with a real headline from that day's coverage. A headline is what was reported that day, not necessarily why the price moved.</p>
+            <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="dailyRecapBreadth"></p>
+            <p class="muted" id="dailyRecapFreshness" style="font-size:11px;margin:0 0 2px"></p>
+            <p id="dailyRecapWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
+            <p style="font-size:13px;margin:6px 0 8px" id="dailyRecapSummary"></p>
+            <div id="dailyRecapMovers"></div>
+            <p class="muted" style="font-size:12px;margin:8px 0 0" id="dailyRecapIndexes"></p>
           </div>
-          <div id="marketNewsSection" class="hidden" style="margin-top:14px">
-            <strong style="font-size:13px">News from your tracked stocks</strong>
-            <p class="muted" style="font-size:12px;margin:4px 0 8px">A short read of today's general market news coverage - not a prediction, and not a recommendation.</p>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <span id="marketSentimentDot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
-              <span id="marketSentimentLabel" style="font-weight:600"></span>
+      </div>
+
+        <div id="investSubMovers" class="hidden" data-subtab-label="Movers">
+  <!-- Market-wide movers, the one card here that can see a stock outside the
+          tracked list. Alpha Vantage answers "what moved most today" - Finnhub
+          and every other free quote API can only price symbols you already name,
+          which is why this list used to be capped at the ~20 already tracked.
+          Finnhub then supplies each ticker's company name and a real headline;
+          one optional Gemini call writes the plain-English summary. Every stage
+          degrades on its own: no key, no card; no headline, just numbers; no
+          summary, still numbers and links. -->
+          <div class="card hidden" id="marketMoversCard">
+          <strong>Biggest movers today</strong>
+          <p class="muted" style="font-size:12px;margin:4px 0 2px" id="marketMoversDate"></p>
+          <p class="muted" style="font-size:12px;margin:2px 0 8px">The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.</p>
+          <p style="font-size:13px;margin:6px 0 8px" id="marketMoversSummary"></p>
+          <div id="marketMoversGainers"></div>
+          <div id="marketMoversLosers" style="margin-top:10px"></div>
+          </div>
+      </div>
+
+        <div id="investSubOverview" class="hidden" data-subtab-label="Overview">
+  <!-- Market overview: a fixed set of major US indexes (S&P 500, Dow,
+               NASDAQ, Russell 2000 - app.js's MARKET_INDEXES) plus today's top
+               3 movers from a fixed large-cap watchlist (MARKET_MOVERS_
+               WATCHLIST) - both genuinely NOT tied to anything the user owns,
+               unlike every other card on this tab. Fed by tools/price-agent.js
+               (Tavily+Gemini for indexes, Finnhub for real ticker prices - see
+               its own header comment, not SearXNG/Gemma, which this pipeline
+               never used), gated by the same PRICE_FINDINGS_ENABLED flag -
+               hidden entirely (not shown with an empty/placeholder state)
+               until that's on and the agent has actually written rows, since
+               there's no manual-entry fallback for either an index or a
+               watchlist stock the way
+               there is for the user's own assets. The movers subsection hides
+               itself independently (there may be indexes but no rankable
+               movers yet, or vice versa). -->
+
+
+
+
+
+
+
+
+          <div class="card hidden" id="marketOverviewCard">
+            <strong>Market overview</strong>
+            <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
+            <p class="muted" style="font-size:12px;margin:4px 0 4px">Major US indexes - a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.</p>
+            <p class="muted" id="marketOverviewFreshness" style="font-size:11px;margin:0 0 2px"></p>
+            <p class="muted" id="marketOverviewLiveFreshness" style="font-size:11px;margin:0 0 6px"></p>
+            <p id="marketOverviewWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
+            <div id="marketOverviewList"></div>
+            <div id="marketMoversSection" class="hidden" style="margin-top:14px">
+              <strong style="font-size:13px">Today's top movers</strong>
+              <p class="muted" style="font-size:12px;margin:4px 0 4px">Biggest moves (up or down) from a fixed watchlist of well-known large-cap stocks - not a scan of the whole market, and not a recommendation.</p>
+              <p class="muted" id="marketMoversFreshness" style="font-size:11px;margin:0 0 8px"></p>
+              <div id="marketMoversList"></div>
             </div>
-            <p class="muted" id="marketSentimentReason" style="font-size:12px;margin:0 0 10px"></p>
-            <div id="marketNewsList"></div>
+            <div id="marketNewsSection" class="hidden" style="margin-top:14px">
+              <strong style="font-size:13px">News from your tracked stocks</strong>
+              <p class="muted" style="font-size:12px;margin:4px 0 8px">A short read of today's general market news coverage - not a prediction, and not a recommendation.</p>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span id="marketSentimentDot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
+                <span id="marketSentimentLabel" style="font-weight:600"></span>
+              </div>
+              <p class="muted" id="marketSentimentReason" style="font-size:12px;margin:0 0 10px"></p>
+              <div id="marketNewsList"></div>
+            </div>
           </div>
-        </div>
+      </div>
 
-        <!-- Price history: the per-symbol chart daily_prices was built for.
-             Finnhub's real historical-candle endpoint is premium and 403s on
-             a free key, so this is drawn from history the app accumulates
-             itself, one row per symbol per trading day. That means the range
-             genuinely starts short and grows - the high/low line below states
-             the real span rather than calling five days a "52-week" anything
-             until a full year actually exists. Hidden until there is history
-             for at least one symbol. -->
-        <div class="card hidden" id="priceHistoryCard">
-          <strong>Price history</strong>
-          <p class="muted" style="font-size:12px;margin:4px 0 8px">Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.</p>
-          <label>Symbol</label>
-          <select id="priceHistorySymbol"></select>
-          <div id="priceHistoryRanges" style="display:flex;gap:6px;margin:10px 0 8px;flex-wrap:wrap"></div>
-          <div class="chartbox short"><canvas id="priceHistoryChart"></canvas></div>
-          <p class="muted" id="priceHistoryEmpty" style="font-size:13px;margin:8px 0 0"></p>
-          <p id="priceHistoryRange" style="font-size:13px;margin:8px 0 0"></p>
-          <div id="priceHistoryFundamentals" style="margin-top:8px"></div>
-        </div>
+        <div id="investSubHistory" class="hidden" data-subtab-label="Price history">
+  <!-- Price history: the per-symbol chart daily_prices was built for.
+               Finnhub's real historical-candle endpoint is premium and 403s on
+               a free key, so this is drawn from history the app accumulates
+               itself, one row per symbol per trading day. That means the range
+               genuinely starts short and grows - the high/low line below states
+               the real span rather than calling five days a "52-week" anything
+               until a full year actually exists. Hidden until there is history
+               for at least one symbol. -->
+          <div class="card hidden" id="priceHistoryCard">
+            <strong>Price history</strong>
+            <p class="muted" style="font-size:12px;margin:4px 0 8px">Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.</p>
+            <label>Symbol</label>
+            <select id="priceHistorySymbol"></select>
+            <div id="priceHistoryRanges" style="display:flex;gap:6px;margin:10px 0 8px;flex-wrap:wrap"></div>
+            <div class="chartbox short"><canvas id="priceHistoryChart"></canvas></div>
+            <p class="muted" id="priceHistoryEmpty" style="font-size:13px;margin:8px 0 0"></p>
+            <p id="priceHistoryRange" style="font-size:13px;margin:8px 0 0"></p>
+            <div id="priceHistoryFundamentals" style="margin-top:8px"></div>
+          </div>
+      </div>
       </div>
 
       <div id="investTabPortfolio" class="hidden">
-        <!-- Every asset in INVESTMENT_ASSET_TYPES (app.js) - a ticker-tracked
-             holding shows live price/gain-loss/day-change math; a symbol-less
-             one (a blended 401(k), say) just shows its value. Explanation
-             text (if tools/price-agent.js found one) shows under the row. -->
-        <div class="card">
-          <div class="topbar" style="margin-bottom:4px">
-            <strong>Holdings</strong>
-            <button class="secondary" id="addHoldingBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add stock</button>
-          </div>
-          <p class="muted" style="font-size:12px;margin:0 0 8px">Record the specific stocks, funds or coins you bought. An account's value is the total of its holdings.</p>
-          <!-- A holding is an `assets` row pointing at its account's asset via
-               parent_asset_id (40_asset_holdings.sql), not a separate table -
-               so the gain/loss and allocation math in investments.js reads it
-               with no changes. Modeled after a real trade ticket - symbol,
-               shares, price per share - not a lump total; app.js converts to/
-               from the stored TOTAL (assets.purchase_price) on save/load, since
-               every other reader of that column already expects a total, not
-               a per-share figure. No separate "current value" input - a real
-               purchase doesn't have one either, and the live-price pipeline
-               (app.js's findLivePrice(), Finnhub-backed) already fills in
-               today's price automatically once the ticker is typed. The
-               optional "Paid from" funding account reuses Quick Add's own
-               assetDeltaError()/applyAssetDelta() unchanged - only the
-               POSITIVE delta between the new and previous total cost basis
-               is validated/deducted, so this correctly covers both a brand
-               new holding and buying more shares of one you already have,
-               while never "charging" an edit that lowers quantity/price. -->
-          <div id="holdingForm" class="hidden" style="margin-bottom:12px;padding:12px;background:var(--panel-2);border-radius:10px">
-            <!-- "Already own this" (default) is exactly the original per-share
-                 form, unchanged - findLivePrice() below is a courtesy default
-                 from the weekly price-agent.js findings, not a live lookup.
-                 "Buying now" instead calls fetchLivePriceOnDemand(), which
-                 hits this app's own /api/price Worker route (worker.js) for a
-                 genuinely real-time Finnhub quote, and computes whichever of
-                 shares/price-per-share the user didn't type from the live
-                 price - see setHoldingEntryMode/recomputeHoldingBuyFields. -->
-            <div class="help-pills" id="holdingModePills">
-              <button type="button" class="help-pill active" data-holding-mode="own">Already own this</button>
-              <button type="button" class="help-pill" data-holding-mode="buying">Buying now</button>
+        <div class="subtab-pills" id="investSubTabsPortfolio">
+          <button type="button" class="subtab-pill active" data-invest-subtab="investSubHoldings">Holdings</button>
+          <button type="button" class="subtab-pill" data-invest-subtab="investSubValue">Value</button>
+          <button type="button" class="subtab-pill" data-invest-subtab="investSubRealized">Realized</button>
+          <button type="button" class="subtab-pill" data-invest-subtab="investSubLimits">Limits</button>
+          <button type="button" class="subtab-pill" data-invest-subtab="investSubTarget">Target</button>
+        </div>
+        <div id="investSubHoldings" data-subtab-label="Holdings">
+  <!-- Every asset in INVESTMENT_ASSET_TYPES (app.js) - a ticker-tracked
+               holding shows live price/gain-loss/day-change math; a symbol-less
+               one (a blended 401(k), say) just shows its value. Explanation
+               text (if tools/price-agent.js found one) shows under the row. -->
+          <div class="card">
+            <div class="topbar" style="margin-bottom:4px">
+              <strong>Holdings</strong>
+              <button class="secondary" id="addHoldingBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add stock</button>
             </div>
-            <label>Account this sits in</label>
-            <select id="holdingAccount"></select>
+            <p class="muted" style="font-size:12px;margin:0 0 8px">Record the specific stocks, funds or coins you bought. An account's value is the total of its holdings.</p>
+            <!-- A holding is an `assets` row pointing at its account's asset via
+                 parent_asset_id (40_asset_holdings.sql), not a separate table -
+                 so the gain/loss and allocation math in investments.js reads it
+                 with no changes. Modeled after a real trade ticket - symbol,
+                 shares, price per share - not a lump total; app.js converts to/
+                 from the stored TOTAL (assets.purchase_price) on save/load, since
+                 every other reader of that column already expects a total, not
+                 a per-share figure. No separate "current value" input - a real
+                 purchase doesn't have one either, and the live-price pipeline
+                 (app.js's findLivePrice(), Finnhub-backed) already fills in
+                 today's price automatically once the ticker is typed. The
+                 optional "Paid from" funding account reuses Quick Add's own
+                 assetDeltaError()/applyAssetDelta() unchanged - only the
+                 POSITIVE delta between the new and previous total cost basis
+                 is validated/deducted, so this correctly covers both a brand
+                 new holding and buying more shares of one you already have,
+                 while never "charging" an edit that lowers quantity/price. -->
+            <div id="holdingForm" class="hidden" style="margin-bottom:12px;padding:12px;background:var(--panel-2);border-radius:10px">
+              <!-- "Already own this" (default) is exactly the original per-share
+                   form, unchanged - findLivePrice() below is a courtesy default
+                   from the weekly price-agent.js findings, not a live lookup.
+                   "Buying now" instead calls fetchLivePriceOnDemand(), which
+                   hits this app's own /api/price Worker route (worker.js) for a
+                   genuinely real-time Finnhub quote, and computes whichever of
+                   shares/price-per-share the user didn't type from the live
+                   price - see setHoldingEntryMode/recomputeHoldingBuyFields. -->
+              <div class="help-pills" id="holdingModePills">
+                <button type="button" class="help-pill active" data-holding-mode="own">Already own this</button>
+                <button type="button" class="help-pill" data-holding-mode="buying">Buying now</button>
+              </div>
+              <label>Account this sits in</label>
+              <select id="holdingAccount"></select>
+              <div class="row">
+                <div><label>Ticker / symbol</label><input id="holdingSymbol" placeholder="AAPL" autocapitalize="characters" /></div>
+                <div><label>Shares / units</label><input id="holdingQuantity" type="number" step="any" inputmode="decimal" placeholder="10" /></div>
+              </div>
+              <div class="help-pills hidden" id="holdingBuyModePills">
+                <button type="button" class="help-pill active" data-holding-buy-basis="shares">By shares</button>
+                <button type="button" class="help-pill" data-holding-buy-basis="dollars">By dollar amount</button>
+              </div>
+              <div class="row hidden" id="holdingDollarAmountRow">
+                <div><label>Amount to invest</label><input id="holdingDollarAmount" type="number" step="0.01" inputmode="decimal" placeholder="500" /></div>
+              </div>
+              <p class="muted" id="holdingLivePriceStatus" style="font-size:12px;margin:2px 0 8px"></p>
+              <div class="row">
+                <div><label id="holdingCostBasisLabel">Price per share</label><input id="holdingCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you paid per share" /></div>
+              </div>
+              <p class="muted" id="holdingTotalCost" style="font-size:12px;margin:2px 0 8px"></p>
+              <label>Paid from (optional)</label>
+              <select id="holdingFundingAccount"></select>
+              <p class="muted" style="font-size:12px;margin:2px 0 8px">If selected, this purchase is deducted from and checked against that account's balance - only for money actually being added (buying more shares), never for editing a holding down.</p>
+              <label>Bucket (optional, for target allocation)</label>
+              <select id="holdingBucket"></select>
+              <p class="muted" style="font-size:12px;margin:8px 0 0">Price per share fills in automatically once a live price is available for the ticker - edit it if you paid a different amount. Once priced, shares x live price is what actually shows as this holding's value.</p>
+              <div style="height:8px"></div>
+              <div class="row">
+                <button id="saveHoldingBtn">Save holding</button>
+                <button class="secondary" id="cancelHoldingBtn">Cancel</button>
+              </div>
+            </div>
+            <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p></div>
+          </div>
+      </div>
+
+        <div id="investSubValue" class="hidden" data-subtab-label="Value">
+  <!-- One snapshot per calendar day the app was actually opened
+               (snapshotPortfolioIfNeeded, app.js) - same reasoning as the
+               Reports page's net worth trend (no cron/server for a static
+               PWA). A day the app wasn't opened just has no row. -->
+          <div class="card">
+            <strong>Value over time</strong>
+            <div class="chartbox short"><canvas id="investTrendChart"></canvas></div>
+            <p class="muted" id="investTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
+          </div>
+      </div>
+
+        <div id="investSubRealized" class="hidden" data-subtab-label="Realized">
+  <!-- Realized gain/loss - money actually banked on sales, genuinely
+               separate from the unrealized gain the totals above show. Average
+               cost basis (assets.purchase_price is one blended total for the
+               position, with no per-lot history), which the card says out loud
+               because that is NOT what a broker reports for individual shares.
+               Hidden until something has actually been sold. -->
+          <div class="card hidden" id="realizedGainCard">
+            <strong>Realized gain/loss</strong>
+            <p class="muted" style="font-size:12px;margin:4px 0 8px">From holdings you've actually sold, using average cost basis. This is not a tax document - a broker reports individual shares differently.</p>
             <div class="row">
-              <div><label>Ticker / symbol</label><input id="holdingSymbol" placeholder="AAPL" autocapitalize="characters" /></div>
-              <div><label>Shares / units</label><input id="holdingQuantity" type="number" step="any" inputmode="decimal" placeholder="10" /></div>
+              <div><div class="muted" style="font-size:12px">This year</div><div id="realizedYtd" style="font-size:18px;font-weight:600">-</div></div>
+              <div><div class="muted" style="font-size:12px">All time</div><div id="realizedAllTime" style="font-size:18px;font-weight:600">-</div></div>
             </div>
-            <div class="help-pills hidden" id="holdingBuyModePills">
-              <button type="button" class="help-pill active" data-holding-buy-basis="shares">By shares</button>
-              <button type="button" class="help-pill" data-holding-buy-basis="dollars">By dollar amount</button>
-            </div>
-            <div class="row hidden" id="holdingDollarAmountRow">
-              <div><label>Amount to invest</label><input id="holdingDollarAmount" type="number" step="0.01" inputmode="decimal" placeholder="500" /></div>
-            </div>
-            <p class="muted" id="holdingLivePriceStatus" style="font-size:12px;margin:2px 0 8px"></p>
-            <div class="row">
-              <div><label id="holdingCostBasisLabel">Price per share</label><input id="holdingCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you paid per share" /></div>
-            </div>
-            <p class="muted" id="holdingTotalCost" style="font-size:12px;margin:2px 0 8px"></p>
-            <label>Paid from (optional)</label>
-            <select id="holdingFundingAccount"></select>
-            <p class="muted" style="font-size:12px;margin:2px 0 8px">If selected, this purchase is deducted from and checked against that account's balance - only for money actually being added (buying more shares), never for editing a holding down.</p>
-            <label>Bucket (optional, for target allocation)</label>
-            <select id="holdingBucket"></select>
-            <p class="muted" style="font-size:12px;margin:8px 0 0">Price per share fills in automatically once a live price is available for the ticker - edit it if you paid a different amount. Once priced, shares x live price is what actually shows as this holding's value.</p>
-            <div style="height:8px"></div>
-            <div class="row">
-              <button id="saveHoldingBtn">Save holding</button>
-              <button class="secondary" id="cancelHoldingBtn">Cancel</button>
+            <p class="muted" id="realizedDetail" style="font-size:12px;margin:8px 0 0"></p>
+          </div>
+      </div>
+
+        <div id="investSubLimits" class="hidden" data-subtab-label="Limits">
+  <!-- Base 2025 IRS limits only (no catch-up, no income phase-outs) -
+               see docs/bank-account-types-research.md §9b.6 for the full
+               per-type reasoning and which types share a limit vs. have their
+               own. A calculator against your own logged contributions, not
+               advice - only ever states the math, same boundary the Target
+               allocation card below already holds for what to buy. Only shows
+               a group the user actually has a qualifying account in. -->
+          <div class="card" id="contributionLimitsCard" style="display:none">
+            <strong>Contribution limits (this year)</strong>
+            <p class="muted" style="font-size:12px;margin:4px 0 8px">Base annual limits only - doesn't account for catch-up contributions, income phase-outs, or filing status. Verify against current IRS figures for your situation.</p>
+            <div id="contributionLimitsList"></div>
+          </div>
+      </div>
+
+        <div id="investSubTarget" class="hidden" data-subtab-label="Target">
+  <!-- A calculator, not a recommendation - risk label and targets are
+               only ever shown back to you as numbers. Nothing here ever
+               suggests what to buy. -->
+          <div class="card">
+            <strong>Target allocation</strong>
+            <p class="muted" style="font-size:12px;margin:4px 0 8px">Set your own target mix and see how far off you are - this never picks investments for you.</p>
+            <label>Risk label (for your own reference only)</label>
+            <select id="investRiskLabel">
+              <option value="">Not set</option>
+              <option value="conservative">Conservative</option>
+              <option value="moderate">Moderate</option>
+              <option value="aggressive">Aggressive</option>
+            </select>
+            <div id="investTargetsList" style="margin-top:12px"><p class="muted" style="font-size:13px">No targets set yet.</p></div>
+            <div class="row" style="margin-top:10px">
+              <select id="investTargetBucket" style="flex:1"></select>
+              <input id="investTargetPercent" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />
+              <button id="saveInvestTargetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
             </div>
           </div>
-          <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p></div>
-        </div>
-
-        <!-- One snapshot per calendar day the app was actually opened
-             (snapshotPortfolioIfNeeded, app.js) - same reasoning as the
-             Reports page's net worth trend (no cron/server for a static
-             PWA). A day the app wasn't opened just has no row. -->
-        <div class="card">
-          <strong>Value over time</strong>
-          <div class="chartbox short"><canvas id="investTrendChart"></canvas></div>
-          <p class="muted" id="investTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
-        </div>
-
-        <!-- Realized gain/loss - money actually banked on sales, genuinely
-             separate from the unrealized gain the totals above show. Average
-             cost basis (assets.purchase_price is one blended total for the
-             position, with no per-lot history), which the card says out loud
-             because that is NOT what a broker reports for individual shares.
-             Hidden until something has actually been sold. -->
-        <div class="card hidden" id="realizedGainCard">
-          <strong>Realized gain/loss</strong>
-          <p class="muted" style="font-size:12px;margin:4px 0 8px">From holdings you've actually sold, using average cost basis. This is not a tax document - a broker reports individual shares differently.</p>
-          <div class="row">
-            <div><div class="muted" style="font-size:12px">This year</div><div id="realizedYtd" style="font-size:18px;font-weight:600">-</div></div>
-            <div><div class="muted" style="font-size:12px">All time</div><div id="realizedAllTime" style="font-size:18px;font-weight:600">-</div></div>
-          </div>
-          <p class="muted" id="realizedDetail" style="font-size:12px;margin:8px 0 0"></p>
-        </div>
-
-        <!-- Base 2025 IRS limits only (no catch-up, no income phase-outs) -
-             see docs/bank-account-types-research.md §9b.6 for the full
-             per-type reasoning and which types share a limit vs. have their
-             own. A calculator against your own logged contributions, not
-             advice - only ever states the math, same boundary the Target
-             allocation card below already holds for what to buy. Only shows
-             a group the user actually has a qualifying account in. -->
-        <div class="card" id="contributionLimitsCard" style="display:none">
-          <strong>Contribution limits (this year)</strong>
-          <p class="muted" style="font-size:12px;margin:4px 0 8px">Base annual limits only - doesn't account for catch-up contributions, income phase-outs, or filing status. Verify against current IRS figures for your situation.</p>
-          <div id="contributionLimitsList"></div>
-        </div>
-
-        <!-- A calculator, not a recommendation - risk label and targets are
-             only ever shown back to you as numbers. Nothing here ever
-             suggests what to buy. -->
-        <div class="card">
-          <strong>Target allocation</strong>
-          <p class="muted" style="font-size:12px;margin:4px 0 8px">Set your own target mix and see how far off you are - this never picks investments for you.</p>
-          <label>Risk label (for your own reference only)</label>
-          <select id="investRiskLabel">
-            <option value="">Not set</option>
-            <option value="conservative">Conservative</option>
-            <option value="moderate">Moderate</option>
-            <option value="aggressive">Aggressive</option>
-          </select>
-          <div id="investTargetsList" style="margin-top:12px"><p class="muted" style="font-size:13px">No targets set yet.</p></div>
-          <div class="row" style="margin-top:10px">
-            <select id="investTargetBucket" style="flex:1"></select>
-            <input id="investTargetPercent" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />
-            <button id="saveInvestTargetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
-          </div>
-        </div>
+      </div>
       </div>
 
 
@@ -1853,6 +1888,7 @@
           <h3>Two tabs, and what's on each</h3>
           <p>The page opens on <strong>Market</strong>, which is everything about the wider stock market - none of it depends on what you own. <strong>My portfolio</strong> is the opposite: only your own holdings, gains, limits and targets. The page remembers whichever tab you used last.</p>
           <p>Above both tabs, and always visible, is your <strong>daily health check</strong> and the four totals. That's deliberate - it's the short answer to "how am I doing?", and the tabs underneath hold the detail behind it.</p>
+          <p>Within each tab, a row of smaller pill buttons switches between its individual sections - Daily recap, Movers, Overview and Price history under Market; Holdings, Value, Realized, Limits and Target under My portfolio. Only one section shows at a time instead of a long scroll, and the page remembers the last section you had open in each tab too.</p>
           <p>The <strong>gear icon</strong> at the top right opens Tracked symbols, the list of stocks the market cards are built around. It's tucked away because it's a setting you'll change occasionally, not something to read daily.</p>
         </div>
 

@@ -4205,6 +4205,43 @@ $("investTabMarketBtn").onclick = () => setInvestTab("market");
 $("investTabPortfolioBtn").onclick = () => setInvestTab("portfolio");
 setInvestTab(localStorage.getItem("investTab") || "market");
 
+// Sub-tabs within each top-level tab, so a market/portfolio panel is one
+// focused card at a time instead of a long stacked scroll. Same toggle-with-
+// .hidden shape as setInvestTab above and for the identical reason: every
+// sub-panel's card keeps its own render function untouched, since hiding a
+// PARENT already hides its children regardless of their own class - no
+// extra work is needed when the top-level tab itself changes.
+//
+// Generic across both groups rather than two near-duplicate functions,
+// since the only difference between Market's 4 sub-tabs and Portfolio's 5
+// is which buttons/storage key they use.
+function setInvestSubTab(barId, storageKey, subId) {
+  const bar = $(barId);
+  if (!bar) return;
+  bar.querySelectorAll("[data-invest-subtab]").forEach((btn) => {
+    const isActive = btn.dataset.investSubtab === subId;
+    btn.classList.toggle("active", isActive);
+    const panel = document.getElementById(btn.dataset.investSubtab);
+    if (panel) panel.classList.toggle("hidden", !isActive);
+  });
+  localStorage.setItem(storageKey, subId);
+}
+
+function wireInvestSubTabs(barId, storageKey, defaultSubId) {
+  const bar = $(barId);
+  if (!bar) return;
+  bar.querySelectorAll("[data-invest-subtab]").forEach((btn) => {
+    btn.onclick = () => setInvestSubTab(barId, storageKey, btn.dataset.investSubtab);
+  });
+  // Fall back to the default if a stale localStorage value no longer
+  // matches a real sub-tab (e.g. after a future change to the tab list).
+  const stored = localStorage.getItem(storageKey);
+  const valid = stored && bar.querySelector(`[data-invest-subtab="${stored}"]`);
+  setInvestSubTab(barId, storageKey, valid ? stored : defaultSubId);
+}
+wireInvestSubTabs("investSubTabsMarket", "investSubTabMarket", "investSubRecap");
+wireInvestSubTabs("investSubTabsPortfolio", "investSubTabPortfolio", "investSubHoldings");
+
 $("watchlistGearBtn").onclick = () => {
   renderWatchlistEditor();
   $("watchlistModal").classList.remove("hidden");

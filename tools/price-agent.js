@@ -275,6 +275,32 @@ const ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query";
 // glancing at the day, not a screener.
 const MOVERS_PER_CATEGORY = 5;
 
+// Quality floor, applied to all 20 BEFORE trimming to 5 - filtering after
+// the slice would have left the card mostly empty instead of finding real
+// candidates further down the list.
+//
+// The first live run made the need obvious: 6 of 10 movers were WARRANTS
+// (RCKTW at $0.0017, RNWWW at $0.0005, ...), which are not stocks, have no
+// company profile, carry no news, and trade in fractions of a cent where a
+// single tick is a "+112%" move. Showing those to someone who has never
+// invested is worse than showing nothing - it misrepresents what a big
+// move even means.
+const MIN_MOVER_PRICE = 1;
+const MIN_MOVER_VOLUME = 50000;
+
+// A 5-character US ticker ending in W, U or R is a warrant, unit or rights
+// issue rather than common stock - a real, standardised suffix convention,
+// not a guess at what looks junky.
+const isDerivativeTicker = (symbol) => symbol.length === 5 && /[WUR]$/.test(symbol);
+
+// Excluded for a stated reason, or null if it belongs on the card.
+function moverRejectReason(m) {
+  if (isDerivativeTicker(m.symbol)) return "warrant/unit/rights, not common stock";
+  if (m.price == null || m.price < MIN_MOVER_PRICE) return `price under $${MIN_MOVER_PRICE}`;
+  if (m.volume == null || m.volume < MIN_MOVER_VOLUME) return "too thinly traded";
+  return null;
+}
+
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
 const FINNHUB_URL = "https://finnhub.io/api/v1/quote";
 // Real per-symbol headlines - confirmed live (2026-08-16) on Finnhub's free
@@ -915,18 +941,32 @@ async function fetchTopMovers() {
   if (data && (data.Information || data.Note || data["Error Message"])) {
     throw new Error(String(data.Information || data.Note || data["Error Message"]).slice(0, 200));
   }
-  const pick = (list, category) => (Array.isArray(list) ? list : [])
-    .slice(0, MOVERS_PER_CATEGORY)
-    .map((row, i) => ({
-      category,
-      rank: i + 1,
-      symbol: String(row.ticker || "").trim().toUpperCase(),
-      price: avNum(row.price),
-      change_amount: avNum(row.change_amount),
-      change_pct: parseChangePct(row.change_percentage),
-      volume: avNum(row.volume),
-    }))
-    .filter((m) => m.symbol && m.change_pct != null);
+  const pick = (list, category) => {
+    const parsed = (Array.isArray(list) ? list : [])
+      .map((row) => ({
+        category,
+        symbol: String(row.ticker || "").trim().toUpperCase(),
+        price: avNum(row.price),
+        change_amount: avNum(row.change_amount),
+        change_pct: parseChangePct(row.change_percentage),
+        volume: avNum(row.volume),
+      }))
+      .filter((m) => m.symbol && m.change_pct != null);
+
+    const kept = [];
+    const dropped = [];
+    for (const m of parsed) {
+      const reason = moverRejectReason(m);
+      if (reason) dropped.push(`${m.symbol} (${reason})`);
+      else kept.push(m);
+    }
+    if (dropped.length) {
+      console.log(`  ${category}s: skipped ${dropped.length} of ${parsed.length} - ${dropped.slice(0, 5).join(", ")}${dropped.length > 5 ? ", ..." : ""}`);
+    }
+    // Rank is assigned AFTER filtering, so the card's "1" is the biggest
+    // move actually shown rather than a gap-riddled original position.
+    return kept.slice(0, MOVERS_PER_CATEGORY).map((m, i) => ({ ...m, rank: i + 1 }));
+  };
   return [...pick(data.top_gainers, "gainer"), ...pick(data.top_losers, "loser")];
 }
 

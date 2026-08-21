@@ -457,8 +457,19 @@ export function latestNewsDigest(findings) {
   const headlines = Array.isArray(latest.headlines)
     ? latest.headlines.filter((h) => h && h.title && h.url).slice(0, 5)
     : [];
-  if (!headlines.length || !latest.sentiment) return null;
-  return { headlines, sentiment: latest.sentiment, sentimentReason: latest.sentiment_reason || null, foundAt: latest.found_at };
+  // Headlines alone are enough. Requiring `sentiment` here is precisely why
+  // this card never rendered once: sentiment needs a Gemini call, that call
+  // kept losing the race for a 20-request daily quota shared with
+  // deal-agent, and one missing optional field discarded a digest full of
+  // real, free, already-fetched headlines. Same layering the daily recap
+  // uses - the free part stands alone, the AI part is an enhancement.
+  if (!headlines.length) return null;
+  return {
+    headlines,
+    sentiment: latest.sentiment || null,
+    sentimentReason: latest.sentiment_reason || null,
+    foundAt: latest.found_at,
+  };
 }
 
 /**
@@ -531,5 +542,122 @@ export function latestRecap(recaps) {
       : [],
     summary: latest.summary || null,
     generatedBy: latest.generated_by || "rollup",
+  };
+}
+
+// Ordinary trading days in a year, used only to decide whether the range
+// below has earned the name "52-week".
+export const FULL_YEAR_DAYS = 365;
+
+/**
+ * High/low for one symbol across whatever daily_prices history exists, plus
+ * how much history that actually is.
+ *
+ * Deliberately reports its own span rather than claiming a 52-week range.
+ * daily_prices only started accumulating on 2026-08-20, so calling five
+ * days of data a "52-week high" would be simply false - the caller labels
+ * it by `spanDays`/`isFullYear` and only says "52-week" once a real year
+ * exists. Same never-overstate-what-we-know line the recap's
+ * coverage-not-cause wording holds.
+ *
+ * Uses each day's intraday `high`/`low` where present and falls back to the
+ * close, since rows backfilled from the findings stream carry a close and
+ * nothing else.
+ * @param {object[]} dailyPrices rows from daily_prices
+ * @param {string} symbol already-uppercased ticker
+ */
+export function priceRangeStats(dailyPrices, symbol) {
+  const rows = dailyPrices.filter(
+    (r) => (r.symbol || "").trim().toUpperCase() === symbol && r.close != null
+  );
+  if (!rows.length) return null;
+
+  let high = -Infinity;
+  let low = Infinity;
+  for (const row of rows) {
+    const close = Number(row.close);
+    const rowHigh = row.high != null ? Number(row.high) : close;
+    const rowLow = row.low != null ? Number(row.low) : close;
+    if (Number.isFinite(rowHigh)) high = Math.max(high, rowHigh);
+    if (Number.isFinite(rowLow)) low = Math.min(low, rowLow);
+  }
+  if (!Number.isFinite(high) || !Number.isFinite(low)) return null;
+
+  const dates = rows.map((r) => r.trade_date).sort();
+  const firstDate = dates[0];
+  const lastDate = dates[dates.length - 1];
+  const spanDays = Math.round((Date.parse(lastDate) - Date.parse(firstDate)) / 86400000) + 1;
+
+  return {
+    high: r2(high),
+    low: r2(low),
+    tradingDays: rows.length,
+    spanDays,
+    firstDate,
+    lastDate,
+    isFullYear: spanDays >= FULL_YEAR_DAYS,
+  };
+}
+
+/**
+ * A date-ordered close series for one symbol, optionally limited to the
+ * last `windowDays` CALENDAR days (not the last N rows - a 1-month view
+ * should mean a month of wall-clock time, however many sessions fell in
+ * it). Returns [] rather than null so a caller can render an empty chart
+ * state without a null check.
+ * @param {object[]} dailyPrices rows from daily_prices
+ * @param {string} symbol already-uppercased ticker
+ * @param {number|null} windowDays null for all available history
+ * @param {Date} today
+ */
+export function priceSeries(dailyPrices, symbol, windowDays = null, today = new Date()) {
+  let rows = dailyPrices.filter(
+    (r) => (r.symbol || "").trim().toUpperCase() === symbol && r.close != null && r.trade_date
+  );
+  if (windowDays) {
+    // windowDays - 1, so the window is INCLUSIVE of today: "last 30 days"
+    // means today plus the 29 before it, not 31 dates. Using windowDays
+    // directly reaches back one day too far.
+    const cutoff = new Date(today.getTime() - (windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    rows = rows.filter((r) => r.trade_date >= cutoff);
+  }
+  return rows
+    .sort((a, b) => (a.trade_date < b.trade_date ? -1 : a.trade_date > b.trade_date ? 1 : 0))
+    .map((r) => ({ date: r.trade_date, close: Number(r.close) }));
+}
+
+/**
+ * Realized gain/loss from actual sales (holding_sales), year-to-date and
+ * all-time. Genuinely different from the unrealized gain portfolioTotals()
+ * reports: that one is "what my positions are worth versus what I paid",
+ * this one is "what I actually banked when I sold".
+ *
+ * Every figure here is average-cost based, because assets.purchase_price
+ * holds one blended total for the position with no per-lot history - the
+ * UI must say so rather than let this read as a broker's tax basis.
+ * Returns null when nothing has been sold, matching this module's
+ * omit-rather-than-show-a-zero convention.
+ * @param {object[]} sales rows from holding_sales
+ * @param {number} year
+ */
+export function realizedGainSummary(sales, year = new Date().getFullYear()) {
+  if (!sales.length) return null;
+  const sum = (rows, key) => r2(rows.reduce((total, row) => total + Number(row[key] || 0), 0));
+  const inYear = sales.filter((s) => String(s.sold_on || "").startsWith(String(year)));
+
+  const ytdBasis = sum(inYear, "cost_basis_removed");
+  const ytdGain = sum(inYear, "realized_gain");
+  return {
+    year,
+    ytdCount: inYear.length,
+    ytdProceeds: sum(inYear, "proceeds"),
+    ytdCostBasis: ytdBasis,
+    ytdRealized: ytdGain,
+    // Null rather than a fake 0% when nothing was sold this year, or when
+    // the basis was zero (a fully gifted position, say) and a percentage
+    // would divide by nothing.
+    ytdRealizedPct: inYear.length && ytdBasis ? pct(ytdGain, ytdBasis) : null,
+    allTimeCount: sales.length,
+    allTimeRealized: sum(sales, "realized_gain"),
   };
 }

@@ -14,7 +14,7 @@
 // which scripts may use a cloud service and which must never.
 //
 // Real stock-ticker quotes (a user's own asset watchlist,
-// MARKET_MOVERS_WATCHLIST) go straight to Finnhub - a plain GET returning
+// the movers watchlist) go straight to Finnhub - a plain GET returning
 // the price directly as JSON, no search or LLM step needed at all
 // (fetchFinnhubQuote()/fetchFinnhubFinding() below). MARKET_INDEXES
 // stays on Tavily+Gemini instead (see the comment above the
@@ -95,7 +95,7 @@
 //      explanation just stays null. Called unconditionally for a user's own
 //      watchlist symbols (small, personal - see MAX_GEMINI_EXPLANATIONS_PER_RUN's
 //      own comment), and only for the biggest movers among
-//      MARKET_MOVERS_WATCHLIST below.
+//      the movers watchlist below.
 //   2b. Real per-symbol news headlines (fetchFinnhubCompanyNews(), added
 //      2026-08-16) - Finnhub's own /company-news product, zero LLM step,
 //      gated to roughly once/hour per symbol (shouldFetchNewsThisRun())
@@ -125,7 +125,7 @@
 //      a small, fixed list).
 //   5. Write validated findings to market_index_findings via the REST API.
 //
-// MARKET_MOVERS_WATCHLIST (a curated large-cap stock list, Investments
+// the movers watchlist (a curated large-cap stock list, Investments
 // tab's "Today's top movers") follows the Finnhub pipeline above, same as
 // a user's own asset watchlist - real tickers, not index names - just
 // writing to market_index_findings alongside the indexes instead of
@@ -158,7 +158,7 @@
 // tighter interval - 15 minutes by default) skips every Tavily/Gemini-
 // backed step entirely (processAllIndexes(), every findExplanation() call,
 // findNewsDigest()) and runs ONLY the two pure-Finnhub loops (a user's own
-// watchlist and MARKET_MOVERS_WATCHLIST). This split exists because the
+// watchlist and the movers watchlist). This split exists because the
 // two halves of this script have wildly different budget headroom: the
 // Finnhub legs cost nothing extra to run often (60 calls/min free, NO
 // daily cap - a full FAST_ONLY run uses ~21 calls total, so even a
@@ -181,7 +181,7 @@
 // Combined monthly Tavily usage (this script + deal-agent.js's own
 // ~10/run) on the weekly schedule comes out around 190/month even in the
 // worst case - comfortably under Tavily's free 1,000/month, with real
-// margin for MARKET_MOVERS_WATCHLIST or a user's own asset list growing
+// margin for the movers watchlist or a user's own asset list growing
 // later. Gemini calls/run, worst case: 1 (batched index price) + 4 (index
 // explanations) + 1 (user watchlist, today's size) + 5
 // (MAX_GEMINI_EXPLANATIONS_PER_RUN movers) + 1 (news digest) = 12 -
@@ -216,12 +216,17 @@ const DRY_RUN = !!process.env.DRY_RUN;
 // to branch on it for which agent_run_status row to write to.
 const FAST_ONLY = !!process.env.FAST_ONLY;
 // Sibling mode to FAST_ONLY, same reasoning for living at top level.
-// RECAP_ONLY=1 builds the stored daily recap (55_daily_recaps.sql) and
-// does nothing else - no Finnhub quotes, no Tavily, no Gemini, not one
-// outbound call. It reads back what the other modes already wrote
-// (daily_prices + the headlines on the findings tables) and rolls it into
-// one row per trading day. Its own schedule (weekdays after the close),
-// its own agent_run_status row.
+// RECAP_ONLY=1 is the DAILY job (weekdays after the close, own
+// agent_run_status row). Three steps, in decreasing order of guarantee:
+//   1. The stored daily recap (55_daily_recaps.sql) - still zero outbound
+//      calls, built purely from what the other modes already wrote
+//      (daily_prices + the headlines on the findings tables). This is the
+//      part that can never be rate-limited, and that property is the whole
+//      design; don't give it up.
+//   2. The market news digest - free Finnhub headlines, plus one optional
+//      Gemini sentiment call that degrades to headlines-only.
+//   3. A fundamentals refresh - skipped entirely if the API tier turns out
+//      not to cover it.
 const RECAP_ONLY = !!process.env.RECAP_ONLY;
 
 // Tavily - real web search, confirmed free tier (1,000 credits/month, no
@@ -250,7 +255,7 @@ function geminiUrl(model) {
 // plain GET returning the price directly as JSON, no search step and no
 // LLM extraction needed, so this replaces Tavily+Gemini for real stock-
 // ticker lookups specifically (the user's own asset watchlist and
-// MARKET_MOVERS_WATCHLIST below). Deliberately NOT used for MARKET_INDEXES
+// the movers watchlist below). Deliberately NOT used for MARKET_INDEXES
 // - Finnhub's index data has been reported moved behind a paid tier at
 // some point, genuinely unconfirmed either way from public sources, so
 // indexes stay on the already-verified Tavily+Gemini pipeline rather than
@@ -298,7 +303,7 @@ const MAX_429_RETRIES = 2;          // per call, exponential backoff (3s, 6s)
 // credits/month (they aren't: this script + deal-agent.js together run
 // well under 400/month at current sizes on the weekly launchd schedule
 // setup-server-machine.sh installs - see the real math in this file's
-// header), but because nothing today stops MARKET_MOVERS_WATCHLIST or a
+// header), but because nothing today stops the movers watchlist or a
 // user's own asset watchlist from growing later. 100 calls/run x 2
 // scripts x ~4.33 weekly runs/month = ~866/month worst case even if both
 // scripts hit their cap every run - still under budget with margin. Once
@@ -510,6 +515,153 @@ async function latestHeadlinesBySymbol() {
   return bySymbol;
 }
 
+// ---- Fundamentals (Finnhub company profile + basic financials) -------------
+// P/E, market cap, dividend yield, industry, and a real company name.
+//
+// **Whether the free tier covers these two endpoints is UNCONFIRMED.**
+// Sources conflict, and this project has already been burned once assuming
+// a tier was free (Gemini's grounding tool, which turned out to need a
+// billing account). So this is built to answer the question by running:
+// a 401/403 is treated as "not on this tier", logged plainly, and latches
+// OFF for the rest of the run so the remaining symbols don't each repeat a
+// call that cannot work. Nothing else is affected - symbol_fundamentals
+// simply stays empty and the UI card stays hidden.
+const FINNHUB_PROFILE_URL = "https://finnhub.io/api/v1/stock/profile2";
+const FINNHUB_METRIC_URL = "https://finnhub.io/api/v1/stock/metric";
+// Refreshed at most daily: fundamentals move on quarterly filings, not by
+// the minute, so re-fetching every 15 minutes would spend real request
+// budget for data that is almost never different.
+const FUNDAMENTALS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+let fundamentalsUnavailable = false;
+
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+
+async function fetchFinnhubJson(url, label) {
+  if (finnhubCallCount >= MAX_FINNHUB_CALLS_PER_RUN) return null;
+  finnhubCallCount++;
+  const res = await fetchWithRetry(url, {}, SEARCH_TIMEOUT_MS);
+  if (res.status === 401 || res.status === 403) {
+    // The whole point of the latch: one definitive "not on your tier"
+    // answer settles it for every remaining symbol this run.
+    fundamentalsUnavailable = true;
+    console.warn(`Finnhub ${label} returned HTTP ${res.status} - not available on this API tier. Skipping fundamentals for the rest of this run.`);
+    return null;
+  }
+  if (!res.ok) throw new Error(`Finnhub ${label} HTTP ${res.status}`);
+  return res.json();
+}
+
+// Returns a symbol_fundamentals row, or null if anything was missing or the
+// tier does not cover it. Every field is independently nullable - a real
+// company with no P/E (unprofitable) or no dividend is normal, not an
+// error, and must never be written as a fake 0.
+async function fetchFundamentals(symbol) {
+  if (fundamentalsUnavailable) return null;
+  try {
+    const profile = await fetchFinnhubJson(
+      `${FINNHUB_PROFILE_URL}?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_API_KEY}`,
+      "stock/profile2"
+    );
+    if (fundamentalsUnavailable || !profile) return null;
+    await sleep(REQUEST_DELAY_MS);
+
+    const metrics = await fetchFinnhubJson(
+      `${FINNHUB_METRIC_URL}?symbol=${encodeURIComponent(symbol)}&metric=all&token=${FINNHUB_API_KEY}`,
+      "stock/metric"
+    );
+    if (fundamentalsUnavailable) return null;
+    const m = (metrics && metrics.metric) || {};
+
+    const row = {
+      symbol,
+      company_name: typeof profile.name === "string" && profile.name.trim() ? profile.name.trim() : null,
+      // Finnhub reports marketCapitalization in MILLIONS.
+      market_cap: num(profile.marketCapitalization) != null ? num(profile.marketCapitalization) * 1e6 : null,
+      pe_ratio: num(m.peTTM) ?? num(m.peBasicExclExtraTTM),
+      dividend_yield: num(m.dividendYieldIndicatedAnnual) ?? num(m.currentDividendYieldTTM),
+      industry: typeof profile.finnhubIndustry === "string" && profile.finnhubIndustry.trim()
+        ? profile.finnhubIndustry.trim() : null,
+      fetched_at: new Date().toISOString(),
+    };
+    // A row with nothing but a symbol is not worth storing.
+    if (!row.company_name && row.market_cap == null && row.pe_ratio == null) return null;
+    return row;
+  } catch (err) {
+    console.warn(`[${symbol}] fundamentals lookup failed (non-fatal): ${err.message}`);
+    return null;
+  }
+}
+
+// Only for symbols whose stored row is missing or a day old. Best-effort
+// throughout: this must never crash a run or delay the real price writes,
+// which are the job that actually matters.
+async function refreshFundamentals(symbols) {
+  if (!symbols.length) return;
+  let existing = [];
+  try {
+    existing = await sbGet("symbol_fundamentals?select=symbol,fetched_at");
+  } catch (err) {
+    console.warn(`Could not read symbol_fundamentals (${err.message}) - skipping fundamentals this run.`);
+    return;
+  }
+  const freshUntil = Date.now() - FUNDAMENTALS_MAX_AGE_MS;
+  const fresh = new Set(
+    existing.filter((r) => r.fetched_at && Date.parse(r.fetched_at) > freshUntil).map((r) => r.symbol)
+  );
+  const stale = symbols.filter((s) => !fresh.has(s));
+  if (!stale.length) {
+    console.log("Fundamentals are all fresh (under a day old) - nothing to fetch.");
+    return;
+  }
+
+  console.log(`Refreshing fundamentals for ${stale.length} symbol(s).`);
+  const rows = [];
+  for (const symbol of stale) {
+    if (fundamentalsUnavailable) break;
+    const row = await fetchFundamentals(symbol);
+    if (row) rows.push(row);
+    await sleep(REQUEST_DELAY_MS);
+  }
+  if (!rows.length) {
+    console.log("No fundamentals rows written this run.");
+    return;
+  }
+  try {
+    await sbUpsertRows("symbol_fundamentals", rows, "symbol");
+    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${rows.length} fundamentals row(s).`);
+    await backfillWatchlistCompanyNames(rows);
+  } catch (err) {
+    console.warn(`Fundamentals write failed (non-fatal): ${err.message}`);
+  }
+}
+
+// A real company name from the profile lets pickRelevantHeadline() judge
+// relevance for a user-added symbol that was never in the seeded defaults.
+// Only fills a NULL - never overwrites a name the user set themselves.
+async function backfillWatchlistCompanyNames(rows) {
+  if (DRY_RUN) return;
+  for (const row of rows) {
+    if (!row.company_name) continue;
+    try {
+      await fetchWithTimeout(
+        `${SUPABASE_URL}/rest/v1/watchlist_symbols?symbol=eq.${encodeURIComponent(row.symbol)}&company_name=is.null`,
+        {
+          method: "PATCH",
+          headers: {
+            apikey: SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ company_name: row.company_name.toLowerCase() }),
+        }
+      );
+    } catch (err) {
+      console.warn(`Could not backfill company_name for ${row.symbol}: ${err.message}`);
+    }
+  }
+}
+
 const MAX_RECAP_SUMMARY_CHARS = 500;
 
 // Checked at the VALIDATION layer, not just forbidden in the prompt below.
@@ -608,13 +760,29 @@ async function findRecapSummary(tradeDate, movers, breadth, indexMoves) {
 // rather than falling back to an unrelated article - showing "Trump Could
 // Cut Canadian Auto Tariffs" under a Tesla move would imply a connection
 // that isn't there, which is worse than showing no headline at all.
-function pickRelevantHeadline(symbol, candidates, usedUrls) {
+// Whole-word match, NOT a substring. A plain `includes()` here was a real
+// bug caught against production data: "DIS" matched "**Dis**cover which dow
+// jones stocks are making waves" and "V" matched "mo**v**ing on Thursday",
+// so short tickers pulled in exactly the aggregator filler this gate exists
+// to reject.
+//
+// Uses the same lookaround idiom as categorize.js's keyword matcher rather
+// than \b, and for the same documented reason: \b needs a word/non-word
+// transition on each side, which silently fails for a term that itself
+// starts or ends with a non-word character (a ticker like "BRK.B").
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const mentionsWholeWord = (text, term) =>
+  new RegExp(`(?<![a-z0-9])${escapeRegex(term.toLowerCase())}(?![a-z0-9])`, "i").test(text);
+
+function pickRelevantHeadline(symbol, candidates, usedUrls, companyNames) {
   if (!Array.isArray(candidates)) return null;
-  const company = MOVER_COMPANY_NAMES[symbol];
+  // Null for a user-added symbol nobody has a company name for yet, in
+  // which case this degrades to ticker-only matching rather than rejecting
+  // every headline outright.
+  const company = companyNames[symbol];
   return candidates.find((h) => {
     if (!h || !h.title || !h.url || usedUrls.has(h.url)) return false;
-    const title = h.title.toLowerCase();
-    return title.includes(symbol.toLowerCase()) || (company && title.includes(company));
+    return mentionsWholeWord(h.title, symbol) || (company && mentionsWholeWord(h.title, company));
   }) || null;
 }
 
@@ -661,7 +829,8 @@ async function buildDailyRecap() {
 
   const headlines = await latestHeadlinesBySymbol();
   const etfTickers = new Set(Object.values(MARKET_INDEX_ETF_PROXIES));
-  const watchlist = new Set(MARKET_MOVERS_WATCHLIST);
+  const { symbols: moverSymbols, names: companyNames } = await loadMoversWatchlist();
+  const watchlist = new Set(moverSymbols);
 
   const scored = [];
   for (const row of todayRows) {
@@ -687,7 +856,7 @@ async function buildDailyRecap() {
     .slice(0, RECAP_MOVER_COUNT)
     .map((m) => {
       const found = headlines.get(m.symbol);
-      const top = pickRelevantHeadline(m.symbol, found && found.headlines, usedHeadlineUrls);
+      const top = pickRelevantHeadline(m.symbol, found && found.headlines, usedHeadlineUrls, companyNames);
       if (top) usedHeadlineUrls.add(top.url);
       return {
         ...m,
@@ -713,12 +882,30 @@ async function buildDailyRecap() {
   // 20/day quota, and the upsert below always sends `summary`, so without
   // carrying the existing value forward a re-run would blank one that had
   // already been generated.
-  const existing = await sbGet(`daily_recaps?select=summary,generated_by&trade_date=eq.${tradeDate}`);
-  let summary = existing.length ? existing[0].summary : null;
+  const existing = await sbGet(`daily_recaps?select=summary,generated_by,movers&trade_date=eq.${tradeDate}`);
+  const storedSummary = existing.length ? existing[0].summary : null;
+  // A stored summary describes a SPECIFIC set of movers and quotes their
+  // percentages in prose. If a later run recomputes different numbers
+  // (prices move until the close, and a re-run mid-session will see them),
+  // carrying the old text forward would put "WMT fell 9.15%" next to a card
+  // reading -9.71%. Reuse only while the numbers it describes are unchanged;
+  // on the normal once-daily post-close schedule this never regenerates.
+  const moverSignature = (list) =>
+    (Array.isArray(list) ? list : []).map((m) => `${m.symbol}:${m.change_pct}`).join(",");
+  const summaryStillMatches = !!storedSummary &&
+    moverSignature(existing[0].movers) === moverSignature(movers);
+
+  let summary = summaryStillMatches ? storedSummary : null;
   let generatedBy = summary ? (existing[0].generated_by || "rollup+gemini") : "rollup";
 
   if (summary) {
-    console.log(`Recap for ${tradeDate} already has a summary - reusing it, no Gemini call this run.`);
+    console.log(`Recap for ${tradeDate} already has a matching summary - reusing it, no Gemini call this run.`);
+  } else if (storedSummary) {
+    console.log("Movers changed since the stored summary was written - regenerating so the prose can't contradict the numbers.");
+  }
+
+  if (summary) {
+    // nothing to do - reused above
   } else if (DRY_RUN) {
     // A dry run is for checking the zero-LLM half without side effects;
     // spending a scarce daily quota unit would be a real side effect. Do a
@@ -835,6 +1022,34 @@ async function writeRunStatus(crashError) {
 async function loadWatchlist() {
   const rows = await sbGet("assets?select=price_symbol&price_symbol=not.is.null");
   return [...new Set(rows.map((r) => (r.price_symbol || "").trim()).filter(Boolean))];
+}
+
+// The movers watchlist, now read from watchlist_symbols (56_watchlist_and_
+// fundamentals.sql) instead of a hardcoded constant that had to be kept in
+// sync by hand with app/app.js. Reads the union across ALL users the same
+// way loadWatchlist() above does for assets.price_symbol - a symbol's price
+// is a public fact, and market_index_findings has never been user-scoped.
+//
+// Falls back to the built-in defaults if the table is empty or unreachable,
+// so a fetch failure degrades to today's behavior rather than pricing
+// nothing at all.
+async function loadMoversWatchlist() {
+  try {
+    const rows = await sbGet("watchlist_symbols?select=symbol,company_name");
+    const symbols = [...new Set(
+      rows.map((r) => (r.symbol || "").trim().toUpperCase()).filter(Boolean)
+    )];
+    const names = {};
+    for (const row of rows) {
+      const symbol = (row.symbol || "").trim().toUpperCase();
+      if (symbol && row.company_name) names[symbol] = String(row.company_name).toLowerCase();
+    }
+    if (symbols.length) return { symbols, names };
+    console.warn("watchlist_symbols is empty - falling back to the built-in default watchlist.");
+  } catch (err) {
+    console.warn(`Could not read watchlist_symbols (${err.message}) - using the built-in default watchlist.`);
+  }
+  return { symbols: [...DEFAULT_MOVERS_WATCHLIST], names: { ...DEFAULT_MOVER_COMPANY_NAMES } };
 }
 
 function buildQueries(symbol) {
@@ -1058,66 +1273,154 @@ async function findExplanation(symbol) {
   return extracted ? extracted.explanation : null;
 }
 
-// ---- Daily market news digest + sentiment (Investments tab, best-effort) --
-// Genuinely NOT tied to any user or symbol - general market news, not a
-// per-stock explanation. One query, one extraction call covers both the
-// headlines and the overall sentiment read, since sentiment here IS the
-// overall tone of that same day's headline coverage - splitting this into
-// two calls would double the cost for no real benefit.
-function buildNewsDigestPrompt() {
-  return [
-    "You are summarizing today's general stock market news and overall",
-    "sentiment, based only on the real search results provided below.",
-    'Respond with ONLY a JSON object, no prose, no code fences. Use this',
-    'exact shape: { "headlines": [{ "title": string, "url": string,',
-    '"source": string|null }], "sentiment": "bullish"|"neutral"|"bearish",',
-    '"sentiment_reason": string }',
-    "headlines: up to 5 real headlines actually present in the results",
-    "below, about the broad market (not a single company). sentiment: your",
-    "read of the OVERALL tone of the results below, not a prediction.",
-    "sentiment_reason: one short, neutral sentence citing what in the",
-    "results supports that read. If the results don't give a clear enough",
-    "picture to pick a sentiment, use \"neutral\". This is a summary of",
-    "existing news coverage, never a recommendation to buy or sell.",
-  ].join("\n");
-}
 
 const NEWS_SENTIMENTS = new Set(["bullish", "neutral", "bearish"]);
 const MAX_NEWS_HEADLINES = 5;
 
-function validateNewsDigest(raw, sourceQuery) {
-  if (!raw || typeof raw !== "object") return null;
-  const headlines = Array.isArray(raw.headlines)
-    ? raw.headlines
-        .filter((h) => h && typeof h.title === "string" && h.title.trim() && typeof h.url === "string" && h.url.trim())
-        .map((h) => ({
-          title: h.title.trim(),
-          url: h.url.trim(),
-          source: typeof h.source === "string" && h.source.trim() ? h.source.trim() : null,
-        }))
-        .slice(0, MAX_NEWS_HEADLINES)
-    : [];
-  const sentiment = NEWS_SENTIMENTS.has(raw.sentiment) ? raw.sentiment : null;
-  const sentiment_reason = typeof raw.sentiment_reason === "string" && raw.sentiment_reason.trim() ? raw.sentiment_reason.trim() : null;
-  if (!headlines.length || !sentiment || !sentiment_reason) return null;
-  return { headlines, sentiment, sentiment_reason, source_query: sourceQuery, extracted_by: "gemini" };
+
+// The market news digest is built from the per-symbol company-news
+// headlines this agent ALREADY stores every hour, not from Finnhub's
+// general news feed.
+//
+// Two attempts at filtering that general feed both failed against real
+// data, and the failures are worth recording so nobody tries a third:
+//   1. Filtering by OUTLET (Reuters/CNBC/Bloomberg/...) returned Gaza
+//      funding, an Iran/Siemens security warning and a cocktail-bar
+//      feature. Those outlets publish everything; the masthead says
+//      nothing about the topic.
+//   2. Filtering on Finnhub's own `related` ticker tagging returned
+//      literally ZERO articles - that field is simply not populated on
+//      the general feed - and the adaptive fallback then produced Harry
+//      and Meghan and the sale of the LA Lakers.
+// A keyword heuristic on headline text is the obvious third idea and is
+// deliberately NOT being tried: it was already attempted for stock-price
+// pages earlier in this project and reverted as unreliable.
+//
+// /company-news?symbol=X is inherently about a tracked company, which is
+// the property the general feed could never establish. So the digest is
+// now "recent news across the stocks you track" and is labeled as exactly
+// that in the UI - a narrower, honest claim rather than a broad one the
+// data cannot support. Costs zero additional API calls: every headline
+// here was already fetched and stored.
+const MARKET_NEWS_SOURCES = new Set([
+  "reuters", "cnbc", "bloomberg", "marketwatch", "seekingalpha", "benzinga",
+  "yahoo", "barrons", "the wall street journal", "financial times",
+]);
+
+async function fetchTrackedStockNews() {
+  const [bySymbol, { names: companyNames }] = await Promise.all([
+    latestHeadlinesBySymbol(), loadMoversWatchlist(),
+  ]);
+  const seen = new Set();
+  const items = [];
+  // Newest symbol-batch first, so the digest leads with the freshest news.
+  const entries = [...bySymbol.entries()].sort((a, b) =>
+    String(b[1].found_at || "").localeCompare(String(a[1].found_at || ""))
+  );
+  for (const [symbol, row] of entries) {
+    // The SAME relevance gate the recap uses, and for the same reason.
+    // Taking headlines[0] here produced three generic aggregator listicles
+    // out of five ("Which dow jones stocks are moving on Thursday?") -
+    // /company-news guarantees a story MENTIONS the ticker, never that it
+    // is about that company. A symbol with nothing genuinely about it is
+    // skipped so the next one can fill the slot, rather than padding the
+    // digest with filler.
+    const picked = pickRelevantHeadline(symbol, row.headlines, seen, companyNames);
+    if (!picked) continue;
+    seen.add(picked.url);
+    items.push({
+      title: String(picked.title).trim(),
+      url: String(picked.url).trim(),
+      source: picked.source ? String(picked.source).trim() : null,
+      symbol,
+    });
+    if (items.length >= MAX_NEWS_HEADLINES) break;
+  }
+  return items;
 }
 
+// Stage 1 (headlines) is free and LLM-free; stage 2 (sentiment) is one
+// optional Gemini call layered on top. This is the same fix that took the
+// daily recap from never-rendering to working every day, applied to the
+// card that is STILL at zero rows for the identical reason: its single
+// Gemini call kept losing the race for a 20-request daily quota shared
+// with deal-agent, and validateNewsDigest() then threw away a digest full
+// of real headlines because one optional field was missing.
 async function findNewsDigest() {
-  const query = "stock market news and sentiment today";
-  let result;
+  let headlines = [];
   try {
-    result = await searchAndExtract(query, TRUSTED_NEWS_DOMAINS, buildNewsDigestPrompt());
+    headlines = await fetchTrackedStockNews();
   } catch (err) {
-    console.warn(`News digest search failed: ${err.message}`);
+    console.warn(`Tracked-stock news lookup failed: ${err.message}`);
     return null;
   }
-  await sleep(REQUEST_DELAY_MS);
-  if (!result.text) {
-    console.warn("No trusted-domain result for news digest - discarding");
+  if (!headlines.length) {
+    console.warn("No stored company-news headlines yet - the hourly news fetch has not run.");
     return null;
   }
-  return validateNewsDigest(parseJsonLoose(result.text), query);
+
+  let sentiment = null;
+  let sentiment_reason = null;
+  if (!DRY_RUN) {
+    try {
+      const text = await extractWithGemini(buildNewsSentimentPrompt(headlines));
+      const parsed = parseJsonLoose(text);
+      // sentiment_reason is Gemini free text shown to the user, exactly like
+      // the recap summary, so it gets the exact same advice/forecast gate.
+      // It previously had none at all - only a non-empty check - which meant
+      // an advice-phrased reason would have passed straight through.
+      // Reusing validateRecapSummary keeps one definition of that boundary
+      // rather than a second copy that could drift.
+      const reason = parsed && typeof parsed.sentiment_reason === "string"
+        ? validateRecapSummary({ summary: parsed.sentiment_reason })
+        : null;
+      if (parsed && NEWS_SENTIMENTS.has(parsed.sentiment) && reason) {
+        sentiment = parsed.sentiment;
+        sentiment_reason = reason;
+      } else if (parsed && !reason) {
+        console.warn("Sentiment reason rejected - keeping the headlines without it.");
+      }
+    } catch (err) {
+      console.warn(`News sentiment failed (non-fatal, keeping the headlines): ${err.message}`);
+    }
+  }
+
+  console.log(`News digest: ${headlines.length} headline(s), sentiment ${sentiment ? "included" : "omitted"}.`);
+  return {
+    headlines,
+    sentiment,
+    sentiment_reason,
+    source_query: "finnhub:company-news (tracked stocks)",
+    extracted_by: sentiment ? "finnhub+gemini" : "finnhub",
+  };
+}
+
+// Reads ONLY the headlines just fetched - never the model's own knowledge
+// of the market, the same restraint every other extraction prompt here
+// carries.
+function buildNewsSentimentPrompt(headlines) {
+  return [
+    "You read recent news headlines about a handful of specific companies",
+    "someone tracks, and characterise the tone of THAT coverage. Use ONLY",
+    "the headlines listed below - do not use your own knowledge of what",
+    "these companies or the wider market did.",
+    'Respond with ONLY a JSON object, no prose, no code fences:',
+    '{ "sentiment": "bullish"|"neutral"|"bearish", "sentiment_reason": string }',
+    "",
+    "Headlines:",
+    ...headlines.map((h) => `- ${h.title} (${h.source || "unknown source"})`),
+    "",
+    "sentiment_reason must be one sentence grounded in these headlines.",
+    "Rules:",
+    "- These are a few companies' stories, NOT the market. Never say",
+    "  anything about 'the market' or overall market sentiment - you are",
+    "  describing the tone of this specific coverage only.",
+    "- Describe what the coverage says. Never claim a headline CAUSED a",
+    "  price move, and never say a stock rose or fell - you were not given",
+    "  any prices.",
+    "- Never recommend buying or selling and never predict what any price",
+    "  will do next, even if a headline itself is phrased that way.",
+  ].join("\n");
 }
 
 // ---- Finnhub: direct stock-ticker quotes, no search/LLM needed --------
@@ -1210,7 +1513,7 @@ function validateFinnhubNews(raw) {
 }
 
 // Real stock tickers only (the user's own asset watchlist and
-// MARKET_MOVERS_WATCHLIST) - see the header comment for why
+// the movers watchlist) - see the header comment for why
 // MARKET_INDEXES stays on processSymbol()/Tavily+Gemini below instead.
 // Price only, no explanation - split out from the original combined
 // function so main() can fetch every symbol's price first, THEN decide
@@ -1414,8 +1717,9 @@ const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Compo
 // as MARKET_INDEXES immediately above (public market data, tied to no
 // user), so it's searched the same way and written to the SAME
 // market_index_findings table rather than a new one. Must match app.js's
-// own MARKET_MOVERS_WATCHLIST constant, kept in sync by hand.
-const MARKET_MOVERS_WATCHLIST = [
+// own default watchlist constant. Both are now only a FALLBACK and a
+// seed - the live list lives in watchlist_symbols and is user-editable.
+const DEFAULT_MOVERS_WATCHLIST = [
   "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "UNH",
   "XOM", "JNJ", "WMT", "PG", "MA", "HD", "DIS", "NFLX", "AMD", "KO",
 ];
@@ -1435,7 +1739,7 @@ const MARKET_MOVERS_WATCHLIST = [
 // app.js's MARKET_INDEX_ETF_PROXIES comment for why mixing the two would
 // corrupt day-change math). Must match app.js's own copy, kept in sync
 // by hand for the same reason MARKET_INDEXES already is.
-// Hand-synced with MARKET_MOVERS_WATCHLIST above, and needed for exactly
+// Seeds watchlist_symbols.company_name, and needed for exactly
 // one job: deciding whether a stored headline is actually ABOUT the symbol
 // it was filed under. Finnhub's /company-news returns articles that merely
 // MENTION a ticker, which in practice is dominated by aggregator filler
@@ -1447,7 +1751,7 @@ const MARKET_MOVERS_WATCHLIST = [
 // as the ticker took that to 3 of 5 genuinely relevant, with the other 2
 // correctly showing nothing.
 // Lowercase; matched as a substring against a lowercased headline title.
-const MOVER_COMPANY_NAMES = {
+const DEFAULT_MOVER_COMPANY_NAMES = {
   AAPL: "apple", MSFT: "microsoft", GOOGL: "alphabet", AMZN: "amazon", NVDA: "nvidia",
   META: "meta", TSLA: "tesla", JPM: "jpmorgan", V: "visa", UNH: "unitedhealth",
   XOM: "exxon", JNJ: "johnson", WMT: "walmart", PG: "procter", MA: "mastercard",
@@ -1462,8 +1766,39 @@ async function main() {
   // Returns before any watchlist loading or outbound call - the recap is
   // built purely from what previous runs already stored.
   if (RECAP_ONLY) {
-    console.log("RECAP_ONLY=1: building the stored daily recap from existing data, no outbound calls.");
+    console.log("RECAP_ONLY=1: daily job - stored recap, market news digest, fundamentals refresh.");
+    // The recap itself still makes ZERO outbound calls and is built purely
+    // from what earlier runs stored - that property is what makes it
+    // un-rate-limitable and must not be given up. The two steps after it
+    // are separate cards with their own graceful degradation, not part of
+    // the recap.
     await buildDailyRecap();
+
+    // Moved here from the weekly run: a DAILY news digest on a weekly
+    // cadence was never the right shape, and it only sat in the weekly job
+    // because it used to need Tavily. Now that headlines come free from
+    // Finnhub it belongs on the daily schedule.
+    try {
+      const digest = await findNewsDigest();
+      if (digest) {
+        await sbInsert("market_news_findings", [digest]);
+        console.log(`${DRY_RUN ? "Would have written" : "Wrote"} market news digest.`);
+      }
+    } catch (err) {
+      console.warn(`News digest failed (non-fatal): ${err.message}`);
+    }
+
+    // Daily matches FUNDAMENTALS_MAX_AGE_MS - quarterly-filing data has no
+    // business being re-fetched every 15 minutes.
+    try {
+      const [ownSymbols, { symbols: moverSymbols }] = await Promise.all([
+        loadWatchlist(), loadMoversWatchlist(),
+      ]);
+      await refreshFundamentals([...new Set([...ownSymbols.map((s) => s.toUpperCase()), ...moverSymbols])]);
+    } catch (err) {
+      console.warn(`Fundamentals refresh failed (non-fatal): ${err.message}`);
+    }
+
     await writeRunStatus();
     return;
   }
@@ -1472,11 +1807,12 @@ async function main() {
   if (fetchNewsThisRun) console.log("Also fetching real per-symbol news headlines this run (Finnhub company-news, roughly hourly).");
 
   const watchlist = await loadWatchlist();
+  const { symbols: moversWatchlist } = await loadMoversWatchlist();
   console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
   console.log(`Market indexes (${MARKET_INDEXES.length}): ${MARKET_INDEXES.join(", ")}`);
-  console.log(`Market movers watchlist (${MARKET_MOVERS_WATCHLIST.length}): ${MARKET_MOVERS_WATCHLIST.join(", ")}`);
+  console.log(`Market movers watchlist (${moversWatchlist.length}): ${moversWatchlist.join(", ")}`);
 
-  if (!watchlist.length && !MARKET_INDEXES.length && !MARKET_MOVERS_WATCHLIST.length) {
+  if (!watchlist.length && !MARKET_INDEXES.length && !moversWatchlist.length) {
     console.log("Nothing to search for. Exiting.");
     return;
   }
@@ -1546,8 +1882,8 @@ async function main() {
     console.log(`  -> ${allIndexFindings.length} finding(s)`);
   }
 
-  console.log(`Fetching movers (Finnhub): ${MARKET_MOVERS_WATCHLIST.join(", ")}`);
-  const moversPriced = await fetchFinnhubFindings(MARKET_MOVERS_WATCHLIST, checkFinnhubBudget, fetchNewsThisRun);
+  console.log(`Fetching movers (Finnhub): ${moversWatchlist.join(", ")}`);
+  const moversPriced = await fetchFinnhubFindings(moversWatchlist, checkFinnhubBudget, fetchNewsThisRun);
   if (FAST_ONLY) {
     console.log(`  -> ${moversPriced.length} priced. FAST_ONLY: skipping mover explanations (Gemini) this run.`);
   } else {
@@ -1574,18 +1910,9 @@ async function main() {
     console.log("No market index or movers findings this run.");
   }
 
-  if (FAST_ONLY) {
-    console.log("FAST_ONLY: skipping market news digest (Tavily+Gemini) this run.");
-  } else if (!checkBudget()) {
-    console.log("Searching: market news digest");
-    const digest = await findNewsDigest();
-    if (digest) {
-      await sbInsert("market_news_findings", [digest]);
-      console.log(`${DRY_RUN ? "Would have written" : "Wrote"} market news digest.`);
-    } else {
-      console.log("No market news digest this run.");
-    }
-  }
+  // The market news digest deliberately does NOT run here any more - it
+  // moved to the daily RECAP_ONLY job above, where a daily digest belongs.
+  // Leaving it here too would just write a duplicate row every Wednesday.
 
   // Every Finnhub-quoted symbol from all three loops above, rolled into
   // the durable daily series. Runs before the purge, which only ever

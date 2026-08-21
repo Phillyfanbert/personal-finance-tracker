@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, FULL_YEAR_DAYS } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -139,6 +139,10 @@ let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP
 let marketIndexFindings = []; // shared, machine-found market index levels (Investments tab's Market overview)
 let marketNewsFindings = []; // shared, machine-found daily market news digest + sentiment (market_news_findings)
 let dailyRecaps = []; // stored zero-LLM daily market recaps (daily_recaps, 55_daily_recaps.sql)
+let dailyPrices = []; // durable per-symbol daily OHLC history (daily_prices, 54)
+let symbolFundamentals = []; // P/E, market cap, dividend yield (symbol_fundamentals, 56)
+let watchlistSymbols = []; // the user's own editable movers watchlist (watchlist_symbols, 56)
+let holdingSales = []; // realized gain/loss from actual sales (holding_sales, 57)
 let agentRunStatus = {}; // { "deal-agent": {...}, "price-agent": {...} } - last-run freshness/health (agent_run_status)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
 let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
@@ -217,7 +221,7 @@ function renderAuth(session) {
     init().then(() => {
       if (view === "subs") loadSubscriptions();
       else if (view === "reports") loadReports();
-      else if (view === "invest") { renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); }
+      else if (view === "invest") { renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor(); }
     });
   }
   else { $("logView").classList.add("hidden"); $("subsView").classList.add("hidden"); $("reportsView").classList.add("hidden"); $("investView").classList.add("hidden"); }
@@ -227,7 +231,7 @@ function renderAuth(session) {
 $("navLog").onclick = () => showView("log");
 $("navSubs").onclick = () => { showView("subs"); loadSubscriptions(); };
 $("navReports").onclick = () => { showView("reports"); loadReports(); };
-$("navInvest").onclick = () => { showView("invest"); renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); };
+$("navInvest").onclick = () => { showView("invest"); renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor(); };
 $("backFromSubs").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
 $("backFromInvest").onclick = () => showView("log");
@@ -251,11 +255,13 @@ async function init() {
   fillCategorySelect($("budgetCategory"));
   $("fDate").value = new Date().toISOString().slice(0, 10);
   await ensureCashAccount();
+  await ensureWatchlistSymbols();
+  await loadWatchlistSymbols();
   // loadAccounts before loadDebts: the debts list checks accounts for which
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
   // Both assets and assetPriceFindings are guaranteed loaded by the
   // Promise.all above (no race) - this is what keeps Net Worth/the Assets
   // card/the net-worth trend chart in sync with live prices on every app
@@ -495,6 +501,49 @@ async function loadMarketNewsFindings() {
 // own, and stays readable even if live pricing were switched off. Only a
 // handful of rows, newest first.
 const RECAP_HISTORY_DAYS = 30;
+// Only the columns the chart and range stats read, and only symbols with
+// history - the table grows by ~24 rows per trading day forever, so this
+// will eventually want a date window; at a few hundred rows it does not yet.
+async function loadDailyPrices() {
+  const { data } = await sb.from("daily_prices")
+    .select("symbol,trade_date,open,high,low,close")
+    .order("trade_date", { ascending: true });
+  dailyPrices = data || [];
+  renderPriceHistory();
+}
+
+async function loadSymbolFundamentals() {
+  const { data } = await sb.from("symbol_fundamentals")
+    .select("symbol,company_name,market_cap,pe_ratio,dividend_yield,industry,fetched_at");
+  symbolFundamentals = data || [];
+  renderPriceHistory();
+}
+
+// The user's own movers watchlist. Seeded with the same 20 defaults on
+// first load (ensureWatchlistSymbols) so a new user sees exactly what the
+// old hardcoded list showed.
+async function loadWatchlistSymbols() {
+  const { data } = await sb.from("watchlist_symbols").select("*").order("symbol");
+  watchlistSymbols = data || [];
+  renderWatchlistEditor();
+}
+
+async function loadHoldingSales() {
+  const { data } = await sb.from("holding_sales").select("*").order("sold_on", { ascending: false });
+  holdingSales = data || [];
+  renderRealizedGains();
+}
+
+// Same shape as ensureCashAccount(): seed real rows once rather than
+// treating "empty" as "use the defaults", which would make removing a
+// default symbol impossible.
+async function ensureWatchlistSymbols() {
+  const { data } = await sb.from("watchlist_symbols").select("id").limit(1);
+  if (data && data.length) return;
+  const rows = Object.entries(DEFAULT_WATCHLIST).map(([symbol, company_name]) => ({ symbol, company_name }));
+  await sb.from("watchlist_symbols").insert(rows);
+}
+
 async function loadDailyRecaps() {
   const { data } = await sb.from("daily_recaps")
     .select("trade_date,movers,breadth,index_moves,summary,generated_by")
@@ -530,6 +579,7 @@ function renderPriceDependentCards() {
   renderAssetPriceFindings();
   renderMarketOverview();
   renderInvestments();
+  renderPriceHistory();
 }
 
 // ---- LIVE QUOTE OVERLAY ----------------------------------------------------
@@ -552,7 +602,7 @@ const ownedPriceSymbols = () => [...new Set(
   assets.filter((a) => a.price_symbol).map((a) => a.price_symbol.trim().toUpperCase())
 )];
 const indexPriceSymbols = () => [...new Set(
-  [...MARKET_MOVERS_WATCHLIST, ...Object.values(MARKET_INDEX_ETF_PROXIES)]
+  [...moverSymbols(), ...Object.values(MARKET_INDEX_ETF_PROXIES)]
 )];
 
 async function fetchLiveQuotes(symbols) {
@@ -919,15 +969,32 @@ const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Avera
 // deliberately written to the SAME market_index_findings table rather than
 // a new one, since that table's real meaning was always "public market
 // data," not literally "indexes only." Must match tools/price-agent.js's
-// own MARKET_MOVERS_WATCHLIST constant, kept in sync by hand for the same
-// reason MARKET_INDEXES already is. Comprehensive-but-not-exhaustive by
-// design (20 large caps across sectors) - the same honesty caveat as
-// tickers.js/BANK_NAMES: this is a fixed watchlist, not a live scan of
-// "every stock," since there's no $0 feed that could do that.
-const MARKET_MOVERS_WATCHLIST = [
-  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "UNH",
-  "XOM", "JNJ", "WMT", "PG", "MA", "HD", "DIS", "NFLX", "AMD", "KO",
-];
+// own default constant. This list is now only a SEED: the live watchlist is
+// user-editable and lives in watchlist_symbols (56_watchlist_and_
+// fundamentals.sql), which is what retired the old requirement to keep this
+// array, price-agent.js's copy, and a third company-name map in sync by
+// hand. ensureWatchlistSymbols() writes these rows once for a new user.
+//
+// Still comprehensive-but-not-exhaustive by design - the same honesty
+// caveat as tickers.js/BANK_NAMES: even user-editable, this is a watchlist
+// someone curates, not a live scan of "every stock," since there's no $0
+// feed that could do that.
+//
+// The company name is lowercase and exists for one job: deciding whether a
+// stored headline is actually ABOUT that symbol. See price-agent.js's
+// pickRelevantHeadline().
+const DEFAULT_WATCHLIST = {
+  AAPL: "apple", MSFT: "microsoft", GOOGL: "alphabet", AMZN: "amazon", NVDA: "nvidia",
+  META: "meta", TSLA: "tesla", JPM: "jpmorgan", V: "visa", UNH: "unitedhealth",
+  XOM: "exxon", JNJ: "johnson", WMT: "walmart", PG: "procter", MA: "mastercard",
+  HD: "home depot", DIS: "disney", NFLX: "netflix", AMD: "amd", KO: "coca-cola",
+};
+// The live list. Falls back to the seed only in the window before
+// loadWatchlistSymbols() has resolved, so a render that fires early still
+// shows something real rather than an empty market-overview card.
+const moverSymbols = () => (watchlistSymbols.length
+  ? [...new Set(watchlistSymbols.map((w) => (w.symbol || "").trim().toUpperCase()).filter(Boolean))]
+  : Object.keys(DEFAULT_WATCHLIST));
 // A plain flat list with no dependency on fetched data, unlike
 // populateAcctTypeSelect/populateAssetTypeSelect/populateDebtTypeSelect
 // (which lazily populate on first form-open) - safe to populate once,
@@ -1443,7 +1510,17 @@ async function loadAccounts() {
   $("fAccount").innerHTML = opts;
   $("eAccount").innerHTML = opts;
   $("sAccount").innerHTML = opts;
-  $("holdingFundingAccount").innerHTML = opts;
+  // NOT the spendable list, for the same reason Transfer's pickers below
+  // aren't: that list counts a credit account as spendable (you do pay
+  // WITH a card), but applyAssetDelta/assetDeltaError are silent no-ops
+  // for anything with no linked_asset_id. Funding a stock purchase from a
+  // card therefore deducted nothing at all - the holding appeared, its
+  // cost basis was recorded, and no money left any account. Asset-backed
+  // only, which also matches reality: brokerages don't settle securities
+  // purchases on a credit card.
+  const assetBacked = accounts.filter((a) => a.linked_asset_id && !a.archived_at);
+  $("holdingFundingAccount").innerHTML = `<option value="">None</option>` +
+    assetBacked.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
   // Deliberately NOT the spendable list above - Transfer needs an
   // asset-backed account specifically (applyAssetDelta/assetDeltaError
   // are silent no-ops for a credit/liability-linked one, which the
@@ -1938,6 +2015,54 @@ async function applyAssetDelta(accountId, paymentType, amount, sign) {
 // what you owe, so sign: +1 to apply a charge (increase balance), -1 to
 // reverse one (edit/delete). Paying a balance down is a separate transfer
 // (see payConfirmBtn below), never routed through this function.
+// The credit-limit ceiling, mirroring assetDeltaError's "can't go below $0"
+// floor on the asset side. Until this existed, credit_limit was purely
+// decorative - it drew a utilization line on the Liabilities card and was
+// never checked, so a card with a $1,000 limit would happily accept a
+// $50,000 charge.
+//
+// Sign convention follows applyLiabilityDelta, NOT assetDeltaError: +1 is
+// MORE owed. An expense on a credit account is +1 here and -1 there, so
+// don't copy a caller's asset sign across.
+//
+// Nets multiple deltas per liability first, so an edit that moves a charge
+// between two cards (or just changes its amount on one) is judged on the
+// real end state rather than on an intermediate one.
+function creditLimitError(deltas) {
+  const netByLiability = new Map();
+  for (const { accountId, amount, sign } of deltas) {
+    if (!accountId) continue;
+    const account = accounts.find((a) => a.id === accountId);
+    if (!account || !account.linked_liability_id) continue;
+    const debt = debts.find((d) => d.id === account.linked_liability_id);
+    if (!debt) continue;
+    const entry = netByLiability.get(debt.id) || { debt, net: 0 };
+    entry.net += sign * Number(amount);
+    netByLiability.set(debt.id, entry);
+  }
+  for (const { debt, net } of netByLiability.values()) {
+    // Only types that genuinely have a preset spending limit. A charge card
+    // is deliberately absent from CREDIT_LIMIT_LIABILITY_TYPES because by
+    // definition it has no preset limit, and BNPL because a pay-in-4 plan
+    // is a fixed installment, not a revolving line - blocking either would
+    // model something that doesn't exist in real life.
+    if (!CREDIT_LIMIT_LIABILITY_TYPES.has(debt.type)) continue;
+    const limit = Number(debt.credit_limit);
+    // No limit recorded means no limit is KNOWN, not that it's zero.
+    if (!Number.isFinite(limit) || limit <= 0) continue;
+    // Only a charge can be refused. A reversal, a payment or a correction
+    // that happens to leave the balance over an already-exceeded limit must
+    // still go through, or a real over-limit balance could never be fixed.
+    if (net <= 0) continue;
+    const newBalance = Math.round((Number(debt.balance) + net) * 100) / 100;
+    if (newBalance > limit) {
+      const available = Math.max(0, Math.round((limit - Number(debt.balance)) * 100) / 100);
+      return `${debt.name} only has ${fmt(available)} left of its ${fmt(limit)} limit. Pay the balance down before charging more.`;
+    }
+  }
+  return null;
+}
+
 async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
   if (!accountId) return;
   const account = accounts.find((a) => a.id === accountId);
@@ -2595,9 +2720,19 @@ $("payConfirmBtn").onclick = async () => {
   const asset = assets.find((a) => a.id === assetId);
   if (!debt || !asset) { flagField("payFromAsset"); return toast("Pick a valid liability and asset"); }
   if (amount > Number(asset.value)) { flagField("payAmount"); return toast(`Not enough in ${asset.name} to pay ${fmt(amount)}`); }
+  // Paying more than is owed used to silently destroy money: the balance
+  // floored at $0 while the FULL amount still left the funding account, so
+  // paying $500 against a $16 debt made $484 disappear - and undo then
+  // added the whole $500 back to the debt, inflating it. Real cards refuse
+  // an overpayment rather than quietly absorbing it, and this app has no
+  // concept of a negative liability (a credit balance) to put it in.
+  if (amount > Number(debt.balance)) {
+    flagField("payAmount");
+    return toast(`${debt.name} only owes ${fmt(debt.balance)} - paying more than that isn't possible here.`);
+  }
 
   const newAssetValue = Math.round((Number(asset.value) - amount) * 100) / 100;
-  const newBalance = Math.max(0, Math.round((Number(debt.balance) - amount) * 100) / 100);
+  const newBalance = Math.round((Number(debt.balance) - amount) * 100) / 100;
 
   const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
   if (assetErr) { flagField("payAmount"); return toast(assetErr.message); }
@@ -2814,6 +2949,10 @@ $("saveBtn").onclick = async () => {
   const paymentType = accounts.find((a) => a.id === accountId).type;
   const assetErr = assetDeltaError([{ accountId, paymentType, amount, sign: -1 }]);
   if (assetErr) { flagField("fAccount"); return toast(assetErr); }
+  // A charge on a credit account can't exceed its limit, the same way a
+  // real card declines. Signed for the LIABILITY side: +1 is more owed.
+  const limitErr = creditLimitError([{ accountId, amount, sign: +1 }]);
+  if (limitErr) { flagField(["fAccount", "fAmount"]); return toast(limitErr); }
   const desc = $("fDesc").value.trim();
   const fullText = $("quick").value.trim();
   const row = {
@@ -3380,6 +3519,14 @@ $("editSave").onclick = async () => {
     { accountId: patch.account_id, paymentType: patch.payment_type, amount, sign: -1 },
   ]);
   if (assetErr) { flagField("eAccount"); return toast(assetErr); }
+  // Same netting as above, on the liability side: the old charge comes off
+  // before the new one goes on, so raising an existing charge is judged on
+  // the difference rather than on its full amount.
+  const limitErr = creditLimitError([
+    { accountId: prevAccountId, amount: prevAmount, sign: -1 },
+    { accountId: patch.account_id, amount, sign: +1 },
+  ]);
+  if (limitErr) { flagField(["eAccount", "eAmount"]); return toast(limitErr); }
 
   $("editSave").disabled = true;
   const { error } = await sb.from("expenses").update(patch).eq("id", editing.id);
@@ -3664,6 +3811,7 @@ function renderInvestments() {
           </div>
           <div style="text-align:right">
             <div class="amt">${fmt(h.currentValue)}<span class="x" data-del-holding="${a.id}" style="margin-left:8px">✕</span></div>
+            ${h.quantity ? `<div><span data-sell-holding="${a.id}" style="font-size:12px;cursor:pointer;text-decoration:underline;color:var(--accent)">Sell</span></div>` : ""}
             <div style="font-size:12px;color:${gainColor(h.gainLoss)}">${h.gainLoss != null ? `${fmt(h.gainLoss)} (${signedPct(h.gainLossPct)})` : "no cost basis set"}</div>
             ${h.dayChange != null ? `<div style="font-size:12px;color:${gainColor(h.dayChange)}">today ${fmt(h.dayChange)} (${signedPct(h.dayChangePct)})</div>` : ""}
           </div>
@@ -3705,6 +3853,12 @@ function renderInvestments() {
   });
   document.querySelectorAll("[data-edit-holding]").forEach((el) => {
     el.onclick = () => openHoldingForm(assets.find((a) => a.id === el.dataset.editHolding));
+  });
+  document.querySelectorAll("[data-sell-holding]").forEach((el) => {
+    el.onclick = (ev) => {
+      ev.stopPropagation(); // don't also open the edit form
+      openSellModal(assets.find((a) => a.id === el.dataset.sellHolding));
+    };
   });
   document.querySelectorAll("[data-del-holding]").forEach((el) => {
     el.onclick = async (ev) => {
@@ -3858,6 +4012,315 @@ const recapDateLabel = (iso) => {
 // would be stating a causation this app can't establish, the same line
 // marketBreadth()'s plain count and the credit-utilization line already
 // hold.
+// ---- SELLING A HOLDING (realized gain/loss) --------------------------------
+// The missing half of the position lifecycle. Buying was already modelled
+// (the Holdings form's "Paid from" charges a real account); selling had no
+// path at all, so a reduced quantity was deliberately treated as a
+// correction and did nothing. That is why unrealized gain was the only gain
+// this app could report.
+//
+// Average cost throughout, and the UI says so: assets.purchase_price is one
+// blended total for the whole position with no per-lot history, so a sale
+// removes a proportional slice of it. That is a real method, but it is NOT
+// what a broker reports for individual shares, so this must never be
+// presented as a tax basis.
+let sellingHolding = null;
+
+function openSellModal(asset) {
+  if (!asset) return;
+  const held = Number(asset.quantity || 0);
+  if (!held) return toast("This holding has no share count to sell from");
+  sellingHolding = asset;
+  const basis = Number(asset.purchase_price || 0);
+
+  $("sellSymbol").textContent = asset.price_symbol || asset.name || "";
+  $("sellHeldQty").textContent = held;
+  $("sellAvgCost").textContent = fmt(basis / held);
+  $("sellQuantity").value = "";
+  $("sellPrice").value = findLivePrice(asset.price_symbol || "") ?? "";
+  $("sellDate").value = new Date().toISOString().slice(0, 10);
+
+  // Asset-backed accounts only - proceeds have to land somewhere that
+  // actually holds a balance, the same filter Transfer's pickers use and
+  // for the same reason (applyAssetDelta is a silent no-op otherwise).
+  $("sellAccount").innerHTML = `<option value="">None</option>` + accounts
+    .filter((a) => a.linked_asset_id && !a.archived_at)
+    .map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+
+  updateSellPreview();
+  $("sellHoldingModal").classList.remove("hidden");
+}
+
+// Live preview of exactly what will be recorded, so the realized number is
+// never a surprise after the fact.
+function updateSellPreview() {
+  const el = $("sellPreview");
+  if (!sellingHolding) { el.textContent = ""; return; }
+  const held = Number(sellingHolding.quantity || 0);
+  const basis = Number(sellingHolding.purchase_price || 0);
+  const qty = parseFloat($("sellQuantity").value);
+  const price = parseFloat($("sellPrice").value);
+  if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price < 0) { el.textContent = ""; return; }
+  if (qty > held) { el.textContent = `You only hold ${held} shares.`; el.style.color = "var(--err)"; return; }
+
+  const proceeds = Math.round(qty * price * 100) / 100;
+  const costOut = Math.round(basis * (qty / held) * 100) / 100;
+  const realized = Math.round((proceeds - costOut) * 100) / 100;
+  el.style.color = "";
+  el.innerHTML = `${fmt(proceeds)} proceeds against ${fmt(costOut)} of cost basis: ` +
+    `<strong style="color:${gainColor(realized)}">${fmt(realized)}</strong> realized` +
+    `${qty === held ? " (closes this position)" : ""}`;
+}
+["sellQuantity", "sellPrice"].forEach((id) => $(id).addEventListener("input", updateSellPreview));
+$("sellClose").onclick = () => { $("sellHoldingModal").classList.add("hidden"); sellingHolding = null; };
+
+$("sellConfirmBtn").onclick = async () => {
+  if (!sellingHolding) return;
+  const held = Number(sellingHolding.quantity || 0);
+  const basis = Number(sellingHolding.purchase_price || 0);
+  const qty = parseFloat($("sellQuantity").value);
+  const price = parseFloat($("sellPrice").value);
+  const soldOn = $("sellDate").value;
+  const accountId = $("sellAccount").value || null;
+
+  if (!Number.isFinite(qty) || qty <= 0) { flagField("sellQuantity"); return toast("Enter how many shares you sold"); }
+  if (qty > held) { flagField("sellQuantity"); return toast(`You only hold ${held} shares`); }
+  if (!Number.isFinite(price) || price < 0) { flagField("sellPrice"); return toast("Enter the price per share"); }
+  if (!soldOn) { flagField("sellDate"); return toast("Pick the date you sold"); }
+
+  const proceeds = Math.round(qty * price * 100) / 100;
+  const costOut = Math.round(basis * (qty / held) * 100) / 100;
+  const realized = Math.round((proceeds - costOut) * 100) / 100;
+
+  const { error: saleErr } = await sb.from("holding_sales").insert({
+    asset_id: sellingHolding.id,
+    symbol: (sellingHolding.price_symbol || "").trim().toUpperCase(),
+    quantity: qty, proceeds, cost_basis_removed: costOut, realized_gain: realized,
+    sold_on: soldOn, account_id: accountId,
+  });
+  if (saleErr) { flagField("sellQuantity"); return toast(saleErr.message); }
+
+  // Remaining position, average-cost: both quantity and the blended basis
+  // shrink proportionally, so the per-share average is unchanged by a sale.
+  const remainingQty = Math.round((held - qty) * 1e6) / 1e6;
+  const remainingBasis = Math.round((basis - costOut) * 100) / 100;
+  const { error: assetErr } = await sb.from("assets")
+    .update({ quantity: remainingQty, purchase_price: remainingBasis })
+    .eq("id", sellingHolding.id);
+  if (assetErr) return toast(assetErr.message);
+
+  if (accountId) {
+    await applyAssetDelta(accountId, null, proceeds, +1);
+    await logActivity("holding_sale", `Sold ${qty} ${sellingHolding.price_symbol || ""}`.trim(),
+      proceeds, soldOn, accountId, null, null, sellingHolding.id);
+  }
+
+  const parentId = sellingHolding.parent_asset_id;
+  $("sellHoldingModal").classList.add("hidden");
+  sellingHolding = null;
+  await loadAssets();
+  await loadHoldingSales();
+  if (parentId) await syncParentAssetValue(parentId);
+  await loadAssets();
+  renderInvestments();
+  renderRealizedGains();
+  renderNetWorth();
+  toast(`Sale recorded: ${fmt(realized)} realized${remainingQty === 0 ? " - position closed" : ""}`);
+};
+
+// ---- PRICE HISTORY (per-symbol chart, range, fundamentals) -----------------
+// Ranges are offered even when history is shorter than the window - the
+// chart just shows what exists and the caption says so, which is more
+// honest than hiding a button and leaving the user wondering why "1Y" is
+// missing.
+const PRICE_HISTORY_RANGES = [
+  { label: "1M", days: 30 },
+  { label: "3M", days: 90 },
+  { label: "6M", days: 182 },
+  { label: "1Y", days: 365 },
+  { label: "Max", days: null },
+];
+let priceHistorySymbol = null;
+let priceHistoryRangeDays = 30;
+
+const fmtCompact = (n) => {
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  return fmt(n);
+};
+
+function renderPriceHistory() {
+  const card = $("priceHistoryCard");
+  if (!card) return;
+  const symbols = [...new Set(dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()).filter(Boolean))].sort();
+  // No manual-entry fallback exists for price history, so an empty card
+  // would be clutter - same convention as Market overview.
+  if (!symbols.length) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  if (!priceHistorySymbol || !symbols.includes(priceHistorySymbol)) {
+    // Default to something the user actually owns before falling back to
+    // whatever is first alphabetically in the shared watchlist.
+    const owned = ownedPriceSymbols().find((s) => symbols.includes(s));
+    priceHistorySymbol = owned || symbols[0];
+  }
+  const select = $("priceHistorySymbol");
+  select.innerHTML = symbols.map((s) => `<option value="${esc(s)}"${s === priceHistorySymbol ? " selected" : ""}>${esc(s)}</option>`).join("");
+
+  $("priceHistoryRanges").innerHTML = PRICE_HISTORY_RANGES.map((r) => `
+    <button class="secondary" data-range="${r.days ?? ""}" style="width:auto;padding:6px 12px;font-size:12px;${
+      (r.days ?? null) === priceHistoryRangeDays ? "border-color:var(--accent);color:var(--accent)" : ""}">${r.label}</button>`).join("");
+  document.querySelectorAll("[data-range]").forEach((el) => {
+    el.onclick = () => {
+      priceHistoryRangeDays = el.dataset.range === "" ? null : Number(el.dataset.range);
+      renderPriceHistory();
+    };
+  });
+
+  const series = priceSeries(dailyPrices, priceHistorySymbol, priceHistoryRangeDays);
+  const canvas = $("priceHistoryChart");
+  const empty = $("priceHistoryEmpty");
+  // One point can't draw a line, and pretending otherwise looks broken.
+  if (series.length < 2) {
+    canvas.style.display = "none";
+    empty.textContent = series.length === 1
+      ? "Only one day of history for this symbol so far - a line needs at least two."
+      : "No price history for this symbol in this range.";
+  } else {
+    canvas.style.display = "";
+    empty.textContent = "";
+    const labels = series.map((p) => {
+      const [y, m, d] = p.date.split("-").map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    });
+    renderLineChart(canvas, labels, series.map((p) => p.close));
+  }
+
+  renderPriceRange();
+  renderFundamentals();
+}
+
+// The honest-labelling half of #3: this is only ever called a 52-week range
+// once a genuine year of history exists. Until then it states the real span
+// it actually covers, because calling five days of data a "52-week high"
+// would simply be false.
+function renderPriceRange() {
+  const el = $("priceHistoryRange");
+  const stats = priceRangeStats(dailyPrices, priceHistorySymbol);
+  if (!stats) { el.textContent = ""; return; }
+  const label = stats.isFullYear
+    ? "52-week range"
+    : `Range so far (${stats.tradingDays} trading day${stats.tradingDays === 1 ? "" : "s"})`;
+  el.innerHTML = `${esc(label)}: <strong>${fmt(stats.low)}</strong> to <strong>${fmt(stats.high)}</strong>`;
+}
+
+function renderFundamentals() {
+  const el = $("priceHistoryFundamentals");
+  const f = symbolFundamentals.find((r) => (r.symbol || "").trim().toUpperCase() === priceHistorySymbol);
+  // Stays empty rather than showing placeholder dashes - whether the data
+  // provider's free tier covers fundamentals at all is unconfirmed, so
+  // "nothing here" is the expected state, not a failure worth announcing.
+  if (!f) { el.innerHTML = ""; return; }
+  const bits = [];
+  if (f.company_name) bits.push(`<div class="meta">${esc(f.company_name)}${f.industry ? " · " + esc(f.industry) : ""}</div>`);
+  const stats = [];
+  if (f.market_cap != null) stats.push(`Market cap ${fmtCompact(Number(f.market_cap))}`);
+  if (f.pe_ratio != null) stats.push(`P/E ${Number(f.pe_ratio).toFixed(1)}`);
+  if (f.dividend_yield != null) stats.push(`Dividend yield ${Number(f.dividend_yield).toFixed(2)}%`);
+  if (stats.length) bits.push(`<div class="muted" style="font-size:12px">${stats.map(esc).join("  ·  ")}</div>`);
+  el.innerHTML = bits.join("");
+}
+
+$("priceHistorySymbol").addEventListener("change", () => {
+  priceHistorySymbol = $("priceHistorySymbol").value;
+  renderPriceHistory();
+});
+
+// ---- REALIZED GAIN/LOSS ----------------------------------------------------
+function renderRealizedGains() {
+  const card = $("realizedGainCard");
+  if (!card) return;
+  const summary = realizedGainSummary(holdingSales);
+  if (!summary) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+
+  const ytd = $("realizedYtd");
+  ytd.textContent = summary.ytdCount
+    ? `${fmt(summary.ytdRealized)}${summary.ytdRealizedPct != null ? ` (${signedPct(summary.ytdRealizedPct)})` : ""}`
+    : "-";
+  ytd.style.color = summary.ytdCount ? gainColor(summary.ytdRealized) : "";
+
+  const all = $("realizedAllTime");
+  all.textContent = fmt(summary.allTimeRealized);
+  all.style.color = gainColor(summary.allTimeRealized);
+
+  $("realizedDetail").textContent = summary.ytdCount
+    ? `${summary.ytdCount} sale${summary.ytdCount === 1 ? "" : "s"} in ${summary.year}: ${fmt(summary.ytdProceeds)} proceeds against ${fmt(summary.ytdCostBasis)} of cost basis. ${summary.allTimeCount} sale${summary.allTimeCount === 1 ? "" : "s"} all time.`
+    : `No sales in ${summary.year}. ${summary.allTimeCount} sale${summary.allTimeCount === 1 ? "" : "s"} recorded earlier.`;
+}
+
+// ---- TRACKED SYMBOLS (user-editable watchlist) -----------------------------
+function renderWatchlistEditor() {
+  const card = $("watchlistCard");
+  if (!card) return;
+  if (!userId) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  $("watchlistList").innerHTML = watchlistSymbols.length
+    ? watchlistSymbols.map((w) => `
+      <div class="exp" style="cursor:default">
+        <div>
+          <div>${esc(w.symbol)}</div>
+          ${w.company_name ? `<div class="meta">${esc(w.company_name)}</div>` : `<div class="meta muted">no company name - headlines match on ticker only</div>`}
+        </div>
+        <span class="x" data-del-watch="${w.id}">✕</span>
+      </div>`).join("")
+    : `<p class="muted" style="font-size:13px">No symbols tracked. The market overview and daily recap will be empty until you add some.</p>`;
+
+  document.querySelectorAll("[data-del-watch]").forEach((el) => {
+    el.onclick = async () => {
+      const row = watchlistSymbols.find((w) => w.id === el.dataset.delWatch);
+      if (!row) return;
+      if (!(await confirmModal(`${row.symbol} stops being tracked in the market overview, breadth count and daily recap. Prices already recorded are kept.`,
+        { title: `Stop tracking ${row.symbol}?` }))) return;
+      const { error } = await sb.from("watchlist_symbols").delete().eq("id", row.id);
+      if (error) return toast(error.message);
+      await loadWatchlistSymbols();
+      renderMarketOverview();
+      toast(`${row.symbol} removed`);
+    };
+  });
+}
+
+$("watchlistAddBtn").onclick = async () => {
+  const symbol = $("watchlistNewSymbol").value.trim().toUpperCase();
+  if (!symbol) { flagField("watchlistNewSymbol"); return toast("Enter a symbol"); }
+  if (!/^[A-Z.\-]{1,10}$/.test(symbol)) {
+    flagField("watchlistNewSymbol");
+    return toast("A symbol is letters, dots or hyphens, up to 10 characters");
+  }
+  if (watchlistSymbols.some((w) => (w.symbol || "").toUpperCase() === symbol)) {
+    flagField("watchlistNewSymbol");
+    return toast(`${symbol} is already tracked`);
+  }
+  // Same confirm-to-override shape as the Bank and ticker fields: the
+  // curated list is comprehensive but not exhaustive, so an unrecognized
+  // symbol warns rather than blocks.
+  if (!isKnownTicker(symbol) && !CRYPTO_SYMBOLS.includes(symbol)) {
+    if (!(await confirmModal(`"${symbol}" isn't in the app's reference list of known tickers. It may still be valid - the list isn't exhaustive.`,
+      { title: "Track this symbol anyway?", confirmLabel: "Track it" }))) return;
+  }
+  const company = $("watchlistNewName").value.trim().toLowerCase() || null;
+  const { error } = await sb.from("watchlist_symbols").insert({ symbol, company_name: company });
+  if (error) { flagField("watchlistNewSymbol"); return toast(error.message); }
+  $("watchlistNewSymbol").value = "";
+  $("watchlistNewName").value = "";
+  await loadWatchlistSymbols();
+  renderMarketOverview();
+  toast(`${symbol} added - prices arrive on the next background run`);
+};
+
 function renderDailyRecap() {
   const card = $("dailyRecapCard");
   if (!card) return;
@@ -3934,7 +4397,7 @@ function renderMarketOverview() {
   // never an AI-inferred read, so it's available exactly as often as
   // real prices are, with zero rate-limit exposure. Plain "X of Y up"
   // wording, not a bullish/bearish label - a count isn't an opinion.
-  const pulse = marketBreadth(MARKET_MOVERS_WATCHLIST, etfTickers, marketIndexFindings);
+  const pulse = marketBreadth(moverSymbols(), etfTickers, marketIndexFindings);
   const pulseEl = $("marketPulse");
   if (pulseEl) {
     if (!pulse) {
@@ -3965,7 +4428,7 @@ function renderMarketOverview() {
     </div>`;
   }).join("");
 
-  const movers = topMarketMovers(MARKET_MOVERS_WATCHLIST, marketIndexFindings, 3);
+  const movers = topMarketMovers(moverSymbols(), marketIndexFindings, 3);
   const moversSection = $("marketMoversSection");
   if (moversSection) moversSection.classList.toggle("hidden", !movers.length);
   renderPricesAsOf("marketMoversFreshness", latestFinnhubRefresh(marketIndexFindings));
@@ -3986,9 +4449,16 @@ function renderMarketOverview() {
   const newsSection = $("marketNewsSection");
   if (newsSection) newsSection.classList.toggle("hidden", !digest);
   if (digest) {
-    $("marketSentimentDot").style.background = HEALTH_TONE_COLOR[SENTIMENT_TONE[digest.sentiment]];
-    $("marketSentimentLabel").textContent = SENTIMENT_LABEL[digest.sentiment];
-    $("marketSentimentReason").textContent = digest.sentimentReason || "";
+    // Sentiment is the optional AI layer and is frequently absent - the
+    // headlines below it are the real, free content and stand on their own.
+    // Showing a neutral-grey dot with no label beats implying a read the
+    // app doesn't actually have.
+    const hasSentiment = !!digest.sentiment;
+    $("marketSentimentDot").style.background = hasSentiment
+      ? HEALTH_TONE_COLOR[SENTIMENT_TONE[digest.sentiment]]
+      : "var(--border)";
+    $("marketSentimentLabel").textContent = hasSentiment ? SENTIMENT_LABEL[digest.sentiment] : "Today's headlines";
+    $("marketSentimentReason").textContent = hasSentiment ? (digest.sentimentReason || "") : "";
     $("marketNewsList").innerHTML = digest.headlines.map((h) => `
       <div class="exp" style="cursor:default">
         <a href="${esc(h.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
@@ -4862,6 +5332,13 @@ async function autoLogDueSubscriptions() {
     while (renewal <= today && cycles < 36) {
       const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
       if (assetErr) { blockedNames.add(sub.name); break; }
+      // A renewal that would breach the card's limit is held back rather
+      // than silently pushing the balance over, exactly like an
+      // insufficient-funds renewal already is.
+      if (creditLimitError([{ accountId: sub.account_id, amount, sign: +1 }])) {
+        blockedNames.add(sub.name);
+        break;
+      }
 
       const { error } = await sb.from("expenses").insert({
         amount, description: sub.name, merchant: sub.name,
@@ -5248,6 +5725,8 @@ $("markPaidBtn").onclick = async () => {
   const paymentType = account.type;
   const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
   if (assetErr) { flagField("sAccount"); return toast(assetErr); }
+  const limitErr = creditLimitError([{ accountId: sub.account_id, amount, sign: +1 }]);
+  if (limitErr) { flagField("sAccount"); return toast(limitErr); }
 
   const row = {
     amount, description: sub.name, merchant: sub.name,

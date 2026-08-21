@@ -1005,6 +1005,59 @@
         <p class="muted" style="font-size:12px;margin:8px 0 0" id="dailyRecapIndexes"></p>
       </div>
 
+      <!-- Price history: the per-symbol chart daily_prices was built for.
+           Finnhub's real historical-candle endpoint is premium and 403s on
+           a free key, so this is drawn from history the app accumulates
+           itself, one row per symbol per trading day. That means the range
+           genuinely starts short and grows - the high/low line below states
+           the real span rather than calling five days a "52-week" anything
+           until a full year actually exists. Hidden until there is history
+           for at least one symbol. -->
+      <div class="card hidden" id="priceHistoryCard">
+        <strong>Price history</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 8px">Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.</p>
+        <label>Symbol</label>
+        <select id="priceHistorySymbol"></select>
+        <div id="priceHistoryRanges" style="display:flex;gap:6px;margin:10px 0 8px;flex-wrap:wrap"></div>
+        <div class="chartbox short"><canvas id="priceHistoryChart"></canvas></div>
+        <p class="muted" id="priceHistoryEmpty" style="font-size:13px;margin:8px 0 0"></p>
+        <p id="priceHistoryRange" style="font-size:13px;margin:8px 0 0"></p>
+        <div id="priceHistoryFundamentals" style="margin-top:8px"></div>
+      </div>
+
+      <!-- Realized gain/loss - money actually banked on sales, genuinely
+           separate from the unrealized gain the totals above show. Average
+           cost basis (assets.purchase_price is one blended total for the
+           position, with no per-lot history), which the card says out loud
+           because that is NOT what a broker reports for individual shares.
+           Hidden until something has actually been sold. -->
+      <div class="card hidden" id="realizedGainCard">
+        <strong>Realized gain/loss</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 8px">From holdings you've actually sold, using average cost basis. This is not a tax document - a broker reports individual shares differently.</p>
+        <div class="row">
+          <div><div class="muted" style="font-size:12px">This year</div><div id="realizedYtd" style="font-size:18px;font-weight:600">-</div></div>
+          <div><div class="muted" style="font-size:12px">All time</div><div id="realizedAllTime" style="font-size:18px;font-weight:600">-</div></div>
+        </div>
+        <p class="muted" id="realizedDetail" style="font-size:12px;margin:8px 0 0"></p>
+      </div>
+
+      <!-- Tracked symbols: the movers watchlist, now user-editable
+           (watchlist_symbols). This replaced three lists that had to be
+           kept in sync by hand across app.js and price-agent.js. Editing it
+           changes what the Market overview, breadth count and Daily recap
+           are computed over. -->
+      <div class="card hidden" id="watchlistCard">
+        <strong>Tracked symbols</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 8px">The stocks the market overview, daily recap and breadth count are based on. Changes take effect on the next background price run.</p>
+        <div class="row">
+          <div><label>Add a symbol</label><input id="watchlistNewSymbol" placeholder="AAPL" autocomplete="off" /></div>
+          <div><label>Company name (optional)</label><input id="watchlistNewName" placeholder="apple" autocomplete="off" /></div>
+        </div>
+        <p class="muted" style="font-size:11px;margin:2px 0 8px">A company name helps match news headlines to the right stock. Left blank, headline matching falls back to the ticker alone.</p>
+        <button id="watchlistAddBtn">Add symbol</button>
+        <div id="watchlistList" style="margin-top:10px"></div>
+      </div>
+
       <div class="card hidden" id="marketOverviewCard">
         <strong>Market overview</strong>
         <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
@@ -1020,7 +1073,7 @@
           <div id="marketMoversList"></div>
         </div>
         <div id="marketNewsSection" class="hidden" style="margin-top:14px">
-          <strong style="font-size:13px">Today's market news</strong>
+          <strong style="font-size:13px">News from your tracked stocks</strong>
           <p class="muted" style="font-size:12px;margin:4px 0 8px">A short read of today's general market news coverage - not a prediction, and not a recommendation.</p>
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span id="marketSentimentDot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
@@ -1260,6 +1313,30 @@
        A standalone Loan/Mortgage/Other liability has no purchase trail to
        reconcile against, so it keeps manual Owed editing - see
        openDebtBalanceForm (app.js) for the linked/standalone branch. -->
+  <!-- Selling a holding. Until this existed a reduced quantity was treated
+       as a correction and did nothing, because there was no way to tell a
+       typo fix from a real sale - which is why unrealized gain was the only
+       gain this app could show. Proceeds optionally credit a real account,
+       reusing the same applyAssetDelta path the Holdings form's "Paid from"
+       already uses in the other direction. -->
+  <div id="sellHoldingModal" class="modal hidden">
+    <div class="sheet">
+      <div class="topbar"><strong>Sell <span id="sellSymbol"></span></strong><button class="secondary" id="sellClose" style="width:auto;padding:6px 12px">✕</button></div>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">You hold <strong id="sellHeldQty">0</strong> shares, average cost <strong id="sellAvgCost">$0</strong> each.</p>
+      <label>Shares to sell</label>
+      <input id="sellQuantity" type="number" step="any" inputmode="decimal" />
+      <label>Price per share</label>
+      <input id="sellPrice" type="number" step="0.01" inputmode="decimal" />
+      <label>Date sold</label>
+      <input id="sellDate" type="date" />
+      <label>Deposit proceeds into (optional)</label>
+      <select id="sellAccount"></select>
+      <p class="muted" style="font-size:11px;margin:2px 0 8px">Leave as None if the cash stayed in the brokerage and isn't tracked here.</p>
+      <p id="sellPreview" style="font-size:13px;margin:8px 0"></p>
+      <button id="sellConfirmBtn">Record sale</button>
+    </div>
+  </div>
+
   <div id="debtBalanceForm" class="modal hidden">
     <div class="sheet">
       <div class="topbar"><strong><span id="debtBalanceLabel"></span></strong><button class="secondary" id="debtBalanceClose" style="width:auto;padding:6px 12px">✕</button></div>
@@ -1539,7 +1616,9 @@
           <h3>Liabilities</h3>
           <p>Tracked debt only, split into two groups: <strong>Credit liabilities</strong> are the automatic ones tied to a credit-type Account above (their balance moves only through real charges/payments, or a manual correction - see below); <strong>Other liabilities</strong> are standalone ones you add directly here (Loan, Mortgage, or a specific type like a HELOC or student loan) with no linked account.</p>
           <p>"Pay" on any liability moves money from a linked asset/account you pick straight to paying it down. The balance can also be corrected directly - set it to an exact figure, or add a specific charge - which is useful when the real statement doesn't quite match what got logged (a fee, a late-arriving charge, a refund); every one of these corrections is written to Recent History as an undoable entry, so nothing changes the amount owed silently.</p>
-          <p>"Edit details" (small link under any liability) opens interest rate, minimum payment, and due date for any liability, plus type-specific fields: a credit limit (adds a plain utilization line - "$X of $Y used" - once both a limit and balance exist, deliberately with no "aim for under 30%" advice, just the math) for a card/HELOC/line of credit; statement-cycle fields (which day the statement closes, which day payment is due, the last statement balance and date) for a real revolving card, which power a paid-in-full / carrying-a-balance / missed-minimum indicator - paying the statement balance in full by the due date means no interest at all, carrying any of it accrues interest even if every payment was on time, and paying only the minimum avoids a late fee but not the interest. Nothing here is ever applied automatically; you confirm each interest charge yourself from the small "Log interest" link when it's ready. A HELOC additionally gets a draw-period-end date.</p>
+          <p>"Edit details" (small link under any liability) opens interest rate, minimum payment, and due date for any liability, plus type-specific fields: a credit limit for a card/HELOC/line of credit; statement-cycle fields (which day the statement closes, which day payment is due, the last statement balance and date) for a real revolving card, which power a paid-in-full / carrying-a-balance / missed-minimum indicator - paying the statement balance in full by the due date means no interest at all, carrying any of it accrues interest even if every payment was on time, and paying only the minimum avoids a late fee but not the interest. Nothing here is ever applied automatically; you confirm each interest charge yourself from the small "Log interest" link when it's ready. A HELOC additionally gets a draw-period-end date.</p>
+          <p><strong>Setting a credit limit does two things.</strong> It adds a plain utilization line ("$X of $Y used") to the liability, deliberately with no "aim for under 30%" advice attached - just the math. And it becomes a real ceiling: once a limit is set, a new expense, subscription renewal or edit that would push the balance past it is refused with a message telling you how much room is left, the same way a real card declines. Pay the balance down and the room comes back.</p>
+          <p>Two deliberate exceptions. Correcting the amount owed by hand is never blocked, because a real balance genuinely can exceed its limit through an over-limit fee, interest, or the bank lowering your limit - if that happens you still need to be able to record the truth. And charge cards and buy-now-pay-later plans are never limited, because neither has a preset spending limit in real life. If no limit is set, nothing is enforced, since a blank field means "unknown", not "zero".</p>
         </div>
 
         <div class="help-topic">
@@ -1691,24 +1770,30 @@
       </div>
       <div id="helpContentInvest" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 390" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 680 560" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Daily recap (biggest movers + headlines)</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="93" fill="var(--text)" font-size="14">Market overview + top movers</text>
+            <text x="40" y="93" fill="var(--text)" font-size="14">Price history (per-symbol chart)</text>
             <rect x="10" y="118" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="147" fill="var(--text)" font-size="14">Daily health check + totals</text>
+            <text x="40" y="147" fill="var(--text)" font-size="14">Realized gain/loss (only after a sale)</text>
             <rect x="10" y="172" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="201" fill="var(--text)" font-size="14">Value over time</text>
+            <text x="40" y="201" fill="var(--text)" font-size="14">Tracked symbols</text>
             <rect x="10" y="226" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="255" fill="var(--text)" font-size="14">Holdings</text>
+            <text x="40" y="255" fill="var(--text)" font-size="14">Market overview + top movers</text>
             <rect x="10" y="280" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="309" fill="var(--text)" font-size="14">Contribution limits (only if you have a tracked account type)</text>
+            <text x="40" y="309" fill="var(--text)" font-size="14">Daily health check + totals</text>
             <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="363" fill="var(--text)" font-size="14">Target allocation</text>
+            <text x="40" y="363" fill="var(--text)" font-size="14">Value over time</text>
+            <rect x="10" y="388" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="417" fill="var(--text)" font-size="14">Holdings</text>
+            <rect x="10" y="442" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="471" fill="var(--text)" font-size="14">Contribution limits (only if you have a tracked account type)</text>
+            <rect x="10" y="496" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="525" fill="var(--text)" font-size="14">Target allocation</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. "Daily recap" and "Market overview" each only appear once there is real data for them - a finished trading day for the first, at least one index/mover/headline for the second.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. Several only appear once there is real data for them: "Daily recap" needs a finished trading day, "Price history" needs at least one recorded price, "Realized gain/loss" needs a sale, and "Market overview" needs at least one index, mover or headline.</p>
 
         <div class="help-topic">
           <h3>Daily recap</h3>
@@ -1720,13 +1805,37 @@
         </div>
 
         <div class="help-topic">
+          <h3>Price history</h3>
+          <p>A price chart for any symbol the app has recorded, with 1M/3M/6M/1Y/Max ranges. Pick a symbol from the dropdown - it defaults to one you actually own where possible, otherwise the first tracked symbol alphabetically.</p>
+          <p><strong>The history starts short and grows.</strong> There is no free source of years of past daily prices, so rather than pretend otherwise the app records one row per symbol per trading day from the day this feature was switched on and builds the chart from that. A range button longer than the history you have simply shows everything available; it isn't broken, there just isn't more yet.</p>
+          <p>Underneath, the high and low across that recorded history. It is labelled by the real span it covers - "Range so far (5 trading days)" and so on - and only ever called a <em>52-week range</em> once a genuine year of history actually exists. Calling five days of data a 52-week high would just be untrue.</p>
+          <p>Where available, a company's name, industry, market cap, P/E and dividend yield appear below that. These come from the same market-data provider as prices; whether they're included on the free plan isn't guaranteed, so if nothing appears there, that's why - everything else on the card works regardless.</p>
+        </div>
+
+        <div class="help-topic">
+          <h3>Realized gain/loss</h3>
+          <p>What you actually made or lost on holdings you've <em>sold</em> - genuinely different from the gain/loss shown on the Holdings card, which is what your current positions are worth versus what you paid ("unrealized"). Shows this year and all time, and only appears once you've recorded at least one sale.</p>
+          <p>To record one, tap "Sell" on any holding with a share count. Enter the shares and price, optionally pick an account for the proceeds to land in, and the app shows exactly what will be recorded before you confirm. Selling your whole position closes it out; the holding stays in the list at zero shares so you can still see it, and you can delete it whenever you like.</p>
+          <p><strong>This uses average cost basis, and it is not a tax document.</strong> The app stores one blended cost for a whole position rather than tracking each purchase separately, so a sale removes a proportional slice of that cost. That's a real, recognised method, but it is <em>not</em> how a broker reports individual shares to you or to the tax authorities - use your broker's own figures for anything official.</p>
+        </div>
+
+        <div class="help-topic">
+          <h3>Tracked symbols</h3>
+          <p>The list of stocks the market overview, the "X of Y up today" breadth count and the daily recap are all computed from. It starts as the same 20 large caps the app previously had built in, and is now yours to change.</p>
+          <p>Add a symbol with its ticker. The optional company name is used for one specific job: deciding whether a news headline is genuinely about that company. Left blank, headline matching falls back to the ticker alone, which is a little less reliable but still works - the background job fills the name in automatically where it can.</p>
+          <p>Removing a symbol stops it being tracked from then on; prices already recorded for it are kept, so its price history doesn't disappear. New symbols get their first prices on the next background run rather than instantly.</p>
+        </div>
+
+        <div class="help-topic">
           <h3>Market overview</h3>
           <p>Today's level and day-over-day change for a handful of major US indexes (S&P 500, Dow Jones, NASDAQ Composite, Russell 2000) - genuinely separate from your own holdings below, this is broad market context, not anything you own. Hidden entirely until an index has actually been found once; even then, an individual index's own exact level can show "not available yet" until its slower weekly search has landed - see below for the "Live via" line that fills the gap in the meantime.</p>
           <p>Below the indexes, "Today's top movers" ranks the biggest day-over-day price swings (up or down) from a fixed watchlist of 20 well-known large-cap stocks, each with a short plain-English explanation of why it moved when one's been found. This is informational only, purely about stocks already on the fixed watchlist - not a scan of the whole market, and never a suggestion of what to buy or sell. It appears independently of the indexes above it, so it's possible to see one without the other depending on what's been found so far.</p>
           <p>Two different refresh speeds feed this card, and separate lines tell you apart which is which. Real stock prices (your own tracked tickers below, and the movers list here) come straight from a live market-data API with no search step involved, refreshed every 15 minutes - "Prices as of" reflects that directly, both under the movers list and here under the indexes. While this page is open it goes and gets fresh prices itself, about once a minute, straight from the market-data API rather than waiting on the background job - so a window (or an installed home-screen icon) left open all day keeps showing current numbers without you reloading anything, and prices keep updating even when the machine that runs the background searches is switched off. Today's change is measured against the official previous close that comes back with each price, not against whatever the background job last recorded. Outside regular US market hours that same line reads "Market closed" instead and stops flagging the age as a problem, because the last close genuinely is the latest price there is until the next open. Each index also gets a "Live via [ticker]" line the same way - a closely-tracking, highly liquid ETF (SPY for the S&P 500, DIA for the Dow, QQQ for the NASDAQ-100 specifically rather than the full Composite, IWM for the Russell 2000) priced on that same fast, no-search pipeline, since a live feed for the exact raw index point isn't freely available. The index's own exact level shown above that line, mover explanations, and today's market news below all go through a slower, genuinely web-searched pipeline that only runs weekly instead - the separate "Last updated" line reflects that pipeline specifically. If that weekly run hit a problem (a rate limit, a timeout), a warning line explains what happened instead of leaving you to guess why a price looks stale or missing - amber for a partial run, red if the whole run failed.</p>
           <p>A real, clickable recent headline (with its source) can also appear under a tracked stock or mover - genuine news, not an AI summary, refreshed roughly hourly on the same fast pipeline as prices. The separate explanation line above it (when present) is still the slower weekly AI-written "why it moved" read - the two can disagree slightly in timing since one refreshes far more often than the other, and that's expected, not a bug.</p>
           <p>The bold line at the top ("X of Y tracked large-caps up today") is a plain count, not an AI's read of the market's mood - it's tallying the same real, already-shown prices below it, so it updates every 15 minutes with no dependency on anything that can run out for the day. Colored green or red only when there's a genuine majority one way or the other, gray when it's roughly split.</p>
-          <p>Below the movers, "Today's market news" shows a short daily read of general market news coverage - up to 5 real headlines you can tap through to the source, plus an overall sentiment (Bullish/Neutral/Bearish) with a one-line reason grounded in that same coverage. This is a summary of what real news outlets are reporting that day, never a prediction and never a recommendation to buy or sell - the same boundary the rest of this app holds everywhere else. It's derived only from real search results, never invented, and appears independently of the indexes/movers above it.</p>
+          <p>Below the movers, "News from your tracked stocks" shows up to 5 recent headlines about the companies on your tracked list, each tappable through to the original source, one per company so several are represented rather than five about the same stock.</p>
+          <p>It is deliberately scoped to <em>your tracked companies</em> rather than the market at large. A general market-news feed was tried and didn't work: the available free feed mixes finance in with world news and lifestyle, and neither filtering by news outlet nor by the provider's own tagging separated them reliably - it returned things like a royal photo feature and a basketball team sale alongside genuine market stories. Headlines about a specific company you track are something the data can actually guarantee, so that is what the card claims.</p>
+          <p>An overall sentiment (Bullish/Neutral/Bearish) with a one-line reason may appear above the headlines. That part is AI-written and optional - if the daily limit is used up it simply says "Today's headlines" with a neutral marker instead, and the headlines themselves are unaffected. It is a summary of coverage, never a prediction and never a recommendation to buy or sell.</p>
         </div>
 
         <div class="help-topic">

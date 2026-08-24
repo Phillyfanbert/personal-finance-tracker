@@ -527,6 +527,13 @@ async function writeDailyCandles(results) {
 }
 
 const RECAP_MOVER_COUNT = 5;
+// The synthesis reads far more coverage than the five movers' own
+// headlines, which is what lets it write about the day's actual themes
+// (a chip partnership, a data-centre buildout) rather than only listing
+// which five tickers moved most. Capped so one batched prompt stays a
+// sane size against a 20-request DAILY Gemini quota.
+const RECAP_NEWS_POOL_MAX = 40;
+const RECAP_NEWS_PER_SYMBOL_MAX = 3;
 // Headlines land on roughly one run in four for ~20 symbols at a time, so
 // this covers several batches - enough that every symbol resolves even
 // when the most recent batch was partial.
@@ -702,7 +709,7 @@ async function backfillWatchlistCompanyNames(rows) {
   }
 }
 
-const MAX_RECAP_SUMMARY_CHARS = 500;
+const MAX_RECAP_SUMMARY_CHARS = 1600;
 
 // Checked at the VALIDATION layer, not just forbidden in the prompt below.
 // Asking a model not to give advice is not the same as it obeying, and
@@ -744,7 +751,7 @@ const INDEX_PLAIN_NAMES = {
   IWM: "the Russell 2000, which tracks around 2,000 smaller US companies",
 };
 
-function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames = {}) {
+function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames = {}, newsPool = []) {
   // Company names are passed IN rather than left to the model. The rule
   // below forbids using its own knowledge of these companies, so without
   // this it could only ever write bare tickers - and "WMT fell 9%" is
@@ -782,8 +789,19 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
     "Biggest movers among the companies they track:",
     ...moverLines,
     "",
+    newsPool.length ? "" : "",
+    newsPool.length ? "Other things reported today about companies they track:" : "",
+    ...newsPool.map((h) => `- ${h.who}: "${h.title}" (${h.source || "unknown source"})`),
+    "",
     "Rules for summary:",
-    "- 2 to 3 short sentences. Everyday words only.",
+    "- Write TWO short paragraphs, separated by one blank line.",
+    "  Paragraph 1: how the market did overall today, using the numbers above.",
+    "  Paragraph 2: what was actually being REPORTED - the two or three",
+    "  biggest themes running through the coverage listed above (for example a",
+    "  partnership, a big investment in new facilities, a company planning to",
+    "  sell shares to the public). Group related stories into a theme instead",
+    "  of listing headlines one by one.",
+    "- Everyday words only.",
     "- Write like you are explaining the day to a friend who knows nothing",
     "  about investing. No finance-desk phrasing.",
     "- Say 'fell' or 'rose', never 'declined', 'advanced', 'posted losses',",
@@ -800,9 +818,13 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
     "- Never give advice, never recommend buying or selling, never predict",
     "  what any price will do next, never give a price target, and never",
     "  call anything cheap, expensive, undervalued or a good opportunity.",
-    "- Only mention a company that appears above. Never invent a reason for a",
-    "  mover listed as having no headline - it is fine to say the move came",
-    "  without much news coverage.",
+    "- Only mention a company that appears somewhere above, in either list.",
+    "  Never invent a reason for a mover listed as having no headline - it is",
+    "  fine to say the move came without much news coverage.",
+    "- Describe only what the headlines above actually say. If a headline",
+    "  reports what a company itself expects or plans, say who said it",
+    "  ('the company said it plans to...'). Never turn that into your own",
+    "  prediction, and never predict anything yourself.",
     "- If the data above is too thin to say anything meaningful, set summary",
     "  to null rather than padding it out.",
   ].filter(Boolean).join("\n");
@@ -854,9 +876,9 @@ async function loadDisplayCompanyNames(fallbackNames) {
   return names;
 }
 
-async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames) {
+async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames, newsPool = []) {
   try {
-    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames));
+    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool));
     const summary = validateRecapSummary(parseJsonLoose(text));
     if (!summary) console.warn("No usable recap summary this run - keeping the zero-LLM recap.");
     return summary;
@@ -1260,7 +1282,29 @@ async function buildDailyRecap() {
     console.log("[dry-run] skipping the Gemini synthesis so no daily quota is spent.");
   } else {
     const displayNames = await loadDisplayCompanyNames(companyNames);
-    summary = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames);
+    // The wider coverage pool, so the synthesis can write about what the day
+    // was ABOUT rather than only which five tickers moved most. Reuses the
+    // headlines already fetched above - no extra call. Skips the ETF proxies
+    // (Finnhub's company-news product doesn't cover a fund meaningfully) and
+    // any URL already shown against a mover, so the same story can't appear
+    // as both a source link and a "meanwhile" item.
+    const pooledUrls = new Set(movers.filter((m) => m.headline).map((m) => m.headline.url));
+    const newsPool = [];
+    for (const [symbol, found] of headlines) {
+      if (etfTickers.has(symbol) || !watchlist.has(symbol)) continue;
+      const name = displayNames[symbol];
+      let taken = 0;
+      for (const h of found.headlines || []) {
+        if (newsPool.length >= RECAP_NEWS_POOL_MAX) break;
+        if (taken >= RECAP_NEWS_PER_SYMBOL_MAX) break;
+        if (!h || !h.title || pooledUrls.has(h.url)) continue;
+        pooledUrls.add(h.url);
+        newsPool.push({ who: name ? `${name} (${symbol})` : symbol, title: h.title, source: h.source || null });
+        taken++;
+      }
+      if (newsPool.length >= RECAP_NEWS_POOL_MAX) break;
+    }
+    summary = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames, newsPool);
     // Only claim Gemini touched this row if it actually produced something
     // usable - generated_by has to stay an honest record of how the row
     // was made, since the whole card is built on not overstating itself.

@@ -4191,18 +4191,23 @@ $("sellConfirmBtn").onclick = async () => {
 // a click/tap toggles the same text as a normal inline block instead.
 // Keyboard-reachable (tabindex="0" in the markup) and responds to Enter/
 // Space, not just a pointer click.
-function wireInfoIcon(iconId, textId) {
-  const icon = $(iconId);
-  const text = $(textId);
-  if (!icon || !text) return;
-  const toggle = () => text.classList.toggle("hidden");
-  icon.addEventListener("click", toggle);
-  icon.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
+// Driven by markup (`data-info="<explainer element id>"`) rather than one
+// wiring call per card. Every Investments card carries one of these now, and
+// a per-card call would mean two edits in two files to add a tenth - this way
+// a new card is markup-only, the same reason fillCategorySelect() populates
+// every category <select> from one list instead of four hand-kept copies.
+function wireInfoIcons() {
+  document.querySelectorAll("[data-info]").forEach((icon) => {
+    const text = document.getElementById(icon.dataset.info);
+    if (!text) return;
+    const toggle = () => text.classList.toggle("hidden");
+    icon.addEventListener("click", toggle);
+    icon.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
+    });
   });
 }
-wireInfoIcon("dailyRecapInfoBtn", "dailyRecapExplainer");
-wireInfoIcon("marketMoversInfoBtn", "marketMoversExplainer");
+wireInfoIcons();
 
 // ---- INVESTMENTS TABS + TRACKED-SYMBOLS GEAR -------------------------------
 // Both panels stay in the DOM and are toggled with .hidden rather than being
@@ -4210,6 +4215,46 @@ wireInfoIcon("marketMoversInfoBtn", "marketMoversExplainer");
 // writing into its own elements with no knowledge of which tab is showing -
 // switching tabs needs no re-render at all, and a background refresh landing
 // on a hidden tab still lands correctly.
+// Switching tabs must not move the page under the user. The tab buttons sit
+// ABOVE the panel they toggle, so showing a different-height panel below them
+// cannot move them on its own - the only thing that actually shifts the page
+// is the document becoming SHORTER than the current scroll position allows,
+// at which point the browser clamps scrollY upward and everything jumps.
+// Restoring scrollY alone can't fix that, because the old position is
+// genuinely unreachable in a shorter document; the missing height has to
+// exist first. So this measures the anchor's real movement (zero in the
+// common case, making this a no-op), pads by exactly the shortfall, and only
+// then scrolls back.
+//
+// The spacer is reset to 0 at the start of every switch rather than being
+// removed on scroll - clearing it mid-scroll would cause the exact jump this
+// exists to prevent.
+let investScrollSpacer = null;
+function preserveScrollAcross(anchor, apply) {
+  const view = $("investView");
+  if (!anchor || !view || anchor.offsetParent === null) { apply(); return; }
+  if (!investScrollSpacer) {
+    investScrollSpacer = document.createElement("div");
+    investScrollSpacer.setAttribute("aria-hidden", "true");
+    view.appendChild(investScrollSpacer);
+  }
+  // Measure BEFORE clearing the previous pad. Clearing it shrinks the
+  // document, which can clamp scrollY on the spot - so reading the anchor
+  // afterwards would capture an already-jumped position and "preserve" that
+  // instead. Caught live: switching back from a padded short panel to a tall
+  // one lost 400px of scroll. Clearing and applying together is fine, since
+  // the delta below measures their combined effect.
+  const before = anchor.getBoundingClientRect().top;
+  investScrollSpacer.style.height = "0px";
+  apply();
+  const delta = anchor.getBoundingClientRect().top - before;
+  if (!delta) return;
+  const targetY = window.scrollY + delta;
+  const shortfall = targetY + window.innerHeight - document.documentElement.scrollHeight;
+  if (shortfall > 0) investScrollSpacer.style.height = `${Math.ceil(shortfall)}px`;
+  window.scrollTo(0, targetY);
+}
+
 let investTab = "market";
 function setInvestTab(tab) {
   investTab = tab === "portfolio" ? "portfolio" : "market";
@@ -4223,8 +4268,10 @@ function setInvestTab(tab) {
     $(id).style.fontWeight = active ? "600" : "";
   }
 }
-$("investTabMarketBtn").onclick = () => setInvestTab("market");
-$("investTabPortfolioBtn").onclick = () => setInvestTab("portfolio");
+// Only the click paths preserve scroll - the initial load calls below run at
+// scrollY 0, where there is nothing to preserve.
+$("investTabMarketBtn").onclick = () => preserveScrollAcross($("investTabBar"), () => setInvestTab("market"));
+$("investTabPortfolioBtn").onclick = () => preserveScrollAcross($("investTabBar"), () => setInvestTab("portfolio"));
 setInvestTab(localStorage.getItem("investTab") || "market");
 
 // Sub-tabs within each top-level tab, so a market/portfolio panel is one
@@ -4253,7 +4300,7 @@ function wireInvestSubTabs(barId, storageKey, defaultSubId) {
   const bar = $(barId);
   if (!bar) return;
   bar.querySelectorAll("[data-invest-subtab]").forEach((btn) => {
-    btn.onclick = () => setInvestSubTab(barId, storageKey, btn.dataset.investSubtab);
+    btn.onclick = () => preserveScrollAcross(bar, () => setInvestSubTab(barId, storageKey, btn.dataset.investSubtab));
   });
   // Fall back to the default if a stale localStorage value no longer
   // matches a real sub-tab (e.g. after a future change to the tab list).
@@ -4564,25 +4611,47 @@ function renderDailyRecap() {
   // draws when it calls itself "a plain count, not an AI's read."
   // esc() because this is model output, the exact provenance that rule
   // exists for.
+  // Paragraph breaks are preserved: the recap is now a written piece rather
+  // than the two-sentence caption it started as, so it can legitimately run
+  // to more than one paragraph. esc() first, then turn the surviving newlines
+  // into real breaks - never the other way round.
   const summaryEl = $("dailyRecapSummary");
-  summaryEl.innerHTML = recap.summary
-    ? `<span class="muted" style="font-size:11px">AI-written summary of the numbers and coverage above</span><br>${esc(recap.summary)}`
-    : "";
-  summaryEl.classList.toggle("hidden", !recap.summary);
+  if (recap.summary) {
+    summaryEl.innerHTML = `<span class="muted" style="font-size:11px">AI-written from the day's real prices and headlines</span><br>${esc(recap.summary).replace(/\n+/g, "<br><br>")}`;
+  } else {
+    // Zero-LLM fallback. The summary is genuinely optional and absent
+    // whenever Gemini fails, which production has shown is common - and now
+    // that the per-mover price table has been dropped, its absence would
+    // otherwise leave this card with almost nothing on it. Says the same
+    // thing the table did, in words, from the same numbers.
+    const nameFor = (sym) => {
+      const w = watchlistSymbols.find((r) => (r.symbol || "").trim().toUpperCase() === sym);
+      return w && w.company_name ? `${w.company_name} (${sym})` : sym;
+    };
+    const moved = recap.movers
+      .filter((m) => Number.isFinite(m.change_pct) && m.change_pct !== 0)
+      .slice(0, 3)
+      .map((m) => `${nameFor(m.symbol)} ${m.change_pct > 0 ? "rose" : "fell"} ${Math.abs(Math.round(m.change_pct * 10) / 10)}%`);
+    summaryEl.textContent = moved.length
+      ? `The biggest moves among the companies you track: ${moved.join(", ")}.`
+      : "";
+  }
+  summaryEl.classList.toggle("hidden", !summaryEl.innerHTML);
 
-  $("dailyRecapMovers").innerHTML = recap.movers.map((m) => `
-    <div class="exp" style="cursor:default">
-      <div>
-        <div>${esc(m.symbol)}</div>
-        ${m.headline
-          ? `<div class="meta"><a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headline.title)}</a>${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>`
-          : `<div class="meta muted">No headline found for this move</div>`}
-      </div>
-      <span class="amt" style="text-align:right">
-        ${fmt(m.close)}
-        <div style="font-size:12px;color:${gainColor(m.change_pct)}">${signedPct(m.change_pct)}</div>
-      </span>
-    </div>`).join("");
+  // The per-mover price table moved out of this card deliberately: the recap
+  // is meant to read as words, and the same closes and percentages are one
+  // tap away on the Movers and Overview sub-tabs. What stays is the part the
+  // prose can't replace - the real, clickable sources it was written from,
+  // still labelled as the day's coverage rather than as a cause.
+  const sourced = recap.movers.filter((m) => m.headline);
+  $("dailyRecapMovers").innerHTML = sourced.length
+    ? `<div class="muted" style="font-size:12px;font-weight:700;margin:14px 0 6px">What was being reported</div>` +
+      sourced.map((m) => `
+        <div style="margin:0 0 10px">
+          <a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px;line-height:1.45">${esc(m.headline.title)}</a>
+          <div class="muted" style="font-size:12px;margin-top:2px">${esc(m.symbol)}${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>
+        </div>`).join("")
+    : "";
 
   // Named plainly rather than by ETF ticker: "Index proxies: IWM -1.32%"
   // told a beginner nothing, and sat directly under a summary that is now

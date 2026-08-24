@@ -108,6 +108,10 @@
     .help-btn { width: 30px; height: 30px; flex: none; padding: 0;
       border-radius: 50%; background: var(--panel-2); border: 1px solid var(--border);
       color: var(--text); font-weight: 700; font-size: 15px; cursor: pointer; }
+    .info-icon { display: inline-flex; align-items: center; justify-content: center;
+      width: 17px; height: 17px; border-radius: 50%; background: var(--panel-2);
+      border: 1px solid var(--border); color: var(--muted); font-size: 11px;
+      font-style: italic; font-family: Georgia, serif; cursor: pointer; flex: none; }
     /* #helpModal's sheet is wider and taller than the other modals (real,
        long documentation, not a short confirm/pick prompt) - a dedicated
        class instead of widening .modal .sheet globally, which would also
@@ -1029,10 +1033,13 @@
                Hidden entirely until a real recap exists, same convention as
                Market overview below. -->
           <div class="card hidden" id="dailyRecapCard">
-            <strong>Daily recap</strong>
+            <div style="display:flex;align-items:center;gap:6px">
+              <strong>Daily recap</strong>
+              <span class="info-icon" tabindex="0" id="dailyRecapInfoBtn" title="The biggest moves among tracked large-caps, each with a real headline from that day's coverage. A headline is what was reported that day, not necessarily why the price moved.">i</span>
+            </div>
             <p class="muted" style="font-size:12px;margin:4px 0 2px" id="dailyRecapDate"></p>
-            <p class="muted" style="font-size:12px;margin:2px 0 4px">The biggest moves among tracked large-caps, each with a real headline from that day's coverage. A headline is what was reported that day, not necessarily why the price moved.</p>
-            <p style="font-size:15px;margin:8px 0 4px;font-weight:600" id="dailyRecapBreadth"></p>
+            <p class="muted hidden" style="font-size:12px;margin:2px 0 4px" id="dailyRecapExplainer">The biggest moves among tracked large-caps, each with a real headline from that day's coverage. A headline is what was reported that day, not necessarily why the price moved.</p>
+            <p style="font-size:22px;line-height:1.3;margin:10px 0 6px;font-weight:800" id="dailyRecapBreadth"></p>
             <p class="muted" id="dailyRecapFreshness" style="font-size:11px;margin:0 0 2px"></p>
             <p id="dailyRecapWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
             <p style="font-size:15.5px;line-height:1.5;margin:8px 0 10px" id="dailyRecapSummary"></p>
@@ -1052,9 +1059,12 @@
           degrades on its own: no key, no card; no headline, just numbers; no
           summary, still numbers and links. -->
           <div class="card hidden" id="marketMoversCard">
-          <strong>Biggest movers today</strong>
+          <div style="display:flex;align-items:center;gap:6px">
+            <strong>Biggest movers today</strong>
+            <span class="info-icon" tabindex="0" id="marketMoversInfoBtn" title="The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.">i</span>
+          </div>
           <p class="muted" style="font-size:12px;margin:4px 0 2px" id="marketMoversDate"></p>
-          <p class="muted" style="font-size:12px;margin:2px 0 8px">The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.</p>
+          <p class="muted hidden" style="font-size:12px;margin:2px 0 8px" id="marketMoversExplainer">The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.</p>
           <p style="font-size:15.5px;line-height:1.5;margin:8px 0 10px" id="marketMoversSummary"></p>
           <div id="marketMoversGainers"></div>
           <div id="marketMoversLosers" style="margin-top:10px"></div>

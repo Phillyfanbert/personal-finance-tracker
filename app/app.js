@@ -4183,6 +4183,27 @@ $("sellConfirmBtn").onclick = async () => {
   toast(`Sale recorded: ${fmt(realized)} realized${remainingQty === 0 ? " - position closed" : ""}`);
 };
 
+// ---- INFO ICONS (declutters a card's explainer paragraph into a tap/hover
+// reveal instead of always-visible text) -------------------------------------
+// The icon's `title` attribute already gives a real native tooltip on
+// hover for free - no JS needed for that half. This adds the other half:
+// hover doesn't exist on the touch devices this PWA is mostly used on, so
+// a click/tap toggles the same text as a normal inline block instead.
+// Keyboard-reachable (tabindex="0" in the markup) and responds to Enter/
+// Space, not just a pointer click.
+function wireInfoIcon(iconId, textId) {
+  const icon = $(iconId);
+  const text = $(textId);
+  if (!icon || !text) return;
+  const toggle = () => text.classList.toggle("hidden");
+  icon.addEventListener("click", toggle);
+  icon.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
+  });
+}
+wireInfoIcon("dailyRecapInfoBtn", "dailyRecapExplainer");
+wireInfoIcon("marketMoversInfoBtn", "marketMoversExplainer");
+
 // ---- INVESTMENTS TABS + TRACKED-SYMBOLS GEAR -------------------------------
 // Both panels stay in the DOM and are toggled with .hidden rather than being
 // built on demand. That is what lets every existing render function keep

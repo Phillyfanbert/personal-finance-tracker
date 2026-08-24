@@ -1010,12 +1010,12 @@ const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Compo
 // be an exact match. Must match tools/price-agent.js's own copy, kept in
 // sync by hand for the same reason MARKET_INDEXES already is.
 const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Average": "DIA", "NASDAQ Composite": "QQQ", "Russell 2000": "IWM" };
-// The inverse, for display: an ETF ticker is an implementation detail of how
-// the index gets priced (see MARKET_INDEX_ETF_PROXIES' own comment), not
-// something a reader should have to decode. Short forms, since these sit on
-// one line - the fuller "500 of the biggest US companies" phrasing lives in
-// price-agent.js's INDEX_PLAIN_NAMES, where the summary has room for it.
-const INDEX_SHORT_NAMES = { SPY: "S&P 500", DIA: "Dow Jones", QQQ: "Nasdaq-100", IWM: "Russell 2000 (smaller companies)" };
+// (An INDEX_SHORT_NAMES map used to live here, for the recap's own one-line
+// "The wider market: ..." summary. That line was removed when Daily recap
+// merged into Overview - the full index list it now sits above states the
+// same moves with more detail - so the map had no callers left. The fuller
+// plain-English phrasing still lives in price-agent.js's INDEX_PLAIN_NAMES,
+// where the written summary has room for it.)
 // A fixed, curated watchlist of well-known large-cap stocks (not each
 // user's own holdings) so the Investments tab can surface "today's biggest
 // movers" even for a user who holds nothing at all - same "public market
@@ -3799,7 +3799,12 @@ async function renderInvestmentsTrend() {
   }
 }
 
-const gainColor = (n) => (n == null ? "" : n >= 0 ? "var(--ok)" : "var(--err)");
+// Exactly zero is neither a gain nor a loss, so it gets the same neutral
+// var(--text) tone renderDailyRecap()'s breadth line and marketBreadth()'s
+// pulse line already use for a tie - not var(--ok), which every call site
+// used to fall into via `n >= 0`. Caught live: a flat 0.00% mover rendered
+// with a green number, implying a gain that didn't happen.
+const gainColor = (n) => (n == null ? "" : n > 0 ? "var(--ok)" : n < 0 ? "var(--err)" : "var(--text)");
 const signedPct = (n) => (n >= 0 ? "+" : "") + n + "%";
 
 // Every investment-flavoured asset, parents and per-ticker holdings alike,
@@ -4249,10 +4254,26 @@ function preserveScrollAcross(anchor, apply) {
   apply();
   const delta = anchor.getBoundingClientRect().top - before;
   if (!delta) return;
-  const targetY = window.scrollY + delta;
+  const targetY = Math.round(window.scrollY + delta);
+  let pad = 0;
   const shortfall = targetY + window.innerHeight - document.documentElement.scrollHeight;
-  if (shortfall > 0) investScrollSpacer.style.height = `${Math.ceil(shortfall)}px`;
+  if (shortfall > 0) {
+    pad = Math.ceil(shortfall);
+    investScrollSpacer.style.height = `${pad}px`;
+  }
   window.scrollTo(0, targetY);
+
+  // Fractional layout can leave the browser a pixel or two short of the
+  // requested position. On its own that is invisible, but it lands in the
+  // SAME direction every time, so switching back and forth walks the page
+  // steadily upward - measured at ~2px per switch before this. One bounded
+  // correction (never a loop), with a little extra slack so the clamp can't
+  // shave it off again.
+  const residual = anchor.getBoundingClientRect().top - before;
+  if (Math.abs(residual) >= 1) {
+    investScrollSpacer.style.height = `${pad + Math.abs(residual) + 2}px`;
+    window.scrollTo(0, Math.round(window.scrollY + residual));
+  }
 }
 
 let investTab = "market";
@@ -4308,7 +4329,7 @@ function wireInvestSubTabs(barId, storageKey, defaultSubId) {
   const valid = stored && bar.querySelector(`[data-invest-subtab="${stored}"]`);
   setInvestSubTab(barId, storageKey, valid ? stored : defaultSubId);
 }
-wireInvestSubTabs("investSubTabsMarket", "investSubTabMarket", "investSubRecap");
+wireInvestSubTabs("investSubTabsMarket", "investSubTabMarket", "investSubOverview");
 wireInvestSubTabs("investSubTabsPortfolio", "investSubTabPortfolio", "investSubHoldings");
 
 $("watchlistGearBtn").onclick = () => {
@@ -4585,9 +4606,8 @@ function renderDailyRecap() {
   // No manual-entry fallback exists for a market recap, so an empty card
   // would be clutter rather than a fact worth stating - hidden entirely
   // until a real one exists, same convention as Market overview.
-  if (!recap) { card.classList.add("hidden"); $("emptyRecap").classList.remove("hidden"); return; }
+  if (!recap) { card.classList.add("hidden"); return; }
   card.classList.remove("hidden");
-  $("emptyRecap").classList.add("hidden");
   renderAgentFreshness("daily-recap", "dailyRecapFreshness", "dailyRecapWarning");
 
   $("dailyRecapDate").textContent = `Market close, ${recapDateLabel(recap.tradeDate)}`;
@@ -4640,7 +4660,7 @@ function renderDailyRecap() {
 
   // The per-mover price table moved out of this card deliberately: the recap
   // is meant to read as words, and the same closes and percentages are one
-  // tap away on the Movers and Overview sub-tabs. What stays is the part the
+  // tap away on the Biggest movers and Overview sub-tabs. What stays is the part the
   // prose can't replace - the real, clickable sources it was written from,
   // still labelled as the day's coverage rather than as a cause.
   const sourced = recap.movers.filter((m) => m.headline);
@@ -4651,15 +4671,6 @@ function renderDailyRecap() {
           <a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px;line-height:1.45">${esc(m.headline.title)}</a>
           <div class="muted" style="font-size:12px;margin-top:2px">${esc(m.symbol)}${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>
         </div>`).join("")
-    : "";
-
-  // Named plainly rather than by ETF ticker: "Index proxies: IWM -1.32%"
-  // told a beginner nothing, and sat directly under a summary that is now
-  // explicitly forbidden from using words like "index" unexplained.
-  $("dailyRecapIndexes").textContent = recap.indexMoves.length
-    ? "The wider market: " + recap.indexMoves
-        .map((i) => `${INDEX_SHORT_NAMES[i.symbol] || i.symbol} ${signedPct(i.change_pct)}`)
-        .join("  ·  ")
     : "";
 }
 
@@ -4686,13 +4697,34 @@ function renderMarketOverview() {
   const pulse = marketBreadth(moverSymbols(), etfTickers, marketIndexFindings);
   const pulseEl = $("marketPulse");
   if (pulseEl) {
-    if (!pulse) {
+    // The Daily recap card directly above states breadth at the last close.
+    // Now that the merge puts both in one tab, this line only earns its
+    // place when it says something that one doesn't: while the market is
+    // OPEN it is genuinely live (refreshed every 15 minutes) and will
+    // differ, and with no recap at all it is the only breadth signal there
+    // is. With the market closed and a recap present it is the identical
+    // sentence twice, a few hundred pixels apart - exactly the duplication
+    // merging these tabs was meant to remove.
+    //
+    // Read from dailyRecaps, NOT from the recap card's hidden state:
+    // renderMarketOverview() is called from several paths that never run
+    // renderDailyRecap() (a findings refresh, a news refresh), so the DOM
+    // would be stale half the time.
+    const marketOpen = marketStatus().open;
+    const saidByRecap = !marketOpen && !!latestRecap(dailyRecaps);
+    if (!pulse || saidByRecap) {
       pulseEl.textContent = "";
+      pulseEl.classList.add("hidden");
     } else {
+      pulseEl.classList.remove("hidden");
       const tone = pulse.up > pulse.down ? "var(--ok)" : pulse.down > pulse.up ? "var(--err)" : "var(--text)";
       pulseEl.style.color = tone;
       const avgText = pulse.avgEtfChangePct != null ? `, tracked indexes avg ${signedPct(pulse.avgEtfChangePct)}` : "";
-      pulseEl.textContent = `${pulse.up} of ${pulse.total} tracked large-caps up today${avgText}`;
+      // Qualified either way: an unqualified "today" on this line and on
+      // the recap headline above would read as the app contradicting
+      // itself during market hours, when the two legitimately differ.
+      const when = marketOpen ? "Right now" : "At the last close";
+      pulseEl.textContent = `${when}: ${pulse.up} of ${pulse.total} tracked large-caps up${avgText}`;
     }
   }
   $("marketOverviewList").innerHTML = indexes.map((idx) => {

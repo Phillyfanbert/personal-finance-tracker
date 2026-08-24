@@ -30,11 +30,15 @@ const SYMBOL_RE = /^[A-Z.\-]{1,10}$/;
 const MAX_SYMBOLS_PER_REQUEST = 40;
 
 // Finnhub's free tier allows 60 calls/minute and the Investments page
-// refreshes once a minute for ~25 symbols, so without this two people with
-// the app open at once would sit right at that ceiling. A Worker isolate is
-// reused across requests, so caching here means every viewer shares one
-// upstream call per symbol per TTL instead of each paying for their own -
-// which is what keeps this route's cost flat as viewers are added.
+// refreshes once a minute for ~25 symbols, so without this even two people
+// with the app open at once would sit right at that ceiling. A Worker
+// isolate is reused across requests, so caching here means every viewer
+// shares one upstream call per symbol per TTL instead of each paying for
+// their own - the movers watchlist and index proxies are the same symbols
+// for every user, so this is what keeps the route's real cost close to flat
+// as viewers are added (at this app's ~4-5-user scale, each viewer mostly
+// only adds their own small set of individually-tracked tickers on top of
+// that shared, already-cached core).
 //
 // Deliberately NOT the Cache API: wrangler.jsonc declares no route or
 // custom domain, so this Worker is served from a workers.dev hostname,
@@ -81,7 +85,7 @@ async function fetchQuote(symbol, env) {
 
 // Confirms the caller is a real signed-in user of this app before spending
 // a Finnhub call on their behalf - the only real abuse concern at this
-// app's ~2-user scale, no separate rate-limiting product needed.
+// app's ~4-5-user scale, no separate rate-limiting product needed.
 async function isSignedIn(request) {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader) return false;

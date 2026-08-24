@@ -5802,8 +5802,8 @@ function renderDealFindings() {
 
 // F6 Phase E (docs/F6-live-deals-proposal.md §9) - promoting copies a
 // finding's fields into subscription_catalog (a plain insert, not
-// atomic with the status update below; low risk for this app's ~2-user
-// trust model, same as the rest of this app's multi-step writes) and
+// atomic with the status update below; low risk for this app's small,
+// trusted ~4-5-user model, same as the rest of this app's multi-step writes) and
 // marks the finding verified so it stops offering Promote/Reject again.
 // Confirmed first (confirmModal) since this has an ongoing effect on
 // the shared, trusted catalog every user sees - not a one-off action.

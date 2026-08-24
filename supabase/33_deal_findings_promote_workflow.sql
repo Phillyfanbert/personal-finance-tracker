@@ -12,7 +12,7 @@
 -- reference data, not per-user), so these policies apply to any
 -- authenticated user of the app, same shape subscription_catalog's
 -- existing read policy already has - acceptable for this app's small,
--- trusted ~2-user scope.
+-- trusted ~4-5-user scope.
 drop policy if exists "promote to catalog" on subscription_catalog;
 create policy "promote to catalog" on subscription_catalog
   for insert with check (auth.role() = 'authenticated');

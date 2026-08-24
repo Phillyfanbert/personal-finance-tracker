@@ -22,7 +22,7 @@
 
 ### 1.2 Users & privacy
 
-- **Scale:** a small number of users (≈2). No need to design for scale.
+- **Scale:** a small number of users (≈4-5). No need to design for scale.
 - **Isolation:** each user sees **only their own** financial data. This is a hard requirement, enforced at the database layer (not just in app code).
 - **Profiles:** each user has a profile capturing status (`working` / `student` / `other`) and any details that help match discounts (e.g. school, graduation year). Profile data feeds F6.
 

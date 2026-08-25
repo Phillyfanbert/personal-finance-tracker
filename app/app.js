@@ -24,7 +24,7 @@ import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
 } from "./subscriptions.js";
-import { advanceIncomeDate } from "./income.js";
+import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText } from "./gemma.js";
@@ -913,6 +913,160 @@ function accountTypesOfKind(kind) {
   }
   return out;
 }
+// Age and income eligibility per account type. Separate from ACCOUNT_TYPES
+// for the same reason BANK_VALIDATED_TYPES/NON_SPENDABLE_ACCOUNT_TYPES are:
+// this is a per-type gate whose rules do not follow category lines, and
+// folding four more fields into ACCOUNT_TYPES' already-wide rows would make
+// that table unreadable. A fixture asserts every ACCOUNT_TYPES key has an
+// entry here, so the two cannot drift apart.
+//
+// **These WARN, they never block** (accountEligibilityWarning below). This
+// app records accounts you already have; it does not open them. A hard
+// block would be wrong for a parent tracking a custodial account, a joint
+// account, an account opened years ago, or a non-US account - and
+// profiles.birth_year gives an age accurate only to within a year anyway,
+// which is not a sound basis for refusing an action outright. Same
+// confirm-to-override shape isKnownBank/isKnownTicker already use.
+//
+// Fields:
+//   minAge  - typical minimum age to OPEN this in your own name; null means
+//             there is genuinely no age rule, which is not the same as 18.
+//   note    - the real reason, shown to the user. Plain language, no jargon.
+//   earnedIncome    - contributions are capped by earned income (IRAs).
+//   under21NeedsIncome - CARD Act: under 21 needs independent income or a
+//             cosigner. This is the one place income is legally load-bearing.
+//   forMinor - inverted rule: the BENEFICIARY must be a minor.
+//   planSet  - the minimum is set by an employer/plan, not by law, so the
+//             number is typical rather than universal.
+const ACCOUNT_AGE_RULES = {
+  // Deposit accounts. A minor can be on one, but as a joint owner with an
+  // adult rather than as sole owner, which is what this number describes.
+  debit:                  { minAge: 18, note: "Banks generally require you to be 18 to open a checking account in your own name. Under 18, it is normally a joint account with an adult." },
+  savings:                { minAge: 18, note: "Generally 18 to open in your own name. Many banks offer minor savings accounts held jointly with an adult." },
+  money_market:           { minAge: 18, note: "Generally 18 to open in your own name." },
+  cash_management:        { minAge: 18, note: "These are brokerage-issued, so the same 18 minimum as a brokerage account applies." },
+  cd:                     { minAge: 18, note: "Generally 18 to open in your own name, or jointly with an adult under 18." },
+
+  // Credit. The CARD Act rule is the one genuinely income-dependent gate.
+  credit:                 { minAge: 18, under21NeedsIncome: true, note: "18 to hold a card in your own name. Under 21, US law also requires you to show independent income or have a cosigner." },
+  charge_card:            { minAge: 18, under21NeedsIncome: true, note: "18 to open, and under 21 the same independent-income or cosigner rule applies as for a credit card." },
+  secured_credit_card:    { minAge: 18, under21NeedsIncome: true, note: "18 to open. The security deposit does not remove the under-21 income or cosigner requirement." },
+  store_card:             { minAge: 18, under21NeedsIncome: true, note: "18 to open, with the same under-21 income or cosigner rule as any other credit card." },
+  personal_line_of_credit:{ minAge: 18, note: "18 to enter a credit agreement in your own name." },
+  heloc:                  { minAge: 18, note: "18 to enter a credit agreement, and you must own the home it is secured against." },
+  overdraft_line:         { minAge: 18, note: "18, since it is a credit line attached to a checking account." },
+  bnpl:                   { minAge: 18, note: "Most pay-in-4 providers require you to be 18." },
+  medical_credit_card:    { minAge: 18, under21NeedsIncome: true, note: "18 to open, with the same under-21 income or cosigner rule as any other credit card." },
+
+  // Loans. All contracts, so all 18 - a contract signed by a minor is
+  // generally voidable, which is why lenders will not write one.
+  personal_loan:          { minAge: 18, note: "18 to sign a loan agreement." },
+  auto_loan:              { minAge: 18, note: "18 to sign a loan agreement. Under 21 a lender often still wants a cosigner." },
+  mortgage:               { minAge: 18, note: "18 to sign a mortgage." },
+  home_equity_loan:       { minAge: 18, note: "18 to sign, and you must own the home." },
+  student_loan:           { minAge: 18, note: "18 to sign. Younger borrowers normally need a cosigner." },
+  payday_loan:            { minAge: 18, note: "18 to borrow." },
+  title_loan:             { minAge: 18, note: "18 to borrow, and you must own the vehicle outright." },
+  credit_builder_loan:    { minAge: 18, note: "18 to sign a loan agreement." },
+  retirement_plan_loan:   { minAge: null, note: "No age rule of its own. It depends entirely on being in a retirement plan that allows loans." },
+
+  // Retirement and investment. Several of these are widely misunderstood.
+  traditional_401k:       { minAge: null, planSet: true, note: "No legal minimum age. Federal law only caps how much a plan can REQUIRE - at most 21 and one year of service - many employers set a lower bar or none at all." },
+  roth_401k:              { minAge: null, planSet: true, note: "Same rule as a traditional 401(k): no legal minimum age. The law only caps what a plan can require, at most 21 and one year of service." },
+  plan_403b:              { minAge: null, planSet: true, note: "No age minimum - and it usually cannot have one. The IRS's universal availability rule requires most employers to let every employee join immediately, with only narrow exceptions (nonresident aliens, certain students, under 20 hours/week)." },
+  plan_457b:              { minAge: null, planSet: true, note: "No legal age minimum. Your employer's plan sets who can join." },
+  // NOT 18. This is the most commonly assumed-wrong rule in the whole table.
+  traditional_ira:        { minAge: null, earnedIncome: true, note: "There is no minimum age for an IRA. What it actually requires is earned income - you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial IRA." },
+  roth_ira:               { minAge: null, earnedIncome: true, note: "There is no minimum age for a Roth IRA. It requires earned income instead - you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial Roth IRA." },
+  sep_ira:                { minAge: 21, earnedIncome: true, planSet: true, note: "The IRS lets an employer require at most age 21, 3 of the last 5 years worked there, and a small minimum compensation - an employer can be more generous than all three, never stricter." },
+  simple_ira:             { minAge: null, earnedIncome: true, planSet: true, note: "No age minimum in law. It is an employer plan, so eligibility follows the employer's rules and your earnings there." },
+  brokerage:              { minAge: 18, note: "18 in most states to open one in your own name - 19 in Alabama and Nebraska, 21 in Mississippi, since it follows each state's legal age of majority. Under that age, the equivalent is a custodial account an adult controls." },
+  espp:                   { minAge: null, planSet: true, note: "No age rule. It depends on being employed somewhere that offers the plan." },
+  pension:                { minAge: null, planSet: true, note: "No age rule of its own. Eligibility comes from your employment and the plan's own vesting rules." },
+  // Inverted: the age limit applies to the beneficiary, not the opener.
+  custodial_utma:         { minAge: null, forMinor: true, note: "This one works the other way around: an adult opens and controls it, and the beneficiary must be a minor. Control transfers permanently at an age set by state law - 21 in most UTMA states, though it can be as low as 18 or as high as 25 (30 in Wyoming) depending on the state and what the custodian chose when opening it." },
+  plan_529:               { minAge: 18, note: "18 to open one as the account owner. There is no age limit on the beneficiary." },
+  tsp:                    { minAge: null, planSet: true, note: "No age minimum. It requires federal employment or uniformed service." },
+  solo_401k:              { minAge: 18, earnedIncome: true, note: "18 to establish it, and it requires self-employment income with no employees other than a spouse." },
+  rollover_inherited_ira: { minAge: null, note: "No age minimum. An inherited IRA can be held by a beneficiary of any age." },
+  annuity:                { minAge: 18, note: "18 to sign an annuity contract." },
+  retirement_employer:    { minAge: null, planSet: true, note: "Eligibility is set by whichever employer plan this represents." },
+  ira:                    { minAge: null, earnedIncome: true, note: "No age minimum. Like any IRA, what it requires is earned income." },
+
+  // Specialty.
+  hsa:                    { minAge: 18, note: "18 to open one yourself, and it also requires a high-deductible health plan and that nobody claims you as a dependent." },
+  fsa:                    { minAge: null, planSet: true, note: "No age rule. It requires an employer that offers one." },
+  hra:                    { minAge: null, planSet: true, note: "No age rule. It is funded and offered entirely by an employer." },
+  dependent_care_fsa:     { minAge: null, planSet: true, note: "No age rule. It requires an employer plan and a qualifying dependent." },
+  // Contribution age limit is on the beneficiary, not the contributor.
+  coverdell_esa:          { minAge: null, forMinor: true, note: "Contributions can normally only be made while the beneficiary is under 18, and the money generally has to be used by the time they turn 30 - both limits are waived entirely for a beneficiary with special needs." },
+  // SECURE 2.0's ABLE Age Adjustment Act raised onset from 26 to 46,
+  // effective 2026 - the higher figure is the one that applies now.
+  able_account:           { minAge: 18, note: "18 to open one in your own name. Eligibility depends on a disability that began before age 46, not on your age today." },
+  prepaid_card:           { minAge: 18, note: "Generally 18, though some teen cards are available earlier with an adult attached." },
+  payroll_card:           { minAge: null, planSet: true, note: "No age rule of its own. It comes from an employer as a way to pay you." },
+  second_chance_checking: { minAge: 18, note: "18, the same as any checking account in your own name." },
+  digital_wallet:         { minAge: 18, note: "Generally 18 for a full account. Some offer teen accounts from 13 with an adult attached." },
+  treasury_direct:        { minAge: 18, note: "18 to open an account and buy Treasury securities directly." },
+  crypto:                 { minAge: 18, note: "Exchanges generally require you to be 18." },
+  multi_currency:         { minAge: 18, note: "Generally 18, the same as any deposit account in your own name." },
+  life_insurance_cash_value: { minAge: 18, note: "18 to be the owner of the policy. A policy can insure a minor, but an adult owns it." },
+  trust_account:          { minAge: null, note: "No age rule of its own. It depends on the trust document and who the trustee is." },
+};
+
+// Age from birth_year alone is accurate only to within a year, since the
+// profile has no birth date. Everything downstream treats this as
+// approximate and warns rather than blocks, so that imprecision is
+// acceptable - but do not build anything on this that needs an exact age.
+function approxAge(profile) {
+  const year = Number(profile?.birth_year);
+  if (!Number.isFinite(year) || year < 1900) return null;
+  const age = new Date().getFullYear() - year;
+  return age >= 0 && age < 130 ? age : null;
+}
+
+// Returns a plain-language reason this account type may not be openable by
+// this user, or null if there is nothing worth saying. Never blocks - the
+// caller turns this into a confirm-to-override, the same shape isKnownBank
+// and isKnownTicker already use.
+//
+// Returns null when the profile has no birth year rather than nagging: an
+// unanswered profile field is not evidence of anything, and this app has a
+// standing rule against stating a number it does not actually know.
+function accountEligibilityWarning(type, profile, sources) {
+  const rule = ACCOUNT_AGE_RULES[type];
+  if (!rule) return null;
+  const age = approxAge(profile);
+  const label = ACCOUNT_TYPES[type]?.label ?? type;
+
+  // The inverted rules: these are about the beneficiary being young enough,
+  // so an adult opening one is correct rather than a problem. Only worth
+  // saying anything if we know the user is themselves a minor.
+  if (rule.forMinor) {
+    if (age != null && age >= 18) return null;
+    return null;
+  }
+
+  if (age != null && rule.minAge != null && age < rule.minAge) {
+    return `You are around ${age}. ${label} accounts normally require you to be ${rule.minAge}. ${rule.note}`;
+  }
+
+  // The CARD Act rule is the one place income genuinely decides eligibility
+  // rather than merely informing it. Uses hasAnyIncome(), not annualIncome() -
+  // a real issuer evaluates "current or reasonably expected income," a
+  // self-reported figure that explicitly includes one-off/irregular
+  // earnings, not a derived annual rate. hasAnyIncome() counts a one_time
+  // source too for exactly that reason, so this stays fully automatic:
+  // nothing here is ever manually typed, it just reflects whatever the
+  // user has already logged on the Income sources form.
+  if (rule.under21NeedsIncome && age != null && age < 21 && age >= 18) {
+    if (!hasAnyIncome(sources)) {
+      return `You are around ${age}, and no income is recorded. Under 21, US law requires you to show independent income or have a cosigner for a ${label.toLowerCase()}. ${rule.note}`;
+    }
+  }
+  return null;
+}
+
 const AUTO_ASSET_TYPE = accountTypesOfKind("asset");
 const AUTO_LIABILITY_TYPE = accountTypesOfKind("liability");
 // No free-text "account name" field - in practice it was always just the
@@ -1217,6 +1371,25 @@ function setAcctType(type) {
   $("acctBank").placeholder = BANK_VALIDATED_TYPES.has(type)
     ? "Start typing a bank..."
     : "Institution name (e.g. Fidelity, Affirm, Coinbase)";
+  renderAccountTypeRequirement(type);
+}
+
+// Shows the selected type's real-world opening requirement up front, rather
+// than only surfacing it as a confirm at save time. Deliberately worded as a
+// fact about the account type, not a judgment about this user - a type with
+// no age rule at all says so plainly instead of staying blank, since "no
+// minimum age" is genuinely useful information for an IRA, which is widely
+// assumed to have one.
+function renderAccountTypeRequirement(type) {
+  const el = $("acctTypeRequirement");
+  if (!el) return;
+  const rule = ACCOUNT_AGE_RULES[type];
+  if (!rule) { el.textContent = ""; return; }
+  el.textContent = rule.note;
+  // Amber only when this specific user looks short of the requirement, so
+  // the line is informational by default and never scolds by simply existing.
+  const warn = accountEligibilityWarning(type, profile, incomeSources);
+  el.style.color = warn ? "var(--warn)" : "";
 }
 $("acctType").onchange = () => setAcctType($("acctType").value);
 
@@ -1318,6 +1491,17 @@ $("saveAcctBtn").onclick = async () => {
       { title: "Bank not recognized", confirmLabel: "Add anyway" }
     );
     if (!ok) return;
+  }
+
+  // Age/income eligibility. Deliberately a confirmation rather than a
+  // refusal - see ACCOUNT_AGE_RULES for why this app must never block here.
+  const eligibility = accountEligibilityWarning(type, profile, incomeSources);
+  if (eligibility) {
+    const ok = await confirmModal(eligibility, {
+      title: "Check this account type",
+      confirmLabel: "Add anyway",
+    });
+    if (!ok) { flagField("acctType"); return; }
   }
 
   let linked_asset_id = null;
@@ -3947,7 +4131,7 @@ function renderInvestments() {
     };
   });
 
-  // Base 2025 IRS limits, factual math only - see CONTRIBUTION_LIMIT_GROUPS'
+  // Base 2026 IRS limits, factual math only - see CONTRIBUTION_LIMIT_GROUPS'
   // own comment and docs/bank-account-types-research.md §9b.6. Colored red
   // once over the limit, same as renderBudgets' over-budget styling - this
   // is a real hard legal limit, not the soft "aim for under 30%" utilization
@@ -4959,33 +5143,51 @@ const TICKER_ELIGIBLE_ASSET_TYPES = new Set(
   [...INVESTMENT_ASSET_TYPES].filter((t) => t !== "pension")
 );
 
-// Base 2025 IRS contribution limits, no catch-up/income-phase-out/filing-
-// status adjustments - see docs/bank-account-types-research.md §9b.6 for
-// the full reasoning per type and per group, including every excluded
-// type's specific reason for not being tracked (sep_ira needs income data
-// this app doesn't have, 529/UTMA use a gift-tax exclusion rather than a
-// clean single limit, a rollover/inherited IRA generally can't receive new
-// contributions at all, ...). Consumed by contributionLimitUsage()
-// (investments.js), which stays free of this app-level configuration the
-// same way it already takes INVESTMENT_ASSET_TYPES-derived lists as
-// arguments rather than hardcoding them itself.
+// 2026 IRS contribution limits (IRS Notice 2025-67, verified live
+// 2026-08-25), no catch-up/income-phase-out/filing-status adjustments -
+// see docs/bank-account-types-research.md §9b.6 for the full reasoning per
+// type and per group, including every excluded type's specific reason for
+// not being tracked (sep_ira needs income data this app doesn't have,
+// 529/UTMA use a gift-tax exclusion rather than a clean single limit, a
+// rollover/inherited IRA generally can't receive new contributions at
+// all, ...). Consumed by contributionLimitUsage() (investments.js), which
+// stays free of this app-level configuration the same way it already
+// takes INVESTMENT_ASSET_TYPES-derived lists as arguments rather than
+// hardcoding them itself.
 //
 // Which types share one limit vs. have their own is the part most likely
 // to be gotten wrong by intuition - a 401(k) and a 457(b) look similar but
 // do NOT share a limit, while a Traditional and a Roth 401(k) look
-// different but DO. Verify the current year's actual figures before
-// relying on this for a real contribution decision - this is a reference
-// calculator showing your own logged numbers back to you, not tax advice,
-// and a stale limit would be worse than showing none.
+// different but DO.
+//
+// **The four COLA-adjusted figures below (elective deferral, 457(b), IRA,
+// SIMPLE IRA) need a manual refresh every January**, when the IRS
+// typically announces the next year's numbers in early November - same
+// "will go stale, needs a manual refresh" category as MARKET_INDEXES or a
+// rotating GEMINI_MODEL alias. Caught live 2026-08-25 running the whole
+// 2026 tax year on 2025 figures: contributionLimitUsage() derives the
+// COMPARISON YEAR from the real clock but the LIMIT ITSELF was a stale
+// constant, so it flagged real 2026 contributions as over/near a ceiling
+// that was already $500-$1,000 too low for every group except ESPP, whose
+// $25,000 is a flat, non-COLA-adjusted statutory cap and carries no such
+// risk. Catch-up amounts (50+, and the larger 60-63 band) are deliberately
+// still not tracked - this app has no birth-date-precision age or
+// per-account catch-up election, only profiles.birth_year - and
+// CONTRIBUTION_LIMIT_GROUPS remains base-limit-only for that reason. This
+// is a reference calculator showing your own logged numbers back to you,
+// not tax advice, and a stale limit would be worse than showing none.
 const CONTRIBUTION_LIMIT_GROUPS = {
   elective_deferral: {
     types: ["traditional_401k", "roth_401k", "plan_403b", "tsp", "solo_401k"],
-    limit: 23500,
+    limit: 24500,
     label: "401(k) / 403(b) / TSP",
   },
-  plan_457b: { types: ["plan_457b"], limit: 23500, label: "457(b)" },
-  ira: { types: ["traditional_ira", "roth_ira"], limit: 7000, label: "IRA (Traditional + Roth combined)" },
-  simple_ira: { types: ["simple_ira"], limit: 16500, label: "SIMPLE IRA" },
+  plan_457b: { types: ["plan_457b"], limit: 24500, label: "457(b)" },
+  ira: { types: ["traditional_ira", "roth_ira"], limit: 7500, label: "IRA (Traditional + Roth combined)" },
+  simple_ira: { types: ["simple_ira"], limit: 17000, label: "SIMPLE IRA" },
+  // Unlike the four groups above, $25,000 is a flat statutory cap under
+  // IRC Section 423(b)(8), not COLA-adjusted - verified live it has been
+  // unchanged since the 1960s and carries no annual update risk.
   espp: { types: ["espp"], limit: 25000, label: "ESPP" },
 };
 
@@ -6227,7 +6429,30 @@ $("deleteSubBtn").onclick = async () => {
 };
 
 // ---- INCOME SOURCES (structurally mirrors subscriptions above) -----------
+// The Log page's Income tile. Shows $0 rather than a blank or a dash when
+// nothing is recorded - unlike this app's usual omit-rather-than-fake-a-
+// number rule, "no income recorded" really is zero income as far as every
+// rule that consults it is concerned. The sub-line is what keeps a genuine
+// zero and a not-yet-filled-in state tellable apart, so showing 0 never
+// silently asserts the user earns nothing.
+function renderIncomeTotal() {
+  if (!$("incomeAnnual")) return;
+  const total = annualIncome(incomeSources);
+  $("incomeAnnual").textContent = fmt(total);
+  const active = incomeSources.filter((s) => s.is_active !== false).length;
+  // one_time sources are deliberately not annualized (see annualIncome), so
+  // a user whose only source is one_time would otherwise see "$0" with no
+  // explanation of why their recorded income isn't counted.
+  const recurring = incomeSources.filter((s) => s.is_active !== false && s.cadence !== "one_time").length;
+  $("incomeAnnualNote").textContent = !incomeSources.length
+    ? "none recorded yet"
+    : recurring === 0 && active > 0
+      ? "only one-time income recorded"
+      : `from ${recurring} recurring source${recurring === 1 ? "" : "s"}`;
+}
+
 function renderIncomeList() {
+  renderIncomeTotal();
   const sorted = [...incomeSources].sort((a, b) => (b.is_active - a.is_active) || a.source.localeCompare(b.source));
   $("incomeList").innerHTML = sorted.length
     ? sorted.map((s) => `

@@ -205,6 +205,11 @@
       <div class="totals">
         <div class="card"><div class="muted" style="font-size:12px">This month</div><div class="big" id="monthTotal">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Entries</div><div class="big" id="monthCount">0</div></div>
+        <!-- Reads 0 rather than a blank when nothing is logged: for every
+             rule that consults income, no income recorded genuinely is
+             zero. The sub-line below keeps a real zero and an empty state
+             tellable apart. -->
+        <div class="card"><div class="muted" style="font-size:12px">Income / yr</div><div class="big" id="incomeAnnual">$0</div><div class="muted" id="incomeAnnualNote" style="font-size:11px;margin-top:2px">none recorded yet</div></div>
       </div>
 
       <!-- Proactive, not something you have to open Reports to see - a
@@ -375,6 +380,11 @@
           <label>Account type</label>
           <select id="acctType" style="margin-bottom:4px"></select>
           <p class="muted" style="font-size:13px;margin:4px 0 10px"><strong id="acctTypeSummary">Adding: Checking</strong></p>
+          <!-- Age/income requirement for the selected type. Stated as a
+               fact about the account, never as a judgment about the user -
+               it shows whether or not a birth year is on file, since the
+               requirement is true regardless of who is reading it. -->
+          <p class="muted" id="acctTypeRequirement" style="font-size:12px;margin:-6px 0 10px"></p>
           <label id="acctBankLabel">Bank</label>
           <!-- <datalist>, not a custom dropdown - it's a native, built-in
                search-as-you-type combobox (typing filters the list to
@@ -675,6 +685,64 @@
            shows the real math for both orders side by side, never says
            which to pick, same boundary the Investments tab's allocation
            calculator already holds for what to buy. -->
+      <!-- Recurring income sources. Moved here from Subscriptions/Bills
+           on 2026-08-25: it was structurally similar to a subscription
+           (a recurring definition auto-logged when due, and
+           autoLogDueIncome() still mirrors autoLogDueSubscriptions()
+           exactly), but sitting on a page about bills going OUT made
+           money coming IN hard to find. It belongs with Accounts, Assets
+           and Liabilities, which is where the rest of this app's money
+           movement already lives. See app/income.js for the
+           cadence-stepping logic. -->
+      <div class="card">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Income sources</strong>
+          <button class="secondary" id="addIncomeBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Recurring income (paychecks, etc.) - logged automatically once each one comes due, the same way a bill charge is. Tap one to edit.</p>
+        <div id="incomeList" style="margin-top:8px"><p class="muted">Loading…</p></div>
+      </div>
+
+      <div class="card hidden" id="incomeForm">
+        <div class="topbar" style="margin-bottom:6px"><strong id="incomeFormTitle">New income source</strong></div>
+        <label>Source</label>
+        <input id="incSource" placeholder="Employer paycheck" />
+        <div class="row">
+          <div><label>Amount</label><input id="incAmount" type="number" step="0.01" inputmode="decimal" /></div>
+          <div><label>Cadence</label>
+            <select id="incCadence">
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Biweekly</option>
+              <option value="semimonthly">Semimonthly (2x/month)</option>
+              <option value="monthly">Monthly</option>
+              <option value="annual">Annual</option>
+              <option value="one_time">One time</option>
+            </select>
+          </div>
+        </div>
+        <!-- Only for semimonthly - two FIXED calendar days per month (e.g.
+             1st & 15th), not a fixed day-count interval the way biweekly
+             is - see app/income.js's own comment for why. -->
+        <div class="row hidden" id="incomeSemimonthlyRow">
+          <div><label>First pay day (1-31)</label><input id="incSemimonthlyDay1" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
+          <div><label>Second pay day (1-31)</label><input id="incSemimonthlyDay2" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
+        </div>
+        <div class="row">
+          <div><label>Next expected</label><input id="incNextExpected" type="date" /></div>
+          <div><label>Deposited into</label><select id="incAccount"></select></div>
+        </div>
+        <label><input type="checkbox" id="incActive" style="width:auto;margin-right:8px" checked />Active</label>
+        <label>Notes</label>
+        <input id="incNotes" placeholder="e.g. biweekly on Fridays" />
+        <div style="height:12px"></div>
+        <div class="row">
+          <button id="saveIncomeBtn">Save</button>
+          <button class="secondary" id="cancelIncomeBtn">Cancel</button>
+        </div>
+        <div style="height:8px"></div>
+        <button class="secondary hidden" id="deleteIncomeBtn" style="color:var(--err)">Delete income source</button>
+      </div>
+
       <div class="card" id="debtStrategyCard">
         <strong>Debt payoff strategy</strong>
         <p class="muted" style="font-size:12px;margin:4px 0 10px">Compares paying extra toward your highest-interest debt first (avalanche) with paying extra toward your smallest-balance debt first (snowball) - shows the real numbers for both, doesn't tell you which to pick.</p>
@@ -882,60 +950,6 @@
         <button class="secondary" id="addSubBtnBottom" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
       </div>
 
-      <!-- Recurring income sources - genuinely separate from everything
-           else on this page (money coming IN, not a bill going out), kept
-           here for now rather than a new page since it's structurally
-           identical to how subscriptions are listed/edited/auto-logged
-           (autoLogDueIncome() mirrors autoLogDueSubscriptions() exactly).
-           See app/income.js for the cadence-stepping logic. -->
-      <div class="card">
-        <div class="topbar" style="margin-bottom:6px">
-          <strong>Income sources</strong>
-          <button class="secondary" id="addIncomeBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
-        </div>
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Recurring income (paychecks, etc.) - logged automatically once each one comes due, the same way a bill charge is. Tap one to edit.</p>
-        <div id="incomeList" style="margin-top:8px"><p class="muted">Loading…</p></div>
-      </div>
-
-      <div class="card hidden" id="incomeForm">
-        <div class="topbar" style="margin-bottom:6px"><strong id="incomeFormTitle">New income source</strong></div>
-        <label>Source</label>
-        <input id="incSource" placeholder="Employer paycheck" />
-        <div class="row">
-          <div><label>Amount</label><input id="incAmount" type="number" step="0.01" inputmode="decimal" /></div>
-          <div><label>Cadence</label>
-            <select id="incCadence">
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Biweekly</option>
-              <option value="semimonthly">Semimonthly (2x/month)</option>
-              <option value="monthly">Monthly</option>
-              <option value="annual">Annual</option>
-              <option value="one_time">One time</option>
-            </select>
-          </div>
-        </div>
-        <!-- Only for semimonthly - two FIXED calendar days per month (e.g.
-             1st & 15th), not a fixed day-count interval the way biweekly
-             is - see app/income.js's own comment for why. -->
-        <div class="row hidden" id="incomeSemimonthlyRow">
-          <div><label>First pay day (1-31)</label><input id="incSemimonthlyDay1" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
-          <div><label>Second pay day (1-31)</label><input id="incSemimonthlyDay2" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
-        </div>
-        <div class="row">
-          <div><label>Next expected</label><input id="incNextExpected" type="date" /></div>
-          <div><label>Deposited into</label><select id="incAccount"></select></div>
-        </div>
-        <label><input type="checkbox" id="incActive" style="width:auto;margin-right:8px" checked />Active</label>
-        <label>Notes</label>
-        <input id="incNotes" placeholder="e.g. biweekly on Fridays" />
-        <div style="height:12px"></div>
-        <div class="row">
-          <button id="saveIncomeBtn">Save</button>
-          <button class="secondary" id="cancelIncomeBtn">Cancel</button>
-        </div>
-        <div style="height:8px"></div>
-        <button class="secondary hidden" id="deleteIncomeBtn" style="color:var(--err)">Delete income source</button>
-      </div>
 
       <!-- Add / edit form (hidden until used) - placed below the full list
            rather than up near the top of the page, so both "+ Add" entry
@@ -1709,7 +1723,7 @@
 
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 444" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 680 498" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Expenses Quick Add</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1725,7 +1739,9 @@
             <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="363" fill="var(--text)" font-size="14">Liabilities</text>
             <rect x="10" y="388" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="417" fill="var(--text)" font-size="14">Debt payoff strategy</text>
+            <text x="40" y="417" fill="var(--text)" font-size="14">Income sources</text>
+            <rect x="10" y="442" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="471" fill="var(--text)" font-size="14">Debt payoff strategy</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. A budget-warning banner can appear above Quick Add; a Live asset prices card can appear between Assets and Liabilities once you've tagged an asset with a ticker/symbol (see Assets below).</p>
@@ -1759,6 +1775,7 @@
           <h3>Accounts</h3>
           <p>Payment methods only - which card, bank, or wallet you paid with. Accounts are <strong>not</strong> counted in net worth by themselves; every account automatically gets its own linked Asset (a debit/deposit-style account) or Liability (a credit-style account) behind the scenes, and that linked balance is what actually counts. "+ Add" walks you through picking a type (this decides the account's name, like Checking or Credit Card) and typing the bank or institution name - for a real bank/credit union this is checked against a large built-in list as you type, and if it's genuinely not on the list you're offered an "add it anyway" option rather than being blocked outright.</p>
           <p>Tap any account circle to adjust its balance directly: type the new total, or use +/- if you only know the change. A credit-type account instead shows Pay/adjust-owed controls from the Liabilities card below, plus a credit-utilization line and (once you've filled in its statement-cycle details there) a paid-in-full / carrying-a-balance / missed-minimum status. Archiving an account (the small "Archive" link under a circle) removes it from every list and total while keeping its full history intact and fully reversible from "View archived" - unlike the ✕ delete, which is permanent and unassigns its past expenses.</p>
+          <p>Each account type shows its real-world <strong>opening requirement</strong> under the type picker - most need you to be 18, but plenty don't, and a few work differently than people expect. An IRA has no minimum age at all (it needs earned income instead, so a teenager with a job can hold one); a custodial UTMA/UGMA works the other way around, where the <em>beneficiary</em> has to be a minor; and 401(k)-style minimums are set by the employer's plan rather than by law. If your profile's birth year suggests you'd be under the usual age, the app asks you to confirm rather than refusing - it records accounts you already have, so a custodial account, a joint account, or one opened years ago all need to go in. With no birth year saved, it never asks at all.</p>
           <p><strong>Transfer</strong> (button next to "+ Add") moves money between two of your own accounts - Checking to Savings, for example. Only accounts with a real balance behind them can be picked (not a credit card or loan - moving money onto a card is paying it down, which stays on the Liabilities card's own Pay flow below). Shows up in Recent History as a single undoable entry, and reduces the "from" account's balance the moment it's confirmed the same way any other spending does.</p>
         </div>
 
@@ -1777,6 +1794,12 @@
           <p>Two deliberate exceptions. Correcting the amount owed by hand is never blocked, because a real balance genuinely can exceed its limit through an over-limit fee, interest, or the bank lowering your limit - if that happens you still need to be able to record the truth. And charge cards and buy-now-pay-later plans are never limited, because neither has a preset spending limit in real life. If no limit is set, nothing is enforced, since a blank field means "unknown", not "zero".</p>
         </div>
 
+        <div class="help-topic">
+          <h3>Income sources</h3>
+          <p>Recurring money coming in - a paycheck, and similar. Each source records its amount, cadence, which account it's deposited into, when the next one's expected, and an Active checkbox, then logs itself automatically once it comes due, the same way a bill charge does. Cadence covers weekly, biweekly, semimonthly (two fixed pay days a month, like the 1st and 15th - not just "every ~15 days," which would slowly drift off your real payday), monthly, annual, and one-time. A one-time source turns itself inactive right after it's logged, so it never logs twice.</p>
+          <p>Only accounts with a real balance behind them can be picked as the deposit account - not a credit card or loan, the same restriction Transfer uses above and for the same reason. Each deposit shows up in Recent History as "Income received," undoable like any other entry there.</p>
+          <p>The <strong>Income / yr</strong> tile at the top of this page annualizes every active recurring source. It reads <strong>$0</strong> until you add one, with a line underneath saying whether that's because nothing is recorded yet or because your only source is one-time - a one-time deposit isn't a yearly rate, so it deliberately isn't counted toward the total. This figure is also what the app checks against the two account types where income is a real legal requirement (see Accounts above).</p>
+        </div>
         <div class="help-topic">
           <h3>Debt payoff strategy</h3>
           <p>Compares two orders for paying extra toward your debts: avalanche (extra goes to whichever has the highest interest rate) and snowball (extra goes to whichever has the smallest balance). Type an optional monthly amount beyond everyone's own minimum, and both strategies show real months-to-debt-free and total-interest numbers side by side - it never tells you which one to actually use, the same "show the math, not advice" line every calculator in this app holds. A liability is left out of the comparison (and counted in the note below the numbers) if it's missing an interest rate or minimum payment, already at $0, or an active HELOC in its draw period - the same conditions that already hide the per-liability payoff line above.</p>
@@ -1800,11 +1823,9 @@
             <text x="40" y="201" fill="var(--text)" font-size="14">Upcoming renewals (30 days)</text>
             <rect x="10" y="226" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="255" fill="var(--text)" font-size="14">All subscriptions/bills</text>
-            <rect x="10" y="280" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="309" fill="var(--text)" font-size="14">Income sources</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">"Recurring expenses found" only appears when the app spots a bill-like pattern in your expense history. "Found online" only appears once at least one candidate has actually been found - see its own note below. "Income sources" is unrelated to the bills above it - money coming in, not going out - kept on this page since it works the same way.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">"Recurring expenses found" only appears when the app spots a bill-like pattern in your expense history. "Found online" only appears once at least one candidate has actually been found - see its own note below. Income sources used to sit on this page and now lives on the Log page instead, with the rest of your accounts and balances - this page is only money going out.</p>
 
         <div class="help-topic">
           <h3>Monthly total / Yearly</h3>
@@ -1838,11 +1859,6 @@
           <p>Upcoming renewals lists anything due in the next 30 days, for a quick glance - it's read-only here, tap the full list below to actually edit one. All subscriptions/bills is the complete list, active and inactive both; tap any row to open it back in the edit form above.</p>
         </div>
 
-        <div class="help-topic">
-          <h3>Income sources</h3>
-          <p>Recurring income (a paycheck, and similar) - genuinely separate from the bills above, kept on this page because it's logged automatically the same way a bill charge is: source, amount, cadence, which account it's deposited into, when the next one's expected, and an Active checkbox. Cadence covers weekly, biweekly, semimonthly (two fixed pay days a month, like the 1st and 15th - not just "every ~15 days," which would slowly drift off your real payday), monthly, annual, and one-time. A one-time source automatically turns itself inactive right after it's logged, so it never logs twice.</p>
-          <p>Only accounts with a real balance behind them can be picked as the deposit account - not a credit card or loan, the same restriction Transfer (Log page) uses and for the same reason. Each deposit shows up in Recent History as "Income received," undoable like any other entry there.</p>
-        </div>
       </div>
       <div id="helpContentReports" class="hidden">
         <div class="help-diagram">
@@ -1906,7 +1922,7 @@
 
         <div class="help-topic">
           <h3>Income vs. expense</h3>
-          <p>Paired bars, income against expense, for the same six months as the chart above it - income comes from whatever you've logged on the Income sources card (Subscriptions/Bills page), either automatically as each recurring source comes due or from a real deposit you entered yourself. Below the chart, "Savings rate" is (income − expense) ÷ income for the selected month specifically - a real percentage, shown plainly with no color or "aim for X%" framing, the same restraint the Emergency fund stat and the Liabilities card's credit-utilization line already hold. Shows "—" for a month with no income logged yet (dividing by zero income isn't a real 0% rate, so it's left blank rather than shown as one) - a month where you genuinely spent more than you earned still shows a real negative percentage, not hidden.</p>
+          <p>Paired bars, income against expense, for the same six months as the chart above it - income comes from whatever you've logged on the Income sources card (Log page), either automatically as each recurring source comes due or from a real deposit you entered yourself. Below the chart, "Savings rate" is (income − expense) ÷ income for the selected month specifically - a real percentage, shown plainly with no color or "aim for X%" framing, the same restraint the Emergency fund stat and the Liabilities card's credit-utilization line already hold. Shows "—" for a month with no income logged yet (dividing by zero income isn't a real 0% rate, so it's left blank rather than shown as one) - a month where you genuinely spent more than you earned still shows a real negative percentage, not hidden.</p>
         </div>
 
         <div class="help-topic">

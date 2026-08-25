@@ -886,35 +886,53 @@ on the Investments tab. This is the reference this app's code (`app.js`'s
 `TICKER_ELIGIBLE_ASSET_TYPES` and `CONTRIBUTION_LIMIT_GROUPS`) is built
 from - if a number or a yes/no here changes, update both, not just one.*
 
-**Contribution-limit figures below are 2025 base limits only** - no
+**Contribution-limit figures below are 2026 base limits only** - no
 catch-up contributions (age 50+, or the special age-60-63 catch-up under
-SECURE 2.0), no income phase-outs, no filing-status adjustments. They come
-from training knowledge, not a live IRS feed (this app has no live data
-source for anything - same honesty already given for `BANK_NAMES` and
-`tickers.js`). **Verify the current year's actual figures before relying on
-this for a real contribution decision** - this app is a calculator showing
-your own numbers back to you, not tax advice, and a stale or wrong limit
-would be worse than showing none at all.
+SECURE 2.0), no income phase-outs, no filing-status adjustments. Confirmed
+live against IRS Notice 2025-67 on 2026-08-25 (see 9b.6's own verification
+note below for what that pass found and corrected) - this table is no
+longer unverified training knowledge, but it is also not a live feed: these
+four figures are COLA-adjusted and need a manual refresh every January,
+same recurring-staleness category as `BANK_NAMES`/`tickers.js` needing a
+periodic refresh, or `MARKET_INDEXES` needing hand-sync. **Before relying
+on this for a real contribution decision, confirm the year has not turned
+over since this was last checked** - this app is a calculator showing your
+own numbers back to you, not tax advice, and a stale or wrong limit would
+be worse than showing none at all.
 
-| Type | Tax treatment | Tickers apply? | Contribution limit (2025 base, own reference only) |
+| Type | Tax treatment | Tickers apply? | Contribution limit (2026 base, own reference only) |
 |---|---|---|---|
-| Traditional 401(k)/403(b)/TSP/Solo 401(k) employee portion | Pre-tax now, ordinary income tax on withdrawal | Yes | $23,500/yr, **shared** across this whole group per person (not per account) |
-| Roth 401(k) | Post-tax now, tax-free qualified withdrawal | Yes | Same $23,500/yr group as above - Roth and Traditional 401(k) contributions share one combined limit, they do not stack |
-| 457(b) | Pre-tax (or Roth 457(b), post-tax) now, taxed/tax-free on withdrawal to match | Yes | $23,500/yr, its **own separate** bucket by law - not shared with the 401(k)/403(b)/TSP group even though the dollar figure happens to match for 2025 |
-| Traditional IRA | Pre-tax (if deductible) now, ordinary income tax on withdrawal | Yes | $7,000/yr, **shared** with Roth IRA |
-| Roth IRA | Post-tax now, tax-free qualified withdrawal; income limits can reduce or eliminate eligibility entirely (not tracked here - no income field exists) | Yes | Same $7,000/yr group as Traditional IRA |
+| Traditional 401(k)/403(b)/TSP/Solo 401(k) employee portion | Pre-tax now, ordinary income tax on withdrawal | Yes | $24,500/yr, **shared** across this whole group per person (not per account) |
+| Roth 401(k) | Post-tax now, tax-free qualified withdrawal | Yes | Same $24,500/yr group as above - Roth and Traditional 401(k) contributions share one combined limit, they do not stack |
+| 457(b) | Pre-tax (or Roth 457(b), post-tax) now, taxed/tax-free on withdrawal to match | Yes | $24,500/yr, its **own separate** bucket by law - not shared with the 401(k)/403(b)/TSP group even though the dollar figure happens to match for 2026 |
+| Traditional IRA | Pre-tax (if deductible) now, ordinary income tax on withdrawal | Yes | $7,500/yr, **shared** with Roth IRA |
+| Roth IRA | Post-tax now, tax-free qualified withdrawal; income limits can reduce or eliminate eligibility entirely (not tracked here - filing status is unknown) | Yes | Same $7,500/yr group as Traditional IRA |
 | SEP IRA | Pre-tax now, ordinary income tax on withdrawal | Yes | Greater of 25% of compensation or $70,000 - **not tracked**, this app has no income field, and for most people the 25%-of-compensation test is the actual binding constraint, not the flat dollar cap, so showing just the cap would overstate what is really allowed |
-| SIMPLE IRA | Pre-tax now, ordinary income tax on withdrawal | Yes | $16,500/yr, its own bucket |
+| SIMPLE IRA | Pre-tax now, ordinary income tax on withdrawal | Yes | $17,000/yr, its own bucket |
 | Brokerage | Ordinary taxable account - capital gains/dividends taxed as earned/realized | Yes | No limit - not tracked |
 | 529 plan | After-tax in, tax-free growth for qualified education expenses | Yes | No single federal limit - governed by the annual gift-tax exclusion (~$19,000/beneficiary for 2025, doubled if a couple splits the gift) plus a per-state aggregate lifetime cap that varies enormously (some states $235,000+, others $500,000+) - **not tracked**, no clean single number exists to check against |
-| TSP | Same as 401(k) - pre-tax (Traditional) or post-tax (Roth TSP) | Yes | Part of the $23,500/yr elective-deferral group above |
-| Solo 401(k) | Same as 401(k) for the employee-deferral portion; the *employer*/profit-sharing portion depends on net self-employment income | Yes | Employee-deferral portion only tracked, in the $23,500/yr group above - the employer/profit-sharing component is **not tracked** (needs self-employment income data this app doesn't have) |
+| TSP | Same as 401(k) - pre-tax (Traditional) or post-tax (Roth TSP) | Yes | Part of the $24,500/yr elective-deferral group above |
+| Solo 401(k) | Same as 401(k) for the employee-deferral portion; the *employer*/profit-sharing portion depends on net self-employment income | Yes | Employee-deferral portion only tracked, in the $24,500/yr group above - the employer/profit-sharing component is **not tracked** (needs self-employment income data this app doesn't have) |
 | Rollover / inherited IRA | Matches whatever the money's original tax treatment was (pre-tax stays pre-tax, Roth stays Roth) | Yes | **Not tracked** - a rollover is a transfer of existing money, not a new contribution, and an inherited IRA generally cannot receive new contributions at all |
 | Annuity | Tax-deferred growth; ordinary income tax on the earnings portion of a withdrawal | **Conditional** - a *variable* annuity has named sub-account funds with real tickers/symbols; a *fixed* annuity does not. No separate fixed/variable type exists in this app's data model, so `annuity` stays ticker-eligible rather than blocking the real (variable) case to guard against the other | No standard IRS annual limit like a retirement account - **not tracked** |
-| ESPP | Ordinary income tax on the discount at purchase, capital gains tax on any further gain at sale | Yes | $25,000/yr (fair market value at grant, for a qualified Section 423 plan), its own bucket |
+| ESPP | Ordinary income tax on the discount at purchase, capital gains tax on any further gain at sale | Yes | $25,000/yr (fair market value at grant, for a qualified Section 423 plan), its own bucket - a flat statutory cap under IRC 423(b)(8), unchanged since the 1960s and NOT COLA-adjusted the way the four groups above are |
 | Pension | Employer-funded defined-benefit promise, not an account balance - see §5.10 | **No** - a pension is an income promise, not a tradable security; `TICKER_ELIGIBLE_ASSET_TYPES` (`app.js`) excludes it specifically | Not applicable - a participant generally does not make discretionary contributions to a pension the way they do to a 401(k) |
 | Custodial UTMA/UGMA | Taxed to the minor (subject to "kiddie tax" rules above a threshold), not the custodian | Yes | Same gift-tax-exclusion shape as a 529 (§5.4) - **not tracked**, no clean account-level limit |
 | Crypto | Capital gains/loss on disposal, same general shape as a brokerage account | Yes, against a **separate** symbol list (`CRYPTO_SYMBOLS`, `tickers.js`) - a crypto "ticker" (BTC, ETH) is not a market-issued security symbol the way a stock/ETF/fund ticker is | No IRS contribution limit concept - not tracked |
+
+> **Verification note (2026-08-25).** All four COLA-adjusted figures
+> below were confirmed live against IRS Notice 2025-67 (the 2026 figures)
+> after a prior version of this table, and the matching
+> `CONTRIBUTION_LIMIT_GROUPS` in `app.js`, had been quietly running the
+> whole 2026 tax year on 2025 numbers - `contributionLimitUsage()` derives
+> the comparison YEAR from the real clock but the limit itself was a
+> hardcoded constant, so it understated everyone's real 2026 ceiling by
+> $500-$1,000 depending on the group. **These four numbers need a manual
+> refresh every January** when the IRS announces the next year's COLA
+> adjustment (typically early November for the year ahead) - same
+> recurring-staleness category as `MARKET_INDEXES` needing hand-sync or a
+> rotating `GEMINI_MODEL` alias. ESPP's $25,000 is the one figure in this
+> table that never needs this: it is a flat statutory cap, not COLA-indexed.
 
 **Which types share a contribution-limit "bucket" together, summarized**
 (this is the part most likely to be gotten wrong by intuition - a 401(k)
@@ -922,17 +940,277 @@ and a 457(b) look similar but do **not** share a limit, while a Traditional
 and a Roth 401(k) look different but **do**):
 
 - **Elective deferral group**: `traditional_401k`, `roth_401k`, `plan_403b`,
-  `tsp`, `solo_401k` (employee portion only) - one shared $23,500/yr limit
+  `tsp`, `solo_401k` (employee portion only) - one shared $24,500/yr limit
   across every account of these types combined, per person.
-- **457(b) group**: `plan_457b` alone - its own separate $23,500/yr limit,
+- **457(b) group**: `plan_457b` alone - its own separate $24,500/yr limit,
   not combined with the group above.
-- **IRA group**: `traditional_ira`, `roth_ira` - one shared $7,000/yr limit.
-- **SIMPLE IRA group**: `simple_ira` alone - its own $16,500/yr limit.
-- **ESPP group**: `espp` alone - its own $25,000/yr limit.
+- **IRA group**: `traditional_ira`, `roth_ira` - one shared $7,500/yr limit.
+- **SIMPLE IRA group**: `simple_ira` alone - its own $17,000/yr limit.
+- **ESPP group**: `espp` alone - its own $25,000/yr limit, a flat
+  statutory figure that does not change year to year (see its table row
+  above).
 - **Not tracked at all**: `sep_ira`, `plan_529`, `rollover_inherited_ira`,
   `annuity`, `custodial_utma`, `brokerage`, `crypto`, `pension`, and the
   legacy `ira`/`retirement_employer` buckets - each for the specific reason
   given in its own table row above, not by omission.
+
+## 9c. Age and income requirements per type
+
+Added 2026-08-25. This is the reference behind `ACCOUNT_AGE_RULES`
+(`app/app.js`); the table below is generated from that map, so the two
+cannot drift. Every row is a real-world requirement for **opening** the
+account, not a rule this app enforces.
+
+> **Verification note (2026-08-25).** The first version of this section
+> was written from general knowledge and not checked against a live source.
+> That was a real gap in a repo whose own standing rule (see the Repository
+> Constraints section) is to confirm a claim live rather than assume it -
+> this section had not actually followed that rule until challenged on it.
+> A follow-up pass checked every load-bearing legal claim below against a
+> live search and corrected what it found wrong; sources are in the
+> reference list at the end of this document. Two corrections changed real
+> app behavior, not just wording:
+> - **401(k)/Roth 401(k)**: age 21 is the legal CEILING a plan is allowed to
+>   impose (ERISA), not a typical minimum - most modern plans allow earlier
+>   or immediate eligibility. The app previously warned a genuinely eligible
+>   19-year-old opening one; `minAge` is now `null` for both.
+> - **403(b)**: understated the real rule. The IRS's universal availability
+>   rule generally requires an employer to let every employee join
+>   immediately if it lets any employee join at all, not merely "the plan
+>   decides" as originally written.
+>
+> Two things this app genuinely cannot verify going forward: state law
+> changes (a table like this goes stale the moment a legislature acts, the
+> same limitation `bankNames.js`/`tickers.js` already carry), and individual
+> plan/issuer policy, which is always more restrictive-or-lenient than the
+> legal floor/ceiling this section describes. Treat every row as "the legal
+> framework as of this date," not as a guarantee about any specific bank,
+> brokerage, or employer plan.
+
+### 9c.1 The app warns, it never blocks
+
+This distinction is the whole design, and it should not be "tightened"
+later without re-reading this section.
+
+This app **records accounts you already have; it does not open them.** A
+hard block would be wrong in at least four ordinary cases: a parent
+tracking a custodial account, a joint account held with an adult, an
+account opened years before the profile was filled in, and a non-US
+account whose rules differ entirely. On top of that, `profiles.birth_year`
+holds a year and not a date, so a computed age is only accurate to within
+a year - which is not a sound basis for refusing an action outright.
+
+So a failed check is a confirm-to-override, the same shape `isKnownBank()`
+and `isKnownTicker()` already use, and the requirement is also shown
+plainly under the type picker before saving. **A profile with no birth
+year never warns at all** - an unanswered field is not evidence of
+anything, and this app has a standing rule against stating a number it
+does not actually know.
+
+### 9c.2 Three rules that are commonly assumed wrong
+
+- **IRAs have no minimum age.** Not 18, not 21. What a Traditional or Roth
+  IRA actually requires is **earned income** - you cannot contribute more
+  than you earned that year. A minor with a job can hold a custodial IRA.
+  Storing 18 here would be a plain factual error.
+- **Custodial accounts invert the rule.** For `custodial_utma` and
+  `coverdell_esa`, the age limit applies to the **beneficiary**, who must
+  be a minor. An adult opening one is correct, not a problem, so these
+  never warn on the adult's own age.
+- **A 401(k)'s "age 21" is a ceiling, not a typical minimum.** ERISA
+  (verified against the Department of Labor's own FAQ) only limits how much
+  a plan is allowed to REQUIRE - at most age 21 and one year of service.
+  Nothing stops a plan requiring less, and many modern plans allow
+  immediate eligibility. The same applies to a Roth 401(k). Naming 21 as
+  "typical" would overstate how common that specific threshold actually is,
+  so both are marked with no minimum age and a note explaining the ceiling.
+- **A 403(b) usually cannot have an age minimum at all.** This is stronger
+  than "the plan decides": the IRS's universal availability rule (verified
+  against irs.gov) generally requires an employer that lets any employee
+  defer salary into a 403(b) to let every employee do so, immediately, with
+  only narrow carve-outs (nonresident aliens, certain students, and
+  employees who normally work under 20 hours/week).
+- **A SEP IRA's age 21 is a real, different kind of ceiling.** Unlike the
+  401(k)'s ERISA rule above, the IRS lets a SEP-sponsoring employer require
+  UP TO age 21 plus 3 of the last 5 years worked there plus a small minimum
+  compensation - three real requirements an employer can relax but never
+  tighten. TSP and SIMPLE IRA carry no age minimum in law either way.
+
+### 9c.3 Where income is genuinely load-bearing
+
+Income informs most of this table but decides only two things:
+
+1. **The CARD Act's under-21 rule.** For any credit-card-shaped type,
+   someone aged 18 to 20 must show independent income or have a cosigner.
+   This is the one place income changes whether the app warns.
+2. **The earned-income cap on IRA contributions**, flagged as
+   `earnedIncome` above.
+
+Deliberately **not** modeled: Roth IRA and Coverdell **income
+phase-outs**. Those need filing status (single, married filing jointly,
+and so on), which this app does not collect, and `CONTRIBUTION_LIMIT_GROUPS`
+already documents excluding phase-outs as a deliberate decision. Adding a
+phase-out that silently assumed a filing status would produce a confidently
+wrong number, which is worse than not showing one.
+
+**The CARD Act check reads `hasAnyIncome()`, a different question from the
+Income tile's `annualIncome()`** (both `app/income.js`, added/split
+2026-08-25). `annualIncome()` answers "what is the rate" - a real question
+for the Log page's tile, income-vs-expense, and the cash-flow forecast,
+all of which need an actual annualized number and correctly exclude a
+`one_time` source (a single past deposit is not a yearly rate).
+`hasAnyIncome()` answers a narrower, boolean question - "is there any
+income on record at all" - because that is genuinely what the law asks.
+Verified live against the CFPB's own Regulation Z commentary: a card
+issuer evaluates "current or reasonably expected income," a self-reported
+figure that explicitly includes tips, seasonal work, and self-employment,
+with no minimum dollar amount set by the statute itself. A derived annual
+rate was never the right shape for this specific check - `hasAnyIncome()`
+is a closer match to the real test, not just a looser one.
+
+**This keeps eligibility fully automatic - the user is never asked to type
+an income figure anywhere.** It simply reflects whatever is already logged
+on the Income sources form, recurring or one-time alike, the moment it's
+added. A one-time source counts here even though it is excluded from the
+annualized rate above.
+
+**One real interaction worth remembering if either function is touched
+again**: `autoLogDueIncome()` deactivates a `one_time` source the instant
+it is paid out, specifically to stop it logging twice - so `is_active:
+false` means "this income stopped" for a recurring source, but "this
+one-time payment already arrived" for a `one_time` one. `hasAnyIncome()`
+skips the `is_active` check specifically for `one_time` rows for exactly
+this reason; naively applying the same filter to both would have made a
+real, already-received payment stop counting as income at the exact
+moment it actually arrived.
+
+### 9c.4 Other restrictions considered, and why most are not modeled
+
+Age and income are not the only real-world gates on opening an account.
+Researching this section surfaced several more, checked live rather than
+assumed, and each is either genuinely universal enough to state as fact or
+deliberately left out for the same reason this app omits a number it
+cannot verify elsewhere (the credit-utilization line, the emergency-fund
+guideline, and others already hold this line).
+
+**Not modeled, on purpose:**
+
+- **SSN or ITIN.** Widely assumed to be a hard requirement everywhere. It
+  is not: several banks open an account on an ITIN alone, and a few
+  (verified live) open one with neither, using other identification
+  instead. This varies by individual bank policy, not by law or account
+  type, so encoding it as a per-type rule would state something false for
+  a real institution.
+- **Credit check / ChexSystems screening.** A checking account can be
+  denied over a ChexSystems record; a credit card obviously involves a
+  credit assessment; a secured card exists specifically to route around
+  one. All of this is issuer-specific underwriting, not a legal minimum
+  this app could state as a fact about the account TYPE.
+- **Minimum opening deposit or minimum balance.** Ranges from $0 to
+  several thousand dollars depending on the individual bank and product -
+  not generalizable per type at all.
+- **US residency / citizenship.** Several major banks explicitly serve
+  non-residents (verified live), so this is not a blanket rule either -
+  again, issuer policy rather than a fact about the account type.
+
+**Documented as fact, not as an eligibility gate** (these don't stop you
+opening an account, so they don't belong in `ACCOUNT_AGE_RULES`, but they
+are real restrictions worth stating plainly):
+
+- **FDIC/NCUA/SIPC insurance caps.** $250,000 per depositor, per insured
+  institution, per ownership category (FDIC and NCUA); SIPC covers up to
+  $500,000 in securities including $250,000 in cash. Already captured as
+  the "Insured / not insured" cross-cutting attribute in section 9 above -
+  this is a fact about what happens to a balance already held, not a
+  barrier to opening the account.
+- **HSA's dependent restriction.** Beyond the HDHP requirement already
+  noted in section 6.1, you cannot open or contribute to an HSA while
+  anyone else claims you as a tax dependent - a real, separate gate from
+  age, worth calling out since it applies regardless of how old you are.
+
+### 9c.5 The generated table
+
+**Deposit accounts**
+
+| Type | Typical minimum age | Also gated by | What the rule actually is |
+|---|---|---|---|
+| `debit` (Checking) | 18 | - | Banks generally require you to be 18 to open a checking account in your own name. Under 18, it is normally a joint account with an adult. |
+| `savings` (Savings) | 18 | - | Generally 18 to open in your own name. Many banks offer minor savings accounts held jointly with an adult. |
+| `money_market` (Money Market) | 18 | - | Generally 18 to open in your own name. |
+| `cash_management` (Cash Management) | 18 | - | These are brokerage-issued, so the same 18 minimum as a brokerage account applies. |
+| `cd` (Certificate of Deposit) | 18 | - | Generally 18 to open in your own name, or jointly with an adult under 18. |
+
+**Credit accounts**
+
+| Type | Typical minimum age | Also gated by | What the rule actually is |
+|---|---|---|---|
+| `credit` (Credit Card) | 18 | under-21 income rule | 18 to hold a card in your own name. Under 21, US law also requires you to show independent income or have a cosigner. |
+| `charge_card` (Charge Card) | 18 | under-21 income rule | 18 to open, and under 21 the same independent-income or cosigner rule applies as for a credit card. |
+| `secured_credit_card` (Secured Credit Card) | 18 | under-21 income rule | 18 to open. The security deposit does not remove the under-21 income or cosigner requirement. |
+| `store_card` (Store / Retail Card) | 18 | under-21 income rule | 18 to open, with the same under-21 income or cosigner rule as any other credit card. |
+| `personal_line_of_credit` (Personal Line of Credit) | 18 | - | 18 to enter a credit agreement in your own name. |
+| `heloc` (HELOC) | 18 | - | 18 to enter a credit agreement, and you must own the home it is secured against. |
+| `overdraft_line` (Overdraft Line of Credit) | 18 | - | 18, since it is a credit line attached to a checking account. |
+| `bnpl` (Buy Now, Pay Later) | 18 | - | Most pay-in-4 providers require you to be 18. |
+| `medical_credit_card` (Medical / Deferred-Interest Card) | 18 | under-21 income rule | 18 to open, with the same under-21 income or cosigner rule as any other credit card. |
+
+**Loans**
+
+| Type | Typical minimum age | Also gated by | What the rule actually is |
+|---|---|---|---|
+| `personal_loan` (Personal Loan) | 18 | - | 18 to sign a loan agreement. |
+| `auto_loan` (Auto Loan) | 18 | - | 18 to sign a loan agreement. Under 21 a lender often still wants a cosigner. |
+| `mortgage` (Mortgage) | 18 | - | 18 to sign a mortgage. |
+| `home_equity_loan` (Home Equity Loan) | 18 | - | 18 to sign, and you must own the home. |
+| `student_loan` (Student Loan) | 18 | - | 18 to sign. Younger borrowers normally need a cosigner. |
+| `payday_loan` (Payday Loan) | 18 | - | 18 to borrow. |
+| `title_loan` (Title Loan) | 18 | - | 18 to borrow, and you must own the vehicle outright. |
+| `credit_builder_loan` (Credit-Builder Loan) | 18 | - | 18 to sign a loan agreement. |
+| `retirement_plan_loan` (Retirement Plan Loan) | None | - | No age rule of its own. It depends entirely on being in a retirement plan that allows loans. |
+
+**Retirement & investment**
+
+| Type | Typical minimum age | Also gated by | What the rule actually is |
+|---|---|---|---|
+| `traditional_401k` (401(k) (Traditional)) | None | plan-set | No legal minimum age. Federal law only caps how much a plan can REQUIRE - at most 21 and one year of service - many employers set a lower bar or none at all. |
+| `roth_401k` (401(k) (Roth)) | None | plan-set | Same rule as a traditional 401(k): no legal minimum age. The law only caps what a plan can require, at most 21 and one year of service. |
+| `plan_403b` (403(b)) | None | plan-set | No age minimum - and it usually cannot have one. The IRS's universal availability rule requires most employers to let every employee join immediately, with only narrow exceptions (nonresident aliens, certain students, under 20 hours/week). |
+| `plan_457b` (457(b)) | None | plan-set | No legal age minimum. Your employer's plan sets who can join. |
+| `traditional_ira` (Traditional IRA) | None | earned income | There is no minimum age for an IRA. What it actually requires is earned income - you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial IRA. |
+| `roth_ira` (Roth IRA) | None | earned income | There is no minimum age for a Roth IRA. It requires earned income instead - you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial Roth IRA. |
+| `sep_ira` (SEP IRA) | 21 | earned income, plan-set | The IRS lets an employer require at most age 21, 3 of the last 5 years worked there, and a small minimum compensation - an employer can be more generous than all three, never stricter. |
+| `simple_ira` (SIMPLE IRA) | None | earned income, plan-set | No age minimum in law. It is an employer plan, so eligibility follows the employer's rules and your earnings there. |
+| `brokerage` (Brokerage) | 18 | - | 18 in most states to open one in your own name - 19 in Alabama and Nebraska, 21 in Mississippi, since it follows each state's legal age of majority. Under that age, the equivalent is a custodial account an adult controls. |
+| `espp` (Employee Stock Purchase Plan) | None | plan-set | No age rule. It depends on being employed somewhere that offers the plan. |
+| `pension` (Pension (Defined Benefit)) | None | plan-set | No age rule of its own. Eligibility comes from your employment and the plan's own vesting rules. |
+| `custodial_utma` (UTMA / UGMA Custodial) | None | beneficiary must be a minor | This one works the other way around: an adult opens and controls it, and the beneficiary must be a minor. Control transfers permanently at an age set by state law - 21 in most UTMA states, though it can be as low as 18 or as high as 25 (30 in Wyoming) depending on the state and what the custodian chose when opening it. |
+| `plan_529` (529 Plan) | 18 | - | 18 to open one as the account owner. There is no age limit on the beneficiary. |
+| `tsp` (Thrift Savings Plan (TSP)) | None | plan-set | No age minimum. It requires federal employment or uniformed service. |
+| `solo_401k` (Solo 401(k)) | 18 | earned income | 18 to establish it, and it requires self-employment income with no employees other than a spouse. |
+| `rollover_inherited_ira` (Rollover / Inherited IRA) | None | - | No age minimum. An inherited IRA can be held by a beneficiary of any age. |
+| `annuity` (Annuity) | 18 | - | 18 to sign an annuity contract. |
+| `retirement_employer` (401(k) / 403(b) / 457) | None | plan-set | Eligibility is set by whichever employer plan this represents. |
+| `ira` (IRA (unspecified)) | None | earned income | No age minimum. Like any IRA, what it requires is earned income. |
+
+**Specialty**
+
+| Type | Typical minimum age | Also gated by | What the rule actually is |
+|---|---|---|---|
+| `hsa` (HSA) | 18 | - | 18 to open one yourself, and it also requires a high-deductible health plan and that nobody claims you as a dependent. |
+| `fsa` (FSA) | None | plan-set | No age rule. It requires an employer that offers one. |
+| `hra` (HRA) | None | plan-set | No age rule. It is funded and offered entirely by an employer. |
+| `dependent_care_fsa` (Dependent Care FSA) | None | plan-set | No age rule. It requires an employer plan and a qualifying dependent. |
+| `coverdell_esa` (Coverdell ESA) | None | beneficiary must be a minor | Contributions can normally only be made while the beneficiary is under 18, and the money generally has to be used by the time they turn 30 - both limits are waived entirely for a beneficiary with special needs. |
+| `able_account` (ABLE Account) | 18 | - | 18 to open one in your own name. Eligibility depends on a disability that began before age 46, not on your age today. |
+| `prepaid_card` (Prepaid Card) | 18 | - | Generally 18, though some teen cards are available earlier with an adult attached. |
+| `payroll_card` (Payroll Card) | None | plan-set | No age rule of its own. It comes from an employer as a way to pay you. |
+| `second_chance_checking` (Second-Chance Checking) | 18 | - | 18, the same as any checking account in your own name. |
+| `digital_wallet` (Digital Wallet) | 18 | - | Generally 18 for a full account. Some offer teen accounts from 13 with an adult attached. |
+| `treasury_direct` (Treasury Direct) | 18 | - | 18 to open an account and buy Treasury securities directly. |
+| `crypto` (Cryptocurrency) | 18 | - | Exchanges generally require you to be 18. |
+| `multi_currency` (Multi-Currency Account) | 18 | - | Generally 18, the same as any deposit account in your own name. |
+| `life_insurance_cash_value` (Life Insurance Cash Value) | 18 | - | 18 to be the owner of the policy. A policy can insure a minor, but an adult owns it. |
+| `trust_account` (Trust Account) | None | - | No age rule of its own. It depends on the trust document and who the trustee is. |
 
 ## 10. Mapping to this app's data model
 
@@ -963,7 +1241,9 @@ recorded as its own explicit set in `app.js`:
 - `NON_SPENDABLE_ACCOUNT_TYPES` - which types are excluded from the "how
   did you pay for this" pickers. Grounded in whether the real product has
   a card or check access, so Specialty is a deliberate mix (HSA/FSA/ABLE
-  do; Coverdell/Treasury Direct/crypto do not).
+  do; Coverdell/Treasury Direct/crypto/life insurance cash value/a trust
+  account do not - a trust may have checkbook access via its trustee, but
+  that is not this app's own user's personal payment method).
 - `GRACE_PERIOD_LIABILITY_TYPES` - which liabilities the credit-cycle
   interest math applies to (see 9b.3).
 - `INVESTMENT_ASSET_TYPES` - which assets appear on the Investments tab.
@@ -1129,3 +1409,19 @@ shipping.
 - [Are Annuities FDIC Insured? What Actually Protects Them, LegalClarity](https://legalclarity.org/are-annuities-fdic-insured-what-protects-your-money/)
 - [State Guaranty Associations and Annuity Protection Limits, Annuity.org](https://www.annuity.org/annuities/regulations/state-guaranty-associations/)
 - [How is Coinbase insured?, Coinbase Help](https://help.coinbase.com/en/coinbase/other-topics/legal-policies/how-is-coinbase-insured)
+- [Comment for 1026.51 Ability To Pay (CARD Act, under-21 income rule), Consumer Financial Protection Bureau](https://consumerfinance.gov/rules-policy/regulations/1026/Interp-51)
+- [FAQs about Retirement Plans and ERISA (401(k) age/service ceiling), U.S. Department of Labor](https://www.dol.gov/agencies/ebsa/about-ebsa/our-activities/resource-center/faqs/retirement-plans-and-erisa)
+- [Issue Snapshot - 403(b) plan - The universal availability requirement, IRS.gov](https://www.irs.gov/retirement-plans/issue-snapshot-403b-plan-the-universal-availability-requirement)
+- [SEP-IRA eligibility requirements, Wikipedia/IRS-sourced summary](https://en.wikipedia.org/wiki/SEP-IRA)
+- [ABLE Account Eligibility Expands in 2026, MEFA](https://www.mefa.org/article/able-account-eligibility-expands-in-2026-what-you-need-to-know/)
+- [UGMA/UTMA Age of Majority by State, Capital Group](https://www.capitalgroup.com/advisor/account-resource-center/ugma-utma/age-of-majority.html)
+- [Age of Majority by State, Policygenius](https://www.policygenius.com/estate-planning/age-of-majority-by-state/)
+- [Minimum Age to Open a Brokerage Account Requirements, CGAA](https://www.cgaa.org/article/minimum-age-to-open-a-brokerage-account)
+- [Terminating ESAs at Age 30 (Coverdell special-needs exception), Ascensus](https://thelink.ascensus.com/articles/2025/2/19/terminating-esas-at-age-30)
+- [Custodial IRAs for kids, Vanguard](https://investor.vanguard.com/accounts-plans/iras/custodial-ira)
+- [How to open a US bank account for non-citizens without an SSN, Wise](https://wise.com/us/blog/bank-account-without-ssn)
+- [401(k) limit increases to $24,500 for 2026, IRA limit increases to $7,500, IRS.gov](https://www.irs.gov/newsroom/401k-limit-increases-to-24500-for-2026-ira-limit-increases-to-7500)
+- [Preparing for 2026: IRS Announces Updated Retirement Plan Limits Under Notice 2025-67, Schechter Benefits Law Group](https://www.sblgllp.com/preparing-for-2026-irs-announces-updated-retirement-plan-limits-under-notice-2025-67)
+- [How Do You Calculate the ESPP $25,000 Limit? (statutory, not COLA-adjusted), NASPP](https://www.naspp.com/blog/ESPP-25000-Limit)
+- [Do Credit Cards Check Your Income? (self-reported, rarely verified), WalletHub](https://wallethub.com/answers/cc/do-credit-cards-check-your-income-2140773508/)
+- [Do You Need Proof of Income for a Credit Card? (2026), The Pay Stubs](https://www.thepaystubs.com/blog/proof-of-income/do-you-need-proof-of-income-for-a-credit-card)

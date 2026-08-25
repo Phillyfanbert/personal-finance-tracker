@@ -68,3 +68,74 @@ export function advanceIncomeDate(isoDate, cadence, semimonthlyDay1 = null, semi
   const clampedDay = Math.min(day, lastDayOfMonth(targetYear, targetMonth));
   return `${targetYear}-${String(targetMonth).padStart(2, "0")}-${String(clampedDay).padStart(2, "0")}`;
 }
+
+// Annualized total of active recurring income, for the Log page's Income
+// tile and for the account-eligibility checks that genuinely depend on
+// income (the CARD Act's under-21 rule, and the earned-income cap on IRA
+// contributions).
+//
+// Returns 0 rather than null when nothing is logged. That is deliberate and
+// differs from this project's usual omit-rather-than-fake-a-number rule:
+// "no income recorded" really is zero income as far as every rule here is
+// concerned, and the user explicitly asked the figure to read 0 when
+// nothing has been entered. The UI still says "none recorded yet" alongside
+// it so a real zero and an empty state stay tellable apart.
+//
+// one_time is excluded on purpose: a single past deposit is not an annual
+// rate, and counting it as one would overstate recurring income for a year
+// afterwards. Inactive sources are excluded for the same reason.
+const CADENCE_PER_YEAR = {
+  weekly: 52,
+  biweekly: 26,
+  semimonthly: 24,
+  monthly: 12,
+  annual: 1,
+};
+
+export function annualIncome(sources) {
+  if (!Array.isArray(sources)) return 0;
+  return sources.reduce((sum, s) => {
+    if (!s || s.is_active === false) return sum;
+    const perYear = CADENCE_PER_YEAR[s.cadence];
+    if (!perYear) return sum;
+    const amount = Number(s.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return sum;
+    return sum + amount * perYear;
+  }, 0);
+}
+
+// A different question from annualIncome() above, deliberately kept
+// separate rather than folded into it: this asks "is there ANY income on
+// record at all," not "what is the annualized rate." Powers the CARD Act
+// under-21 eligibility check (accountEligibilityWarning, app.js) - real
+// card issuers evaluate "current or reasonably expected income," a self-
+// reported figure that explicitly includes tips, seasonal work, and
+// self-employment (verified live against the CFPB's own Regulation Z
+// commentary, 2026-08-25), not a derived annualized rate the way this
+// app's own recurring-source tracking is. The law itself sets no minimum
+// dollar amount either, so a boolean read is a more honest mapping of the
+// real test than inventing a dollar floor ever was.
+//
+// one_time IS counted here, unlike annualIncome() - a single freelance
+// payment or a one-off gig genuinely is real income for this narrower
+// question, even though it is correctly excluded from an annualized rate.
+// This keeps the eligibility check fully automatic: the user never types
+// an income figure anywhere, it simply reflects whatever they've already
+// logged on the Income sources form, one-time or recurring alike.
+//
+// A one_time source is skipped from the is_active check specifically -
+// autoLogDueIncome() deactivates it the INSTANT it's paid out, to stop it
+// logging twice, so is_active:false there means "already received," not
+// "this income stopped" the way it does for a recurring source. Filtering
+// it out here would make a real, already-paid deposit stop counting as
+// evidence of income at the exact moment it actually arrived. A recurring
+// source turned inactive (a lost job) correctly still excludes.
+export function hasAnyIncome(sources) {
+  if (!Array.isArray(sources)) return false;
+  return sources.some((s) => {
+    if (!s) return false;
+    const amount = Number(s.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return false;
+    return s.cadence === "one_time" || s.is_active !== false;
+  });
+}

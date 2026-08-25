@@ -15,7 +15,7 @@ import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, FULL_YEAR_DAYS } from "./investments.js";
-import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS } from "./tickers.js";
+import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
 } from "./csvImport.js";
@@ -4585,10 +4585,17 @@ function renderWatchlistEditor() {
     ? watchlistSymbols.map((w) => {
         const symbol = (w.symbol || "").trim().toUpperCase();
         const owned = held.has(symbol);
+        // Existing rows were saved lowercased ("apple"). Show the curated
+        // proper-case name when the stored one is only a case variant of it,
+        // so those read properly without migrating any data - but never
+        // override a name the user actually wrote differently.
+        const curated = TICKER_NAMES[symbol];
+        const stored = (w.company_name || "").trim();
+        const display = curated && stored.toLowerCase() === curated.toLowerCase() ? curated : stored;
         const sub = owned
-          ? `<div class="meta">${w.company_name ? esc(w.company_name) + " · " : ""}you own this - added automatically</div>`
-          : w.company_name
-            ? `<div class="meta">${esc(w.company_name)}</div>`
+          ? `<div class="meta">${display ? esc(display) + " · " : ""}you own this - added automatically</div>`
+          : display
+            ? `<div class="meta">${esc(display)}</div>`
             : `<div class="meta muted">no company name - headlines match on ticker only</div>`;
         return `
       <div class="exp" style="cursor:default">
@@ -4616,6 +4623,94 @@ function renderWatchlistEditor() {
   });
 }
 
+// Ticker autocomplete for the Tracked companies field. Purely local - it
+// reads the curated TICKER_NAMES map already bundled for isKnownTicker(), so
+// there is no request, no key and no rate limit behind it, and it works
+// offline like the rest of this PWA.
+//
+// A suggestion is a CONVENIENCE, never a gate: the field stays free text and
+// saveWatchlist's existing isKnownTicker() confirm-to-override path is
+// untouched, so a real ticker the curated list has never heard of can still
+// be added. Same "comprehensive but not exhaustive" honesty isKnownBank()
+// established for the Bank field.
+let watchlistSuggestions = [];
+let watchlistSuggestIndex = -1;
+
+function renderWatchlistSuggestions() {
+  const box = $("watchlistSuggest");
+  const input = $("watchlistNewSymbol");
+  if (!box) return;
+  if (!watchlistSuggestions.length) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    input.setAttribute("aria-expanded", "false");
+    return;
+  }
+  box.classList.remove("hidden");
+  input.setAttribute("aria-expanded", "true");
+  // esc() on the name too: curated today, but this renders into innerHTML and
+  // the rule here is to escape anything not provably fixed at the call site.
+  box.innerHTML = watchlistSuggestions.map((s, i) => `
+    <div class="suggest-item${i === watchlistSuggestIndex ? " active" : ""}" role="option" data-suggest="${esc(s.symbol)}" data-suggest-name="${esc(s.name)}">
+      <div class="suggest-sym">${esc(s.symbol)}</div>
+      <div class="suggest-name">${esc(s.name)}</div>
+    </div>`).join("");
+}
+
+function closeWatchlistSuggestions() {
+  watchlistSuggestions = [];
+  watchlistSuggestIndex = -1;
+  renderWatchlistSuggestions();
+}
+
+function applyWatchlistSuggestion(symbol, name) {
+  $("watchlistNewSymbol").value = symbol;
+  // Only fill the name if the user hasn't typed their own - their wording is
+  // what headline matching will use, so it is never silently overwritten.
+  const nameField = $("watchlistNewName");
+  if (!nameField.value.trim()) nameField.value = name;
+  closeWatchlistSuggestions();
+  $("watchlistNewSymbol").focus();
+}
+
+$("watchlistNewSymbol").addEventListener("input", () => {
+  const q = $("watchlistNewSymbol").value.trim();
+  // An exact ticker match alone is not worth a one-row dropdown covering the
+  // field the user just finished typing into.
+  const hits = searchTickers(q);
+  watchlistSuggestions = (hits.length === 1 && hits[0].symbol.toLowerCase() === q.toLowerCase()) ? [] : hits;
+  watchlistSuggestIndex = -1;
+  renderWatchlistSuggestions();
+});
+
+$("watchlistNewSymbol").addEventListener("keydown", (ev) => {
+  if (!watchlistSuggestions.length) return;
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault();
+    const step = ev.key === "ArrowDown" ? 1 : -1;
+    watchlistSuggestIndex = (watchlistSuggestIndex + step + watchlistSuggestions.length) % watchlistSuggestions.length;
+    renderWatchlistSuggestions();
+  } else if (ev.key === "Enter" && watchlistSuggestIndex >= 0) {
+    // Only intercept Enter when a suggestion is actually highlighted, so
+    // Enter still submits normally for a hand-typed ticker.
+    ev.preventDefault();
+    const s = watchlistSuggestions[watchlistSuggestIndex];
+    applyWatchlistSuggestion(s.symbol, s.name);
+  } else if (ev.key === "Escape") {
+    closeWatchlistSuggestions();
+  }
+});
+
+// mousedown, not click: blur fires first on click and would close the list
+// before the selection ever registered.
+$("watchlistSuggest").addEventListener("mousedown", (ev) => {
+  const item = ev.target.closest("[data-suggest]");
+  if (!item) return;
+  ev.preventDefault();
+  applyWatchlistSuggestion(item.dataset.suggest, item.dataset.suggestName);
+});
+$("watchlistNewSymbol").addEventListener("blur", () => setTimeout(closeWatchlistSuggestions, 120));
+
 $("watchlistAddBtn").onclick = async () => {
   const symbol = $("watchlistNewSymbol").value.trim().toUpperCase();
   if (!symbol) { flagField("watchlistNewSymbol"); return toast("Enter a symbol"); }
@@ -4634,7 +4729,15 @@ $("watchlistAddBtn").onclick = async () => {
     if (!(await confirmModal(`"${symbol}" isn't in the app's reference list of known tickers. It may still be valid - the list isn't exhaustive.`,
       { title: "Track this symbol anyway?", confirmLabel: "Track it" }))) return;
   }
-  const company = $("watchlistNewName").value.trim().toLowerCase() || null;
+  // Kept as typed rather than lowercased. price-agent.js's
+  // mentionsWholeWord() lowercases the term and matches case-insensitively,
+  // so case never mattered for headline matching - it only made every saved
+  // name render as "apple" in the list below. Falls back to the curated
+  // display name when the field is left blank and we know the symbol, so a
+  // known ticker is never stored nameless (which would drop it to
+  // ticker-only headline matching for no reason).
+  const typed = $("watchlistNewName").value.trim();
+  const company = typed || TICKER_NAMES[symbol] || null;
   const { error } = await sb.from("watchlist_symbols").insert({ symbol, company_name: company });
   if (error) { flagField("watchlistNewSymbol"); return toast(error.message); }
   $("watchlistNewSymbol").value = "";

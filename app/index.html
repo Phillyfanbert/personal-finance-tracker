@@ -111,6 +111,17 @@
     /* Shared by every card that pairs a title with an "i" explainer, so a new
        card is markup-only - see wireInfoIcons() in app.js. */
     .card-head { display: flex; align-items: center; gap: 6px; }
+    /* Ticker autocomplete under the Tracked companies symbol field.
+       Absolutely positioned so appearing/disappearing never reflows the
+       fields beneath it while someone is typing. */
+    .suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 10px; margin-top: 4px; max-height: 240px; overflow-y: auto; }
+    .suggest-item { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border); }
+    .suggest-item:last-child { border-bottom: none; }
+    .suggest-item:hover, .suggest-item.active { background: var(--panel); }
+    .suggest-sym { font-weight: 600; font-size: 14px; }
+    .suggest-name { font-size: 12px; color: var(--muted); margin-top: 1px; }
     /* Any ticker/company that opens its own price history - see
        openPriceHistory() in app.js. Underlined on hover only, so a list of
        them doesn't read as a wall of links. */
@@ -1451,10 +1462,14 @@
 
       <p class="muted" style="font-size:12px;margin:4px 0 8px">Everything on the Market tab is built from this list - the written recap, the up/down count, today's top movers and the price-history charts. Changes take effect on the next background price run.</p>
       <div class="row">
-      <div><label>Add a symbol</label><input id="watchlistNewSymbol" placeholder="AAPL" autocomplete="off" /></div>
+      <div style="position:relative">
+        <label>Add a symbol</label>
+        <input id="watchlistNewSymbol" placeholder="AAPL or company name" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="watchlistSuggest" />
+        <div id="watchlistSuggest" class="suggest hidden" role="listbox"></div>
+      </div>
       <div><label>Company name (optional)</label><input id="watchlistNewName" placeholder="apple" autocomplete="off" /></div>
       </div>
-      <p class="muted" style="font-size:11px;margin:2px 0 8px">A company name helps match news headlines to the right stock. Left blank, headline matching falls back to the ticker alone.</p>
+      <p class="muted" style="font-size:11px;margin:2px 0 8px">Start typing a ticker or company name to pick from known symbols - the name fills in for you. Any real ticker can still be typed in by hand if it isn't suggested. A company name helps match news headlines to the right stock; left blank, headline matching falls back to the ticker alone.</p>
       <button id="watchlistAddBtn">Add symbol</button>
       <div id="watchlistList" style="margin-top:10px"></div>
     </div>

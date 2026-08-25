@@ -111,6 +111,11 @@
     /* Shared by every card that pairs a title with an "i" explainer, so a new
        card is markup-only - see wireInfoIcons() in app.js. */
     .card-head { display: flex; align-items: center; gap: 6px; }
+    /* Any ticker/company that opens its own price history - see
+       openPriceHistory() in app.js. Underlined on hover only, so a list of
+       them doesn't read as a wall of links. */
+    .sym-link { cursor: pointer; }
+    .sym-link:hover, .sym-link:focus { text-decoration: underline; }
     .explainer { font-size: 12px; margin: 4px 0 8px; }
     .info-icon { display: inline-flex; align-items: center; justify-content: center;
       width: 17px; height: 17px; border-radius: 50%; background: var(--panel-2);
@@ -976,10 +981,6 @@
           <h1 style="margin:0">Investments</h1>
           <button class="help-btn" id="helpInvestBtn" title="Help">?</button>
         </div>
-        <!-- Tracked symbols is configuration, not daily reading, so it sits
-             behind a gear rather than taking a whole card's worth of
-             attention next to the day's actual numbers. -->
-        <button class="help-btn" id="watchlistGearBtn" title="Tracked symbols" aria-label="Tracked symbols">&#9881;</button>
       </div>
 
       <!-- Pinned above the tabs on purpose: portfolioHealthSummary() is
@@ -1012,6 +1013,15 @@
       <div class="row" id="investTabBar" style="gap:10px;margin:6px 0 18px">
         <button class="secondary" id="investTabMarketBtn" style="padding:16px 0;font-size:16px;font-weight:600">Market</button>
         <button class="secondary" id="investTabPortfolioBtn" style="padding:16px 0;font-size:16px;font-weight:600">My portfolio</button>
+      </div>
+
+      <!-- Sits with the Market/portfolio buttons rather than as a bare cog in
+           the topbar, where it was unlabelled and easy to miss - this is the
+           one control that decides what every card on the Market tab is built
+           from, so it says so in words. Deliberately smaller and right-aligned
+           so it doesn't read as a third tab. -->
+      <div style="display:flex;justify-content:flex-end;margin:-12px 0 14px">
+        <button class="secondary" id="watchlistGearBtn" style="width:auto;padding:8px 14px;font-size:13px">&#9881; Choose tracked companies</button>
       </div>
 
       <div id="investTabMarket">
@@ -1426,17 +1436,20 @@
        gain this app could show. Proceeds optionally credit a real account,
        reusing the same applyAssetDelta path the Holdings form's "Paid from"
        already uses in the other direction. -->
-  <!-- Tracked symbols: reached from the gear in the Investments topbar.
+  <!-- Tracked companies: reached from the labelled "Choose tracked
+       companies" button under the Market / My portfolio tabs. It began as a
+       bare, unlabelled cog in the topbar, which gave no clue that this is
+       what every Market card is built from - moved and spelled out
+       2026-08-24.
        This is the list the market overview, breadth count and daily recap
        are computed over. Holdings are added to it automatically
        (syncHoldingsIntoWatchlist, app.js) - you never re-add a ticker you
        already own. -->
   <div id="watchlistModal" class="modal hidden">
     <div class="sheet">
-      <div class="topbar"><strong>Tracked symbols</strong><button class="secondary" id="watchlistClose" style="width:auto;padding:6px 12px">&#10005;</button></div>
+      <div class="topbar"><strong>Tracked companies</strong><button class="secondary" id="watchlistClose" style="width:auto;padding:6px 12px">&#10005;</button></div>
 
-      <strong>Tracked symbols</strong>
-      <p class="muted" style="font-size:12px;margin:4px 0 8px">The stocks the market overview, daily recap and breadth count are based on. Changes take effect on the next background price run.</p>
+      <p class="muted" style="font-size:12px;margin:4px 0 8px">Everything on the Market tab is built from this list - the written recap, the up/down count, today's top movers and the price-history charts. Changes take effect on the next background price run.</p>
       <div class="row">
       <div><label>Add a symbol</label><input id="watchlistNewSymbol" placeholder="AAPL" autocomplete="off" /></div>
       <div><label>Company name (optional)</label><input id="watchlistNewName" placeholder="apple" autocomplete="off" /></div>
@@ -1743,7 +1756,7 @@
         <div class="help-topic">
           <h3>Liabilities</h3>
           <p>Tracked debt only, split into two groups: <strong>Credit liabilities</strong> are the automatic ones tied to a credit-type Account above (their balance moves only through real charges/payments, or a manual correction - see below); <strong>Other liabilities</strong> are standalone ones you add directly here (Loan, Mortgage, or a specific type like a HELOC or student loan) with no linked account.</p>
-          <p>"Pay" on any liability moves money from a linked asset/account you pick straight to paying it down. The balance can also be corrected directly - set it to an exact figure, or add a specific charge - which is useful when the real statement doesn't quite match what got logged (a fee, a late-arriving charge, a refund); every one of these corrections is written to Recent History as an undoable entry, so nothing changes the amount owed silently.</p>
+          <p>"Pay" on any liability moves money from a linked asset/account you pick straight to paying it down. The balance can also be corrected directly - set it to an exact figure, or add a specific charge - which is useful when the real statement doesn't quite match what got logged (a fee, a late-arriving charge, a refund); every one of these corrections is written to Recent History as an undoable entry, so nothing changes the amount owed silently. A payment larger than the balance is refused rather than accepted and floored at zero, the same way a real card rejects an overpayment - the app has no concept of a credit balance to hold the difference in, so the extra would simply vanish from the funding account.</p>
           <p>"Edit details" (small link under any liability) opens interest rate, minimum payment, and due date for any liability, plus type-specific fields: a credit limit for a card/HELOC/line of credit; statement-cycle fields (which day the statement closes, which day payment is due, the last statement balance and date) for a real revolving card, which power a paid-in-full / carrying-a-balance / missed-minimum indicator - paying the statement balance in full by the due date means no interest at all, carrying any of it accrues interest even if every payment was on time, and paying only the minimum avoids a late fee but not the interest. Nothing here is ever applied automatically; you confirm each interest charge yourself from the small "Log interest" link when it's ready. A HELOC additionally gets a draw-period-end date.</p>
           <p><strong>Setting a credit limit does two things.</strong> It adds a plain utilization line ("$X of $Y used") to the liability, deliberately with no "aim for under 30%" advice attached - just the math. And it becomes a real ceiling: once a limit is set, a new expense, subscription renewal or edit that would push the balance past it is refused with a message telling you how much room is left, the same way a real card declines. Pay the balance down and the room comes back.</p>
           <p>Two deliberate exceptions. Correcting the amount owed by hand is never blocked, because a real balance genuinely can exceed its limit through an over-limit fee, interest, or the bank lowering your limit - if that happens you still need to be able to record the truth. And charge cards and buy-now-pay-later plans are never limited, because neither has a preset spending limit in real life. If no limit is set, nothing is enforced, since a blank field means "unknown", not "zero".</p>
@@ -1922,7 +1935,7 @@
             <text x="40" y="518" fill="var(--text)" font-size="14">Target allocation</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Your daily health check and totals always sit at the top. Everything below is split across two tabs: <strong>Market</strong> for what the wider market did, and <strong>My portfolio</strong> for your own money. Several cards only appear once there is real data for them: the written recap at the top of Overview needs a finished trading day, "Biggest movers" needs the market-wide lookup to be set up, "Price history" needs at least one recorded price, and "Realized gain/loss" needs a sale. Tracked symbols moved to the gear icon at the top of the page.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Your daily health check and totals always sit at the top. Everything below is split across two tabs: <strong>Market</strong> for what the wider market did, and <strong>My portfolio</strong> for your own money. Several cards only appear once there is real data for them: the written recap at the top of Overview needs a finished trading day, "Biggest movers" needs the market-wide lookup to be set up, "Price history" needs at least one recorded price, and "Realized gain/loss" needs a sale. The list of companies all of this is built from is edited from the "Choose tracked companies" button just under the Market / My portfolio buttons.</p>
 
         <div class="help-topic">
           <h3>Two tabs, and what's on each</h3>
@@ -1933,7 +1946,8 @@
           <p>A section with nothing to show yet displays a dashed rectangle explaining why, rather than sitting blank - "No recap yet, check back after the market closes", "You haven't recorded a sale yet", and so on. Once there is something real to show, that message is replaced by the section itself.</p>
           <p>Switching between tabs or sections <strong>never moves the page under you</strong> - whatever you were looking at stays exactly where it was on screen, even when the section you switch to is much shorter or much taller than the one you left.</p>
           <p>Every card title has a small <strong>"i"</strong> beside it. Hovering it on a computer, or tapping it on a phone, shows a one-line explanation of what that card is and where its numbers come from. The explanations used to sit permanently under each title; they're behind the icon now so the cards lead with the actual numbers, and nothing was shortened in the move.</p>
-          <p>The <strong>gear icon</strong> at the top right opens Tracked symbols, the list of stocks the market cards are built around. It's tucked away because it's a setting you'll change occasionally, not something to read daily.</p>
+          <p><strong>"Choose tracked companies"</strong>, directly under the Market / My portfolio buttons, opens the list of stocks every card on the Market tab is built from. It used to be an unlabelled cog in the top corner, which gave no hint of what it did or how much depended on it.</p>
+          <p><strong>Any ticker or company name on this page can be tapped</strong> to jump straight to that symbol's own price chart and company details. That works from the recap's sources, the index list, both movers lists and your own holdings. Tapping a company from the market-wide "Biggest movers" list usually says there's no history recorded for it - that is expected, since it isn't one of your tracked companies; add it from "Choose tracked companies" and history starts building from the next background run.</p>
         </div>
 
         <div class="help-topic">
@@ -1973,8 +1987,8 @@
         </div>
 
         <div class="help-topic">
-          <h3>Tracked symbols</h3>
-          <p>The list of stocks the market overview, the "X of Y up today" breadth count and the daily recap are all computed from. It starts as the same 20 large caps the app previously had built in, and is now yours to change.</p>
+          <h3>Choose tracked companies</h3>
+          <p>Reached from the button of that name under the Market / My portfolio buttons. This is the list every Market card is computed from: the written recap, the "X of Y up today" count, today's top movers and the price-history charts. It starts as the same 20 large caps the app previously had built in, and is now yours to change.</p>
           <p>Add a symbol with its ticker. The optional company name is used for one specific job: deciding whether a news headline is genuinely about that company. Left blank, headline matching falls back to the ticker alone, which is a little less reliable but still works - the background job fills the name in automatically where it can.</p>
           <p>Removing a symbol stops it being tracked from then on; prices already recorded for it are kept, so its price history doesn't disappear. New symbols get their first prices on the next background run rather than instantly.</p>
         </div>

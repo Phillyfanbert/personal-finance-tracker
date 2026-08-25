@@ -3805,7 +3805,16 @@ async function renderInvestmentsTrend() {
 // used to fall into via `n >= 0`. Caught live: a flat 0.00% mover rendered
 // with a green number, implying a gain that didn't happen.
 const gainColor = (n) => (n == null ? "" : n > 0 ? "var(--ok)" : n < 0 ? "var(--err)" : "var(--text)");
-const signedPct = (n) => (n >= 0 ? "+" : "") + n + "%";
+// Rounded to 2dp, and no "+" on an exact zero. Neither used to happen:
+// Alpha Vantage hands back raw precision, so a market-wide mover rendered
+// as "+113.1547%", and `n >= 0` put a plus sign on a flat 0% - the same
+// "zero is not a gain" mistake gainColor() had. A percentage with four
+// decimal places is noise at every call site here.
+const signedPct = (n) => {
+  if (!Number.isFinite(n)) return "-";
+  const r = Math.round(n * 100) / 100;
+  return (r > 0 ? "+" : "") + r + "%";
+};
 
 // Every investment-flavoured asset, parents and per-ticker holdings alike,
 // EXCLUDING anything belonging to an archived account (archivedAccountAssetIds
@@ -3865,7 +3874,7 @@ function renderInvestments() {
       <div class="exp" data-edit-holding="${a.id}" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px;padding-left:12px">
         <div style="display:flex;justify-content:space-between;gap:10px">
           <div>
-            <div>${esc(h.symbol)}</div>
+            <div class="sym-link" data-price-symbol="${esc(h.symbol)}" title="View price history for ${esc(h.symbol)}">${esc(h.symbol)}</div>
             <div class="meta">${h.quantity ?? "?"} @ ${h.latestPrice != null ? fmt(h.latestPrice) : "no live price yet"}</div>
           </div>
           <div style="text-align:right">
@@ -4365,7 +4374,7 @@ function renderMarketMovers() {
   const row = (m) => `
     <div class="exp" style="cursor:default">
       <div>
-        <div>${esc(m.company_name || m.symbol)}${m.company_name ? ` <span class="muted">(${esc(m.symbol)})</span>` : ""}</div>
+        <div class="sym-link" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.company_name || m.symbol)}${m.company_name ? ` <span class="muted">(${esc(m.symbol)})</span>` : ""}</div>
         ${m.headline
           ? `<div class="meta"><a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headline.title)}</a>${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>`
           : `<div class="meta muted">No news coverage found for this move</div>`}
@@ -4405,6 +4414,42 @@ const fmtCompact = (n) => {
   if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
   return fmt(n);
 };
+
+// Any ticker or company name anywhere on this page is a way into that
+// symbol's own history. One delegated listener over `data-price-symbol`
+// rather than an onclick per row, the same markup-driven shape
+// wireInfoIcons() uses - these rows are rebuilt on every render, so
+// per-row handlers would need re-binding after each one.
+//
+// CAPTURE phase, deliberately: a holding row carries its own
+// `data-edit-holding` onclick bound directly to the element, which in the
+// bubble phase would already have fired (opening the edit form) before a
+// document-level listener ever saw the event. Capturing lets the ticker
+// inside that row claim the click and stop it there.
+function openPriceHistory(symbol) {
+  const sym = (symbol || "").trim().toUpperCase();
+  if (!sym) return;
+  const recorded = new Set(dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()));
+  // A market-wide mover is usually NOT tracked, so it genuinely has no
+  // history here - say why and point at the fix rather than switching to
+  // an empty chart.
+  if (!recorded.has(sym)) {
+    return toast(`No price history recorded for ${sym} yet. Add it under "Choose tracked companies" to start building one.`);
+  }
+  priceHistorySymbol = sym;
+  setInvestTab("market");
+  setInvestSubTab("investSubTabsMarket", "investSubTabMarket", "investSubHistory");
+  renderPriceHistory();
+  const card = $("priceHistoryCard");
+  if (card) card.scrollIntoView({ block: "start" });
+}
+document.addEventListener("click", (ev) => {
+  const el = ev.target.closest && ev.target.closest("[data-price-symbol]");
+  if (!el) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  openPriceHistory(el.dataset.priceSymbol);
+}, true);
 
 function renderPriceHistory() {
   const card = $("priceHistoryCard");
@@ -4669,7 +4714,7 @@ function renderDailyRecap() {
       sourced.map((m) => `
         <div style="margin:0 0 10px">
           <a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px;line-height:1.45">${esc(m.headline.title)}</a>
-          <div class="muted" style="font-size:12px;margin-top:2px">${esc(m.symbol)}${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>
+          <div class="muted" style="font-size:12px;margin-top:2px"><span class="sym-link" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.symbol)}</span>${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>
         </div>`).join("")
     : "";
 }
@@ -4734,7 +4779,7 @@ function renderMarketOverview() {
     <div class="exp" style="cursor:default;flex-direction:column;align-items:stretch;gap:2px">
       <div style="display:flex;justify-content:space-between;gap:10px">
         <div>
-          <div>${esc(idx.label)}</div>
+          <div${etfTicker ? ` class="sym-link" data-price-symbol="${esc(etfTicker)}" title="View price history for ${esc(etfTicker)}"` : ""}>${esc(idx.label)}</div>
           ${idx.explanation ? `<div class="meta">${esc(idx.explanation)}</div>` : ""}
         </div>
         <span class="amt" style="text-align:right">
@@ -4753,7 +4798,7 @@ function renderMarketOverview() {
   $("marketMoversList").innerHTML = movers.map((m) => `
     <div class="exp" style="cursor:default">
       <div>
-        <div>${esc(m.label)}</div>
+        <div class="sym-link" data-price-symbol="${esc(m.label)}" title="View price history for ${esc(m.label)}">${esc(m.label)}</div>
         ${m.explanation ? `<div class="meta">${esc(m.explanation)}</div>` : ""}
         ${m.headlines && m.headlines.length ? `<div class="meta"><a href="${esc(m.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headlines[0].title)}</a>${m.headlines[0].source ? " · " + esc(m.headlines[0].source) : ""}</div>` : ""}
       </div>

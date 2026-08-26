@@ -26,7 +26,7 @@ import {
 } from "./subscriptions.js";
 import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { forecastCashFlow } from "./cashflow.js";
-import { findDeals, studentUpsell, eligibilityUpsells, matchService } from "./discounts.js";
+import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth, emergencyFundCoverage } from "./networth.js";
@@ -6279,6 +6279,19 @@ function renderDeals() {
 
 // Machine-found deals (F6 stretch) - separate, clearly-labeled, unverified.
 // Never blended into the trusted curated numbers above.
+// The stored snippet is raw scraped markdown, so it arrives with heading
+// hashes and hard line breaks mid-sentence ("y ## 6 Premium accounts...").
+// This is the only grounding the user has for an unverified number, so it
+// has to be readable: strip the markup, collapse the whitespace, and cut on
+// a word boundary rather than mid-word.
+function cleanSnippet(raw, max = 150) {
+  const text = String(raw || "").replace(/[#*`>]+/g, " ").replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut) + "...";
+}
+
 function renderDealFindings() {
   const card = $("dealFindingsCard");
   if (!card) return;
@@ -6286,27 +6299,37 @@ function renderDealFindings() {
   card.classList.remove("hidden");
   renderAgentFreshness("deal-agent", "dealFindingsFreshness", "dealFindingsWarning");
 
-  const activeNames = subscriptions.filter((s) => s.is_active).map((s) => s.name);
-  const matches = dealFindings.filter((f) => activeNames.some((name) => matchService(name, f.service)));
+  // One row per subscription, cheapest only, and only when it genuinely
+  // beats what is already being paid - see bestFindingPerSubscription().
+  // Listing every match instead produced eight rows for one Spotify
+  // subscription in production, four of them the same price from the same
+  // URL, and most of them not actually cheaper than the current plan.
+  const best = bestFindingPerSubscription(subscriptions, dealFindings, matchService);
 
-  if (!matches.length) {
-    $("dealFindingsList").innerHTML = `<p class="muted" style="font-size:13px">No live findings yet for your subscriptions.</p>`;
+  if (!best.length) {
+    $("dealFindingsList").innerHTML = `<p class="muted" style="font-size:13px">Nothing found yet that beats what you already pay.</p>`;
     return;
   }
-  $("dealFindingsList").innerHTML = matches.map((f) => {
+  $("dealFindingsList").innerHTML = best.map((d) => {
+    const f = d.finding;
     const link = f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
-    const price = f.price != null ? fmt(Number(f.price)) : "?";
-    // A candidate finding gets Promote/Reject (F6 Phase E); an already-
-    // verified one just shows its status - nothing left to review.
     const actions = f.status === "candidate"
       ? `<button class="secondary" data-promote-finding="${f.id}" style="width:auto;padding:3px 8px;font-size:11px;margin-right:4px">Promote</button><button class="secondary" data-reject-finding="${f.id}" style="width:auto;padding:3px 8px;font-size:11px">Reject</button>`
       : `<span class="muted" style="font-size:11px">${f.status === "verified" ? "✓ verified" : esc(f.status)}</span>`;
+    // A trial changes what the price means, so it is stated on its own line
+    // next to the figure it qualifies rather than left buried in the
+    // snippet - "then" makes clear the number is the post-trial rate.
+    const trial = d.trial
+      ? `<div style="font-size:12px;color:var(--warn);margin-top:2px">${esc(d.trial.label)}, then ${fmt(d.monthly)}/mo</div>`
+      : "";
     return `
       <div class="exp" style="cursor:default;flex-wrap:wrap;gap:6px">
         <div>
-          <div>${esc(f.service)}${f.plan_type ? " · " + esc(f.plan_type) : ""}</div>
-          <div class="meta">${price}${f.eligibility ? " (" + esc(f.eligibility) + ")" : ""} ${link}</div>
-          ${f.status === "candidate" && f.extracted_by === "regex" ? `<div class="muted" style="font-size:11px">pattern match${f.raw_snippet ? " - " + esc(f.raw_snippet) : ""}</div>` : ""}
+          <div>${esc(d.subscriptionName)}${f.plan_type ? " · " + esc(f.plan_type) : ""}</div>
+          <div class="meta">${fmt(d.monthly)}/mo vs ${fmt(d.currentMonthly)} now · saves ${fmt(d.yearlySavings)}/yr ${link}</div>
+          ${trial}
+          ${f.eligibility ? `<div class="muted" style="font-size:11px">${esc(f.eligibility)}</div>` : ""}
+          ${f.raw_snippet ? `<div class="muted" style="font-size:11px;margin-top:2px">From the page: "${esc(cleanSnippet(f.raw_snippet))}"</div>` : ""}
         </div>
         <span class="amt">${actions}</span>
       </div>`;

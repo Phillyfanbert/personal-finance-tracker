@@ -169,3 +169,95 @@ export function eligibilityUpsells(subscriptions, catalog, profile) {
   }
   return out.sort((a, b) => b.potentialYearly - a.potentialYearly);
 }
+
+// ---- Live findings (deal_findings) ------------------------------------------
+// The agent-discovered equivalent of findDeals() above, and deliberately held
+// to the same bar: at most ONE result per subscription, the cheapest, and only
+// when it actually beats what the user already pays.
+//
+// The card used to list every matching row instead, which in production meant
+// eight rows for one Spotify subscription - four of them the same $21.99 from
+// the same URL, and $21.99 is what the user already pays, so most of the card
+// was noise that recommended nothing.
+
+// A free trial changes what a price MEANS ("3 months free, then $6.99"), so a
+// finding whose source text advertises one has to say so rather than showing
+// the post-trial figure as if it were the price today. Read straight from the
+// snippet the agent already stored, so the claim stays attached to the page it
+// came from - never inferred from the number alone.
+const TRIAL_PATTERNS = [
+  /(\d+)\s*(day|week|month)s?\s+(?:free|on us|at no cost)/i,
+  /free\s+for\s+(\d+)\s*(day|week|month)s?/i,
+  /try\s+[^.]*?\bfor\s+(\d+)\s*(day|week|month)s?\s+(?:free|on us)/i,
+];
+
+/**
+ * The trial offer named in a finding's own source text, or null.
+ * @returns {{months:number|null, label:string}|null} `label` is phrased for
+ *   display; `months` is null for a day/week trial, which is not meaningfully
+ *   a monthly figure.
+ */
+export function trialFromSnippet(snippet) {
+  const text = (snippet || "").replace(/\s+/g, " ");
+  if (!text) return null;
+  for (const re of TRIAL_PATTERNS) {
+    const m = text.match(re);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    const unit = m[2].toLowerCase();
+    const plural = n === 1 ? unit : unit + "s";
+    return { months: unit === "month" ? n : null, label: `${n} ${plural} free first` };
+  }
+  return null;
+}
+
+/**
+ * At most one live finding per active subscription: the cheapest that genuinely
+ * beats what they pay now.
+ *
+ * Mirrors findDeals()' rule rather than inventing a second one - same
+ * monthly-normalized comparison, same "must actually be cheaper" bar. A
+ * finding with no price is dropped: it cannot be compared, so it cannot be
+ * shown as a saving.
+ *
+ * @param {Array} subscriptions active-or-not; inactive are skipped
+ * @param {Array} findings rows from deal_findings
+ * @param {(subName: string, service: string) => boolean} matches service matcher
+ * @returns {Array} one entry per subscription that has a genuine saving
+ */
+export function bestFindingPerSubscription(subscriptions, findings, matches = matchService) {
+  const out = [];
+  for (const sub of subscriptions || []) {
+    if (!sub.is_active) continue;
+    const current = monthlyAmount(sub);
+    let best = null;
+    for (const f of findings || []) {
+      if (!f || f.status === "rejected") continue;
+      if (!matches(sub.name, f.service)) continue;
+      const price = Number(f.price);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      // Findings are advertised monthly rates; an annual figure would need a
+      // billing cycle the agent does not record, so nothing is divided here.
+      if (price >= current - 0.01) continue;
+      // Ties go to the row with real provenance, so the surviving finding is
+      // the one a person can most easily check.
+      const better = !best
+        || price < best.monthly - 0.001
+        || (Math.abs(price - best.monthly) <= 0.001 && !best.finding.url && f.url);
+      if (better) best = { finding: f, monthly: price };
+    }
+    if (!best) continue;
+    const saving = r2(current - best.monthly);
+    out.push({
+      subscriptionName: sub.name,
+      currentMonthly: r2(current),
+      finding: best.finding,
+      monthly: r2(best.monthly),
+      monthlySavings: saving,
+      yearlySavings: r2(saving * 12),
+      trial: trialFromSnippet(best.finding.raw_snippet),
+    });
+  }
+  return out.sort((a, b) => b.yearlySavings - a.yearlySavings);
+}

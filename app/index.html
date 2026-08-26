@@ -75,8 +75,12 @@
       width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
       font-size: 12px; font-weight: 700; cursor: pointer; border: 2px solid var(--panel); }
     .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-    .totals { display: flex; gap: 12px; margin-bottom: 14px; }
-    .totals .card { flex: 1; text-align: center; margin: 0; }
+    /* Wraps rather than squeezing. Three tiles in a fixed row overflowed a
+       375px screen once a tile carried a longer label, clipping the number
+       itself off the right edge - the whole point of the tile. flex-basis
+       plus wrap lets the third drop to its own line instead. */
+    .totals { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+    .totals .card { flex: 1 1 150px; min-width: 0; text-align: center; margin: 0; }
     .totals .big { font-size: 22px; font-weight: 800; }
     .chartbox { position: relative; height: 240px; }
     .chartbox.short { height: 200px; }
@@ -838,7 +842,7 @@
              for why: dividing savings by average logged spending amplified
              thin data into a meaningless "75 years", where the average
              itself is wrong by an amount the reader can actually see. -->
-        <div class="card"><div class="muted" style="font-size:12px">Typical month</div><div class="big" id="rptAvgSpend">—</div><div class="muted" id="rptAvgSpendNote" style="font-size:11px;margin-top:2px">nothing logged yet</div></div>
+        <div class="card"><div class="muted" style="font-size:12px" id="rptAvgSpendLabel">Spent in a typical month</div><div class="big" id="rptAvgSpend">—</div><div class="muted" id="rptAvgSpendNote" style="font-size:11px;margin-top:2px">nothing logged yet</div></div>
       </div>
 
       <!-- Interactive spending Q&A (Gemma, optional/best-effort like Phase 3) -->
@@ -2026,8 +2030,10 @@
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Month selector and totals</h3>
           <div class="help-topic-body hidden">
           <p>Most of this page shows whichever month you pick at the top right. The bottom four cards are the exception, because they are about your balances now rather than a past month.</p>
-          <p>The three totals: what you spent in the month you picked, how much of that was subscriptions and bills, and <strong>Typical month</strong> - roughly what you spend in a normal month.</p>
-          <p>That last one always describes now, not the month you picked, and it is averaged only over months that actually have spending in them. If you have logged one month, it shows that month rather than quietly dividing by more months than you have data for. The small line underneath always says what it is based on, so a figure resting on very little is obvious rather than passing as settled.</p>
+          <p>The three totals: what you spent in the month you picked, how much of that was subscriptions and bills, and a third that changes depending on what you have recorded.</p>
+          <p>Before you have added any income, that third one reads <strong>Spent in a typical month</strong> - roughly what a normal month costs you. Once the app knows about any money coming in, it switches to <strong>Left over in a typical month</strong>: what you were paid, minus what you spent. A plus means you ended the month ahead, a minus means you spent more than came in. The label always changes with it, so it is never unclear which one you are looking at.</p>
+          <p>It waits for income before showing the left-over figure on purpose. With nothing recorded on the income side, that sum would read as a loss every month and tell you something untrue - so it shows the spending figure until it can answer the better question honestly.</p>
+          <p>That tile always describes now, not the month you picked, and it averages only over months that actually have something in them. If you have one month of history, it shows that month rather than quietly dividing by more months than you have data for. The small line underneath always says what it is based on, so a figure resting on very little is obvious rather than passing as settled.</p>
           <p>It is worth knowing this can only count what you have actually written down. If you log some purchases and not others, it will read low - the fix is logging more, or importing a file from your bank.</p>
           <p>That average always divides by 3 months, even if you've only logged spending in one of them, so a short history can produce a very large number of months - one $14 expense makes your average look like about $5 a month, and an ordinary balance then reads as hundreds of months of runway. When fewer than 3 months have any spending in them, the line under the number says what it's actually based on ("based on 1 month of spending") rather than presenting the figure as if it were a settled fact. It becomes meaningful once you have a few real months of history.</p>
           </div>

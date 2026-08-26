@@ -6017,27 +6017,50 @@ async function renderReports() {
   // Anchored to today (monthKey()), not the page's month picker, matching
   // the account-history and net-worth-trend cards - a "typical month" is
   // not a property of whichever month is being browsed.
+  // The third tile answers whichever question the data can actually support.
+  //
+  // With income recorded it shows NET - what was left over in a typical
+  // month - because "am I ahead or behind" is more useful than "what do I
+  // spend", which says nothing about whether it was affordable.
+  //
+  // With NO income recorded it falls back to spending, because net would
+  // then be a subtraction with an empty side: it would read "-$14 a month"
+  // and state, confidently and wrongly, that money is being lost. An
+  // understated magnitude is survivable; a wrong DIRECTION is not. The label
+  // changes with the number, so which of the two is on screen is never
+  // ambiguous.
   const AVG_SPEND_WINDOW_MONTHS = 6;
   const avgMonths = lastMonths(AVG_SPEND_WINDOW_MONTHS, monthKey());
-  const avgMonthTotals = monthlyTotals(allExpenses, avgMonths);
-  // **Divides by months that actually contain spending, not by the window
+  const avgIncomeActivity = accountActivity.filter((a) => a.kind === "income");
+  const avgRows = incomeVsExpense(avgIncomeActivity, allExpenses, avgMonths);
+  const hasIncome = avgRows.some((r) => r.income > 0);
+
+  // **Divides by months that actually contain something, not by the window
   // length.** Dividing by the full window was the specific bug behind the
-  // old tile: with one month of data out of three it understated real
+  // old runway tile: one month of data out of three understated real
   // spending threefold before the ratio even multiplied the error.
-  const monthsWithSpending = avgMonthTotals.filter((v) => v > 0);
-  const avgSpend = monthsWithSpending.length
-    ? monthsWithSpending.reduce((s, v) => s + v, 0) / monthsWithSpending.length
+  const activeRows = avgRows.filter((r) => (hasIncome ? r.income > 0 || r.expense > 0 : r.expense > 0));
+  const mean = (pick) => activeRows.reduce((s, r) => s + pick(r), 0) / activeRows.length;
+  const avgValue = activeRows.length
+    ? (hasIncome ? mean((r) => r.income - r.expense) : mean((r) => r.expense))
     : null;
 
-  $("rptAvgSpend").textContent = avgSpend != null ? fmt(avgSpend) : "—";
-  // Says what the figure rests on, so a thin average is visibly thin
-  // rather than passing as settled - the same qualify-rather-than-overstate
-  // rule priceRangeStats() follows for a range shorter than a year.
-  $("rptAvgSpendNote").textContent = avgSpend == null
+  $("rptAvgSpendLabel").textContent = hasIncome ? "Left over in a typical month" : "Spent in a typical month";
+  // A sign, not a colour. Direction is the whole point of the net figure, but
+  // this page deliberately keeps no colour or threshold framing on its money
+  // stats - the same restraint the savings-rate line below already holds.
+  $("rptAvgSpend").textContent = avgValue == null
+    ? "—"
+    : hasIncome
+      ? `${avgValue > 0 ? "+" : avgValue < 0 ? "-" : ""}${fmt(Math.abs(avgValue))}`
+      : fmt(avgValue);
+  // Says what the figure rests on, so a thin average is visibly thin rather
+  // than passing as settled - the same qualify-rather-than-overstate rule
+  // priceRangeStats() follows for a range shorter than a year.
+  $("rptAvgSpendNote").textContent = avgValue == null
     ? "nothing logged yet"
-    : monthsWithSpending.length === 1
-      ? "based on 1 month so far"
-      : `averaged over ${monthsWithSpending.length} months`;
+    : (activeRows.length === 1 ? "based on 1 month so far" : `averaged over ${activeRows.length} months`)
+      + (hasIncome ? " (money in minus money out)" : "");
 
   const empty = total === 0;
   $("rptEmpty").classList.toggle("hidden", !empty);

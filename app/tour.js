@@ -13,7 +13,7 @@
 //
 // **A step whose target is missing or hidden is dropped, not shown empty.**
 // That is the whole reason visibleSteps() exists: a large share of this app's
-// cards only appear once real data exists (Live asset prices, Market
+// cards only appear once real data exists (the budget warning, Market
 // overview, the budget warning, Realized gain/loss), and a brand-new user -
 // exactly the person taking this tour - has none of it. Pointing an arrow at
 // a collapsed or absent element is worse than skipping it silently.

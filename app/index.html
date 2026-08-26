@@ -624,19 +624,6 @@
         </div>
       </div>
 
-      <!-- Live asset prices (docs/ROADMAP.md Assets #4) - hidden unless
-           PRICE_FINDINGS_ENABLED is set in config.js. Same trust tier as
-           F6's "Found online" card below: machine-found, unverified,
-           applying a price is an explicit tap, never automatic. -->
-      <div class="card hidden" id="assetPriceFindingsCard">
-        <div class="topbar" style="margin-bottom:6px">
-          <strong>Live asset prices</strong>
-          <span class="muted" style="font-size:12px">unverified - tap a link to check the source</span>
-        </div>
-        <p class="muted" id="assetPriceFindingsFreshness" style="font-size:11px;margin:0 0 6px"></p>
-        <div id="assetPriceFindingsList"></div>
-      </div>
-
       <!-- Liabilities: tracked credit debt only. Subscriptions and a full
            expense breakdown used to live here too - moved out (Reports has
            the full expense log + a By-payment-type chart), since neither
@@ -1839,7 +1826,7 @@
             <text x="40" y="471" fill="var(--text)" font-size="14">Debt payoff strategy</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. A budget-warning banner can appear above Quick Add; a Live asset prices card can appear between Assets and Liabilities once you've tagged an asset with a ticker/symbol (see Assets below).</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. A budget-warning banner can appear above Quick Add when a category is close to or over its limit.</p>
 
         <div class="help-topic" id="helpTopic-expenses-quick-add">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Expenses Quick Add</h3>
@@ -1887,7 +1874,8 @@
         <div class="help-topic" id="helpTopic-assets">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Assets</h3>
           <div class="help-topic-body hidden">
-          <p>Everything you own that counts toward net worth - not just accounts. "+ Add asset" covers standalone things with no linked account: an Investment, Property, Vehicle, a retirement account you're tracking on its own, or any of roughly fifty specific types (brokerage, 401(k)/Roth/Traditional variants, HSA, crypto, and more). A Vehicle gets an optional depreciation estimate (purchase price, date, and a yearly rate) instead of you updating its value by hand. An investment-flavored asset gets an optional cost basis and allocation bucket, both used on the Investments page; adding a ticker/symbol and quantity here also lets the live-price feature price it automatically, refreshed every 15 minutes for a real stock ticker (see the Investments page's help for the fuller picture, including per-ticker holdings inside an account).</p>
+          <p>Everything you own that counts toward net worth - not just accounts. "+ Add asset" covers standalone things with no linked account: an Investment, Property, Vehicle, a retirement account you're tracking on its own, or any of roughly fifty specific types (brokerage, 401(k)/Roth/Traditional variants, HSA, crypto, and more). A Vehicle gets an optional depreciation estimate (purchase price, date, and a yearly rate) instead of you updating its value by hand. An investment-flavored asset gets an optional cost basis and allocation bucket, both used on the Investments page; adding a ticker/symbol and quantity here also lets the app price it automatically from the live market feed, so you never update that value by hand.</p>
+          <p><strong>Investments appear here as a single "Investments" line</strong>, not one row per account, and its figure is the same total the Investments page shows at the top - the two are calculated the same way and cannot drift apart. Tap the line to go straight to that page, where the per-account and per-ticker detail lives. Keeping it to one line here is deliberate: investments have a whole page of their own, and listing every brokerage and retirement account again on this page split the same information across two places.</p>
           <p>A CD's maturity date shows an upcoming-renewal reminder here once it's within 30 days. Any manually-priced asset (no live feed) that hasn't been touched in 6+ months gets a gentle "this might be stale" notice, just as a reminder to check it's still accurate - nothing changes automatically.</p>
           </div>
         </div>

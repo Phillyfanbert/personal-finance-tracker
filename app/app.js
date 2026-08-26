@@ -547,13 +547,12 @@ async function fetchLatestHeadlines(table, cols) {
 // is the one that ends up with a correct render, same pattern
 // renderRecurringCandidates() already uses for its own two parallel loads.
 async function loadAssetPriceFindings() {
-  if (!PRICE_FINDINGS_ENABLED) { assetPriceFindings = []; renderAssetPriceFindings(); return; }
+  if (!PRICE_FINDINGS_ENABLED) { assetPriceFindings = []; return; }
   const [prices, headlines] = await Promise.all([
     fetchFindings("asset_price_findings", ASSET_PRICE_FINDING_COLS),
     fetchLatestHeadlines("asset_price_findings", ASSET_PRICE_FINDING_COLS),
   ]);
   assetPriceFindings = mergeFindings(prices, headlines);
-  renderAssetPriceFindings();
 }
 
 // Same dormant-until-flag shape as loadAssetPriceFindings above, same
@@ -704,7 +703,6 @@ const newestFoundAt = (rows) =>
   rows.reduce((max, r) => (r.found_at && (!max || r.found_at > max) ? r.found_at : max), null);
 
 function renderPriceDependentCards() {
-  renderAssetPriceFindings();
   renderMarketOverview();
   renderInvestments();
   renderPriceHistory();
@@ -2136,8 +2134,25 @@ async function syncParentAssetValue(parentAssetId) {
 // own pattern) pulls the resynced values into memory and re-renders.
 async function syncAllParentAssetValues() {
   const parentIds = new Set(assets.filter((a) => a.parent_asset_id).map((a) => a.parent_asset_id));
-  if (!parentIds.size) return;
-  await Promise.all([...parentIds].map((id) => syncParentAssetValue(id)));
+
+  // A STANDALONE priced asset (its own price_symbol and quantity, with no
+  // holdings under it and no parent above it) has no parent to roll up into,
+  // so it was never covered here - its value only ever changed when someone
+  // pressed Apply on the Log page's "Live asset prices" card. That card is
+  // gone, so this now keeps those assets current automatically too, which is
+  // what the card was really for.
+  const standalone = assets.filter((a) =>
+    a.price_symbol && a.quantity && !a.parent_asset_id && !parentIds.has(a.id));
+  const priced = investmentHoldings(standalone, assetPriceFindings);
+  const standaloneWrites = priced
+    .filter((h) => h.currentValue != null && Math.abs(h.currentValue - Number(h.asset.value || 0)) > 0.005)
+    .map((h) => sb.from("assets").update({ value: Math.round(h.currentValue * 100) / 100 }).eq("id", h.asset.id));
+
+  if (!parentIds.size && !standaloneWrites.length) return;
+  await Promise.all([
+    ...[...parentIds].map((id) => syncParentAssetValue(id)),
+    ...standaloneWrites,
+  ]);
   await loadAssets();
 }
 
@@ -2159,13 +2174,35 @@ async function loadAssets() {
   // purchase info (effectiveAssetValue, depreciation.js), not the stored
   // value - every other asset type is unaffected.
   const listedAssets = topLevelAssets(); // holdings show on the Investments tab, not here
-  $("assetsList").innerHTML = listedAssets.length
-    ? listedAssets.map((a) => `
+  // Investments collapse to ONE line here rather than one row per account.
+  // They have a whole page of their own, and listing each brokerage and
+  // retirement account again on Log just split the same information across
+  // two places. The figure is computed the same way the Investments page's
+  // own "Total value" is - same countableInvestmentAssets() and
+  // portfolioTotals() - so the two cannot drift apart or disagree.
+  const investmentRows = listedAssets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type));
+  const otherRows = listedAssets.filter((a) => !INVESTMENT_ASSET_TYPES.has(a.type));
+  const countable = countableInvestmentAssets();
+  const investTotal = portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable).totalValue;
+
+  const rowFor = (a) => `
       <div class="exp" ${linkedAssetIds.has(a.id) ? "" : `data-edit-asset="${a.id}" style="cursor:pointer"`}>
         <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}</div>`}${esc(a.name)}</div>
         <span class="amt">${fmt(effectiveAssetValue(a))}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
-      </div>`).join("")
+      </div>`;
+  // Tapping it goes to the Investments page rather than opening an edit
+  // form: there is no single asset behind this line to edit.
+  const investmentRow = investmentRows.length ? `
+      <div class="exp" id="assetsInvestmentRow" style="cursor:pointer">
+        <div><div class="meta">${investmentRows.length} account${investmentRows.length === 1 ? "" : "s"}</div>Investments</div>
+        <span class="amt">${fmt(investTotal)}</span>
+      </div>` : "";
+
+  $("assetsList").innerHTML = listedAssets.length
+    ? otherRows.map(rowFor).join("") + investmentRow
     : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
+  const investRow = $("assetsInvestmentRow");
+  if (investRow) investRow.onclick = () => { goToView("invest"); };
   document.querySelectorAll("[data-edit-asset]").forEach((el) => {
     el.onclick = () => openAssetForm(assets.find((a) => a.id === el.dataset.editAsset));
   });
@@ -2200,7 +2237,6 @@ async function loadAssets() {
     .map((a) => `${a.name} last updated ${a.monthsSince} month${a.monthsSince === 1 ? "" : "s"} ago`).join(" · ");
   renderNetWorth();
   renderAccountsList(); // a changed asset value may be a linked account's balance line
-  renderAssetPriceFindings();
   renderInvestments();
 }
 
@@ -2212,65 +2248,22 @@ async function loadAssets() {
 // 27_asset_quantity.sql) - refuses rather than guessing 1, since silently
 // setting a multi-share holding's value to a single share's price would
 // be a real, wrong financial number.
-function renderAssetPriceFindings() {
-  const card = $("assetPriceFindingsCard");
-  if (!card) return;
-  if (!PRICE_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
-  renderPricesAsOf("assetPriceFindingsFreshness", latestFinnhubRefresh(assetPriceFindings));
-
-  const bySymbol = new Map();
-  for (const a of assets) {
-    if (!a.price_symbol) continue;
-    const key = a.price_symbol.trim().toUpperCase();
-    if (!bySymbol.has(key)) bySymbol.set(key, []);
-    bySymbol.get(key).push(a);
-  }
-  const matches = assetPriceFindings.filter((f) => bySymbol.has((f.symbol || "").trim().toUpperCase()));
-
-  if (!matches.length) {
-    $("assetPriceFindingsList").innerHTML = `<p class="muted" style="font-size:13px">No live findings yet for your assets.</p>`;
-    return;
-  }
-  $("assetPriceFindingsList").innerHTML = matches.map((f, i) => {
-    // f.url/f.symbol/f.currency trace back to tools/price-agent.js, which
-    // is server-side and gates outbound fetches through a domain allowlist
-    // (hostAllowed) - but the finding text itself is still Gemma output
-    // derived from a scraped page, so it's escaped/attribute-safe here too,
-    // not trusted just because it didn't come from this app's own users.
-    const link = f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
-    return `
-      <div class="exp" style="cursor:default">
-        <div>
-          <div>${esc(f.symbol)}</div>
-          <div class="meta">${fmt(f.price)} ${esc(f.currency || "USD")} ${link}</div>
-        </div>
-        <span class="amt" style="font-size:12px;cursor:pointer;text-decoration:underline;color:var(--accent)" data-apply-price-idx="${i}">Apply</span>
-      </div>`;
-  }).join("");
-  document.querySelectorAll("[data-apply-price-idx]").forEach((el) => {
-    el.onclick = async () => {
-      const finding = matches[Number(el.dataset.applyPriceIdx)];
-      const targets = bySymbol.get((finding.symbol || "").trim().toUpperCase()) || [];
-      let applied = 0;
-      const parentsToSync = new Set();
-      for (const asset of targets) {
-        if (!asset.quantity) { toast(`Set a quantity for ${asset.name} first`); continue; }
-        const newValue = Math.round(Number(finding.price) * Number(asset.quantity) * 100) / 100;
-        const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-        if (error) { toast(error.message); continue; }
-        applied++;
-        // A holding's own .value is never read by anything on its own -
-        // only the parent account's rolled-up value matters for net worth
-        // (CLAUDE.md) - without this, "Apply" on a holding looked
-        // successful but changed nothing anywhere.
-        if (asset.parent_asset_id) parentsToSync.add(asset.parent_asset_id);
-      }
-      for (const parentId of parentsToSync) await syncParentAssetValue(parentId);
-      if (applied) { await loadAssets(); toast(`Applied live price to ${applied} asset${applied === 1 ? "" : "s"}`); }
-    };
-  });
-}
+// The Log page's "Live asset prices" card was REMOVED (2026-08-26). It
+// listed every row in asset_price_findings for a symbol the user held, and
+// that table gets one row per symbol every 15 minutes, so a single AAPL
+// holding produced a wall of near-identical rows - the same price over and
+// over with an Apply link beside each.
+//
+// Deduping it to one row per symbol would have fixed the wall but left an
+// investments card sitting on the Log page, which is not where investments
+// live. The Assets card now shows investments as one combined line instead,
+// and the per-symbol detail stays on the Investments page where the rest of
+// it already is.
+//
+// Its only unique function was the manual "Apply", which wrote live price x
+// quantity into an asset's value. That is now automatic for every priced
+// asset - see syncAllParentAssetValues(), which covers standalone priced
+// assets as well as parents with holdings - so nothing was lost with it.
 
 // No linked asset (Checking or Cash) may ever go negative, on any path -
 // manual adjust panel (see adjustSubtractBtn/adjustSetBtn above) or expense

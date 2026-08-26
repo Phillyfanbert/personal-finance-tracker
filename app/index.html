@@ -102,6 +102,37 @@
     .modal .sheet { background: var(--panel); width: 100%; max-width: 560px;
       border-radius: 16px 16px 0 0; border: 1px solid var(--border); padding: 18px;
       max-height: 90vh; overflow-y: auto; }
+    /* First-run guided tour (app/tour.js + startTour() in app.js).
+       Above .modal's 70 so the tour can point at a modal's own controls
+       later if needed, but below .toast's 80 so a toast fired mid-tour is
+       still readable. */
+    .tour { position: fixed; inset: 0; z-index: 75; }
+    /* One element does the dimming AND the ring: a huge spread box-shadow
+       darkens everything outside this rect, so there is no clip-path and no
+       four framing divs to keep in sync. pointer-events:none lets the hole
+       stay visually "live" without the user being able to click through to
+       a half-explained control mid-tour (.tour itself catches those). */
+    .tour-spot { position: absolute; border-radius: 12px; pointer-events: none;
+      border: 2px solid var(--accent); box-shadow: 0 0 0 9999px rgba(0,0,0,.72);
+      transition: top .25s, left .25s, width .25s, height .25s; }
+    .tour-card { position: absolute; width: min(340px, calc(100vw - 32px));
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+      padding: 16px; box-shadow: 0 12px 32px rgba(0,0,0,.5); }
+    /* The arrow. Rotated square rather than a border triangle so it can
+       carry the same border and background as the card and read as one
+       shape; the clip hides the two edges that would show through. */
+    .tour-arrow { position: absolute; width: 14px; height: 14px; background: var(--panel);
+      border: 1px solid var(--border); transform: rotate(45deg); }
+    .tour-arrow.up { top: -8px; border-right: none; border-bottom: none; }
+    .tour-arrow.down { bottom: -8px; border-left: none; border-top: none; }
+    .tour-card h3 { margin: 0 0 6px; font-size: 16px; }
+    .tour-card p { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+    .tour-diagram { margin: 10px 0 0; }
+    .tour-diagram svg { width: 100%; height: auto; max-height: 34vh; }
+    .tour-actions { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+    .tour-actions button { width: auto; padding: 8px 14px; font-size: 13px; }
+    .tour-step-count { font-size: 12px; color: var(--muted); margin-right: auto; }
+
     /* Help ("?") button, one per view topbar - small and circular so it
        reads as a secondary/reference action, not competing with the
        page's real buttons (Profile, + Add, ...) for attention. */
@@ -202,7 +233,7 @@
         </div>
       </div>
 
-      <div class="totals">
+      <div class="totals" id="logTotals">
         <div class="card"><div class="muted" style="font-size:12px">This month</div><div class="big" id="monthTotal">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Entries</div><div class="big" id="monthCount">0</div></div>
         <!-- Reads 0 rather than a blank when nothing is logged: for every
@@ -222,7 +253,7 @@
       </div>
 
       <!-- Quick add -->
-      <div class="card quickadd">
+      <div class="card quickadd" id="quickAddCard">
         <strong>Expenses Quick Add</strong>
         <label for="quick" class="hidden">Quick add</label>
         <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" style="margin-top:8px" />
@@ -252,7 +283,7 @@
       </div>
 
       <!-- Expense list -->
-      <div class="card">
+      <div class="card" id="recentHistoryCard">
         <strong>Recent History</strong>
         <!-- Four independent filters, all AND-ed together (see
              filteredTransactions in app.js). A label above each one names
@@ -329,7 +360,7 @@
            limit you are deciding right now is about the month you are in.
            renderBudgets() is called from loadExpenses (app.js), not from
            renderReports, for the same reason. -->
-      <div class="card">
+      <div class="card" id="budgetsCard">
         <strong>Budgets</strong>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Monthly limit per category, for the current month.</p>
         <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
@@ -349,7 +380,7 @@
       <!-- Accounts = payment methods, used to tag expenses. NOT counted in net
            worth - see Assets below for that. Kept visually + conceptually
            separate from Assets/Liabilities per that distinction. -->
-      <div class="card">
+      <div class="card" id="accountsCard">
         <div class="topbar" style="margin-bottom:4px">
           <strong>Accounts</strong>
           <div>
@@ -470,7 +501,7 @@
 
       <!-- Assets = what you own, counted in net worth. Separate from Accounts
            above (payment methods) even if a bank account appears in both. -->
-      <div class="card">
+      <div class="card" id="assetsCard">
         <div class="topbar" style="margin-bottom:4px">
           <strong>Assets</strong>
           <span class="muted" style="font-size:12px" id="assetsTotal">$0</span>
@@ -694,7 +725,7 @@
            and Liabilities, which is where the rest of this app's money
            movement already lives. See app/income.js for the
            cadence-stepping logic. -->
-      <div class="card">
+      <div class="card" id="incomeSourcesCard">
         <div class="topbar" style="margin-bottom:6px">
           <strong>Income sources</strong>
           <button class="secondary" id="addIncomeBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
@@ -764,7 +795,7 @@
         <select id="monthSel" style="width:auto"></select>
       </div>
 
-      <div class="totals">
+      <div class="totals" id="reportTotals">
         <div class="card"><div class="muted" style="font-size:12px">Selected month</div><div class="big" id="rptTotal">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Subscriptions/Bills</div><div class="big" id="rptSubs">$0</div></div>
         <!-- Liquid assets / average of the last 3 months' spending - a
@@ -802,7 +833,7 @@
            (no account activity) - this card is about spending for the month,
            not every balance change. Scrollable so a busy month doesn't push
            every chart below it far down the page - see renderReports (app.js). -->
-      <div class="card">
+      <div class="card" id="rptExpListCard">
         <div class="topbar" style="margin-bottom:4px">
           <strong>Monthly Expense Log</strong>
           <div class="row" style="width:auto;gap:6px">
@@ -829,7 +860,7 @@
         <div class="chartbox short"><canvas id="payChart"></canvas></div>
       </div>
 
-      <div class="card">
+      <div class="card" id="trendCard">
         <strong>Last 6 months</strong>
         <div class="chartbox short"><canvas id="trendChart"></canvas></div>
       </div>
@@ -904,7 +935,7 @@
         <button class="secondary" id="addSubBtn" style="width:auto;padding:8px 12px">+ Add</button>
       </div>
 
-      <div class="totals">
+      <div class="totals" id="subsTotals">
         <div class="card"><div class="muted" style="font-size:12px">Monthly total</div><div class="big" id="subsTotalMonthly">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Yearly</div><div class="big" id="subsTotalYearly">$0</div></div>
       </div>
@@ -1018,7 +1049,7 @@
            already a compilation of numbers computed elsewhere on this page,
            so it stands as the permanent answer to "how am I doing?" while
            the tabs below hold the detail behind it. -->
-      <div class="card">
+      <div class="card" id="investHealthCard">
         <strong>Daily health check</strong>
         <div id="investHealthList" style="margin-top:10px"></div>
         <div class="chartbox tiny" style="margin-top:10px"><canvas id="investHealthTrendChart"></canvas></div>
@@ -1727,9 +1758,16 @@
         <button class="help-pill" data-help-page="invest">Investments</button>
       </div>
 
+      <p class="muted" style="font-size:12px;margin:0 0 10px">A short guided tour runs automatically the first time you open each page, pointing at each part in turn. It only runs once per page per device, and finishing or skipping it counts as done - use the button below to see it again.</p>
+
+      <!-- Replays the guided tour for whichever page's help is open. The
+           tour marks itself seen once finished or skipped, so this is the
+           only way back to it. -->
+      <button class="secondary" id="helpReplayTour" style="width:auto;padding:8px 14px;font-size:13px;margin-bottom:12px">Replay the guided tour for this page</button>
+
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 498" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramLog" viewBox="0 0 680 498" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Expenses Quick Add</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1818,7 +1856,7 @@
       </div>
       <div id="helpContentSubs" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 336" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramSubs" viewBox="0 0 680 336" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Recurring expenses found (only when any are detected)</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1868,7 +1906,7 @@
       </div>
       <div id="helpContentReports" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 606" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramReports" viewBox="0 0 680 606" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Ask about your spending</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1949,7 +1987,7 @@
       </div>
       <div id="helpContentInvest" class="hidden">
         <div class="help-diagram">
-          <svg viewBox="0 0 680 548" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramInvest" viewBox="0 0 680 548" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="34" fill="var(--text)" font-size="14">Daily health check + totals (always shown)</text>
             <text x="28" y="78" fill="var(--accent)" font-size="13" font-weight="600">Market tab</text>
@@ -2072,6 +2110,25 @@
           <h3>Target allocation</h3>
           <p>A calculator, not advice: set a risk label for your own reference (it isn't used in any calculation) and a target percentage for each bucket (Stocks, Bonds, Cash, Crypto, Real Estate, Other) that you've tagged your assets/holdings with. It only ever shows your current percentage against that target and the dollar gap between them - it never tells you what to actually buy or sell, and never will.</p>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- First-run guided tour. Built once here and moved/retargeted per
+       step rather than rebuilt, so the spotlight can animate between
+       targets. Starts hidden; startTour() in app.js drives it. -->
+  <div id="tour" class="tour hidden">
+    <div id="tourSpot" class="tour-spot"></div>
+    <div id="tourCard" class="tour-card">
+      <div id="tourArrow" class="tour-arrow up"></div>
+      <h3 id="tourTitle"></h3>
+      <p id="tourBody"></p>
+      <div id="tourDiagram" class="tour-diagram hidden"></div>
+      <div class="tour-actions">
+        <span class="tour-step-count" id="tourCount"></span>
+        <button class="secondary" id="tourSkip">Skip</button>
+        <button class="secondary hidden" id="tourBack">Back</button>
+        <button id="tourNext">Next</button>
       </div>
     </div>
   </div>

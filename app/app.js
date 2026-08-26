@@ -31,6 +31,7 @@ import { parseWithGemma, askGemma, warmUpGemma, embedText } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth, emergencyFundCoverage } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
+import { TOUR_STEPS, visibleSteps, clampStep } from "./tour.js";
 
 const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, GEMMA_EMBED_MODEL, GEMMA_AUTH_KEY, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 // Ollama's embeddings endpoint, derived from GEMMA_ENDPOINT (the full
@@ -224,16 +225,20 @@ function renderAuth(session) {
       if (view === "subs") loadSubscriptions();
       else if (view === "reports") loadReports();
       else if (view === "invest") { renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor(); }
+      // Deliberately after init() resolves, not inside showView(): a card
+      // that has not rendered its data yet measures as zero-height, and
+      // visibleSteps() would then drop most of the tour as "not visible".
+      maybeStartTour(view);
     });
   }
   else { $("logView").classList.add("hidden"); $("subsView").classList.add("hidden"); $("reportsView").classList.add("hidden"); $("investView").classList.add("hidden"); }
 }
 
 // ---- NAVIGATION ------------------------------------------------------------
-$("navLog").onclick = () => showView("log");
-$("navSubs").onclick = () => { showView("subs"); loadSubscriptions(); };
-$("navReports").onclick = () => { showView("reports"); loadReports(); };
-$("navInvest").onclick = () => { showView("invest"); renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor(); };
+$("navLog").onclick = () => { showView("log"); maybeStartTour("log"); };
+$("navSubs").onclick = () => { showView("subs"); loadSubscriptions(); maybeStartTour("subs"); };
+$("navReports").onclick = () => { showView("reports"); loadReports(); maybeStartTour("reports"); };
+$("navInvest").onclick = () => { showView("invest"); renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor(); maybeStartTour("invest"); };
 $("backFromSubs").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
 $("backFromInvest").onclick = () => showView("log");
@@ -6663,11 +6668,206 @@ function openHelp(page) {
   });
   $("helpModal").classList.remove("hidden");
 }
+// ---- FIRST-RUN GUIDED TOUR -------------------------------------------------
+// Step content and the visibility filter live in tour.js (pure); everything
+// here is the DOM half - measuring targets, moving the spotlight, and
+// remembering which pages have been toured.
+//
+// Per-device via localStorage, matching lastView/investTab rather than the
+// profiles table: this is UI state, not account data, and seeing the tour
+// once on a phone and once on a desktop is reasonable rather than a bug.
+const tourSeenKey = (view) => `tourDone:${view}`;
+const tourSeen = (view) => localStorage.getItem(tourSeenKey(view)) === "1";
+const markTourSeen = (view) => localStorage.setItem(tourSeenKey(view), "1");
+
+let tourView = null;
+let tourSteps = [];
+let tourIndex = -1;
+
+// A target has to exist and actually be rendered.
+//
+// getClientRects().length is the test rather than a width/height check: a
+// display:none element (which .hidden sets) generates no boxes and returns
+// 0, while a rendered element returns at least one box even when it is
+// currently zero-width. Measuring width instead dropped every full-width
+// card the moment the viewport was narrow, which is a real failure mode on
+// a small screen and not just a testing artifact. offsetParent is no good
+// here either - it is null for a position:fixed element, and the nav this
+// tour points at is fixed.
+function tourTargetShowable(id) {
+  const el = $(id);
+  if (!el) return false;
+  return el.getClientRects().length > 0;
+}
+
+function endTour(markSeen = true) {
+  if (markSeen && tourView) markTourSeen(tourView);
+  tourView = null;
+  tourSteps = [];
+  tourIndex = -1;
+  $("tour").classList.add("hidden");
+}
+
+function renderTourStep() {
+  const step = tourSteps[tourIndex];
+  if (!step) return endTour();
+  const target = $(step.target);
+  if (!target) return tourGo(1);
+
+  $("tourTitle").textContent = step.title;
+  $("tourBody").textContent = step.body;
+  $("tourCount").textContent = `${tourIndex + 1} of ${tourSteps.length}`;
+  $("tourBack").classList.toggle("hidden", tourIndex === 0);
+  $("tourNext").textContent = tourIndex === tourSteps.length - 1 ? "Done" : "Next";
+
+  // The opening step of each page shows that page's help diagram. Cloned
+  // from the help modal rather than restated here, so it cannot drift from
+  // the diagram the help sheet shows - see tour.js's note on `diagram`.
+  const diagramBox = $("tourDiagram");
+  diagramBox.innerHTML = "";
+  const source = step.diagram ? $(step.diagram) : null;
+  if (source) {
+    const copy = source.cloneNode(true);
+    copy.removeAttribute("id"); // never two nodes sharing the source's id
+    diagramBox.appendChild(copy);
+  }
+  diagramBox.classList.toggle("hidden", !source);
+
+  // behavior:"auto" scrolls synchronously, so the rect read straight after
+  // it already describes the post-scroll position - no frame to wait for,
+  // and measuring here rather than in a rAF keeps this working in a tab
+  // that is not currently visible (see maybeStartTour for why that matters).
+  if (step.placement !== "center") {
+    target.scrollIntoView({ block: "center", behavior: "auto" });
+  }
+  positionTourStep(step, target);
+}
+
+function positionTourStep(step, target) {
+  const spot = $("tourSpot");
+  const card = $("tourCard");
+  const arrow = $("tourArrow");
+  const r = target.getBoundingClientRect();
+  const pad = 6;
+
+  // "center" is the page-level opening step: dim everything, no ring around
+  // a whole view, and put the card in the middle.
+  if (step.placement === "center") {
+    // Collapsed to nothing at the centre rather than display:none - the
+    // dimming IS this element's box-shadow, so hiding it would leave the
+    // opening step sitting on an undimmed page. Border goes transparent so
+    // the collapsed ring is not a visible dot.
+    spot.style.display = "";
+    spot.style.borderColor = "transparent";
+    spot.style.top = "50%";
+    spot.style.left = "50%";
+    spot.style.width = "0px";
+    spot.style.height = "0px";
+    card.style.top = "50%";
+    card.style.left = "50%";
+    card.style.transform = "translate(-50%, -50%)";
+    arrow.classList.add("hidden");
+    return;
+  }
+
+  spot.style.display = "";
+  spot.style.borderColor = "";
+  card.style.transform = "";
+  arrow.classList.remove("hidden");
+  spot.style.top = `${r.top - pad}px`;
+  spot.style.left = `${r.left - pad}px`;
+  spot.style.width = `${r.width + pad * 2}px`;
+  spot.style.height = `${r.height + pad * 2}px`;
+
+  const cardH = card.offsetHeight;
+  const gap = 14;
+  // Honour the step's preference only when it actually fits - otherwise a
+  // step near the bottom of the viewport would render its card off-screen.
+  const roomBelow = window.innerHeight - r.bottom;
+  const below = step.placement === "bottom" ? roomBelow > cardH + gap : !(r.top > cardH + gap);
+  const top = below ? r.bottom + gap : r.top - cardH - gap;
+
+  card.style.top = `${Math.max(8, Math.min(top, window.innerHeight - cardH - 8))}px`;
+  const cardW = card.offsetWidth;
+  const left = r.left + r.width / 2 - cardW / 2;
+  card.style.left = `${Math.max(8, Math.min(left, window.innerWidth - cardW - 8))}px`;
+
+  arrow.classList.toggle("up", below);
+  arrow.classList.toggle("down", !below);
+  // Point at the target's centre, clamped so the arrow stays on the card.
+  const arrowLeft = r.left + r.width / 2 - parseFloat(card.style.left) - 7;
+  arrow.style.left = `${Math.max(14, Math.min(arrowLeft, cardW - 28))}px`;
+}
+
+function tourGo(delta) {
+  const next = tourIndex + delta;
+  if (next < 0) return;
+  if (next >= tourSteps.length) return endTour();
+  tourIndex = clampStep(next, tourSteps.length);
+  renderTourStep();
+}
+
+// `force` is the Replay path from the help sheet - it ignores both the
+// seen flag and the "already running" guard.
+function startTour(view, force = false) {
+  if (!force && tourSeen(view)) return;
+  if (tourView && !force) return;
+  const steps = visibleSteps(TOUR_STEPS[view] || [], tourTargetShowable);
+  if (!steps.length) return;
+  tourView = view;
+  tourSteps = steps;
+  tourIndex = 0;
+  $("tour").classList.remove("hidden");
+  renderTourStep();
+}
+
+// A short timeout, deliberately NOT requestAnimationFrame. rAF does not fire
+// at all while a tab is hidden, so a first load in a background tab (or any
+// tab the browser considers not visible) left the tour silently never
+// starting - it only appeared if and when the tab was focused. A timeout
+// fires regardless of visibility. The delay exists because showView() only
+// toggles .hidden and the freshly-shown view needs one style recalculation
+// before its cards measure as anything other than zero-height.
+function maybeStartTour(view) {
+  if (tourSeen(view)) return;
+  setTimeout(() => startTour(view), 60);
+}
+
+$("tourNext").onclick = () => tourGo(1);
+$("tourBack").onclick = () => tourGo(-1);
+$("tourSkip").onclick = () => endTour();
+// Reposition rather than close: an orientation change, a keyboard
+// dismissal, or the step's own scrollIntoView would otherwise leave the ring
+// pointing at empty space.
+//
+// **Body scroll is deliberately NOT locked while the tour runs**, which was
+// the first instinct and is wrong: the spotlight is positioned from a
+// viewport rect, but each step reaches its target BY scrolling, so locking
+// scroll stopped scrollIntoView from doing anything and left the ring stuck
+// on the previous target with the card off-screen. Repositioning on scroll
+// keeps the ring attached instead, and the full-screen overlay already stops
+// the user scrolling the page out from under it by hand.
+function repositionCurrentTourStep() {
+  if (!tourView) return;
+  const step = tourSteps[tourIndex];
+  const target = step && $(step.target);
+  if (target) positionTourStep(step, target);
+}
+window.addEventListener("resize", repositionCurrentTourStep);
+window.addEventListener("scroll", repositionCurrentTourStep, { passive: true });
+
 $("helpLogBtn").onclick = () => openHelp("log");
 $("helpSubsBtn").onclick = () => openHelp("subs");
 $("helpReportsBtn").onclick = () => openHelp("reports");
 $("helpInvestBtn").onclick = () => openHelp("invest");
 $("helpClose").onclick = () => $("helpModal").classList.add("hidden");
+// Replays the tour for whichever page's help is currently open. Closes the
+// sheet first so the spotlight is measuring the real page, not a modal.
+$("helpReplayTour").onclick = () => {
+  const page = document.querySelector("[data-help-page].active")?.dataset.helpPage || lastView();
+  $("helpModal").classList.add("hidden");
+  setTimeout(() => startTour(page, true), 60);
+};
 document.querySelectorAll("[data-help-page]").forEach((el) => {
   el.onclick = () => openHelp(el.dataset.helpPage);
 });

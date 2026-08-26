@@ -222,9 +222,10 @@ function renderAuth(session) {
     // needs no extra call since its own cards already self-render as each
     // of init()'s loadX() calls completes, the same way they always have.
     init().then(() => {
-      if (view === "subs") loadSubscriptions();
-      else if (view === "reports") loadReports();
-      else if (view === "invest") { renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor(); }
+      // Same helper the nav buttons use, so "what does this view need
+      // loaded" has exactly one definition. showView() above already ran;
+      // calling it again here is harmless and keeps this to one call.
+      goToView(view);
       // Deliberately after init() resolves, not inside showView(): a card
       // that has not rendered its data yet measures as zero-height, and
       // visibleSteps() would then drop most of the tour as "not visible".
@@ -235,10 +236,26 @@ function renderAuth(session) {
 }
 
 // ---- NAVIGATION ------------------------------------------------------------
-$("navLog").onclick = () => { showView("log"); maybeStartTour("log"); };
-$("navSubs").onclick = () => { showView("subs"); loadSubscriptions(); maybeStartTour("subs"); };
-$("navReports").onclick = () => { showView("reports"); loadReports(); maybeStartTour("reports"); };
-$("navInvest").onclick = () => { showView("invest"); renderInvestments(); renderInvestmentsTrend(); renderMarketOverview(); renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor(); maybeStartTour("invest"); };
+// Switching to a view and loading what that view needs, in one place. Kept as
+// a function rather than repeated per button because a second caller (the
+// help sheet's "Replay the guided tour" button) needs exactly the same thing,
+// and the first version of that button skipped it - it started a page's tour
+// without switching to the page, so every target was still hidden and the
+// tour filtered itself down to whichever step happened to point at the
+// always-visible nav. It looked like the button did nothing.
+function goToView(view) {
+  showView(view);
+  if (view === "subs") loadSubscriptions();
+  else if (view === "reports") loadReports();
+  else if (view === "invest") {
+    renderInvestments(); renderInvestmentsTrend(); renderMarketOverview();
+    renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor();
+  }
+}
+$("navLog").onclick = () => { goToView("log"); maybeStartTour("log"); };
+$("navSubs").onclick = () => { goToView("subs"); maybeStartTour("subs"); };
+$("navReports").onclick = () => { goToView("reports"); maybeStartTour("reports"); };
+$("navInvest").onclick = () => { goToView("invest"); maybeStartTour("invest"); };
 $("backFromSubs").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
 $("backFromInvest").onclick = () => showView("log");
@@ -7007,6 +7024,11 @@ $("helpClose").onclick = () => $("helpModal").classList.add("hidden");
 $("helpReplayTour").onclick = () => {
   const page = document.querySelector("[data-help-page].active")?.dataset.helpPage || lastView();
   $("helpModal").classList.add("hidden");
+  // Switch to the page first. The help sheet can show any page's help via its
+  // pill row, so the page being read about is frequently NOT the one on
+  // screen - and a tour whose targets are all hidden filters down to nothing
+  // and silently does not appear.
+  goToView(page);
   setTimeout(() => startTour(page, true), 60);
 };
 document.querySelectorAll("[data-help-page]").forEach((el) => {

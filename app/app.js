@@ -3314,6 +3314,9 @@ let csvMapping = { dateCol: null, amountCol: null, descCol: null, categoryCol: n
 let csvPreviewRows = []; // { normalized, duplicate }[] - only successfully-normalized rows
 let csvSkippedCount = 0; // rows that failed to normalize (bad date/amount)
 let csvLastImportedIds = []; // this session's last import - Undo target
+// Income from the same import lands in account_activity, not expenses, so
+// Undo has to track both id sets to take the whole import back out.
+let csvLastImportedActivityIds = [];
 
 function resetCsvImportState() {
   csvHeaders = []; csvDataRows = [];
@@ -3371,9 +3374,22 @@ $("csvFileInput").onchange = () => {
     csvMapping = guessColumnMapping(csvHeaders);
     $("csvMapDate").innerHTML = csvColumnOptions(csvMapping.dateCol);
     $("csvMapAmount").innerHTML = csvColumnOptions(csvMapping.amountCol);
+    $("csvMapDebit").innerHTML = csvColumnOptions(csvMapping.debitCol);
+    $("csvMapCredit").innerHTML = csvColumnOptions(csvMapping.creditCol);
     $("csvMapDesc").innerHTML = csvColumnOptions(csvMapping.descCol);
     $("csvMapCategory").innerHTML = csvColumnOptions(csvMapping.categoryCol);
-    $("csvFlipSign").checked = guessSignConvention(csvDataRows, csvMapping);
+    // A file with separate money-out/money-in columns states the direction
+    // by which column a value sits in, so the sign question does not apply
+    // and asking it would only confuse.
+    const hasPair = csvMapping.debitCol != null && csvMapping.creditCol != null;
+    $("csvDebitCreditCols").classList.toggle("hidden", !hasPair);
+    $("csvAmountCol").classList.toggle("hidden", hasPair);
+    $("csvFlipSignLabel").classList.toggle("hidden", hasPair);
+    $("csvFlipSign").checked = !hasPair && guessSignConvention(csvDataRows, csvMapping);
+    // Default to whichever reading the file itself supports: a pair or a
+    // signed column can carry both directions, so start on "both".
+    $("csvRowKind").value = "auto";
+    updateCsvRowKindHint();
     const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at);
     $("csvAccount").innerHTML = spendable.length
       ? spendable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("")
@@ -3390,31 +3406,64 @@ $("csvStep2Back").onclick = () => {
   $("csvStep1").classList.remove("hidden");
 };
 
+// Says, in words, what the chosen option will actually do to this file -
+// the difference between "both" and "only what I spent" is not obvious from
+// the labels alone when a file contains a mix.
+function updateCsvRowKindHint() {
+  const hint = {
+    auto: "Each row is read as money out or money in, whichever it is.",
+    expense: "Only money going out is brought in. Anything you were paid is skipped.",
+    income: "Only money coming in is brought in. Anything you spent is skipped.",
+  };
+  $("csvRowKindHint").textContent = hint[$("csvRowKind").value] || "";
+}
+$("csvRowKind").onchange = updateCsvRowKindHint;
+
 $("csvStep2Next").onclick = () => {
-  const dateCol = $("csvMapDate").value !== "" ? Number($("csvMapDate").value) : null;
-  const amountCol = $("csvMapAmount").value !== "" ? Number($("csvMapAmount").value) : null;
-  if (dateCol == null || amountCol == null) { flagField(["csvMapDate", "csvMapAmount"]); return toast("Pick a Date and an Amount column"); }
-  if (!$("csvAccount").value) { flagField("csvAccount"); return toast("Pick an account to import into"); }
+  const num = (id) => ($(id).value !== "" ? Number($(id).value) : null);
+  const dateCol = num("csvMapDate");
+  const usingPair = !$("csvDebitCreditCols").classList.contains("hidden");
+  const amountCol = usingPair ? null : num("csvMapAmount");
+  const debitCol = usingPair ? num("csvMapDebit") : null;
+  const creditCol = usingPair ? num("csvMapCredit") : null;
+
+  if (dateCol == null) { flagField("csvMapDate"); return toast("Pick which column holds the date"); }
+  if (!usingPair && amountCol == null) { flagField("csvMapAmount"); return toast("Pick which column holds the amount"); }
+  if (usingPair && debitCol == null && creditCol == null) {
+    flagField(["csvMapDebit", "csvMapCredit"]);
+    return toast("Pick at least one of the money-out or money-in columns");
+  }
+  if (!$("csvAccount").value) { flagField("csvAccount"); return toast("Pick which account this file is for"); }
+
   csvMapping = {
-    dateCol, amountCol,
-    descCol: $("csvMapDesc").value !== "" ? Number($("csvMapDesc").value) : null,
-    categoryCol: $("csvMapCategory").value !== "" ? Number($("csvMapCategory").value) : null,
+    dateCol, amountCol, debitCol, creditCol,
+    descCol: num("csvMapDesc"),
+    categoryCol: num("csvMapCategory"),
   };
   const flipSign = $("csvFlipSign").checked;
+  const rowKind = $("csvRowKind").value;
 
   csvPreviewRows = [];
   csvSkippedCount = 0;
   for (const raw of csvDataRows) {
-    const normalized = normalizeRow(raw, csvMapping, { flipSign });
+    const normalized = normalizeRow(raw, csvMapping, { flipSign, rowKind });
     if (!normalized) { csvSkippedCount++; continue; }
-    csvPreviewRows.push({ normalized, duplicate: isLikelyDuplicate(normalized, allExpenses) });
+    // Only expenses can duplicate an existing expense; an income row is
+    // checked against nothing, so it never starts unticked for that reason.
+    const duplicate = normalized.kind === "expense" && isLikelyDuplicate(normalized, allExpenses);
+    csvPreviewRows.push({ normalized, duplicate });
   }
 
   const dupCount = csvPreviewRows.filter((r) => r.duplicate).length;
+  const incomeCount = csvPreviewRows.filter((r) => r.normalized.kind === "income").length;
+  const spendCount = csvPreviewRows.length - incomeCount;
+  const parts = [];
+  if (spendCount) parts.push(`${spendCount} thing${spendCount === 1 ? "" : "s"} you spent`);
+  if (incomeCount) parts.push(`${incomeCount} payment${incomeCount === 1 ? "" : "s"} you received`);
   $("csvPreviewSummary").textContent =
-    `${csvPreviewRows.length} row${csvPreviewRows.length === 1 ? "" : "s"} ready to import` +
-    (dupCount ? `, ${dupCount} flagged as possible duplicates` : "") +
-    (csvSkippedCount ? `. ${csvSkippedCount} row${csvSkippedCount === 1 ? "" : "s"} skipped (couldn't read a date/amount).` : ".");
+    (parts.length ? `Found ${parts.join(" and ")}.` : "Nothing usable found in this file.") +
+    (dupCount ? ` ${dupCount} look${dupCount === 1 ? "s" : ""} like something you already have.` : "") +
+    (csvSkippedCount ? ` ${csvSkippedCount} row${csvSkippedCount === 1 ? " was" : "s were"} skipped - no readable date or amount, or pointing the other way.` : "");
 
   $("csvPreviewList").innerHTML = csvPreviewRows.length
     ? csvPreviewRows.map((r, i) => `
@@ -3422,11 +3471,11 @@ $("csvStep2Next").onclick = () => {
         <div style="display:flex;align-items:center;gap:8px;min-width:0">
           <input type="checkbox" class="csv-row-select" data-csv-idx="${i}" ${r.duplicate ? "" : "checked"} style="width:auto;flex-shrink:0" />
           <div style="min-width:0">
-            <div>${esc(r.normalized.description || "(no description)")}${r.duplicate ? ` <span class="muted" style="font-size:11px">possible duplicate</span>` : ""}</div>
-            <div class="meta">${r.normalized.occurred_at}${r.normalized.category ? " · " + esc(r.normalized.category) : ""}</div>
+            <div>${esc(r.normalized.description || "(no description)")}${r.duplicate ? ` <span class="muted" style="font-size:11px">you may already have this</span>` : ""}</div>
+            <div class="meta">${r.normalized.occurred_at}${r.normalized.kind === "income" ? " · money in" : ""}${r.normalized.category ? " · " + esc(r.normalized.category) : ""}</div>
           </div>
         </div>
-        <span class="amt">${fmt(r.normalized.amount)}</span>
+        <span class="amt" style="color:${r.normalized.kind === "income" ? "var(--ok)" : "var(--text)"}">${r.normalized.kind === "income" ? "+" : ""}${fmt(r.normalized.amount)}</span>
       </div>`).join("")
     : `<p class="muted" style="font-size:13px">No valid rows found in this file.</p>`;
 
@@ -3450,7 +3499,7 @@ $("csvImportConfirm").onclick = async () => {
   const importAccount = accounts.find((a) => a.id === accountId);
   const paymentType = importAccount.type;
 
-  const rows = toImport.map((r) => ({
+  const rows = toImport.filter((r) => r.normalized.kind === "expense").map((r) => ({
     amount: r.normalized.amount,
     description: r.normalized.description,
     merchant: null,
@@ -3460,35 +3509,78 @@ $("csvImportConfirm").onclick = async () => {
     occurred_at: r.normalized.occurred_at,
     source: "import",
   }));
+  // Income lands in account_activity, the same table autoLogDueIncome()
+  // writes to, so an imported paycheck shows up in Recent History and in
+  // income-vs-expense exactly like one the app logged itself.
+  //
+  // **Deliberately does NOT call applyAssetDelta**, for the identical reason
+  // the expense side above does not: these already happened, and the
+  // account's real balance already includes them. Crediting them again would
+  // count the money twice. See CLAUDE.md's note on the import path.
+  const incomeRows = toImport.filter((r) => r.normalized.kind === "income").map((r) => ({
+    kind: "income",
+    description: r.normalized.description || "Imported income",
+    amount: r.normalized.amount,
+    occurred_at: r.normalized.occurred_at,
+    account_id: accountId,
+  }));
 
   $("csvImportConfirm").disabled = true;
   csvLastImportedIds = [];
+  csvLastImportedActivityIds = [];
   for (let i = 0; i < rows.length; i += CSV_INSERT_CHUNK_SIZE) {
     const chunk = rows.slice(i, i + CSV_INSERT_CHUNK_SIZE);
     const { data, error } = await sb.from("expenses").insert(chunk).select("id");
     if (error) {
       $("csvImportConfirm").disabled = false;
       flagField("csvAccount");
-      return toast(`Import failed partway through (${csvLastImportedIds.length} rows written): ${error.message}`);
+      return toast(`Import stopped partway (${csvLastImportedIds.length} rows saved): ${error.message}`);
     }
     csvLastImportedIds.push(...(data || []).map((r) => r.id));
+  }
+  for (let i = 0; i < incomeRows.length; i += CSV_INSERT_CHUNK_SIZE) {
+    const chunk = incomeRows.slice(i, i + CSV_INSERT_CHUNK_SIZE);
+    const { data, error } = await sb.from("account_activity").insert(chunk).select("id");
+    if (error) {
+      $("csvImportConfirm").disabled = false;
+      flagField("csvAccount");
+      return toast(`Import stopped partway (${csvLastImportedIds.length + csvLastImportedActivityIds.length} rows saved): ${error.message}`);
+    }
+    csvLastImportedActivityIds.push(...(data || []).map((r) => r.id));
   }
   $("csvImportConfirm").disabled = false;
 
   await loadExpenses();
-  $("csvImportSummary").textContent = `Imported ${csvLastImportedIds.length} expense${csvLastImportedIds.length === 1 ? "" : "s"}.`;
+  await loadAccountActivity();
+  const spent = csvLastImportedIds.length;
+  const got = csvLastImportedActivityIds.length;
+  const summary = [
+    spent ? `${spent} thing${spent === 1 ? "" : "s"} you spent` : null,
+    got ? `${got} payment${got === 1 ? "" : "s"} you received` : null,
+  ].filter(Boolean).join(" and ");
+  $("csvImportSummary").textContent = `Added ${summary}.`;
   $("csvStep3").classList.add("hidden");
   $("csvStep4").classList.remove("hidden");
-  toast(`Imported ${csvLastImportedIds.length} expense${csvLastImportedIds.length === 1 ? "" : "s"} ✓`);
+  toast(`Added ${summary} ✓`);
 };
 
 $("csvUndoImportBtn").onclick = async () => {
-  if (!csvLastImportedIds.length) return;
-  if (!(await confirmModal("This removes every expense from this import.", { title: "Undo this import?" }))) return;
-  const { error } = await sb.from("expenses").delete().in("id", csvLastImportedIds);
-  if (error) return toast(error.message);
-  csvLastImportedIds = [];
+  if (!csvLastImportedIds.length && !csvLastImportedActivityIds.length) return;
+  if (!(await confirmModal("This takes back out everything this import added.", { title: "Undo this import?" }))) return;
+  if (csvLastImportedIds.length) {
+    const { error } = await sb.from("expenses").delete().in("id", csvLastImportedIds);
+    if (error) return toast(error.message);
+    csvLastImportedIds = [];
+  }
+  // Undoing income needs no balance correction, because importing it never
+  // applied one - the same reason the expense side above just deletes rows.
+  if (csvLastImportedActivityIds.length) {
+    const { error } = await sb.from("account_activity").delete().in("id", csvLastImportedActivityIds);
+    if (error) return toast(error.message);
+    csvLastImportedActivityIds = [];
+  }
   await loadExpenses();
+  await loadAccountActivity();
   $("csvImportModal").classList.add("hidden");
   toast("Import undone");
 };
@@ -7161,6 +7253,16 @@ const USER_DATA_TABLES = [
   "assets", "liabilities", "account_activity", "budgets", "net_worth_snapshots",
 ];
 $("downloadDataBtn").onclick = async () => {
+  // Confirm first. This writes a file containing every account balance,
+  // every transaction and the profile to the device's downloads folder, in
+  // plain readable JSON - on a shared or borrowed computer that is a real
+  // consequence, and it is one tap away from the Profile screen. Same
+  // confirm-before-a-consequential-action bar the delete flows already use.
+  const ok = await confirmModal(
+    "This saves a file to your device containing everything in your account: balances, every transaction, and your profile. Anyone who can open that file can read all of it. Only do this on a device you trust.",
+    { title: "Download a copy of your data?", confirmLabel: "Download" }
+  );
+  if (!ok) return;
   $("downloadDataBtn").disabled = true;
   const dump = { exported_at: new Date().toISOString() };
   for (const table of USER_DATA_TABLES) {

@@ -59,11 +59,38 @@ export function parseAmount(str) {
   return negParens ? -Math.abs(n) : n;
 }
 
+// Ordered most-specific first: "transaction date" should win over a bare
+// "date" when a file has both, and "original description" over "name".
+// Widened well past the original four-keyword list because the mapping step
+// is the part of an import a person is most likely to get wrong or give up
+// on - every header matched here is one fewer dropdown they have to set.
 const FIELD_KEYWORDS = {
-  dateCol: ["date", "transaction date", "posted date", "posting date"],
-  amountCol: ["amount", "debit", "amount debited", "value"],
-  descCol: ["description", "merchant", "payee", "name", "memo", "original description"],
-  categoryCol: ["category"],
+  dateCol: ["transaction date", "posted date", "posting date", "value date",
+    "date posted", "completed date", "started date", "date"],
+  amountCol: ["transaction amount", "amount debited", "amount", "value", "sum", "total"],
+  descCol: ["original description", "transaction description", "description",
+    "merchant", "payee", "narrative", "reference", "details", "memo", "notes", "name"],
+  categoryCol: ["category", "transaction category", "type of transaction"],
+};
+
+// A very common bank shape is two amount columns rather than one signed
+// one: money out in "Debit"/"Withdrawal", money in "Credit"/"Deposit".
+// Detecting that pair is the single biggest setup win for real bank files -
+// without it the user has to pick one column and silently loses every row
+// of the other kind.
+const DEBIT_KEYWORDS = ["debit", "withdrawal", "withdrawals", "money out", "paid out", "spent", "charge"];
+const CREDIT_KEYWORDS = ["credit", "deposit", "deposits", "money in", "paid in", "received"];
+
+const matchIdx = (lower, keywords, used) => {
+  for (const k of keywords) {
+    const exact = lower.findIndex((h, i) => !used.has(i) && h === k);
+    if (exact !== -1) return exact;
+  }
+  for (const k of keywords) {
+    const partial = lower.findIndex((h, i) => !used.has(i) && h.includes(k));
+    if (partial !== -1) return partial;
+  }
+  return -1;
 };
 
 /**
@@ -71,17 +98,41 @@ const FIELD_KEYWORDS = {
  * names. A field stays null if nothing matches - the mapping UI shows
  * that as unset rather than silently guessing wrong. Never assigns the
  * same column to two fields.
+ * `debitCol`/`creditCol` are set only when the file has a SEPARATE
+ * money-out and money-in column, in which case `amountCol` is left null and
+ * normalizeRow() reads the pair instead.
  * @param {string[]} headers
- * @returns {{dateCol:number|null, amountCol:number|null, descCol:number|null, categoryCol:number|null}}
+ * @returns {{dateCol:number|null, amountCol:number|null, descCol:number|null, categoryCol:number|null, debitCol:number|null, creditCol:number|null}}
  */
 export function guessColumnMapping(headers) {
   const lower = headers.map((h) => (h || "").toLowerCase().trim());
   const used = new Set();
-  const mapping = { dateCol: null, amountCol: null, descCol: null, categoryCol: null };
-  for (const [field, keywords] of Object.entries(FIELD_KEYWORDS)) {
-    const idx = lower.findIndex((h, i) => !used.has(i) && keywords.some((k) => h === k || h.includes(k)));
+  const mapping = {
+    dateCol: null, amountCol: null, descCol: null, categoryCol: null,
+    debitCol: null, creditCol: null,
+  };
+
+  // Date and description first, so an "amount" guess can never consume the
+  // column a more specific field wanted.
+  for (const field of ["dateCol", "descCol", "categoryCol"]) {
+    const idx = matchIdx(lower, FIELD_KEYWORDS[field], used);
     if (idx !== -1) { mapping[field] = idx; used.add(idx); }
   }
+
+  // The two-column shape wins over a single amount column when BOTH halves
+  // are present - a file with only a "Debit" column is a single-column file
+  // whose header happens to be called Debit, not a pair.
+  const debit = matchIdx(lower, DEBIT_KEYWORDS, used);
+  const credit = matchIdx(lower, CREDIT_KEYWORDS, used);
+  if (debit !== -1 && credit !== -1) {
+    mapping.debitCol = debit; used.add(debit);
+    mapping.creditCol = credit; used.add(credit);
+    return mapping;
+  }
+
+  const amount = matchIdx(lower, FIELD_KEYWORDS.amountCol, used);
+  if (amount !== -1) { mapping.amountCol = amount; used.add(amount); }
+  else if (debit !== -1) { mapping.amountCol = debit; used.add(debit); }
   return mapping;
 }
 
@@ -110,21 +161,50 @@ export function guessSignConvention(rows, mapping) {
  * One raw CSV row + the confirmed column mapping -> a normalized expense,
  * or null if the date/amount don't parse (skipped, not guessed).
  * @param {string[]} rawRow
- * @param {{dateCol:number|null, amountCol:number|null, descCol:number|null, categoryCol:number|null}} mapping
- * @param {{flipSign?: boolean}} [options]
+ * @param {object} mapping from guessColumnMapping()
+ * @param {{flipSign?: boolean, rowKind?: "expense"|"income"|"auto"}} [options]
+ *   rowKind "auto" reads the direction from each row's own sign; the other
+ *   two force it, and skip rows pointing the other way.
+ * @returns {{occurred_at:string, amount:number, description:string|null,
+ *   category:string|null, kind:"expense"|"income"}|null}
  */
-export function normalizeRow(rawRow, mapping, { flipSign = false } = {}) {
-  if (mapping.dateCol == null || mapping.amountCol == null) return null;
+export function normalizeRow(rawRow, mapping, { flipSign = false, rowKind = "expense" } = {}) {
+  if (mapping.dateCol == null) return null;
   const occurred_at = parseFlexibleDate(rawRow[mapping.dateCol]);
-  let amount = parseAmount(rawRow[mapping.amountCol]);
-  if (occurred_at == null || amount == null) return null;
-  if (flipSign) amount = -amount;
-  // This app's expenses.amount is always a positive spend - the sign
-  // convention is fully resolved by flipSign above, not left ambiguous.
-  amount = Math.abs(amount);
+  if (occurred_at == null) return null;
+
+  // Two shapes. A separate debit/credit pair states the direction by which
+  // column the value is in, so it needs no sign convention and no guessing;
+  // a single amount column carries the direction in its sign.
+  let signed = null;
+  if (mapping.debitCol != null || mapping.creditCol != null) {
+    const out = mapping.debitCol != null ? parseAmount(rawRow[mapping.debitCol]) : null;
+    const inn = mapping.creditCol != null ? parseAmount(rawRow[mapping.creditCol]) : null;
+    // A row normally fills exactly one of the two; the other is blank or 0.
+    if (out != null && Math.abs(out) > 0) signed = Math.abs(out);
+    else if (inn != null && Math.abs(inn) > 0) signed = -Math.abs(inn);
+    else return null;
+  } else {
+    if (mapping.amountCol == null) return null;
+    const raw = parseAmount(rawRow[mapping.amountCol]);
+    if (raw == null) return null;
+    signed = flipSign ? -raw : raw;
+  }
+
+  // After the step above, POSITIVE always means money out and NEGATIVE money
+  // in, whichever shape the file had. rowKind then decides what to do with
+  // that: "expense"/"income" force every row one way (the common case - a
+  // file that is all one thing), while "auto" trusts the sign, which is what
+  // a full bank statement needs.
+  const kind = rowKind === "auto" ? (signed < 0 ? "income" : "expense") : rowKind;
+  if (rowKind === "expense" && signed < 0) return null;  // money in, skipped
+  if (rowKind === "income" && signed > 0) return null;   // money out, skipped
+
+  const amount = Math.abs(signed);
+  if (amount === 0) return null;
   const description = mapping.descCol != null ? (rawRow[mapping.descCol] || "").trim() || null : null;
   const category = mapping.categoryCol != null ? (rawRow[mapping.categoryCol] || "").trim() || null : null;
-  return { occurred_at, amount, description, category };
+  return { occurred_at, amount, description, category, kind };
 }
 
 /**

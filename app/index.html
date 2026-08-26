@@ -1647,25 +1647,41 @@
       <div class="topbar"><strong>Import CSV</strong><button class="secondary" id="csvImportClose" style="width:auto;padding:6px 12px">Close</button></div>
 
       <div id="csvStep1">
-        <p class="muted" style="font-size:13px">Import expense history from another platform (bank export, Mint, YNAB, ...). Everything happens in your browser - the file itself is never uploaded anywhere.</p>
-        <p class="muted" style="font-size:12px;margin-top:8px"><strong>Imported expenses only add to your history for tracking and reports - they never change any account or liability balance.</strong> Those already reflect this spending in real life; adjust them yourself afterward if this file doesn't already match your current balance.</p>
+        <p class="muted" style="font-size:13px">Bring in what you have spent and what you have been paid, from a bank export or another app. The file stays on your device - it is never uploaded anywhere.</p>
+        <p class="muted" style="font-size:12px;margin-top:8px"><strong>Imported rows are added as history only. They never change an account balance.</strong> Your balances already include this money in real life, so changing them again would count it twice.</p>
         <label style="margin-top:12px">CSV file (up to 5MB, ~10,000 rows)</label>
         <input id="csvFileInput" type="file" accept=".csv,text/csv" />
         <p class="muted" id="csvFileError" style="font-size:12px;color:var(--err);margin-top:6px"></p>
       </div>
 
       <div id="csvStep2" class="hidden">
-        <p class="muted" style="font-size:13px">Match each column in your file to a field. Date and Amount are required.</p>
-        <div class="row">
-          <div><label>Date column</label><select id="csvMapDate"></select></div>
-          <div><label>Amount column</label><select id="csvMapAmount"></select></div>
+        <p class="muted" style="font-size:13px">The app has filled these in from your file's column names. Check they look right - only the date and amount matter.</p>
+
+        <label>What is in this file?</label>
+        <select id="csvRowKind">
+          <option value="auto">Both money spent and money received</option>
+          <option value="expense">Only things I spent</option>
+          <option value="income">Only money I was paid</option>
+        </select>
+        <p class="muted" id="csvRowKindHint" style="font-size:12px;margin:4px 0 0"></p>
+
+        <div class="row" style="margin-top:10px">
+          <div><label>Which column is the date</label><select id="csvMapDate"></select></div>
+          <div id="csvAmountCol"><label>Which column is the amount</label><select id="csvMapAmount"></select></div>
+        </div>
+        <!-- Shown instead of a single amount column when the file has a
+             separate money-out and money-in column, which is common in bank
+             exports - guessColumnMapping() detects the pair. -->
+        <div class="row hidden" id="csvDebitCreditCols">
+          <div><label>Money out column</label><select id="csvMapDebit"></select></div>
+          <div><label>Money in column</label><select id="csvMapCredit"></select></div>
         </div>
         <div class="row">
-          <div><label>Description column (optional)</label><select id="csvMapDesc"></select></div>
-          <div><label>Category column (optional)</label><select id="csvMapCategory"></select></div>
+          <div><label>Description (optional)</label><select id="csvMapDesc"></select></div>
+          <div><label>Category (optional)</label><select id="csvMapCategory"></select></div>
         </div>
-        <label style="margin-top:10px"><input type="checkbox" id="csvFlipSign" style="width:auto;margin-right:8px" />Amounts in this file are negative for money spent</label>
-        <label>Import into account</label>
+        <label id="csvFlipSignLabel" style="margin-top:10px"><input type="checkbox" id="csvFlipSign" style="width:auto;margin-right:8px" />In this file, money spent is shown as a negative number</label>
+        <label>Which account is this for</label>
         <select id="csvAccount"></select>
         <div style="height:10px"></div>
         <div class="row">
@@ -1676,7 +1692,7 @@
 
       <div id="csvStep3" class="hidden">
         <p class="muted" id="csvPreviewSummary" style="font-size:13px"></p>
-        <p class="muted" style="font-size:12px">Rows checked will be imported. Likely duplicates (matching an existing expense's date, amount, and description) start unchecked.</p>
+        <p class="muted" style="font-size:12px">Ticked rows will be brought in. Anything that looks like something you already have (same date, amount and description) starts unticked.</p>
         <div id="csvPreviewList" class="scroll-list" style="margin-top:8px"></div>
         <div style="height:10px"></div>
         <div class="row">
@@ -1785,7 +1801,7 @@
            shared reference tables (subscription_catalog, deal_findings,
            asset_price_findings, service_domains), which aren't this
            user's data to begin with (docs/ROADMAP.md Cross-cutting #2). -->
-      <button class="secondary" id="downloadDataBtn">Download all my data</button>
+      <button class="secondary" id="downloadDataBtn">Download a copy of my data</button>
     </div>
   </div>
 
@@ -1846,7 +1862,10 @@
           <p>Type a whole expense as free text, e.g. "$14 lunch chipotle debit" - amount, merchant, and a matching account (if you name a payment type like "debit" or a bank name) are detected automatically as you type. This always works with no setup (a built-in keyword parser). If this household's optional Gemma server is configured (<code>GEMMA_ENDPOINT</code>), a second pass runs a moment later and can fill in fields the keyword parser missed or got less precisely - you'll see "Asking Gemma..." then "Parsed by Gemma" in small text under the field. Nothing is saved until you tap Save.</p>
           <p>Four fields are required before Save will go through: Amount, Account, Category, Date. Any of the four that's still empty gets a live red border the whole time, not just after a rejected Save - it clears the instant you fill it in. Description/merchant is the only optional field.</p>
           <p>If the account it guessed is wrong (or it couldn't guess), just pick the right one from the Account dropdown yourself - it never blocks you, it just doesn't guess when it isn't confident (for example, two Chase accounts and the text only says "chase").</p>
-          <p><strong>Import CSV</strong> (small button below the form) opens a 4-step wizard: pick a file, map its columns (which column is the date and which is the amount are required; description and category are optional, plus a checkbox if the file's amounts are recorded with the opposite sign this app expects), preview every row with likely duplicates flagged, then confirm. Imported rows are marked as history that already happened, so they never touch your account balances a second time (your balance should already reflect them in real life) - use the "Undo this import" button right after if you picked the wrong file or mapping.</p>
+          <p><strong>Import CSV</strong> (the small button under the box) brings in a file from your bank or another app, in four steps: pick the file, check the columns, look over what it found, then confirm. The file never leaves your device.</p>
+          <p>It reads the column names and fills the settings in for you, so usually there is nothing to change. It handles both shapes of bank file: one where a single amount column goes negative for money spent, and one with separate money-out and money-in columns. When it spots the second kind it uses those two columns and stops asking about signs, because the column already says which direction the money went.</p>
+          <p><strong>One file can bring in both what you spent and what you were paid.</strong> "What is in this file?" is set to read both by default, which is right for a normal bank statement. Change it to one or the other if your file only holds one kind, and anything pointing the other way is skipped instead of being brought in backwards. Money you received is shown in green with a plus sign so you can tell the two apart before confirming.</p>
+          <p>Everything imported is treated as history that has already happened, so <strong>it never changes an account balance</strong> - your balance in real life already includes it, and counting it again would double it. If you picked the wrong file or the wrong columns, "Undo this import" takes the whole lot back out, both the spending and the income.</p>
           </div>
         </div>
 
@@ -1924,7 +1943,7 @@
         <div class="help-topic" id="helpTopic-profile-top-right">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Profile (top right)</h3>
           <div class="help-topic-body hidden">
-          <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Subscriptions/Bills page, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else. "Download all my data" exports a plain JSON file of everything in your own tables.</p>
+          <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Subscriptions/Bills page, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else. "Download a copy of my data" saves a file holding everything in your account. It asks you to confirm first, because that file is readable by anyone who can open it - only do it on a device you trust.</p>
           </div>
         </div>
       </div>

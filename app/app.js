@@ -6285,9 +6285,13 @@ function renderDeals() {
   }
 
   if (!parts.length) {
+    // Deliberately says "checked plans" rather than "nothing found": the
+    // unverified section directly below may well have something, and the
+    // two used to be separate cards that could contradict each other at a
+    // glance ("No cheaper plans" above "here is a cheaper plan").
     const hint = subscriptions.some((s) => s.is_active)
-      ? "No cheaper eligible plans found for your current subscriptions."
-      : "Add subscriptions to see cheaper eligible plans.";
+      ? "No cheaper plan in the checked list for what you have now."
+      : "Add subscriptions to see cheaper plans you qualify for.";
     $("dealsList").innerHTML = `<p class="muted" style="font-size:13px">${hint}</p>`;
     return;
   }
@@ -6299,8 +6303,15 @@ function renderDeals() {
   });
 }
 
-// Machine-found deals (F6 stretch) - separate, clearly-labeled, unverified.
-// Never blended into the trusted curated numbers above.
+// Machine-found deals (F6 stretch). Now a labeled section INSIDE the
+// Savings found card rather than a card of its own - "where can I save
+// money" is one question, and two cards each answering it separately meant
+// two "nothing found" messages side by side.
+//
+// The trust separation that mattered is unchanged: these rows stay visibly
+// marked unverified, keep their own source links and Promote/Reject, and
+// are still never added into the card header's yearly total, which only
+// ever sums curated plans the app can stand behind.
 // The stored snippet is raw scraped markdown, so it arrives with heading
 // hashes and hard line breaks mid-sentence ("y ## 6 Premium accounts...").
 // This is the only grounding the user has for an unverified number, so it
@@ -6315,10 +6326,10 @@ function cleanSnippet(raw, max = 150) {
 }
 
 function renderDealFindings() {
-  const card = $("dealFindingsCard");
-  if (!card) return;
-  if (!DEAL_FINDINGS_ENABLED) { card.classList.add("hidden"); return; }
-  card.classList.remove("hidden");
+  const section = $("dealFindingsSection");
+  if (!section) return;
+  if (!DEAL_FINDINGS_ENABLED) { section.classList.add("hidden"); return; }
+  section.classList.remove("hidden");
   renderAgentFreshness("deal-agent", "dealFindingsFreshness", "dealFindingsWarning");
 
   // One row per subscription, cheapest only, and only when it genuinely
@@ -6329,7 +6340,16 @@ function renderDealFindings() {
   const best = bestFindingPerSubscription(subscriptions, dealFindings, matchService);
 
   if (!best.length) {
-    $("dealFindingsList").innerHTML = `<p class="muted" style="font-size:13px">Nothing found yet that beats what you already pay.</p>`;
+    // Nothing to show, so the whole section goes away rather than adding a
+    // second "nothing found" line under the one the card already shows.
+    // The exception is a currently-warning agent run: an empty result then
+    // has a REASON the user should see, and hiding it would leave them
+    // wondering whether the search is even running.
+    const warningShown = !$("dealFindingsWarning").classList.contains("hidden");
+    section.classList.toggle("hidden", !warningShown);
+    $("dealFindingsList").innerHTML = warningShown
+      ? `<p class="muted" style="font-size:13px">No cheaper option found online in that run.</p>`
+      : "";
     return;
   }
   $("dealFindingsList").innerHTML = best.map((d) => {

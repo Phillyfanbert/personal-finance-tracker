@@ -836,8 +836,15 @@
       </div>
 
       <div class="totals" id="reportTotals">
-        <div class="card"><div class="muted" style="font-size:12px">Selected month</div><div class="big" id="rptTotal">$0</div></div>
-        <div class="card"><div class="muted" style="font-size:12px">Subscriptions/Bills</div><div class="big" id="rptSubs">$0</div></div>
+        <!-- All three labels name what the number IS. "Selected month" and
+             "Subscriptions/Bills" did not: the first never said it was
+             spending, and the second read as the cost of your subscriptions
+             when it is really the Subscriptions slice of THIS month's
+             logged spending - so it can sit at $0.00 while the
+             Subscriptions page says $5.99/month, with nothing explaining
+             the gap. "Of that" ties it to the tile beside it. -->
+        <div class="card"><div class="muted" style="font-size:12px" id="rptTotalLabel">Spent this month</div><div class="big" id="rptTotal">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Of that, subscriptions</div><div class="big" id="rptSubs">$0</div><div class="muted" id="rptSubsNote" style="font-size:11px;margin-top:2px"></div></div>
         <!-- Typical monthly spending, not a runway ratio. See renderReports()
              for why: dividing savings by average logged spending amplified
              thin data into a meaningless "75 years", where the average
@@ -2030,7 +2037,8 @@
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Month selector and totals</h3>
           <div class="help-topic-body hidden">
           <p>Most of this page shows whichever month you pick at the top right. The bottom four cards are the exception, because they are about your balances now rather than a past month.</p>
-          <p>The three totals: what you spent in the month you picked, how much of that was subscriptions and bills, and a third that changes depending on what you have recorded.</p>
+          <p>The three totals, each labelled with what it is: what you spent in the month you picked, how much of that was subscriptions, and a third that changes depending on what you have recorded.</p>
+          <p><strong>"Of that, subscriptions"</strong> counts only spending you have written down and filed under Subscriptions in that month. It is not the same as the total on the Subscriptions/Bills page, which is what those plans cost you per month whether or not a charge has been logged. If you have subscriptions set up but none of their charges recorded yet, this reads $0.00 and says so underneath, rather than looking like the two pages disagree.</p>
           <p>Before you have added any income, that third one reads <strong>Spent in a typical month</strong> - roughly what a normal month costs you. Once the app knows about any money coming in, it switches to <strong>Left over in a typical month</strong>: what you were paid, minus what you spent. A plus means you ended the month ahead, a minus means you spent more than came in. The label always changes with it, so it is never unclear which one you are looking at.</p>
           <p>It waits for income before showing the left-over figure on purpose. With nothing recorded on the income side, that sum would read as a loss every month and tell you something untrue - so it shows the spending figure until it can answer the better question honestly.</p>
           <p>That tile always describes now, not the month you picked, and it averages only over months that actually have something in them. If you have one month of history, it shows that month rather than quietly dividing by more months than you have data for. The small line underneath always says what it is based on, so a figure resting on very little is obvious rather than passing as settled.</p>

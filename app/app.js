@@ -5996,8 +5996,21 @@ async function renderReports() {
   const total = byCat.reduce((s, d) => s + d.value, 0);
   const subs = byCat.filter((d) => d.label === "Subscriptions").reduce((s, d) => s + d.value, 0);
 
+  // Names the actual month rather than "Selected month", so the number is
+  // self-describing even when scrolled away from the picker.
+  $("rptTotalLabel").textContent = `Spent in ${monthLabel(ym)}`;
   $("rptTotal").textContent = fmt(total);
   $("rptSubs").textContent = fmt(subs);
+  // This tile counts expenses CATEGORISED as Subscriptions in the chosen
+  // month, which is a different number from what the Subscriptions page
+  // shows (the cost of the subscriptions themselves). They diverge whenever
+  // a charge has not been logged as an expense yet, and a bare "$0.00"
+  // sitting next to a "$5.99/month" on another page just looks broken. Only
+  // said when there is actually a discrepancy worth explaining.
+  const subsMonthlyCost = totalMonthly(subscriptions);
+  $("rptSubsNote").textContent = subs === 0 && subsMonthlyCost > 0
+    ? "none logged as spending yet"
+    : "";
 
   // Typical monthly spending, replacing the old emergency-fund runway.
   //

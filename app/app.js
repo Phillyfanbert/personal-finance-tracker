@@ -6658,6 +6658,117 @@ $("profileClose").onclick = () => $("profileModal").classList.add("hidden");
 // modal in this file, this one has no corresponding loadX()/renderX().
 const HELP_PAGES = ["log", "subs", "reports", "invest"];
 const HELP_TITLES = { log: "Log page help", subs: "Subscriptions/Bills help", reports: "Reports help", invest: "Investments help" };
+// Help topics are collapsed by default and open one at a time on click.
+// Markup-driven and wired once, the same shape wireInfoIcons() uses: a new
+// topic is markup-only, no wiring call of its own.
+//
+// The page diagram doubles as a table of contents - clicking a row opens the
+// matching topic below. The match is made at RUNTIME by comparing the row's
+// label to each topic's heading rather than by hand-annotating every <rect>
+// in four SVGs, so a diagram row and its topic cannot drift out of sync as
+// long as they are still named the same thing. A row with no matching topic
+// (several are captions like "only when any are detected") simply stays
+// inert rather than erroring.
+// A diagram label's parenthetical is a caption, not part of the name
+// ("Upcoming renewals (30 days)", "Overview (recap in words, then the
+// numbers)"), so it is stripped before matching - leaving it in stopped
+// those rows matching a topic that plainly describes them.
+const helpLabelKey = (s) => (s || "")
+  .replace(/\([^)]*\)/g, " ")
+  .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+function setHelpTopicOpen(topic, open) {
+  const head = topic.querySelector(".help-topic-head");
+  const body = topic.querySelector(".help-topic-body");
+  if (!head || !body) return;
+  body.classList.toggle("hidden", !open);
+  head.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function openHelpTopic(topic) {
+  setHelpTopicOpen(topic, true);
+  // scrollIntoView on the topic scrolls the sheet, not the page behind it,
+  // since .sheet is the scrolling container here.
+  topic.scrollIntoView({ block: "start", behavior: "smooth" });
+  document.querySelectorAll(".help-topic.flash").forEach((t) => t.classList.remove("flash"));
+  topic.classList.add("flash");
+}
+
+function wireHelpTopics() {
+  document.querySelectorAll(".help-topic").forEach((topic) => {
+    const head = topic.querySelector(".help-topic-head");
+    if (!head) return;
+    const toggle = () => {
+      const isOpen = head.getAttribute("aria-expanded") === "true";
+      setHelpTopicOpen(topic, !isOpen);
+      topic.classList.remove("flash");
+    };
+    head.onclick = toggle;
+    head.onkeydown = (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
+    };
+  });
+
+  // Group each diagram row's <rect>+<text> so the whole row is one target.
+  document.querySelectorAll(".help-diagram svg").forEach((svg) => {
+    const texts = [...svg.querySelectorAll("text")];
+    const rects = [...svg.querySelectorAll("rect")];
+    texts.forEach((text) => {
+      const label = helpLabelKey(text.textContent);
+      // **Scoped to this diagram's own page**, not the whole document. A
+      // document-wide search matched the first topic in DOM order, so the
+      // Reports diagram's "Net worth trend" row resolved to the LOG page's
+      // "Net worth" topic (prefix match, Log comes first) and clicking it
+      // silently opened something on a hidden page. Caught by asserting
+      // every row resolves to a topic on its own page.
+      const scope = svg.closest('[id^="helpContent"]') || document;
+      const candidates = [...scope.querySelectorAll(".help-topic")];
+      const keyOf = (t) => {
+        const h = t.querySelector(".help-topic-head");
+        return h ? helpLabelKey(h.textContent) : "";
+      };
+      // Exact before prefix, so a row whose label is a strict prefix of a
+      // longer heading (or vice versa) never beats its own exact match.
+      const topic = candidates.find((t) => keyOf(t) === label)
+        // A heading can cover several diagram rows at once ("By category /
+        // By account / By payment type"), so a row matching any one of its
+        // slash-separated parts counts - without this those rows were inert
+        // even though a real topic described them.
+        || candidates.find((t) => {
+          const h = t.querySelector(".help-topic-head");
+          if (!h) return false;
+          // Prefix, not equality, so "All subscriptions/bills" still finds
+          // the "All subscriptions" half of a combined heading.
+          return h.textContent.split("/").map(helpLabelKey)
+            .some((part) => part && (part === label || label.startsWith(part) || part.startsWith(label)));
+        })
+        || candidates.find((t) => {
+          const key = keyOf(t);
+          return key && (label.startsWith(key) || key.startsWith(label));
+        });
+      if (!topic) return;
+      // The rect sharing this row is the one whose band contains the text.
+      const y = parseFloat(text.getAttribute("y"));
+      const rect = rects.find((r) => {
+        const ry = parseFloat(r.getAttribute("y")), rh = parseFloat(r.getAttribute("height"));
+        return Number.isFinite(ry) && Number.isFinite(rh) && y >= ry && y <= ry + rh;
+      });
+      for (const el of [text, rect]) {
+        if (!el) continue;
+        el.classList.add("diagram-row");
+        // Cursor comes from the .help-diagram .diagram-row CSS rule, NOT an
+        // inline style: the tour clones this same SVG into .tour-diagram,
+        // and cloneNode copies attributes but not handlers - an inline
+        // cursor would have made the tour's copy look clickable while
+        // doing nothing. Scoping it in CSS keeps the affordance where the
+        // behaviour actually is.
+        el.onclick = () => openHelpTopic(topic);
+      }
+    });
+  });
+}
+wireHelpTopics();
+
 function openHelp(page) {
   $("helpModalTitle").textContent = HELP_TITLES[page];
   for (const p of HELP_PAGES) {
@@ -6665,6 +6776,13 @@ function openHelp(page) {
   }
   document.querySelectorAll("[data-help-page]").forEach((el) => {
     el.classList.toggle("active", el.dataset.helpPage === page);
+  });
+  // Reset to the collapsed table-of-contents view on every open, rather
+  // than restoring whatever was left expanded last time - the diagram plus
+  // the heading list is the point of the redesign.
+  document.querySelectorAll(".help-topic").forEach((t) => {
+    setHelpTopicOpen(t, false);
+    t.classList.remove("flash");
   });
   $("helpModal").classList.remove("hidden");
 }

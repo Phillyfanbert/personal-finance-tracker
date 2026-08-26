@@ -834,16 +834,11 @@
       <div class="totals" id="reportTotals">
         <div class="card"><div class="muted" style="font-size:12px">Selected month</div><div class="big" id="rptTotal">$0</div></div>
         <div class="card"><div class="muted" style="font-size:12px">Subscriptions/Bills</div><div class="big" id="rptSubs">$0</div></div>
-        <!-- Liquid assets / average of the last 3 months' spending - a
-             plain number, deliberately no color or "aim for X months"
-             framing (see networth.js's emergencyFundCoverage()).
-             The sub-line is load-bearing, not decoration: "319.2mo" alone
-             says nothing about what is being measured, and it also hides
-             that the figure can rest on almost no spending history at all
-             (a single $14 expense across three months produced exactly
-             that reading in production). Same label/value/note shape the
-             Income tile on the Log page uses. -->
-        <div class="card"><div class="muted" style="font-size:12px">Savings would last</div><div class="big" id="rptEmergencyFund">—</div><div class="muted" id="rptEmergencyFundNote" style="font-size:11px;margin-top:2px">if money stopped coming in</div></div>
+        <!-- Typical monthly spending, not a runway ratio. See renderReports()
+             for why: dividing savings by average logged spending amplified
+             thin data into a meaningless "75 years", where the average
+             itself is wrong by an amount the reader can actually see. -->
+        <div class="card"><div class="muted" style="font-size:12px">Typical month</div><div class="big" id="rptAvgSpend">—</div><div class="muted" id="rptAvgSpendNote" style="font-size:11px;margin-top:2px">nothing logged yet</div></div>
       </div>
 
       <!-- Interactive spending Q&A (Gemma, optional/best-effort like Phase 3) -->
@@ -918,7 +913,7 @@
         <p class="muted explainer hidden" id="incExpExplainer">What came in against what went out, for each of the last six months. Green is money in, blue is money out.</p>
         <div class="chartbox short"><canvas id="incomeExpenseChart"></canvas></div>
         <!-- Deliberately no color/threshold framing - a plain number, same
-             restraint as the Emergency fund stat above and the Liabilities
+             restraint as the Liabilities
              card's credit-utilization line. -->
         <p class="muted" style="font-size:12px;margin:8px 0 0">Of what you earned this month, you kept: <strong id="savingsRateStat">—</strong></p>
       </div>
@@ -2030,7 +2025,10 @@
         <div class="help-topic" id="helpTopic-month-selector-and-totals">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Month selector and totals</h3>
           <div class="help-topic-body hidden">
-          <p>Everything on this page except the bottom four cards (Account balance history, Cash flow forecast, Net worth trend, and indirectly the Q&A/monthly report below) is scoped to whichever month you pick at the top right. The first two totals under it are that month's full expense total and just its Subscriptions category slice. The third, "Emergency fund," is always current rather than scoped to the selected month - it's your liquid account balances (checking, savings, cash, and similar - not retirement, investment, or loan accounts) divided by your average spending over the last 3 months, shown as a plain number of months covered - the small line under it says so, since "319.2mo" on its own doesn't tell you what is being measured. No color, no "aim for X months" - just the math, the same way this app never turns a real number into advice.</p>
+          <p>Most of this page shows whichever month you pick at the top right. The bottom four cards are the exception, because they are about your balances now rather than a past month.</p>
+          <p>The three totals: what you spent in the month you picked, how much of that was subscriptions and bills, and <strong>Typical month</strong> - roughly what you spend in a normal month.</p>
+          <p>That last one always describes now, not the month you picked, and it is averaged only over months that actually have spending in them. If you have logged one month, it shows that month rather than quietly dividing by more months than you have data for. The small line underneath always says what it is based on, so a figure resting on very little is obvious rather than passing as settled.</p>
+          <p>It is worth knowing this can only count what you have actually written down. If you log some purchases and not others, it will read low - the fix is logging more, or importing a file from your bank.</p>
           <p>That average always divides by 3 months, even if you've only logged spending in one of them, so a short history can produce a very large number of months - one $14 expense makes your average look like about $5 a month, and an ordinary balance then reads as hundreds of months of runway. When fewer than 3 months have any spending in them, the line under the number says what it's actually based on ("based on 1 month of spending") rather than presenting the figure as if it were a settled fact. It becomes meaningful once you have a few real months of history.</p>
           </div>
         </div>

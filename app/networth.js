@@ -38,20 +38,19 @@ export function computeNetWorth(assets, debts) {
   };
 }
 
-/**
- * Months of average spending covered by liquid assets. Deliberately no
- * color threshold or "aim for 3-6 months" framing here - the same
- * restraint the Liabilities card's credit-utilization line already
- * holds (a real, commonly-cited guideline, but stating it would cross
- * from showing the math into advice). Callers render this as a plain
- * number, nothing more.
- * @param {number} liquidAssetsTotal
- * @param {number} avgMonthlySpending
- * @returns {number|null} null when there's no spending to divide by (a
- *   0 or negative average would be a divide-by-zero/nonsensical result,
- *   not a real "infinite runway").
- */
-export function emergencyFundCoverage(liquidAssetsTotal, avgMonthlySpending) {
-  if (!(avgMonthlySpending > 0)) return null;
-  return Math.round((liquidAssetsTotal / avgMonthlySpending) * 10) / 10;
-}
+// emergencyFundCoverage() was REMOVED here on 2026-08-26, along with the
+// Reports tile that used it. Recorded so it is not simply rebuilt:
+//
+// It divided liquid assets by average logged spending, and dividing
+// AMPLIFIES thin data. In production one $14 expense became "75 years" - a
+// figure so far from reality it told the reader nothing and hid its own
+// cause. Worse, it could not fix itself with time: this app only knows what
+// gets typed in, so anyone who logs a subset of their spending has a
+// permanently understated denominator and a permanently overstated runway.
+//
+// The tile now shows average monthly spending directly. The same thin data
+// then reads "$14 a month" - still incomplete, but wrong by an amount the
+// reader can see and act on, instead of exploding into a meaningless span.
+// If a runway figure is ever wanted again, it needs a denominator the user
+// states outright (a monthly-essentials field) rather than one inferred
+// from partial logging.

@@ -29,7 +29,7 @@ import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
-import { computeNetWorth, emergencyFundCoverage } from "./networth.js";
+import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 import { TOUR_STEPS, visibleSteps, clampStep } from "./tour.js";
 
@@ -5999,53 +5999,45 @@ async function renderReports() {
   $("rptTotal").textContent = fmt(total);
   $("rptSubs").textContent = fmt(subs);
 
-  // Always "right now," not scoped to the selected month above - liquid
-  // assets are a live current balance, not a historical figure, so
-  // anchoring to today (not ym) keeps this from changing confusingly as
-  // the user browses past months in the dropdown. Same reasoning the
-  // account-history/net-worth-trend cards already use for staying
-  // unscoped to monthSel.
-  const efMonths = lastMonths(3, monthKey());
-  const efMonthTotals = monthlyTotals(allExpenses, efMonths);
-  const efAvgSpending = efMonthTotals.reduce((s, v) => s + v, 0) / efMonths.length;
-  // How many of the three months actually have spending in them, which is
-  // what decides whether the coverage figure means anything. The average
-  // divides by 3 regardless, so one $14 expense becomes ~$4.67/month and a
-  // perfectly ordinary balance then reads as hundreds of months of runway -
-  // real arithmetic on unrepresentative input, which is exactly the case
-  // that showed up in production.
-  const efMonthsWithSpending = efMonthTotals.filter((v) => v > 0).length;
-  const efLiquidAssets = accounts
-    .filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at && a.linked_asset_id)
-    .reduce((sum, a) => {
-      const asset = assets.find((x) => x.id === a.linked_asset_id);
-      return sum + (asset ? Number(asset.value) : 0);
-    }, 0);
-  const efCoverage = emergencyFundCoverage(efLiquidAssets, efAvgSpending);
-  // "898.4 mo" was read as a dollar amount - the tile label said "Emergency
-  // fund", which sounds like a pot of money, and "mo" is easy to skim past.
-  // The label now names the measure ("Savings would last") and the value is
-  // spelled out in words, so it cannot be mistaken for an amount.
+  // Typical monthly spending, replacing the old emergency-fund runway.
   //
-  // Large spans switch to years: 898 months is not a quantity anyone can
-  // picture, and "about 74 years" makes it immediately obvious the figure
-  // rests on too little spending history to mean anything yet - which the
-  // note underneath then explains.
-  $("rptEmergencyFund").textContent = efCoverage == null
-    ? "—"
-    : efCoverage >= 24
-      ? `${Math.round(efCoverage / 12)} years`
-      : efCoverage >= 1
-        ? `${efCoverage} month${efCoverage === 1 ? "" : "s"}`
-        : `${Math.round(efCoverage * 30)} day${Math.round(efCoverage * 30) === 1 ? "" : "s"}`;
-  // States what the number rests on when that is "almost nothing" - the same
-  // qualify-rather-than-overstate rule priceRangeStats() follows when it
-  // refuses to call five days of data a 52-week range.
-  $("rptEmergencyFundNote").textContent = efCoverage == null
-    ? "no spending recorded yet"
-    : efMonthsWithSpending < efMonths.length
-      ? `rough guess - based on only ${efMonthsWithSpending} month${efMonthsWithSpending === 1 ? "" : "s"} of spending`
-      : "if money stopped coming in";
+  // That tile divided liquid savings by average logged spending, and
+  // DIVIDING AMPLIFIES BAD DATA: a single $14 lunch became "75 years",
+  // a figure so far from reality it told the reader nothing and hid its
+  // own cause. The same thin data shown as an average reads "$4.67 a
+  // month" - still wrong, but obviously and legibly wrong, and it points
+  // straight at the reason (almost nothing logged yet). The error stays
+  // the same size instead of exploding.
+  //
+  // It also does not need a second concept explained alongside it, which
+  // is what made the old tile hard to label: "Emergency fund" sounded
+  // like an amount, and every attempt to caption the ratio was still
+  // teaching the reader a formula.
+  //
+  // Anchored to today (monthKey()), not the page's month picker, matching
+  // the account-history and net-worth-trend cards - a "typical month" is
+  // not a property of whichever month is being browsed.
+  const AVG_SPEND_WINDOW_MONTHS = 6;
+  const avgMonths = lastMonths(AVG_SPEND_WINDOW_MONTHS, monthKey());
+  const avgMonthTotals = monthlyTotals(allExpenses, avgMonths);
+  // **Divides by months that actually contain spending, not by the window
+  // length.** Dividing by the full window was the specific bug behind the
+  // old tile: with one month of data out of three it understated real
+  // spending threefold before the ratio even multiplied the error.
+  const monthsWithSpending = avgMonthTotals.filter((v) => v > 0);
+  const avgSpend = monthsWithSpending.length
+    ? monthsWithSpending.reduce((s, v) => s + v, 0) / monthsWithSpending.length
+    : null;
+
+  $("rptAvgSpend").textContent = avgSpend != null ? fmt(avgSpend) : "—";
+  // Says what the figure rests on, so a thin average is visibly thin
+  // rather than passing as settled - the same qualify-rather-than-overstate
+  // rule priceRangeStats() follows for a range shorter than a year.
+  $("rptAvgSpendNote").textContent = avgSpend == null
+    ? "nothing logged yet"
+    : monthsWithSpending.length === 1
+      ? "based on 1 month so far"
+      : `averaged over ${monthsWithSpending.length} months`;
 
   const empty = total === 0;
   $("rptEmpty").classList.toggle("hidden", !empty);

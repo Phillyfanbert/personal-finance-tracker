@@ -5930,16 +5930,30 @@ async function renderReports() {
       return sum + (asset ? Number(asset.value) : 0);
     }, 0);
   const efCoverage = emergencyFundCoverage(efLiquidAssets, efAvgSpending);
-  $("rptEmergencyFund").textContent = efCoverage != null ? `${efCoverage} mo` : "—";
-  // States what the number is, and - when the answer is "almost nothing" -
-  // what it rests on. Saying "based on 1 month of spending" is the same
-  // omit-or-qualify-rather-than-overstate rule priceRangeStats() follows
-  // when it refuses to call five days of data a 52-week range.
+  // "898.4 mo" was read as a dollar amount - the tile label said "Emergency
+  // fund", which sounds like a pot of money, and "mo" is easy to skim past.
+  // The label now names the measure ("Savings would last") and the value is
+  // spelled out in words, so it cannot be mistaken for an amount.
+  //
+  // Large spans switch to years: 898 months is not a quantity anyone can
+  // picture, and "about 74 years" makes it immediately obvious the figure
+  // rests on too little spending history to mean anything yet - which the
+  // note underneath then explains.
+  $("rptEmergencyFund").textContent = efCoverage == null
+    ? "—"
+    : efCoverage >= 24
+      ? `${Math.round(efCoverage / 12)} years`
+      : efCoverage >= 1
+        ? `${efCoverage} month${efCoverage === 1 ? "" : "s"}`
+        : `${Math.round(efCoverage * 30)} day${Math.round(efCoverage * 30) === 1 ? "" : "s"}`;
+  // States what the number rests on when that is "almost nothing" - the same
+  // qualify-rather-than-overstate rule priceRangeStats() follows when it
+  // refuses to call five days of data a 52-week range.
   $("rptEmergencyFundNote").textContent = efCoverage == null
     ? "no spending recorded yet"
     : efMonthsWithSpending < efMonths.length
-      ? `based on ${efMonthsWithSpending} month${efMonthsWithSpending === 1 ? "" : "s"} of spending`
-      : "how long savings would last";
+      ? `rough guess - based on only ${efMonthsWithSpending} month${efMonthsWithSpending === 1 ? "" : "s"} of spending`
+      : "if money stopped coming in";
 
   const empty = total === 0;
   $("rptEmpty").classList.toggle("hidden", !empty);
@@ -5947,11 +5961,14 @@ async function renderReports() {
   const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
   renderExpenseList("rptExpList", monthRows, "No expenses this month.");
 
+  // All three still render every time. They are cheap (already-loaded
+  // expenses, no query) and Chart.js needs a laid-out canvas to size
+  // itself, so drawing only the visible one would leave the other two blank
+  // when their pill is first tapped.
   renderBreakdownBar($("catChart"), byCat);
   renderBreakdownBar($("acctChart"), byAcct);
   renderBreakdownBar($("payChart"), byPayment);
   const trailing = lastMonths(6, ym);
-  renderTrendBar($("trendChart"), trailing, monthlyTotals(allExpenses, trailing));
 
   const incomeActivity = accountActivity.filter((a) => a.kind === "income");
   const ive = incomeVsExpense(incomeActivity, allExpenses, trailing);
@@ -5963,6 +5980,25 @@ async function renderReports() {
     ? signedPct(Math.round(selectedMonth.savingsRate * 1000) / 10)
     : "—";
 }
+
+// Three views of one month's spending behind pills, rather than three
+// separate cards stacked down the page. Persisted per device like the
+// Investments sub-tabs, with a stale-value fallback to the default.
+const BREAKDOWN_VIEWS = { cat: "breakdownBoxCat", acct: "breakdownBoxAcct", pay: "breakdownBoxPay" };
+function setBreakdownView(view) {
+  const key = BREAKDOWN_VIEWS[view] ? view : "cat";
+  for (const [name, boxId] of Object.entries(BREAKDOWN_VIEWS)) {
+    $(boxId).classList.toggle("hidden", name !== key);
+  }
+  document.querySelectorAll("[data-breakdown]").forEach((el) => {
+    el.classList.toggle("active", el.dataset.breakdown === key);
+  });
+  localStorage.setItem("reportsBreakdown", key);
+}
+document.querySelectorAll("[data-breakdown]").forEach((el) => {
+  el.onclick = () => setBreakdownView(el.dataset.breakdown);
+});
+setBreakdownView(localStorage.getItem("reportsBreakdown") || "cat");
 
 // ---- MONTH REPORT EXPORT (docs/ROADMAP.md Reports & Net Worth #3) --------
 // Recomputes ym/monthRows fresh rather than reading renderReports()'s

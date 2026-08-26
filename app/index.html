@@ -843,7 +843,7 @@
              (a single $14 expense across three months produced exactly
              that reading in production). Same label/value/note shape the
              Income tile on the Log page uses. -->
-        <div class="card"><div class="muted" style="font-size:12px">Emergency fund</div><div class="big" id="rptEmergencyFund">—</div><div class="muted" id="rptEmergencyFundNote" style="font-size:11px;margin-top:2px">how long savings would last</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Savings would last</div><div class="big" id="rptEmergencyFund">—</div><div class="muted" id="rptEmergencyFundNote" style="font-size:11px;margin-top:2px">how long savings would last</div></div>
       </div>
 
       <!-- Interactive spending Q&A (Gemma, optional/best-effort like Phase 3) -->
@@ -881,40 +881,46 @@
         <div id="rptExpList" class="scroll-list" style="margin-top:8px"></div>
       </div>
 
-      <div class="card">
-        <strong>By category</strong>
-        <div class="chartbox"><canvas id="catChart"></canvas></div>
-      </div>
-
-      <div class="card">
-        <strong>By account</strong>
-        <div class="chartbox short"><canvas id="acctChart"></canvas></div>
-      </div>
-
-      <div class="card">
-        <strong>By payment type</strong>
-        <div class="chartbox short"><canvas id="payChart"></canvas></div>
-      </div>
-
-      <div class="card" id="trendCard">
-        <strong>Last 6 months</strong>
-        <div class="chartbox short"><canvas id="trendChart"></canvas></div>
+      <!-- One card with three views instead of three near-identical cards.
+           They answered the same question ("where did the money go") sliced
+           three ways, so they are pills over a single chart now - the same
+           .subtab-pill pattern the Investments page uses. -->
+      <div class="card" id="breakdownCard">
+        <div class="card-head">
+          <strong>Where your money went</strong>
+          <span class="info-icon" tabindex="0" role="button" data-info="breakdownExplainer" title="The same month's spending, split three ways. Use the buttons to switch between what you spent it on, which account it came out of, and how you paid.">i</span>
+        </div>
+        <p class="muted explainer hidden" id="breakdownExplainer">The same month's spending, split three ways. Use the buttons to switch between what you spent it on, which account it came out of, and how you paid.</p>
+        <div class="row" id="breakdownTabs" style="gap:6px;margin:8px 0 10px">
+          <button class="subtab-pill" data-breakdown="cat">What on</button>
+          <button class="subtab-pill" data-breakdown="acct">Which account</button>
+          <button class="subtab-pill" data-breakdown="pay">How paid</button>
+        </div>
+        <div class="chartbox" id="breakdownBoxCat"><canvas id="catChart"></canvas></div>
+        <div class="chartbox short hidden" id="breakdownBoxAcct"><canvas id="acctChart"></canvas></div>
+        <div class="chartbox short hidden" id="breakdownBoxPay"><canvas id="payChart"></canvas></div>
       </div>
 
       <!-- Reads account_activity rows with kind='income' (see the Income
-           sources card, Subscriptions/Bills page) plus the same monthly
-           expense totals every other chart on this page uses - see
-           incomeVsExpense() (charts.js). Not scoped to the month selector
-           for its own trailing-6-months window, matching "Last 6 months"
-           immediately above it; the savings-rate stat below IS scoped to
-           the selected month, matching the page's other stat tiles. -->
-      <div class="card">
-        <strong>Income vs. expense</strong>
+           sources card on the Log page) plus the same monthly expense
+           totals the rest of this page uses - see incomeVsExpense()
+           (charts.js). Not scoped to the month selector: it is a trailing
+           six-month window. The savings-rate stat below IS scoped to the
+           selected month, matching the page's stat tiles.
+           This ABSORBED the old "Last 6 months" card, which drew expenses
+           alone over exactly the same six months - the same bars, minus the
+           income comparison, so it was strictly less informative. -->
+      <div class="card" id="trendCard">
+        <div class="card-head">
+          <strong>Money in and out</strong>
+          <span class="info-icon" tabindex="0" role="button" data-info="incExpExplainer" title="What came in against what went out, for each of the last six months. Green is money in, blue is money out.">i</span>
+        </div>
+        <p class="muted explainer hidden" id="incExpExplainer">What came in against what went out, for each of the last six months. Green is money in, blue is money out.</p>
         <div class="chartbox short"><canvas id="incomeExpenseChart"></canvas></div>
         <!-- Deliberately no color/threshold framing - a plain number, same
              restraint as the Emergency fund stat above and the Liabilities
              card's credit-utilization line. -->
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Savings rate (selected month): <strong id="savingsRateStat">—</strong></p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Of what you earned this month, you kept: <strong id="savingsRateStat">—</strong></p>
       </div>
 
       <!-- Reconstructed from expenses + account_activity (see
@@ -1981,7 +1987,7 @@
       </div>
       <div id="helpContentReports" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramReports" viewBox="0 0 680 606" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramReports" viewBox="0 0 680 444" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Ask about your spending</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -1989,21 +1995,15 @@
             <rect x="10" y="118" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="147" fill="var(--text)" font-size="14">Monthly Expense Log</text>
             <rect x="10" y="172" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="201" fill="var(--text)" font-size="14">By category</text>
+            <text x="40" y="201" fill="var(--text)" font-size="14">Where your money went</text>
             <rect x="10" y="226" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="255" fill="var(--text)" font-size="14">By account</text>
+            <text x="40" y="255" fill="var(--text)" font-size="14">Money in and out</text>
             <rect x="10" y="280" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="309" fill="var(--text)" font-size="14">By payment type</text>
+            <text x="40" y="309" fill="var(--text)" font-size="14">Account balance history</text>
             <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="363" fill="var(--text)" font-size="14">Last 6 months</text>
+            <text x="40" y="363" fill="var(--text)" font-size="14">Cash flow forecast</text>
             <rect x="10" y="388" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="417" fill="var(--text)" font-size="14">Income vs. expense</text>
-            <rect x="10" y="442" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="471" fill="var(--text)" font-size="14">Account balance history</text>
-            <rect x="10" y="496" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="525" fill="var(--text)" font-size="14">Cash flow forecast</text>
-            <rect x="10" y="550" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="579" fill="var(--text)" font-size="14">Net worth trend</text>
+            <text x="40" y="417" fill="var(--text)" font-size="14">Net worth trend</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. The month selector (top right) and its "Selected month" / "Subscriptions/Bills" totals apply to everything except the last four cards - see below for which.</p>
@@ -2039,23 +2039,19 @@
         </div>
 
         <div class="help-topic" id="helpTopic-by-category-by-account-by-payment-type">
-          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>By category / By account / By payment type</h3>
+          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Where your money went</h3>
           <div class="help-topic-body hidden">
-          <p>Three bar-chart breakdowns of the selected month's spending, sliced three different ways - which category it went to, which account paid it, and debit vs. credit vs. cash. Each bar's dollar amount is written right on the label so you don't need to hover to read it.</p>
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-last-6-months">
-          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Last 6 months</h3>
-          <div class="help-topic-body hidden">
-          <p>A bar per month, total spending only, for the six months ending at whichever month is selected above - the one chart on this page that shows more than a single month at once (everything else above it is that one month only).</p>
+          <p>The selected month's spending, split three ways. The buttons switch between them: <strong>What on</strong> groups by category (food, housing, and so on), <strong>Which account</strong> groups by the card or account it came out of, and <strong>How paid</strong> groups by debit, credit or cash. Each bar has its dollar amount written on the label, so nothing needs hovering over.</p>
+          <p>These used to be three separate cards down the page. They answer the same question sliced differently, so they share one chart now and the buttons pick the slice. Whichever one you last looked at is the one you come back to.</p>
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-income-vs-expense">
-          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Income vs. expense</h3>
+          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Money in and out</h3>
           <div class="help-topic-body hidden">
-          <p>Paired bars, income against expense, for the same six months as the chart above it - income comes from whatever you've logged on the Income sources card (Log page), either automatically as each recurring source comes due or from a real deposit you entered yourself. Below the chart, "Savings rate" is (income − expense) ÷ income for the selected month specifically - a real percentage, shown plainly with no color or "aim for X%" framing, the same restraint the Emergency fund stat and the Liabilities card's credit-utilization line already hold. Shows "—" for a month with no income logged yet (dividing by zero income isn't a real 0% rate, so it's left blank rather than shown as one) - a month where you genuinely spent more than you earned still shows a real negative percentage, not hidden.</p>
+          <p>Two bars for each of the last six months: green for money that came in, blue for money that went out. Income comes from whatever you have added under Income sources on the Log page, whether the app logged it automatically when it was due or you entered a deposit yourself.</p>
+          <p>Underneath, "Of what you earned this month, you kept" is the share of that month's income left after everything you spent. If you spent more than you earned it shows a negative figure, which is shown honestly rather than hidden. It stays blank for a month with no income recorded, because there is nothing to take a share of.</p>
+          <p>This card absorbed an older "Last 6 months" chart that drew only spending over exactly the same six months - the same bars without the income to compare them against, so it was strictly less useful.</p>
           </div>
         </div>
 

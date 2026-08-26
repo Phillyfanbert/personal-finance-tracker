@@ -136,9 +136,24 @@
     /* Help ("?") button, one per view topbar - small and circular so it
        reads as a secondary/reference action, not competing with the
        page's real buttons (Profile, + Add, ...) for attention. */
-    .help-btn { width: 30px; height: 30px; flex: none; padding: 0;
-      border-radius: 50%; background: var(--panel-2); border: 1px solid var(--border);
-      color: var(--text); font-weight: 700; font-size: 15px; cursor: pointer; }
+    /* Says "Help" in words rather than a bare "?" circle. The circle was
+       easy to read as decoration next to the page title, and this button is
+       now the only route to both the written guide and replaying the guided
+       tour, so it has to be unmistakable. Accent-tinted for the same reason:
+       it should read as an offer of help, not as page furniture. The "?" is
+       kept as a glyph beside the word because it is the near-universal help
+       affordance and carries the meaning faster than the word alone. */
+    .help-btn { display: inline-flex; align-items: center; gap: 6px;
+      width: auto; flex: none; padding: 6px 12px 6px 8px; border-radius: 999px;
+      background: rgba(56, 189, 248, .12); border: 1px solid var(--accent);
+      color: var(--accent); font-weight: 600; font-size: 13px; cursor: pointer;
+      transition: background-color .15s; }
+    .help-btn:hover, .help-btn:focus-visible { background: rgba(56, 189, 248, .22); }
+    /* The glyph keeps its own circle so the pill still reads as "? = help"
+       at a glance, without the word having to carry it alone. */
+    .help-btn .help-glyph { display: inline-flex; align-items: center; justify-content: center;
+      width: 18px; height: 18px; border-radius: 50%; flex: none;
+      background: var(--accent); color: var(--bg); font-size: 12px; font-weight: 800; }
     /* Shared by every card that pairs a title with an "i" explainer, so a new
        card is markup-only - see wireInfoIcons() in app.js. */
     .card-head { display: flex; align-items: center; gap: 6px; }
@@ -245,7 +260,7 @@
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
           <h1 style="margin:0;font-size:17px">Personal Finance Tracker</h1>
-          <button class="help-btn" id="helpLogBtn" title="Help">?</button>
+          <button class="help-btn" id="helpLogBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
         </div>
         <div style="display:flex;gap:8px">
           <button class="secondary" id="profileBtn" style="width:auto;padding:8px 12px">Profile</button>
@@ -806,11 +821,11 @@
 
     <!-- ============ APP: REPORTS VIEW ============ -->
     <div id="reportsView" class="hidden">
-      <div class="topbar">
+      <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="secondary" id="backFromReports" style="width:auto;padding:8px 10px">←</button>
           <h1 style="margin:0">Reports</h1>
-          <button class="help-btn" id="helpReportsBtn" title="Help">?</button>
+          <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
         </div>
         <select id="monthSel" style="width:auto"></select>
       </div>
@@ -946,11 +961,11 @@
 
     <!-- ============ APP: SUBSCRIPTIONS VIEW ============ -->
     <div id="subsView" class="hidden">
-      <div class="topbar">
+      <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="secondary" id="backFromSubs" style="width:auto;padding:8px 10px">←</button>
           <h1 style="margin:0">Subscriptions/Bills</h1>
-          <button class="help-btn" id="helpSubsBtn" title="Help">?</button>
+          <button class="help-btn" id="helpSubsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
         </div>
         <button class="secondary" id="addSubBtn" style="width:auto;padding:8px 12px">+ Add</button>
       </div>
@@ -1057,11 +1072,11 @@
 
     <!-- ============ APP: INVESTMENTS VIEW ============ -->
     <div id="investView" class="hidden">
-      <div class="topbar">
+      <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="secondary" id="backFromInvest" style="width:auto;padding:8px 10px">←</button>
           <h1 style="margin:0">Investments</h1>
-          <button class="help-btn" id="helpInvestBtn" title="Help">?</button>
+          <button class="help-btn" id="helpInvestBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
         </div>
       </div>
 

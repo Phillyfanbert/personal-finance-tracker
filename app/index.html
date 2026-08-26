@@ -769,8 +769,14 @@
         <div class="card"><div class="muted" style="font-size:12px">Subscriptions/Bills</div><div class="big" id="rptSubs">$0</div></div>
         <!-- Liquid assets / average of the last 3 months' spending - a
              plain number, deliberately no color or "aim for X months"
-             framing (see networth.js's emergencyFundCoverage()). -->
-        <div class="card"><div class="muted" style="font-size:12px">Emergency fund</div><div class="big" id="rptEmergencyFund">—</div></div>
+             framing (see networth.js's emergencyFundCoverage()).
+             The sub-line is load-bearing, not decoration: "319.2mo" alone
+             says nothing about what is being measured, and it also hides
+             that the figure can rest on almost no spending history at all
+             (a single $14 expense across three months produced exactly
+             that reading in production). Same label/value/note shape the
+             Income tile on the Log page uses. -->
+        <div class="card"><div class="muted" style="font-size:12px">Emergency fund</div><div class="big" id="rptEmergencyFund">—</div><div class="muted" id="rptEmergencyFundNote" style="font-size:11px;margin-top:2px">how long savings would last</div></div>
       </div>
 
       <!-- Interactive spending Q&A (Gemma, optional/best-effort like Phase 3) -->
@@ -1891,7 +1897,8 @@
 
         <div class="help-topic">
           <h3>Month selector and totals</h3>
-          <p>Everything on this page except the bottom four cards (Account balance history, Cash flow forecast, Net worth trend, and indirectly the Q&A/monthly report below) is scoped to whichever month you pick at the top right. The first two totals under it are that month's full expense total and just its Subscriptions category slice. The third, "Emergency fund," is always current rather than scoped to the selected month - it's your liquid account balances (checking, savings, cash, and similar - not retirement, investment, or loan accounts) divided by your average spending over the last 3 months, shown as a plain number of months covered. No color, no "aim for X months" - just the math, the same way this app never turns a real number into advice.</p>
+          <p>Everything on this page except the bottom four cards (Account balance history, Cash flow forecast, Net worth trend, and indirectly the Q&A/monthly report below) is scoped to whichever month you pick at the top right. The first two totals under it are that month's full expense total and just its Subscriptions category slice. The third, "Emergency fund," is always current rather than scoped to the selected month - it's your liquid account balances (checking, savings, cash, and similar - not retirement, investment, or loan accounts) divided by your average spending over the last 3 months, shown as a plain number of months covered - the small line under it says so, since "319.2mo" on its own doesn't tell you what is being measured. No color, no "aim for X months" - just the math, the same way this app never turns a real number into advice.</p>
+          <p>That average always divides by 3 months, even if you've only logged spending in one of them, so a short history can produce a very large number of months - one $14 expense makes your average look like about $5 a month, and an ordinary balance then reads as hundreds of months of runway. When fewer than 3 months have any spending in them, the line under the number says what it's actually based on ("based on 1 month of spending") rather than presenting the figure as if it were a settled fact. It becomes meaningful once you have a few real months of history.</p>
         </div>
 
         <div class="help-topic">

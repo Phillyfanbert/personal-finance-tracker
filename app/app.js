@@ -5878,7 +5878,15 @@ async function renderReports() {
   // account-history/net-worth-trend cards already use for staying
   // unscoped to monthSel.
   const efMonths = lastMonths(3, monthKey());
-  const efAvgSpending = monthlyTotals(allExpenses, efMonths).reduce((s, v) => s + v, 0) / efMonths.length;
+  const efMonthTotals = monthlyTotals(allExpenses, efMonths);
+  const efAvgSpending = efMonthTotals.reduce((s, v) => s + v, 0) / efMonths.length;
+  // How many of the three months actually have spending in them, which is
+  // what decides whether the coverage figure means anything. The average
+  // divides by 3 regardless, so one $14 expense becomes ~$4.67/month and a
+  // perfectly ordinary balance then reads as hundreds of months of runway -
+  // real arithmetic on unrepresentative input, which is exactly the case
+  // that showed up in production.
+  const efMonthsWithSpending = efMonthTotals.filter((v) => v > 0).length;
   const efLiquidAssets = accounts
     .filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at && a.linked_asset_id)
     .reduce((sum, a) => {
@@ -5886,7 +5894,16 @@ async function renderReports() {
       return sum + (asset ? Number(asset.value) : 0);
     }, 0);
   const efCoverage = emergencyFundCoverage(efLiquidAssets, efAvgSpending);
-  $("rptEmergencyFund").textContent = efCoverage != null ? `${efCoverage}mo` : "—";
+  $("rptEmergencyFund").textContent = efCoverage != null ? `${efCoverage} mo` : "—";
+  // States what the number is, and - when the answer is "almost nothing" -
+  // what it rests on. Saying "based on 1 month of spending" is the same
+  // omit-or-qualify-rather-than-overstate rule priceRangeStats() follows
+  // when it refuses to call five days of data a 52-week range.
+  $("rptEmergencyFundNote").textContent = efCoverage == null
+    ? "no spending recorded yet"
+    : efMonthsWithSpending < efMonths.length
+      ? `based on ${efMonthsWithSpending} month${efMonthsWithSpending === 1 ? "" : "s"} of spending`
+      : "how long savings would last";
 
   const empty = total === 0;
   $("rptEmpty").classList.toggle("hidden", !empty);

@@ -146,14 +146,20 @@ export function categorize(text, userRules = {}) {
 export function quickParse(text) {
   const out = { amount: null, payment_type: null, rest: text || "" };
   if (!text) return out;
-  const amtMatch = text.match(/\$?\s*(\d+(?:\.\d{1,2})?)/);
-  if (amtMatch) out.amount = parseFloat(amtMatch[1]);
+  // Thousands separators are allowed, and stripped before parseFloat, which
+  // stops at the first comma. Without this, "1,234.56 rent" matched just the
+  // leading "1" and quietly logged a $1 expense instead of $1,234.56 - a real
+  // money bug, and one csvImport.js's own parseAmount() already handled.
+  const amtMatch = text.match(/\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/);
+  if (amtMatch) out.amount = parseFloat(amtMatch[1].replace(/,/g, ""));
   const lower = text.toLowerCase();
   if (/\bcredit\b/.test(lower)) out.payment_type = "credit";
   else if (/\bdebit\b/.test(lower)) out.payment_type = "debit";
   else if (/\bcash\b/.test(lower)) out.payment_type = "cash";
   out.rest = text
-    .replace(/\$?\s*\d+(?:\.\d{1,2})?/, "")
+    // Must match the amount pattern above, or the digits after a comma would
+    // be left behind in the description ("234.56 rent").
+    .replace(/\$?\s*(?:\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/, "")
     .replace(/\b(credit|debit|cash)\b/i, "")
     .trim();
   return out;

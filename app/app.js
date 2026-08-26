@@ -5979,10 +5979,15 @@ $("exportPdfBtn").onclick = () => {
   const total = byCat.reduce((s, d) => s + d.value, 0);
   const win = window.open("", "_blank");
   if (!win) { toast("Allow pop-ups to print/export a PDF"); return; }
+  // esc() here for the same reason every innerHTML site has it: this is
+  // document.write of a full HTML page, so a description, merchant or
+  // category containing markup would execute in the print window. Category
+  // is not safe just because the picker offers a fixed list - csvImport.js
+  // writes whatever the file's category column contained, unvalidated.
   const rowsHtml = monthRows.map((r) =>
-    `<tr><td>${r.occurred_at}</td><td>${r.description || r.merchant || ""}</td><td>${r.category || ""}</td><td style="text-align:right">${fmt(r.amount)}</td></tr>`
+    `<tr><td>${esc(r.occurred_at)}</td><td>${esc(r.description || r.merchant || "")}</td><td>${esc(r.category || "")}</td><td style="text-align:right">${fmt(r.amount)}</td></tr>`
   ).join("");
-  const catHtml = byCat.map((c) => `<tr><td>${c.label}</td><td style="text-align:right">${fmt(c.value)}</td></tr>`).join("");
+  const catHtml = byCat.map((c) => `<tr><td>${esc(c.label)}</td><td style="text-align:right">${fmt(c.value)}</td></tr>`).join("");
   win.document.write(`<!doctype html><html><head><title>${monthLabel(ym)} report</title>
 <meta charset="utf-8">
 <style>

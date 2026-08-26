@@ -404,10 +404,23 @@ function renderAgentFreshness(agent, freshnessId, warningId) {
   }
 
   warningEl.classList.remove("hidden");
-  warningEl.style.color = status.status === "failed" ? "var(--err)" : "var(--warn)";
-  // Past tense plus a real age, so it can never be misread as happening
-  // now. The agent writes `detail` in the present tense for its own logs.
-  warningEl.textContent = `${timeAgo(status.ran_at)}: ${status.detail}`;
+  // Muted and short, deliberately NOT amber and NOT the agent's own `detail`.
+  // That string is written for a log ("6 of 40 live searches failed this run
+  // (rate limits or timeouts)"), and in amber next to prices Finnhub had
+  // refreshed 11 minutes earlier it made a working card read as unreliable.
+  // A partial run is the normal, expected state of a best-effort background
+  // job, not something to alarm anyone about - the reader only needs to know
+  // the data might not be complete, and "Last updated X ago" directly above
+  // already carries how old it is.
+  //
+  // This is also not the app's only staleness signal: renderPricesAsOf()
+  // colors its own line once real prices actually go stale, which answers
+  // "is this data old" from the data itself rather than from a job's status.
+  // That is the one worth making visible, so this one stays quiet.
+  warningEl.style.color = "var(--muted)";
+  warningEl.textContent = status.status === "failed"
+    ? "Could not refresh last time - showing the most recent data saved."
+    : "Some of this may be incomplete - the last refresh only partly finished.";
 }
 
 // How long a failed/degraded run stays worth warning about.

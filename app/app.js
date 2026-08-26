@@ -361,12 +361,58 @@ function renderAgentFreshness(agent, freshnessId, warningId) {
 
   if (status.status === "ok" || !status.detail) {
     warningEl.classList.add("hidden");
-  } else {
-    warningEl.classList.remove("hidden");
-    warningEl.style.color = status.status === "failed" ? "var(--err)" : "var(--warn)";
-    warningEl.textContent = status.detail; // .textContent, not innerHTML - no esc() needed
+    return;
   }
+
+  // A stale problem is not a current problem. `detail` is written in the
+  // present tense ("failed this run"), which read as "right now" even when
+  // the run it describes was a week old - and it sits directly above index
+  // ETF prices that Finnhub refreshed 15 minutes ago, so a working card
+  // looked broken. Past a full cadence the run is simply old news: the
+  // "Last updated X ago" line above already says so, and that is the
+  // honest signal. Only warn while the failure is still the current state.
+  // An agent with no entry falls back to the longest window rather than
+  // undefined - `ageMs > undefined` is always false, which would keep the
+  // warning forever, and silently at that.
+  const maxAge = AGENT_WARNING_MAX_AGE_MS[agent] ?? DEFAULT_AGENT_WARNING_MAX_AGE_MS;
+  const ageMs = Date.now() - new Date(status.ran_at).getTime();
+  if (Number.isFinite(ageMs) && ageMs > maxAge) {
+    warningEl.classList.add("hidden");
+    return;
+  }
+
+  warningEl.classList.remove("hidden");
+  warningEl.style.color = status.status === "failed" ? "var(--err)" : "var(--warn)";
+  // Past tense plus a real age, so it can never be misread as happening
+  // now. The agent writes `detail` in the present tense for its own logs.
+  warningEl.textContent = `${timeAgo(status.ran_at)}: ${status.detail}`;
 }
+
+// How long a failed/degraded run stays worth warning about.
+//
+// **Deliberately SHORTER than the agent's own cadence, not longer.** The
+// first attempt here used 8 days for the weekly agents, reasoning that the
+// failure is "current" until the next run replaces it - but that is exactly
+// what produced the reported problem: a weekly agent's bad run would keep
+// its banner up for the entire week until the next one, so the banner was
+// effectively permanent. A fixture against the real production row (7 days
+// old, degraded) caught it.
+//
+// The useful question is not "is this still the newest run" but "is this
+// still news." A failure is worth explaining while it is recent; after
+// that, "Last updated 7 days ago" is the honest and sufficient signal, and
+// repeating a week-old rate-limit message next to prices that refreshed 15
+// minutes ago just makes a working card look broken.
+const DEFAULT_AGENT_WARNING_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
+const AGENT_WARNING_MAX_AGE_MS = {
+  "price-agent": DEFAULT_AGENT_WARNING_MAX_AGE_MS,
+  "deal-agent": DEFAULT_AGENT_WARNING_MAX_AGE_MS,
+  // These two run every 15 minutes and daily, so a failure that still
+  // matters is necessarily recent - and if either stops running entirely,
+  // renderPricesAsOf()'s own amber "prices as of" line already says so.
+  "price-agent-fast": 6 * 60 * 60 * 1000,
+  "daily-recap": 6 * 60 * 60 * 1000,
+};
 
 // Deliberately separate from renderAgentFreshness above, which reflects
 // an AGENT RUN's status (the whole weekly Tavily/Gemini pipeline) - this

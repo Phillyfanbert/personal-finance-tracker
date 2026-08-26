@@ -2090,6 +2090,16 @@ async function processAllIndexes() {
       confidence: extracted.confidence,
       extracted_by: "gemini",
       explanation: null,
+      // Overrides market_index_findings' 2-day column default, which is
+      // written for the FAST_ONLY ticker stream (~2,300 rows/day, where a
+      // short TTL is what keeps the table bounded). These four rows are
+      // written WEEKLY, so the default guaranteed they were purged about
+      // two days after each run and the Market overview card then showed
+      // "index level not available yet" for the remaining five - which is
+      // exactly what production did: zero index-label rows had ever
+      // survived, while the 15-minute ETF proxy rows beside them were
+      // always fine. A weekly row needs to outlive its own cadence.
+      expires_at: new Date(Date.now() + INDEX_LEVEL_TTL_MS).toISOString(),
     });
   }
 
@@ -2108,6 +2118,12 @@ async function processAllIndexes() {
 // import/export machinery to share it with app/*.js, same as
 // TRUSTED_PRICE_DOMAINS already has no client-side counterpart either.
 const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Composite", "Russell 2000"];
+
+// Slightly longer than the weekly cadence that writes these, so a run
+// firing a little late never leaves a gap with no index level at all. Only
+// four rows a week, so this costs nothing against the row-growth concern
+// that justifies the 2-day default for the high-frequency ticker stream.
+const INDEX_LEVEL_TTL_MS = 8 * 24 * 60 * 60 * 1000;
 
 // ---- Market movers watchlist (Investments tab, "Today's top movers") -----
 // A fixed, curated list of well-known large-cap stocks - NOT each user's

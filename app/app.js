@@ -6124,9 +6124,19 @@ setBreakdownView(localStorage.getItem("reportsBreakdown") || "cat");
 // Recomputes ym/monthRows fresh rather than reading renderReports()'s
 // locals - cheap (already-loaded allExpenses, no new query) and avoids
 // threading extra state through just for these two buttons.
-$("exportCsvBtn").onclick = () => {
+// Confirms first, same bar as downloadDataBtn below and for the same
+// reason: this writes a readable file of real spending to the device's
+// downloads folder, which is a real consequence on a shared or borrowed
+// computer. A file export is not undoable once it has left the app.
+$("exportCsvBtn").onclick = async () => {
   const ym = $("monthSel").value || monthKey();
   const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  if (!monthRows.length) return toast(`Nothing logged in ${monthLabel(ym)} to save`);
+  const ok = await confirmModal(
+    `This saves ${monthRows.length} transaction${monthRows.length === 1 ? "" : "s"} from ${monthLabel(ym)} to your device as a spreadsheet file. It lists what you bought and how much, and anyone who can open the file can read it.`,
+    { title: "Save this month to a file?", confirmLabel: "Save file" }
+  );
+  if (!ok) return;
   const csv = buildExpensesCsv(monthRows, acctName);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -6142,9 +6152,15 @@ $("exportCsvBtn").onclick = () => {
 // robust than trying to make the whole SPA shell print sensibly. The
 // user picks "Save as PDF" as the print destination themselves; nothing
 // here writes a PDF directly.
-$("exportPdfBtn").onclick = () => {
+$("exportPdfBtn").onclick = async () => {
   const ym = $("monthSel").value || monthKey();
   const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  if (!monthRows.length) return toast(`Nothing logged in ${monthLabel(ym)} to print`);
+  const ok = await confirmModal(
+    `This opens a printable report of ${monthLabel(ym)} in a new tab, listing every one of your ${monthRows.length} transaction${monthRows.length === 1 ? "" : "s"} that month. From there you can print it or save it as a PDF.`,
+    { title: "Open a printable report?", confirmLabel: "Open report" }
+  );
+  if (!ok) return;
   const byCat = sumBy(allExpenses, "category", ym);
   const total = byCat.reduce((s, d) => s + d.value, 0);
   const win = window.open("", "_blank");
@@ -6799,12 +6815,61 @@ function openIncomeForm(src) {
   $("incNotes").value = src?.notes ?? "";
   $("deleteIncomeBtn").classList.toggle("hidden", !src);
   updateIncomeSemimonthlyVisibility();
+  updateIncomeFieldHighlighting();
   $("incomeForm").classList.remove("hidden");
   $("incomeForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 function closeIncomeForm() { $("incomeForm").classList.add("hidden"); editingIncome = null; }
 
+// Same live "still empty" red border as REQUIRED_QUICK_ADD_FIELDS and
+// REQUIRED_HOLDING_FIELDS - this form had neither, so nothing on it showed
+// as required until a rejected Save said so in a toast.
+//
+// The two semimonthly day fields are checked separately rather than sitting
+// in the list: they are required only for that one cadence, and painting a
+// red border on a row that is currently hidden would flag a field the user
+// cannot even see.
+const REQUIRED_INCOME_FIELDS = ["incSource", "incAmount"];
+function updateIncomeFieldHighlighting() {
+  for (const id of REQUIRED_INCOME_FIELDS) {
+    $(id).classList.toggle("field-required", !$(id).value.trim());
+  }
+  const semimonthly = $("incCadence").value === "semimonthly";
+  for (const id of ["incSemimonthlyDay1", "incSemimonthlyDay2"]) {
+    $(id).classList.toggle("field-required", semimonthly && !$(id).value);
+  }
+  updateIncomeAutoLogNote();
+}
+
+// next_expected and account_id are deliberately NOT required to save: a
+// source with neither still counts toward annualIncome() and hasAnyIncome(),
+// which is a real thing to want ("I earn this, but do not touch my
+// balances"). But autoLogDueIncome() skips any source missing either one, so
+// leaving them blank silently disables the one thing this form promises -
+// the exact silent-no-op class of bug CLAUDE.md already records two of.
+// Stating the consequence keeps the legitimate state available without
+// letting it fail quietly.
+function updateIncomeAutoLogNote() {
+  const missing = [];
+  if (!$("incNextExpected").value) missing.push("the next pay day");
+  if (!$("incAccount").value) missing.push("an account");
+  $("incomeAutoLogNote").textContent = missing.length
+    ? `Add ${missing.join(" and ")}, and the app will add this money for you each time it arrives. Left blank, this still counts toward your yearly income, but no money is ever added anywhere.`
+    : "";
+  $("incomeAutoLogNote").classList.toggle("hidden", !missing.length);
+}
+
+for (const id of [...REQUIRED_INCOME_FIELDS, "incSemimonthlyDay1", "incSemimonthlyDay2", "incNextExpected"]) {
+  $(id).addEventListener("input", updateIncomeFieldHighlighting);
+}
+// change, not input: a <select> and a date picker both report a mouse-driven
+// choice as change, and incNextExpected needs both (typed vs. picked).
+for (const id of ["incCadence", "incAccount", "incNextExpected"]) {
+  $(id).addEventListener("change", updateIncomeFieldHighlighting);
+}
+
 $("saveIncomeBtn").onclick = async () => {
+  updateIncomeFieldHighlighting();
   const source = $("incSource").value.trim();
   const amount = parseFloat($("incAmount").value);
   if (!source) { flagField("incSource"); return toast("Source required"); }

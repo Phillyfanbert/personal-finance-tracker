@@ -770,10 +770,10 @@
 
       <div class="card hidden" id="incomeForm">
         <div class="topbar" style="margin-bottom:6px"><strong id="incomeFormTitle">New income source</strong></div>
-        <label>Source</label>
+        <label>Source (required)</label>
         <input id="incSource" placeholder="Employer paycheck" />
         <div class="row">
-          <div><label>Amount</label><input id="incAmount" type="number" step="0.01" inputmode="decimal" /></div>
+          <div><label>Amount (required)</label><input id="incAmount" type="number" step="0.01" inputmode="decimal" /></div>
           <div><label>Cadence</label>
             <select id="incCadence">
               <option value="weekly">Weekly</option>
@@ -789,13 +789,17 @@
              1st & 15th), not a fixed day-count interval the way biweekly
              is - see app/income.js's own comment for why. -->
         <div class="row hidden" id="incomeSemimonthlyRow">
-          <div><label>First pay day (1-31)</label><input id="incSemimonthlyDay1" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
-          <div><label>Second pay day (1-31)</label><input id="incSemimonthlyDay2" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
+          <div><label>First pay day (1-31, required)</label><input id="incSemimonthlyDay1" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
+          <div><label>Second pay day (1-31, required)</label><input id="incSemimonthlyDay2" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
         </div>
         <div class="row">
           <div><label>Next expected</label><input id="incNextExpected" type="date" /></div>
           <div><label>Deposited into</label><select id="incAccount"></select></div>
         </div>
+        <!-- Written live by updateIncomeAutoLogNote(). Not a validation
+             error: a source with no date/account is a legitimate thing to
+             record, it just never adds money on its own. -->
+        <div class="muted hidden" id="incomeAutoLogNote" style="font-size:12px;margin-top:6px"></div>
         <label><input type="checkbox" id="incActive" style="width:auto;margin-right:8px" checked />Active</label>
         <label>Notes</label>
         <input id="incNotes" placeholder="e.g. biweekly on Fridays" />
@@ -1931,6 +1935,7 @@
         <div class="help-topic" id="helpTopic-income-sources">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Income sources</h3>
           <div class="help-topic-body hidden">
+          <p><strong>Source</strong> and <strong>Amount</strong> are required, and so are the two pay days if you pick semimonthly. Anything still needed is outlined in red while you fill the form in, and clears as soon as you type. <strong>Next expected</strong> and <strong>Deposited into</strong> are not required, but the app can only add money for you if it knows when and where - leave either blank and the source still counts toward your yearly income, it just never records a deposit. The form says so underneath those two fields rather than letting it fail quietly.</p>
           <p>Recurring money coming in - a paycheck, and similar. Each source records its amount, cadence, which account it's deposited into, when the next one's expected, and an Active checkbox, then logs itself automatically once it comes due, the same way a bill charge does. Cadence covers weekly, biweekly, semimonthly (two fixed pay days a month, like the 1st and 15th - not just "every ~15 days," which would slowly drift off your real payday), monthly, annual, and one-time. A one-time source turns itself inactive right after it's logged, so it never logs twice.</p>
           <p>Only accounts with a real balance behind them can be picked as the deposit account - not a credit card or loan, the same restriction Transfer uses above and for the same reason. Each deposit shows up in Recent History as "Income received," undoable like any other entry there.</p>
           <p>The <strong>Income / yr</strong> tile at the top of this page annualizes every active recurring source. It reads <strong>$0</strong> until you add one, with a line underneath saying whether that's because nothing is recorded yet or because your only source is one-time - a one-time deposit isn't a yearly rate, so it deliberately isn't counted toward the total. This figure is also what the app checks against the two account types where income is a real legal requirement (see Accounts above).</p>
@@ -2065,7 +2070,7 @@
         <div class="help-topic" id="helpTopic-monthly-expense-log">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Monthly Expense Log</h3>
           <div class="help-topic-body hidden">
-          <p>Every plain expense in the selected month (not account activity like balance corrections - this list is about spending specifically). Tap one to edit or recategorize it, same as Recent History on the Log page. CSV exports the visible rows to a spreadsheet file; Print / PDF opens a clean, separate printable page you can save as a PDF from your browser's own print dialog.</p>
+          <p>Every plain expense in the selected month (not account activity like balance corrections - this list is about spending specifically). Tap one to edit or recategorize it, same as Recent History on the Log page. CSV exports the visible rows to a spreadsheet file; Print / PDF opens a clean, separate printable page you can save as a PDF from your browser's own print dialog. Both ask you to confirm first: either one puts a readable copy of that month's spending somewhere outside the app, which matters on a shared or borrowed device.</p>
           </div>
         </div>
 

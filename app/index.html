@@ -300,7 +300,7 @@
         <strong>Expenses Quick Add</strong>
         <label for="quick" class="hidden">Quick add</label>
         <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" style="margin-top:8px" />
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Type free text: amount & merchant are auto-detected, and a matching account if you name one (e.g. "debit"). Confirm below.</p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Type it however you would say it, like "14 lunch chipotle debit". The app fills in the rest for you to check before saving.</p>
 
         <div id="confirm" class="hidden" style="margin-top:12px">
           <div id="parseStatus" class="muted" style="font-size:12px;min-height:16px;margin-bottom:6px"></div>
@@ -381,7 +381,7 @@
             <input id="txnMaxAmount" type="number" step="0.01" inputmode="decimal" placeholder="Any" style="width:100%;font-size:12px;padding:6px 8px" />
           </div>
         </div>
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Tap an expense to edit or recategorize, or check a few to recategorize them together. Account activity (payments, balance adjustments) is shown for reference only and can't be checked.</p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Tap anything to change it, or tick a few to change them together. Payments and balance changes are listed too, but those cannot be ticked.</p>
         <!-- Selection persists across filter changes (so refining a search
              doesn't lose a partially-built selection) - only cleared by
              Clear, a successful Apply, or a fresh loadExpenses(). -->
@@ -804,10 +804,16 @@
         <button class="secondary hidden" id="deleteIncomeBtn" style="color:var(--err)">Delete income source</button>
       </div>
 
+      <!-- The explanation lives behind the "i" like every other card that
+           has one, rather than as a permanently-visible paragraph - see
+           wireInfoIcons(). -->
       <div class="card" id="debtStrategyCard">
-        <strong>Debt payoff strategy</strong>
-        <p class="muted" style="font-size:12px;margin:4px 0 10px">Compares paying extra toward your highest-interest debt first (avalanche) with paying extra toward your smallest-balance debt first (snowball) - shows the real numbers for both, doesn't tell you which to pick.</p>
-        <label>Extra monthly toward debt (optional)</label>
+        <div class="card-head">
+          <strong>Paying off what you owe</strong>
+          <span class="info-icon" tabindex="0" role="button" data-info="debtStrategyExplainer" title="Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.">i</span>
+        </div>
+        <p class="muted explainer hidden" id="debtStrategyExplainer">Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.</p>
+        <label>Spare money you could put toward debt each month</label>
         <input id="debtStrategyExtra" type="number" step="0.01" inputmode="decimal" placeholder="0" />
         <div id="debtStrategyResult" style="margin-top:10px;font-size:13px"></div>
         <p class="muted" id="debtStrategyExcluded" style="font-size:12px;margin-top:8px"></p>
@@ -935,7 +941,7 @@
           <select id="forecastAccountSelect" style="width:auto;font-size:12px"></select>
         </div>
         <div class="chartbox short"><canvas id="forecastChart"></canvas></div>
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Next 30 days, based on known upcoming bills and income only - not a spending prediction.</p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">The next 30 days, using only bills and pay you have already told the app about. It does not try to guess your everyday spending.</p>
       </div>
 
       <!-- One snapshot per calendar day the app was actually opened
@@ -1347,7 +1353,7 @@
                 <button class="secondary" id="cancelHoldingBtn">Cancel</button>
               </div>
             </div>
-            <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p></div>
+            <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">Nothing here yet. Add an investment account from the Assets card on the Log page.</p></div>
           </div>
       </div>
 
@@ -1488,7 +1494,7 @@
   <div id="archivedAcctModal" class="modal hidden">
     <div class="sheet">
       <div class="topbar"><strong>Archived accounts</strong><button class="secondary" id="archivedAcctClose" style="width:auto;padding:6px 12px">Close</button></div>
-      <p class="muted" style="font-size:12px;margin:6px 0 10px">Closed accounts, hidden from the Accounts card and from expense payment pickers. Their balances still count toward net worth.</p>
+      <p class="muted" style="font-size:12px;margin:6px 0 10px">Accounts you have closed. They stay out of your lists, but what is in them still counts toward what you own.</p>
       <div id="archivedAcctList"></div>
     </div>
   </div>
@@ -1823,7 +1829,7 @@
             <rect x="10" y="388" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="417" fill="var(--text)" font-size="14">Income sources</text>
             <rect x="10" y="442" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="471" fill="var(--text)" font-size="14">Debt payoff strategy</text>
+            <text x="40" y="471" fill="var(--text)" font-size="14">Paying off what you owe</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. A budget-warning banner can appear above Quick Add when a category is close to or over its limit.</p>
@@ -1900,9 +1906,12 @@
           </div>
         </div>
         <div class="help-topic" id="helpTopic-debt-payoff-strategy">
-          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Debt payoff strategy</h3>
+          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Paying off what you owe</h3>
           <div class="help-topic-body hidden">
-          <p>Compares two orders for paying extra toward your debts: avalanche (extra goes to whichever has the highest interest rate) and snowball (extra goes to whichever has the smallest balance). Type an optional monthly amount beyond everyone's own minimum, and both strategies show real months-to-debt-free and total-interest numbers side by side - it never tells you which one to actually use, the same "show the math, not advice" line every calculator in this app holds. A liability is left out of the comparison (and counted in the note below the numbers) if it's missing an interest rate or minimum payment, already at $0, or an active HELOC in its draw period - the same conditions that already hide the per-liability payoff line above.</p>
+          <p>If you owe money in more than one place, there are two common ways to decide where any spare money should go. One is to put it toward whichever debt charges the highest interest rate. The other is to put it toward whichever debt is smallest, so you clear one sooner. This card works out what each would actually cost you and shows both, side by side.</p>
+          <p>The box is for spare money you could put toward debt each month, on top of the smallest payment each one already requires. Leaving it at 0 is fine - the comparison still works, it just takes longer either way. For each option you get how many months until everything is paid off, and how much interest you would pay in total getting there.</p>
+          <p>It will never tell you which to choose. Both are reasonable, people pick differently for good reasons, and this app shows you the numbers rather than making that decision for you.</p>
+          <p>A debt is left out of the comparison if the app does not yet know its interest rate and smallest monthly payment, if it is already paid off, or if it is a home equity line you can still borrow more from (those work differently enough that including them would give a misleading answer). A short note under the numbers says how many were left out, and you can fill in the missing details by tapping that debt under Liabilities.</p>
           </div>
         </div>
 

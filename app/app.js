@@ -2808,15 +2808,23 @@ function renderDebtStrategy() {
   const { avalanche, snowball, excludedCount } = compareDebtStrategies(debts, extra);
   const el = $("debtStrategyResult");
   if (!avalanche) {
-    el.innerHTML = `<p class="muted">Add an interest rate and minimum payment to at least one liability to see this comparison.</p>`;
-  } else {
-    const line = (label, r) => r.neverPaysOff
-      ? `<div><strong>${esc(label)}:</strong> minimum payment won't cover interest - balance will grow</div>`
-      : `<div><strong>${esc(label)}:</strong> ${r.months}mo to debt-free, ${fmt(r.totalInterest)} total interest</div>`;
-    el.innerHTML = line("Avalanche (highest interest first)", avalanche) + line("Snowball (smallest balance first)", snowball);
+    el.innerHTML = `<p class="muted">To compare, at least one thing you owe needs its interest rate and smallest allowed monthly payment filled in. Tap it under Liabilities above to add them.</p>`;
+    // No comparison means the "not included" note below would just repeat
+    // what the line above already says, in more technical words. It is only
+    // useful ALONGSIDE a real comparison, to explain what is missing from it.
+    $("debtStrategyExcluded").textContent = "";
+    return;
   }
+  const line = (label, r) => r.neverPaysOff
+    ? `<div><strong>${esc(label)}:</strong> the smallest allowed payment does not cover the interest, so the amount owed would keep growing</div>`
+    : `<div><strong>${esc(label)}:</strong> paid off in ${r.months} month${r.months === 1 ? "" : "s"}, ${fmt(r.totalInterest)} paid in interest along the way</div>`;
+  // Plain description first; the common names are kept in brackets so the
+  // words are still recognisable if someone reads them elsewhere.
+  el.innerHTML = line("Highest interest rate first (avalanche)", avalanche)
+    + line("Smallest amount first (snowball)", snowball);
+
   $("debtStrategyExcluded").textContent = excludedCount
-    ? `${excludedCount} liabilit${excludedCount === 1 ? "y" : "ies"} not included (missing interest rate/minimum payment, already paid off, or an active HELOC draw period).`
+    ? `${excludedCount === 1 ? "One debt is" : excludedCount + " debts are"} left out of this: either it still needs an interest rate and a smallest monthly payment, it is already paid off, or it is a home equity line you can still borrow from.`
     : "";
 }
 $("debtStrategyExtra").addEventListener("input", renderDebtStrategy);

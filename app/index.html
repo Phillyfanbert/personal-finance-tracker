@@ -307,6 +307,18 @@
     .text-xs { font-size: var(--fs-xs); }
     .text-sm { font-size: var(--fs-sm); }
     .danger { color: var(--err); }
+    /* A real button element that keeps the underlined-text look. These were spans
+       with cursor:pointer and no keyboard access at all; the global button
+       rule would otherwise make each one a full-width filled block. */
+    .link-action { position: relative; display: inline-block; width: auto; padding: 0;
+      border: none; background: none; font: inherit; font-size: var(--fs-xs); color: inherit;
+      text-decoration: underline; cursor: pointer; text-align: left; }
+    /* These sit inline inside a row, so giving the element itself 44px of
+       height would push every row apart. The hit box is extended vertically
+       instead: the text stays where it is and the tappable area around it
+       reaches --target-min. */
+    .link-action::after { content: ""; position: absolute; left: 0; right: 0; top: 50%;
+      transform: translateY(-50%); height: var(--target-min); min-width: var(--target-min); }
     /* Written by flagField(ids, message). Not below --fs-sm: this is the only
        statement of what went wrong that stays on screen after the toast. */
     .field-error { color: var(--err); font-size: var(--fs-sm); margin: var(--sp-1) 0 0; }

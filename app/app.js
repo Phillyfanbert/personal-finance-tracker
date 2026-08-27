@@ -1824,11 +1824,11 @@ function renderAccountsList() {
         return `
       <div class="acct-circle-item" ${clickAttr}${styleAttr}>
         <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : esc((bankLabel.trim()[0] || "?").toUpperCase())}</div>
-        ${a.type === "cash" ? "" : `<span class="x" data-del-acct="${a.id}">✕</span>`}
+        ${a.type === "cash" ? "" : `<button type="button" class="x" data-del-acct="${a.id}" aria-label="Delete ${esc(acctLabel(a))}">✕</button>`}
         <div class="name">${esc(bankLabel)}</div>
         <div class="type">${a.name}</div>
         ${balance != null ? `<div class="balance">${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}</div>` : ""}
-        ${a.type === "cash" ? "" : `<div class="muted" data-archive-acct="${a.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Archive</div>`}
+        ${a.type === "cash" ? "" : `<button type="button" class="link-action muted" data-archive-acct="${a.id}" aria-label="Archive ${esc(acctLabel(a))}">Archive</button>`}
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
@@ -2338,7 +2338,7 @@ async function loadAssets() {
   const rowFor = (a) => `
       <div class="exp" ${linkedAssetIds.has(a.id) ? "" : `data-edit-asset="${a.id}" style="cursor:pointer"`}>
         <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}</div>`}${esc(a.name)}</div>
-        <span class="amt">${fmt(effectiveAssetValue(a))}${linkedAssetIds.has(a.id) ? "" : `<span class="x" data-del-asset="${a.id}" style="margin-left:8px">✕</span>`}</span>
+        <span class="amt">${fmt(effectiveAssetValue(a))}${linkedAssetIds.has(a.id) ? "" : `<button type="button" class="x" data-del-asset="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(a.name)}">✕</button>`}</span>
       </div>`;
   // Tapping it goes to the Investments page rather than opening an edit
   // form: there is no single asset behind this line to edit.
@@ -2847,7 +2847,7 @@ async function loadDebts() {
     const interest = s.interestEstimate != null
       ? ` Interest so far about ${fmt(s.interestEstimate)}/mo at ${d.interest_rate}% APR.` : "";
     const logBtn = s.interestEstimate
-      ? `<span class="muted" data-log-interest="${d.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-left:6px">Log interest charge</span>` : "";
+      ? `<button type="button" class="link-action muted" data-log-interest="${d.id}" aria-label="Log an interest charge on ${esc(d.name)}">Log interest charge</button>` : "";
     if (s.state === "paid_in_full") {
       return `<div class="meta" style="color:var(--ok)">Statement paid in full - no interest this cycle</div>`;
     }
@@ -2870,12 +2870,12 @@ async function loadDebts() {
         ${heloc?.phase === "draw" ? "" : payoffLine(d)}
         ${utilizationLine(d)}
         ${cycleLine(d)}
-        <div class="muted" data-edit-debt="${d.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Edit details</div>
+        <button type="button" class="link-action muted" data-edit-debt="${d.id}" aria-label="Edit details of ${esc(d.name)}">Edit details</button>
       </div>
       <span class="amt">
         ${linkedDebtIds.has(d.id) ? "" : `<button class="secondary" data-add-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:6px">+</button>`}
         <button class="secondary" data-pay-debt="${d.id}" style="width:auto;padding:4px 10px;font-size:12px;margin-right:8px">Pay</button>
-        ${fmt(d.balance)}${linkedDebtIds.has(d.id) ? "" : `<span class="x" data-del-debt="${d.id}" style="margin-left:8px">✕</span>`}
+        ${fmt(d.balance)}${linkedDebtIds.has(d.id) ? "" : `<button type="button" class="x" data-del-debt="${d.id}" style="margin-left:8px" aria-label="Delete ${esc(d.name)}">✕</button>`}
       </span>
     </div>`;
   };
@@ -3768,7 +3768,7 @@ function renderExpenseList(containerId, rows, emptyMsg, { selectable = false } =
       <span class="amt">${NON_UNDOABLE_ACTIVITY_KINDS.has(r.kind) ? "" : fmt(Math.abs(r.amount))}${
         NON_UNDOABLE_ACTIVITY_KINDS.has(r.kind)
           ? ""
-          : `<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span>`
+          : `<button type="button" class="x" data-undo-idx="${i}" style="margin-left:8px" aria-label="Undo ${esc(r.description)}">↶</button>`
       }</span>
     </div>` : `
     <div class="exp" data-idx="${i}">
@@ -3779,7 +3779,7 @@ function renderExpenseList(containerId, rows, emptyMsg, { selectable = false } =
           <div class="meta">${r.occurred_at} · ${esc(r.category || "Uncategorized")}${r.payment_type ? " · " + accountTypeLabel(r.payment_type) : ""}${acctName(r.account_id) ? " · " + esc(acctName(r.account_id)) : ""}</div>
         </div>
       </div>
-      <span class="amt">${fmt(r.amount)}<span class="x" data-undo-idx="${i}" style="margin-left:8px;cursor:pointer" title="Undo">↶</span></span>
+      <span class="amt">${fmt(r.amount)}<button type="button" class="x" data-undo-idx="${i}" style="margin-left:8px" aria-label="Undo ${esc(r.description || r.merchant || "this entry")}">↶</button></span>
     </div>`).join("");
   el.querySelectorAll(".exp").forEach((rowEl) => {
     const row = rows[Number(rowEl.dataset.idx)];
@@ -4223,7 +4223,7 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
           <span>${esc(s.category)}</span>
           <span>
             ${fmt(s.spent)} / ${fmt(s.limit)} (${s.pct}%)
-            <span class="x" data-del-budget="${esc(s.category)}" style="margin-left:8px">✕</span>
+            <button type="button" class="x" data-del-budget="${esc(s.category)}" style="margin-left:8px" aria-label="Remove the ${esc(s.category)} budget">✕</button>
           </span>
         </div>
         <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
@@ -4373,7 +4373,7 @@ function renderInvestments() {
       return `
         <div class="exp" data-edit-holding="${a.id}" style="cursor:pointer;padding-left:12px">
           <div><div>${esc(a.name)}</div><div class="meta">no symbol set</div></div>
-          <span class="amt">${fmt(effectiveAssetValue(a))}<span class="x" data-del-holding="${a.id}" style="margin-left:8px">✕</span></span>
+          <span class="amt">${fmt(effectiveAssetValue(a))}<button type="button" class="x" data-del-holding="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(a.name)}">✕</button></span>
         </div>`;
     }
     return `
@@ -4384,8 +4384,8 @@ function renderInvestments() {
             <div class="meta">${h.quantity ?? "?"} @ ${h.latestPrice != null ? fmt(h.latestPrice) : "no live price yet"}</div>
           </div>
           <div style="text-align:right">
-            <div class="amt">${fmt(h.currentValue)}<span class="x" data-del-holding="${a.id}" style="margin-left:8px">✕</span></div>
-            ${h.quantity ? `<div><span data-sell-holding="${a.id}" style="font-size:12px;cursor:pointer;text-decoration:underline;color:var(--accent)">Sell</span></div>` : ""}
+            <div class="amt">${fmt(h.currentValue)}<button type="button" class="x" data-del-holding="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(h.symbol)}">✕</button></div>
+            ${h.quantity ? `<div><button type="button" class="link-action" data-sell-holding="${a.id}" style="color:var(--accent)" aria-label="Sell ${esc(h.symbol)}">Sell</button></div>` : ""}
             <div style="font-size:12px;color:${gainColor(h.gainLoss)}">${h.gainLoss != null ? `${fmt(h.gainLoss)} (${signedPct(h.gainLossPct)})` : "no cost basis set"}</div>
             ${h.dayChange != null ? `<div style="font-size:12px;color:${gainColor(h.dayChange)}">today ${fmt(h.dayChange)} (${signedPct(h.dayChangePct)})</div>` : ""}
           </div>
@@ -4406,7 +4406,7 @@ function renderInvestments() {
     // funding-account field.
     const contributionAffordance = children.length
       ? ""
-      : `<div class="muted" data-log-contribution="${p.id}" style="font-size:11px;cursor:pointer;text-decoration:underline;margin-top:2px">Log contribution</div>`;
+      : `<button type="button" class="link-action muted" data-log-contribution="${p.id}" aria-label="Log a contribution to ${esc(p.name)}">Log contribution</button>`;
     return `
       <div style="margin-bottom:14px">
         <div class="exp" style="cursor:default">
@@ -4490,7 +4490,7 @@ function renderInvestments() {
           <span>${esc(a.bucket)}</span>
           <span>
             ${a.currentPct}% / ${a.targetPercent}% target (${gapLabel})
-            <span class="x" data-del-invest-target="${esc(a.bucket)}" style="margin-left:8px">✕</span>
+            <button type="button" class="x" data-del-invest-target="${esc(a.bucket)}" style="margin-left:8px" aria-label="Remove the ${esc(a.bucket)} target">✕</button>
           </span>
         </div>
         <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
@@ -5152,7 +5152,7 @@ function renderWatchlistEditor() {
           <div>${esc(w.symbol)}</div>
           ${sub}
         </div>
-        ${owned ? "" : `<span class="x" data-del-watch="${w.id}">✕</span>`}
+        ${owned ? "" : `<button type="button" class="x" data-del-watch="${w.id}" aria-label="Stop tracking ${esc(w.symbol)}">✕</button>`}
       </div>`;
       }).join("")
     : `<p class="muted" style="font-size:13px">No symbols tracked. The market overview and daily recap will be empty until you add some.</p>`;

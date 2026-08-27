@@ -4006,13 +4006,31 @@ function renderRecentTransactions() {
   updateBulkActionBar();
 }
 
+// A failed load used to render as `<p class="muted">`, the exact same grey
+// paragraph used for "nothing here yet". Someone whose data failed to load was
+// told, in effect, that they have no data, and would go looking for the wrong
+// problem. Error and empty are different states and must look different
+// (principles document 1.3), and an error needs a way to try again - without
+// one the only recovery is a full page reload.
+function renderLoadError(containerId, error, retry) {
+  const el = $(containerId);
+  if (!el) return;
+  const btnId = `${containerId}-retry`;
+  el.innerHTML = `<div class="load-error" role="alert">`
+    + `<strong>Could not load this.</strong>`
+    + `<p>${esc(error.message)}</p>`
+    + `<button type="button" class="btn-sm secondary" id="${btnId}">Try again</button></div>`;
+  const btn = $(btnId);
+  if (btn && typeof retry === "function") btn.onclick = () => { el.innerHTML = `<p class="muted">Loading...</p>`; retry(); };
+}
+
 async function loadExpenses() {
   // Pull ~12 months so Reports can aggregate without a second round-trip.
   const since = lastMonths(12)[0] + "-01";
   const { data, error } = await sb.from("expenses")
     .select("*").gte("occurred_at", since)
     .order("occurred_at", { ascending: false }).order("created_at", { ascending: false });
-  if (error) { $("expList").innerHTML = `<p class="muted">${esc(error.message)}</p>`; return; }
+  if (error) { renderLoadError("expList", error, loadExpenses); return; }
   allExpenses = data || [];
   // Drop any selected id a reload no longer has (deleted/undone/out of the
   // 12-month window) so the bulk-action count never overcounts stale ids.
@@ -6413,7 +6431,7 @@ const SUBSCRIPTION_CATEGORY_SUGGESTIONS = [
 
 async function loadSubscriptions() {
   const { data, error } = await sb.from("subscriptions").select("*").order("next_renewal", { ascending: true });
-  if (error) { $("subList").innerHTML = `<p class="muted">${esc(error.message)}</p>`; return; }
+  if (error) { renderLoadError("subList", error, loadSubscriptions); return; }
   subscriptions = data || [];
   renderSubscriptions();
   renderDeals();
@@ -6429,7 +6447,7 @@ async function loadSubscriptions() {
 
 async function loadIncome() {
   const { data, error } = await sb.from("income").select("*").order("next_expected", { ascending: true });
-  if (error) { $("incomeList").innerHTML = `<p class="muted">${esc(error.message)}</p>`; return; }
+  if (error) { renderLoadError("incomeList", error, loadIncome); return; }
   incomeSources = data || [];
   renderIncomeList();
 }

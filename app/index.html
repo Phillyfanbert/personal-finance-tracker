@@ -312,6 +312,13 @@
     .text-xs { font-size: var(--fs-xs); }
     .text-sm { font-size: var(--fs-sm); }
     .danger { color: var(--err); }
+    /* A failed load must not look like an empty one. Empty state is a dashed,
+       centred, muted card; this is bordered in the error colour, left-aligned,
+       and says plainly that something went wrong. */
+    .load-error { border: 1px solid var(--err); border-radius: var(--r-control);
+      padding: var(--sp-3); }
+    .load-error strong { color: var(--err); display: block; }
+    .load-error p { font-size: var(--fs-sm); margin: var(--sp-2) 0; color: var(--text); }
     /* Visually hidden but still in the accessibility tree. Used for the data
        tables behind each chart: a <canvas> is an opaque bitmap, so the numbers
        Chart.js paints into it reach nobody using a screen reader. */

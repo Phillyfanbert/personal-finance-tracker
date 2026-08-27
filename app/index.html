@@ -430,16 +430,16 @@
         <div id="confirm" class="hidden" style="margin-top:12px">
           <div id="parseStatus" class="muted" style="font-size:12px;min-height:16px;margin-bottom:6px"></div>
           <div class="row">
-            <div><label>Amount</label><input id="fAmount" type="number" step="0.01" inputmode="decimal" /></div>
-            <div><label>Account</label><select id="fAccount"></select></div>
+            <div><label for="fAmount">Amount</label><input id="fAmount" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label for="fAccount">Account</label><select id="fAccount"></select></div>
           </div>
           <!-- Amount/Account/Category/Date are all required (see saveBtn,
                app.js) - Description is the only optional field here. -->
-          <label>Description / merchant (optional)</label>
+          <label for="fDesc">Description / merchant (optional)</label>
           <input id="fDesc" />
           <div class="row">
-            <div><label>Category</label><select id="fCategory"></select></div>
-            <div><label>Date</label><input id="fDate" type="date" /></div>
+            <div><label for="fCategory">Category</label><select id="fCategory"></select></div>
+            <div><label for="fDate">Date</label><input id="fDate" type="date" /></div>
           </div>
           <div style="height:12px"></div>
           <div class="row">
@@ -467,30 +467,30 @@
              those two filters, and under Kind unless "Activity only" is
              picked there. -->
         <div style="margin-top:8px">
-          <label style="margin:0 0 4px">Search</label>
+          <label style="margin:0 0 4px" for="txnSearch">Search</label>
           <input id="txnSearch" placeholder="Search merchant or description..." style="width:100%;font-size:13px;padding:6px 8px" autocomplete="off" />
         </div>
         <div class="row" style="flex-wrap:wrap;gap:6px 10px;margin-top:8px;align-items:flex-end">
           <div style="flex:1;min-width:110px">
-            <label style="margin:0 0 4px">Type</label>
+            <label style="margin:0 0 4px" for="txnTypeFilter">Type</label>
             <select id="txnTypeFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
               <option value="">All</option>
             </select>
           </div>
           <div style="flex:1;min-width:110px">
-            <label style="margin:0 0 4px">Account</label>
+            <label style="margin:0 0 4px" for="txnAccountFilter">Account</label>
             <select id="txnAccountFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
               <option value="">All</option>
             </select>
           </div>
           <div style="flex:1;min-width:110px">
-            <label style="margin:0 0 4px">Category</label>
+            <label style="margin:0 0 4px" for="txnCategoryFilter">Category</label>
             <select id="txnCategoryFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
               <option value="">All</option>
             </select>
           </div>
           <div style="flex:1;min-width:110px">
-            <label style="margin:0 0 4px">Kind</label>
+            <label style="margin:0 0 4px" for="txnKindFilter">Kind</label>
             <select id="txnKindFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
               <option value="">All</option>
               <option value="expense">Expenses only</option>
@@ -498,11 +498,11 @@
             </select>
           </div>
           <div style="flex:1;min-width:80px">
-            <label style="margin:0 0 4px">Min $</label>
+            <label style="margin:0 0 4px" for="txnMinAmount">Min $</label>
             <input id="txnMinAmount" type="number" step="0.01" inputmode="decimal" placeholder="0" style="width:100%;font-size:12px;padding:6px 8px" />
           </div>
           <div style="flex:1;min-width:80px">
-            <label style="margin:0 0 4px">Max $</label>
+            <label style="margin:0 0 4px" for="txnMaxAmount">Max $</label>
             <input id="txnMaxAmount" type="number" step="0.01" inputmode="decimal" placeholder="Any" style="width:100%;font-size:12px;padding:6px 8px" />
           </div>
         </div>
@@ -512,7 +512,7 @@
              Clear, a successful Apply, or a fresh loadExpenses(). -->
         <div class="row hidden" id="bulkActionBar" style="align-items:center;gap:8px;margin-top:8px;padding:8px;background:var(--panel-2);border-radius:8px">
           <span class="muted" style="font-size:12px;white-space:nowrap" id="bulkSelectedCount"></span>
-          <select id="bulkCategorySelect" style="flex:1;font-size:12px;padding:6px 8px"></select>
+          <select id="bulkCategorySelect" aria-label="Category to apply to the selected transactions" style="flex:1;font-size:12px;padding:6px 8px"></select>
           <button id="bulkApplyBtn" style="width:auto;padding:6px 12px;font-size:12px">Apply</button>
           <button class="secondary" id="bulkClearBtn" style="width:auto;padding:6px 12px;font-size:12px">Clear</button>
         </div>
@@ -597,28 +597,28 @@
            moving it here needed no JS change. -->
       <div class="card hidden" id="subForm">
         <div class="topbar" style="margin-bottom:6px"><h2 id="subFormTitle">New subscription/bill</h2></div>
-        <label>Service name</label>
+        <label for="sName">Service name</label>
         <input id="sName" placeholder="Spotify" />
         <!-- Free text with suggestions, not a fixed dropdown - same pattern
              as acctBank below: pick a common category or type any label of
              your own (see docs/subscription-bill-types-research.md). -->
-        <label>Category</label>
+        <label for="sCategory">Category</label>
         <input id="sCategory" placeholder="Streaming & Media" list="subCategorySuggestions" autocomplete="off" />
         <datalist id="subCategorySuggestions"></datalist>
         <div class="row">
-          <div><label>Amount</label><input id="sAmount" type="number" step="0.01" inputmode="decimal" /></div>
-          <div><label>Billing cycle</label>
+          <div><label for="sAmount">Amount</label><input id="sAmount" type="number" step="0.01" inputmode="decimal" /></div>
+          <div><label for="sCycle">Billing cycle</label>
             <select id="sCycle"><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="semiannual">Semiannual</option><option value="annual">Annual</option><option value="other">Other</option></select>
           </div>
         </div>
         <div class="row">
-          <div><label>Next renewal</label><input id="sRenewal" type="date" /></div>
-          <div><label>Account</label><select id="sAccount"></select></div>
+          <div><label for="sRenewal">Next renewal</label><input id="sRenewal" type="date" /></div>
+          <div><label for="sAccount">Account</label><select id="sAccount"></select></div>
         </div>
         <label><input type="checkbox" id="sActive" style="width:auto;margin-right:8px" checked />Active</label>
         <!-- Just the flag - no "what could I cut" view reads it yet (docs/ROADMAP.md). -->
         <label><input type="checkbox" id="sEssential" style="width:auto;margin-right:8px" />Essential (bill you need, not a discretionary subscription)</label>
-        <label>Notes</label>
+        <label for="sNotes">Notes</label>
         <input id="sNotes" placeholder="e.g. shared family plan" />
         <div style="height:12px"></div>
         <!-- Logs today's charge as a real expense against the linked account
@@ -673,7 +673,7 @@
                populateAcctTypeSelect comment for the history and how the
                regression is mitigated here instead: a bold "Adding: <type>"
                summary line that updates with every change). -->
-          <label>Account type</label>
+          <label for="acctType">Account type</label>
           <select id="acctType" style="margin-bottom:4px"></select>
           <p class="muted" style="font-size:13px;margin:4px 0 10px"><strong id="acctTypeSummary">Adding: Checking</strong></p>
           <!-- Age/income requirement for the selected type. Stated as a
@@ -681,7 +681,7 @@
                it shows whether or not a birth year is on file, since the
                requirement is true regardless of who is reading it. -->
           <p class="muted" id="acctTypeRequirement" style="font-size:12px;margin:-6px 0 10px"></p>
-          <label id="acctBankLabel">Bank</label>
+          <label id="acctBankLabel" for="acctBank">Bank</label>
           <!-- <datalist>, not a custom dropdown - it's a native, built-in
                search-as-you-type combobox (typing filters the list to
                matches) while still taking free text for a bank not in it,
@@ -717,10 +717,10 @@
              card" stays on the existing Liabilities card Pay flow. -->
         <div id="transferForm" class="hidden" style="margin-top:10px;padding:12px;background:var(--panel-2);border-radius:10px">
           <div class="row">
-            <div><label>From</label><select id="transferFrom"></select></div>
-            <div><label>To</label><select id="transferTo"></select></div>
+            <div><label for="transferFrom">From</label><select id="transferFrom"></select></div>
+            <div><label for="transferTo">To</label><select id="transferTo"></select></div>
           </div>
-          <label>Amount</label>
+          <label for="transferAmount">Amount</label>
           <input id="transferAmount" type="number" step="0.01" inputmode="decimal" />
           <div style="height:8px"></div>
           <div class="row">
@@ -740,14 +740,14 @@
           <div class="muted" style="font-size:12px;margin-bottom:6px"><span id="adjustAssetLabel">Value</span>: <strong id="adjustCurrentValue">$0</strong></div>
 
           <div id="adjustBankMode">
-            <input id="adjustNewBalance" type="number" step="0.01" inputmode="decimal" placeholder="New balance" />
+            <input id="adjustNewBalance" aria-label="New balance" type="number" step="0.01" inputmode="decimal" placeholder="New balance" />
             <div style="height:8px"></div>
             <button id="adjustSetBtn">Save balance</button>
           </div>
 
           <div class="muted" style="font-size:12px;margin:12px 0 6px">Or adjust by an amount</div>
           <div id="adjustDeltaMode">
-            <input id="adjustAmount" type="number" step="0.01" inputmode="decimal" placeholder="Amount" />
+            <input id="adjustAmount" aria-label="Amount to adjust by" type="number" step="0.01" inputmode="decimal" placeholder="Amount" />
             <div class="row" style="margin-top:8px">
               <button id="adjustAddBtn">+ Add</button>
               <button class="secondary" id="adjustSubtractBtn">- Subtract</button>
@@ -756,7 +756,7 @@
 
           <!-- Only shown for a CD-type asset (openAssetAdjust, app.js). -->
           <div id="adjustMaturitySection" class="hidden" style="margin:12px 0 0">
-            <label>Maturity date</label>
+            <label for="adjustMaturityDate">Maturity date</label>
             <input id="adjustMaturityDate" type="date" />
             <div style="height:8px"></div>
             <button class="secondary" id="adjustMaturitySaveBtn">Save maturity date</button>
@@ -782,7 +782,7 @@
         <button class="secondary" id="addAssetBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add asset</button>
         <div id="assetForm" class="hidden" style="margin-top:10px">
           <div class="row">
-            <input id="assetName" placeholder="Vanguard Brokerage" />
+            <input id="assetName" aria-label="Asset name" placeholder="Vanguard Brokerage" />
             <!-- The base 4 are standalone-only, no account-type equivalent.
                  Retirement/investment and specialty groups are appended in
                  JS (populateAssetTypeSelect, app.js) from the same
@@ -790,14 +790,14 @@
                  handful (prepaid/payroll cards, digital wallet, second-
                  chance checking) that only make sense as a spendable
                  account, not a standalone value. -->
-            <select id="assetType">
+            <select id="assetType" aria-label="Asset type">
               <optgroup label="General">
                 <option value="investment">Investment</option><option value="property">Property</option>
                 <option value="vehicle">Vehicle</option><option value="other">Other</option>
               </optgroup>
             </select>
           </div>
-          <label>Value</label>
+          <label for="assetValue">Value</label>
           <input id="assetValue" type="number" step="0.01" inputmode="decimal" />
 
           <!-- Vehicle-only (assetType.onchange, app.js). Filling these in
@@ -806,10 +806,10 @@
           <div id="assetDepreciationSection" class="hidden" style="margin-top:8px">
             <p class="muted" style="font-size:12px;margin:0 0 8px">Estimate this vehicle's current value from its purchase price instead of typing an updated value by hand. Leave blank to keep using Value above.</p>
             <div class="row">
-              <div><label>Purchase price</label><input id="assetPurchasePrice" type="number" step="0.01" inputmode="decimal" /></div>
-              <div><label>Purchase date</label><input id="assetPurchaseDate" type="date" /></div>
+              <div><label for="assetPurchasePrice">Purchase price</label><input id="assetPurchasePrice" type="number" step="0.01" inputmode="decimal" /></div>
+              <div><label for="assetPurchaseDate">Purchase date</label><input id="assetPurchaseDate" type="date" /></div>
             </div>
-            <label>Depreciation rate (%/year)</label>
+            <label for="assetDepRate">Depreciation rate (%/year)</label>
             <input id="assetDepRate" type="number" step="0.1" min="0" max="100" placeholder="15" />
             <div class="muted" id="assetDepPreview" style="font-size:12px;margin-top:6px"></div>
           </div>
@@ -819,8 +819,8 @@
                #4). Quantity is required before a live price can be applied,
                since price alone isn't a total value - see app.js. -->
           <div class="row" style="margin-top:8px">
-            <div><label>Price symbol (optional)</label><input id="assetPriceSymbol" placeholder="AAPL, BTC, VTSAX" /></div>
-            <div><label>Quantity (optional)</label><input id="assetQuantity" type="number" step="any" inputmode="decimal" /></div>
+            <div><label for="assetPriceSymbol">Price symbol (optional)</label><input id="assetPriceSymbol" placeholder="AAPL, BTC, VTSAX" /></div>
+            <div><label for="assetQuantity">Quantity (optional)</label><input id="assetQuantity" type="number" step="any" inputmode="decimal" /></div>
           </div>
 
           <!-- Investment-only (assetType.onchange, app.js). Cost basis is a
@@ -832,9 +832,9 @@
                (INVESTMENT_BUCKETS, app.js), so a typo can't silently
                create a second bucket that a target never matches. -->
           <div id="assetInvestmentSection" class="hidden" style="margin-top:8px">
-            <label>Cost basis - total paid (optional)</label>
+            <label for="assetCostBasis">Cost basis - total paid (optional)</label>
             <input id="assetCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you originally paid, in total" />
-            <label>Allocation bucket (optional)</label>
+            <label for="assetInvestBucket">Allocation bucket (optional)</label>
             <select id="assetInvestBucket"></select>
           </div>
 
@@ -877,7 +877,7 @@
         <button class="secondary" id="addDebtBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
         <div id="debtForm" class="hidden" style="margin-top:10px">
           <div class="row">
-            <input id="debtName" placeholder="Chase Sapphire" />
+            <input id="debtName" aria-label="Name of what you owe" placeholder="Chase Sapphire" />
             <!-- 'loan'/'mortgage'/'other' are the original generic values;
                  the specific loan types are appended in JS
                  (populateDebtTypeSelect, app.js) from ACCOUNT_TYPES' Loans
@@ -887,18 +887,18 @@
                  tracked. Credit-category types (credit card, HELOC, ...)
                  stay Accounts-card-only, matching how 'credit' already
                  worked before this. -->
-            <select id="debtType">
+            <select id="debtType" aria-label="Type of what you owe">
               <option value="loan">Loan</option>
               <option value="mortgage">Mortgage</option><option value="other">Other</option>
             </select>
           </div>
-          <label>Balance owed</label>
+          <label for="debtBalance">Balance owed</label>
           <input id="debtBalance" type="number" step="0.01" inputmode="decimal" />
           <div class="row">
-            <div><label>Interest rate % (optional)</label><input id="debtRate" type="number" step="0.01" inputmode="decimal" /></div>
-            <div><label>Min payment (optional)</label><input id="debtMinPay" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label for="debtRate">Interest rate % (optional)</label><input id="debtRate" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label for="debtMinPay">Min payment (optional)</label><input id="debtMinPay" type="number" step="0.01" inputmode="decimal" /></div>
           </div>
-          <label>Due date (optional)</label>
+          <label for="debtDue">Due date (optional)</label>
           <input id="debtDue" type="date" />
           <div style="height:8px"></div>
           <button id="saveDebtBtn">Save liability</button>
@@ -913,10 +913,10 @@
         <div id="debtDetailsForm" class="hidden" style="margin-top:10px">
           <div class="topbar" style="margin-bottom:6px"><h2>Liability details</h2></div>
           <div class="row">
-            <div><label>Interest rate % (optional)</label><input id="debtDetailsRate" type="number" step="0.01" inputmode="decimal" /></div>
-            <div><label>Min payment (optional)</label><input id="debtDetailsMinPay" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label for="debtDetailsRate">Interest rate % (optional)</label><input id="debtDetailsRate" type="number" step="0.01" inputmode="decimal" /></div>
+            <div><label for="debtDetailsMinPay">Min payment (optional)</label><input id="debtDetailsMinPay" type="number" step="0.01" inputmode="decimal" /></div>
           </div>
-          <label>Due date (optional)</label>
+          <label for="debtDetailsDue">Due date (optional)</label>
           <input id="debtDetailsDue" type="date" />
           <!-- Only for a real revolving limit (CREDIT_LIMIT_LIABILITY_TYPES,
                app.js) - a HELOC/line of credit/regular card has one, a
@@ -925,7 +925,7 @@
                utilize a percentage of. Powers the utilization line shown
                on the Liabilities card once both this and a balance exist. -->
           <div id="debtDetailsLimitSection" class="hidden">
-            <label>Credit limit (optional)</label>
+            <label for="debtDetailsLimit">Credit limit (optional)</label>
             <input id="debtDetailsLimit" type="number" step="0.01" inputmode="decimal" placeholder="e.g. 5000" />
           </div>
           <!-- Credit-account-only (openDebtDetailsForm, app.js). Interest on
@@ -937,18 +937,18 @@
                for - see creditCycle.js. -->
           <div id="debtDetailsCycleSection" class="hidden" style="margin-top:8px">
             <div class="row">
-              <div><label>Statement closes (day)</label><input id="debtDetailsStatementDay" type="number" min="1" max="31" step="1" inputmode="numeric" placeholder="e.g. 5" /></div>
-              <div><label>Payment due (day)</label><input id="debtDetailsDueDay" type="number" min="1" max="31" step="1" inputmode="numeric" placeholder="e.g. 2" /></div>
+              <div><label for="debtDetailsStatementDay">Statement closes (day)</label><input id="debtDetailsStatementDay" type="number" min="1" max="31" step="1" inputmode="numeric" placeholder="e.g. 5" /></div>
+              <div><label for="debtDetailsDueDay">Payment due (day)</label><input id="debtDetailsDueDay" type="number" min="1" max="31" step="1" inputmode="numeric" placeholder="e.g. 2" /></div>
             </div>
             <div class="row">
-              <div><label>Statement balance</label><input id="debtDetailsStatementBalance" type="number" step="0.01" inputmode="decimal" placeholder="From your latest statement" /></div>
-              <div><label>Statement date</label><input id="debtDetailsStatementDate" type="date" /></div>
+              <div><label for="debtDetailsStatementBalance">Statement balance</label><input id="debtDetailsStatementBalance" type="number" step="0.01" inputmode="decimal" placeholder="From your latest statement" /></div>
+              <div><label for="debtDetailsStatementDate">Statement date</label><input id="debtDetailsStatementDate" type="date" /></div>
             </div>
             <p class="muted" id="debtDetailsCycleInfo" style="font-size:12px;margin-top:6px"></p>
           </div>
           <!-- HELOC-only (openDebtDetailsForm, app.js). -->
           <div id="debtDetailsDrawSection" class="hidden" style="margin-top:8px">
-            <label>Draw period ends (optional)</label>
+            <label for="debtDetailsDrawEnd">Draw period ends (optional)</label>
             <input id="debtDetailsDrawEnd" type="date" />
             <p class="muted" id="debtDetailsPhaseInfo" style="font-size:12px;margin-top:6px"></p>
           </div>
@@ -988,11 +988,11 @@
 
       <div class="card hidden" id="incomeForm">
         <div class="topbar" style="margin-bottom:6px"><h2 id="incomeFormTitle">New income source</h2></div>
-        <label>Source (required)</label>
+        <label for="incSource">Source (required)</label>
         <input id="incSource" placeholder="Employer paycheck" />
         <div class="row">
-          <div><label>Amount (required)</label><input id="incAmount" type="number" step="0.01" inputmode="decimal" /></div>
-          <div><label>Cadence</label>
+          <div><label for="incAmount">Amount (required)</label><input id="incAmount" type="number" step="0.01" inputmode="decimal" /></div>
+          <div><label for="incCadence">Cadence</label>
             <select id="incCadence">
               <option value="weekly">Weekly</option>
               <option value="biweekly">Biweekly</option>
@@ -1007,19 +1007,19 @@
              1st & 15th), not a fixed day-count interval the way biweekly
              is - see app/income.js's own comment for why. -->
         <div class="row hidden" id="incomeSemimonthlyRow">
-          <div><label>First pay day (1-31, required)</label><input id="incSemimonthlyDay1" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
-          <div><label>Second pay day (1-31, required)</label><input id="incSemimonthlyDay2" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
+          <div><label for="incSemimonthlyDay1">First pay day (1-31, required)</label><input id="incSemimonthlyDay1" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
+          <div><label for="incSemimonthlyDay2">Second pay day (1-31, required)</label><input id="incSemimonthlyDay2" type="number" min="1" max="31" step="1" inputmode="numeric" /></div>
         </div>
         <div class="row">
-          <div><label>Next expected</label><input id="incNextExpected" type="date" /></div>
-          <div><label>Deposited into</label><select id="incAccount"></select></div>
+          <div><label for="incNextExpected">Next expected</label><input id="incNextExpected" type="date" /></div>
+          <div><label for="incAccount">Deposited into</label><select id="incAccount"></select></div>
         </div>
         <!-- Written live by updateIncomeAutoLogNote(). Not a validation
              error: a source with no date/account is a legitimate thing to
              record, it just never adds money on its own. -->
         <div class="muted hidden" id="incomeAutoLogNote" style="font-size:12px;margin-top:6px"></div>
         <label><input type="checkbox" id="incActive" style="width:auto;margin-right:8px" checked />Active</label>
-        <label>Notes</label>
+        <label for="incNotes">Notes</label>
         <input id="incNotes" placeholder="e.g. biweekly on Fridays" />
         <div style="height:12px"></div>
         <div class="row">
@@ -1041,7 +1041,7 @@
           <h1 style="margin:0">Reports</h1>
           <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
         </div>
-        <select id="monthSel" style="width:auto"></select>
+        <select id="monthSel" aria-label="Month to show" style="width:auto"></select>
       </div>
 
       <div class="totals" id="reportTotals">
@@ -1065,7 +1065,7 @@
       <div class="card" id="qaCard">
         <h2>Ask about your spending</h2>
         <div class="row" style="margin-top:8px">
-          <input id="qaQuestion" placeholder="e.g. How much did I spend on food last month?" />
+          <input id="qaQuestion" aria-label="Your question about your spending" placeholder="e.g. How much did I spend on food last month?" />
         </div>
         <button id="qaAskBtn" style="margin-top:8px">Ask</button>
         <p class="muted" id="qaStatus" style="font-size:12px;margin:8px 0 0"></p>
@@ -1146,7 +1146,7 @@
       <div class="card">
         <div class="topbar" style="margin-bottom:6px">
           <h2>Account balance history</h2>
-          <select id="historyAccountSelect" style="width:auto;font-size:12px"></select>
+          <select id="historyAccountSelect" aria-label="Account to chart" style="width:auto;font-size:12px"></select>
         </div>
         <div class="chartbox short"><canvas id="historyChart"></canvas></div>
       </div>
@@ -1201,8 +1201,8 @@
         <p class="muted" style="font-size:12px;margin:4px 0 0">Monthly limit per category, for the current month.</p>
         <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
         <div class="row" style="margin-top:10px">
-          <select id="budgetCategory" style="flex:1"></select>
-          <input id="budgetLimit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1" />
+          <select id="budgetCategory" aria-label="Category to set a limit for" style="flex:1"></select>
+          <input id="budgetLimit" aria-label="Monthly limit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1" />
           <button id="saveBudgetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
         </div>
       </div>
@@ -1216,7 +1216,7 @@
           <span class="info-icon" tabindex="0" role="button" data-info="debtStrategyExplainer" title="Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.">i</span>
         </div>
         <p class="muted explainer hidden" id="debtStrategyExplainer">Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.</p>
-        <label>Spare money you could put toward debt each month</label>
+        <label for="debtStrategyExtra">Spare money you could put toward debt each month</label>
         <input id="debtStrategyExtra" type="number" step="0.01" inputmode="decimal" placeholder="0" />
         <div id="debtStrategyResult" style="margin-top:10px;font-size:13px"></div>
         <p class="muted" id="debtStrategyExcluded" style="font-size:12px;margin-top:8px"></p>
@@ -1234,7 +1234,7 @@
       <div class="card">
         <div class="topbar" style="margin-bottom:6px">
           <h2>Cash flow forecast</h2>
-          <select id="forecastAccountSelect" style="width:auto;font-size:12px"></select>
+          <select id="forecastAccountSelect" aria-label="Account to forecast" style="width:auto;font-size:12px"></select>
         </div>
         <div class="chartbox short"><canvas id="forecastChart"></canvas></div>
         <p class="muted" style="font-size:12px;margin:8px 0 0">The next 30 days, using only bills and pay you have already told the app about. It does not try to guess your everyday spending.</p>
@@ -1422,7 +1422,7 @@
               <span class="info-icon" tabindex="0" role="button" data-info="priceHistoryExplainer" title="Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.">i</span>
             </div>
             <p class="muted explainer hidden" id="priceHistoryExplainer">Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.</p>
-            <label>Symbol</label>
+            <label for="priceHistorySymbol">Symbol</label>
             <select id="priceHistorySymbol"></select>
             <div id="priceHistoryRanges" style="display:flex;gap:6px;margin:10px 0 8px;flex-wrap:wrap"></div>
             <div class="chartbox short"><canvas id="priceHistoryChart"></canvas></div>
@@ -1485,28 +1485,28 @@
                 <button type="button" class="help-pill active" data-holding-mode="own">Already own this</button>
                 <button type="button" class="help-pill" data-holding-mode="buying">Buying now</button>
               </div>
-              <label>Account this sits in</label>
+              <label for="holdingAccount">Account this sits in</label>
               <select id="holdingAccount"></select>
               <div class="row">
-                <div><label>Ticker / symbol</label><input id="holdingSymbol" placeholder="AAPL" autocapitalize="characters" /></div>
-                <div><label>Shares / units</label><input id="holdingQuantity" type="number" step="any" inputmode="decimal" placeholder="10" /></div>
+                <div><label for="holdingSymbol">Ticker / symbol</label><input id="holdingSymbol" placeholder="AAPL" autocapitalize="characters" /></div>
+                <div><label for="holdingQuantity">Shares / units</label><input id="holdingQuantity" type="number" step="any" inputmode="decimal" placeholder="10" /></div>
               </div>
               <div class="help-pills hidden" id="holdingBuyModePills">
                 <button type="button" class="help-pill active" data-holding-buy-basis="shares">By shares</button>
                 <button type="button" class="help-pill" data-holding-buy-basis="dollars">By dollar amount</button>
               </div>
               <div class="row hidden" id="holdingDollarAmountRow">
-                <div><label>Amount to invest</label><input id="holdingDollarAmount" type="number" step="0.01" inputmode="decimal" placeholder="500" /></div>
+                <div><label for="holdingDollarAmount">Amount to invest</label><input id="holdingDollarAmount" type="number" step="0.01" inputmode="decimal" placeholder="500" /></div>
               </div>
               <p class="muted" id="holdingLivePriceStatus" style="font-size:12px;margin:2px 0 8px"></p>
               <div class="row">
-                <div><label id="holdingCostBasisLabel">Price per share</label><input id="holdingCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you paid per share" /></div>
+                <div><label id="holdingCostBasisLabel" for="holdingCostBasis">Price per share</label><input id="holdingCostBasis" type="number" step="0.01" inputmode="decimal" placeholder="What you paid per share" /></div>
               </div>
               <p class="muted" id="holdingTotalCost" style="font-size:12px;margin:2px 0 8px"></p>
-              <label>Paid from (optional)</label>
+              <label for="holdingFundingAccount">Paid from (optional)</label>
               <select id="holdingFundingAccount"></select>
               <p class="muted" style="font-size:12px;margin:2px 0 8px">If selected, this purchase is deducted from and checked against that account's balance - only for money actually being added (buying more shares), never for editing a holding down.</p>
-              <label>Bucket (optional, for target allocation)</label>
+              <label for="holdingBucket">Bucket (optional, for target allocation)</label>
               <select id="holdingBucket"></select>
               <p class="muted" style="font-size:12px;margin:8px 0 0">Price per share fills in automatically once a live price is available for the ticker - edit it if you paid a different amount. Once priced, shares x live price is what actually shows as this holding's value.</p>
               <div style="height:8px"></div>
@@ -1586,7 +1586,7 @@
               <span class="info-icon" tabindex="0" role="button" data-info="targetExplainer" title="Set your own target mix and see how far off you are - this never picks investments for you.">i</span>
             </div>
             <p class="muted explainer hidden" id="targetExplainer">Set your own target mix and see how far off you are - this never picks investments for you.</p>
-            <label>Risk label (for your own reference only)</label>
+            <label for="investRiskLabel">Risk label (for your own reference only)</label>
             <select id="investRiskLabel">
               <option value="">Not set</option>
               <option value="conservative">Conservative</option>
@@ -1595,8 +1595,8 @@
             </select>
             <div id="investTargetsList" style="margin-top:12px"><p class="muted" style="font-size:13px">No targets set yet.</p></div>
             <div class="row" style="margin-top:10px">
-              <select id="investTargetBucket" style="flex:1"></select>
-              <input id="investTargetPercent" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />
+              <select id="investTargetBucket" aria-label="Investment type" style="flex:1"></select>
+              <input id="investTargetPercent" aria-label="Target percentage" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />
               <button id="saveInvestTargetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
             </div>
           </div>
@@ -1615,8 +1615,8 @@
       <div id="contributionForm" class="hidden" style="margin-bottom:12px;padding:12px;background:var(--panel-2);border-radius:10px">
         <div class="topbar" style="margin-bottom:6px"><h2 id="contributionLabel">Log a contribution</h2></div>
         <div class="row">
-          <div><label>Amount</label><input id="contributionAmount" type="number" step="0.01" inputmode="decimal" placeholder="500" /></div>
-          <div><label>Date</label><input id="contributionDate" type="date" /></div>
+          <div><label for="contributionAmount">Amount</label><input id="contributionAmount" type="number" step="0.01" inputmode="decimal" placeholder="500" /></div>
+          <div><label for="contributionDate">Date</label><input id="contributionDate" type="date" /></div>
         </div>
         <div style="height:8px"></div>
         <div class="row">
@@ -1668,17 +1668,17 @@
       <div class="topbar"><strong>Edit expense</strong><button class="secondary" id="editClose" style="width:auto;padding:6px 12px">Close</button></div>
       <!-- No separate Payment field - same as quick-add, payment type is
            derived from whichever account is selected below (app.js). -->
-      <label>Amount</label>
+      <label for="eAmount">Amount</label>
       <input id="eAmount" type="number" step="0.01" inputmode="decimal" />
       <!-- Amount/Account/Category/Date are all required (see editSave,
            app.js) - Description is the only optional field here. -->
-      <label>Description / merchant (optional)</label>
+      <label for="eDesc">Description / merchant (optional)</label>
       <input id="eDesc" />
       <div class="row">
-        <div><label>Category</label><select id="eCategory"></select></div>
-        <div><label>Account</label><select id="eAccount"></select></div>
+        <div><label for="eCategory">Category</label><select id="eCategory"></select></div>
+        <div><label for="eAccount">Account</label><select id="eAccount"></select></div>
       </div>
-      <label>Date</label>
+      <label for="eDate">Date</label>
       <input id="eDate" type="date" />
       <label style="margin-top:12px"><input type="checkbox" id="eLearn" style="width:auto;margin-right:8px" checked />Remember this category for similar merchants</label>
       <div style="height:14px"></div>
@@ -1721,11 +1721,11 @@
       <p class="muted" style="font-size:12px;margin:4px 0 8px">Everything on the Market tab is built from this list - the written recap, the up/down count, today's top movers and the price-history charts. Changes take effect on the next background price run.</p>
       <div class="row">
       <div style="position:relative">
-        <label>Add a symbol</label>
+        <label for="watchlistNewSymbol">Add a symbol</label>
         <input id="watchlistNewSymbol" placeholder="AAPL or company name" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="watchlistSuggest" />
         <div id="watchlistSuggest" class="suggest hidden" role="listbox"></div>
       </div>
-      <div><label>Company name (optional)</label><input id="watchlistNewName" placeholder="apple" autocomplete="off" /></div>
+      <div><label for="watchlistNewName">Company name (optional)</label><input id="watchlistNewName" placeholder="apple" autocomplete="off" /></div>
       </div>
       <p class="muted" style="font-size:11px;margin:2px 0 8px">Start typing a ticker or company name to pick from known symbols - the name fills in for you. Any real ticker can still be typed in by hand if it isn't suggested. A company name helps match news headlines to the right stock; left blank, headline matching falls back to the ticker alone.</p>
       <button id="watchlistAddBtn">Add symbol</button>
@@ -1737,13 +1737,13 @@
     <div class="sheet">
       <div class="topbar"><strong>Sell <span id="sellSymbol"></span></strong><button class="secondary" id="sellClose" style="width:auto;padding:6px 12px">✕</button></div>
       <p class="muted" style="font-size:12px;margin:0 0 8px">You hold <strong id="sellHeldQty">0</strong> shares, average cost <strong id="sellAvgCost">$0</strong> each.</p>
-      <label>Shares to sell</label>
+      <label for="sellQuantity">Shares to sell</label>
       <input id="sellQuantity" type="number" step="any" inputmode="decimal" />
-      <label>Price per share</label>
+      <label for="sellPrice">Price per share</label>
       <input id="sellPrice" type="number" step="0.01" inputmode="decimal" />
-      <label>Date sold</label>
+      <label for="sellDate">Date sold</label>
       <input id="sellDate" type="date" />
-      <label>Deposit proceeds into (optional)</label>
+      <label for="sellAccount">Deposit proceeds into (optional)</label>
       <select id="sellAccount"></select>
       <p class="muted" style="font-size:11px;margin:2px 0 8px">Leave as None if the cash stayed in the brokerage and isn't tracked here.</p>
       <p id="sellPreview" style="font-size:13px;margin:8px 0"></p>
@@ -1762,13 +1762,13 @@
       <div id="debtOwedMode" class="hidden">
         <!-- Direct set, for fixing a wrong balance (typo, missed charge) -
              separate from "Amount to add" below, which is for a new charge. -->
-        <label>Set exact amount owed</label>
+        <label for="debtOwedSet">Set exact amount owed</label>
         <input id="debtOwedSet" type="number" step="0.01" inputmode="decimal" />
         <div style="height:8px"></div>
         <button id="debtOwedSetConfirm">Save amount owed</button>
 
         <div class="muted" style="font-size:12px;margin:12px 0 6px">Or add a charge</div>
-        <label>Amount to add</label>
+        <label for="debtOwedAmount">Amount to add</label>
         <input id="debtOwedAmount" type="number" step="0.01" inputmode="decimal" />
         <div style="height:12px"></div>
         <button id="debtOwedConfirm">Add to owed</button>
@@ -1779,9 +1779,9 @@
              so a standalone asset (Investment, Property, a manually-added
              retirement account) with no linked account can't be picked
              here. See loadAssets() (app.js). -->
-        <label>From account</label>
+        <label for="payFromAsset">From account</label>
         <select id="payFromAsset"></select>
-        <label>Amount</label>
+        <label for="payAmount">Amount</label>
         <input id="payAmount" type="number" step="0.01" inputmode="decimal" />
         <div style="height:12px"></div>
         <button id="payConfirmBtn">Pay</button>
@@ -1806,7 +1806,7 @@
       <div id="csvStep1">
         <p class="muted" style="font-size:13px">Bring in what you have spent and what you have been paid, from a bank export or another app. The file stays on your device - it is never uploaded anywhere.</p>
         <p class="muted" style="font-size:12px;margin-top:8px"><strong>Imported rows are added as history only. They never change an account balance.</strong> Your balances already include this money in real life, so changing them again would count it twice.</p>
-        <label style="margin-top:12px">CSV file (up to 5MB, ~10,000 rows)</label>
+        <label style="margin-top:12px" for="csvFileInput">CSV file (up to 5MB, ~10,000 rows)</label>
         <input id="csvFileInput" type="file" accept=".csv,text/csv" />
         <p class="muted" id="csvFileError" style="font-size:12px;color:var(--err);margin-top:6px"></p>
       </div>
@@ -1814,7 +1814,7 @@
       <div id="csvStep2" class="hidden">
         <p class="muted" style="font-size:13px">The app has filled these in from your file's column names. Check they look right - only the date and amount matter.</p>
 
-        <label>What is in this file?</label>
+        <label for="csvRowKind">What is in this file?</label>
         <select id="csvRowKind">
           <option value="auto">Both money spent and money received</option>
           <option value="expense">Only things I spent</option>
@@ -1823,22 +1823,22 @@
         <p class="muted" id="csvRowKindHint" style="font-size:12px;margin:4px 0 0"></p>
 
         <div class="row" style="margin-top:10px">
-          <div><label>Which column is the date</label><select id="csvMapDate"></select></div>
-          <div id="csvAmountCol"><label>Which column is the amount</label><select id="csvMapAmount"></select></div>
+          <div><label for="csvMapDate">Which column is the date</label><select id="csvMapDate"></select></div>
+          <div id="csvAmountCol"><label for="csvMapAmount">Which column is the amount</label><select id="csvMapAmount"></select></div>
         </div>
         <!-- Shown instead of a single amount column when the file has a
              separate money-out and money-in column, which is common in bank
              exports - guessColumnMapping() detects the pair. -->
         <div class="row hidden" id="csvDebitCreditCols">
-          <div><label>Money out column</label><select id="csvMapDebit"></select></div>
-          <div><label>Money in column</label><select id="csvMapCredit"></select></div>
+          <div><label for="csvMapDebit">Money out column</label><select id="csvMapDebit"></select></div>
+          <div><label for="csvMapCredit">Money in column</label><select id="csvMapCredit"></select></div>
         </div>
         <div class="row">
-          <div><label>Description (optional)</label><select id="csvMapDesc"></select></div>
-          <div><label>Category (optional)</label><select id="csvMapCategory"></select></div>
+          <div><label for="csvMapDesc">Description (optional)</label><select id="csvMapDesc"></select></div>
+          <div><label for="csvMapCategory">Category (optional)</label><select id="csvMapCategory"></select></div>
         </div>
         <label id="csvFlipSignLabel" style="margin-top:10px"><input type="checkbox" id="csvFlipSign" style="width:auto;margin-right:8px" />In this file, money spent is shown as a negative number</label>
-        <label>Which account is this for</label>
+        <label for="csvAccount">Which account is this for</label>
         <select id="csvAccount"></select>
         <div style="height:10px"></div>
         <div class="row">
@@ -1878,18 +1878,18 @@
            (see index.html's authView comment) is what keeps an installed
            home-screen icon signed in, so it belongs where it's seen first. -->
       <div class="muted" style="font-size:12px;margin:0 0 4px;font-weight:700">Account security</div>
-      <label>Email</label>
+      <label for="pEmail">Email</label>
       <input id="pEmail" disabled />
-      <label>New password</label>
+      <label for="pNewPassword">New password</label>
       <input id="pNewPassword" type="password" autocomplete="new-password" placeholder="At least 6 characters" />
       <button class="secondary" id="setPasswordBtn">Set / change password</button>
       <p id="passwordSetMsg" class="muted" style="margin-top:8px;font-size:12px"></p>
       <div style="height:14px"></div>
 
       <p class="muted" style="font-size:12px;margin:0 0 8px">Used to match you to better subscription deals and to give sharper answers in Reports' Q&A. Only you can see this.</p>
-      <label>Display name</label>
+      <label for="pName">Display name</label>
       <input id="pName" placeholder="Your name" />
-      <label>Status</label>
+      <label for="pStatus">Status</label>
       <select id="pStatus">
         <option value="working">Working</option>
         <option value="student">Student</option>
@@ -1897,8 +1897,8 @@
       </select>
       <div id="pStudentFields" class="hidden">
         <div class="row">
-          <div><label>School</label><input id="pSchool" placeholder="e.g. NYU" /></div>
-          <div><label>Graduation year</label><input id="pGradYear" type="number" inputmode="numeric" placeholder="2027" /></div>
+          <div><label for="pSchool">School</label><input id="pSchool" placeholder="e.g. NYU" /></div>
+          <div><label for="pGradYear">Graduation year</label><input id="pGradYear" type="number" inputmode="numeric" placeholder="2027" /></div>
         </div>
       </div>
 
@@ -1910,11 +1910,11 @@
       <div class="muted" style="font-size:12px;margin:16px 0 4px;font-weight:700">Deal eligibility</div>
       <label style="margin-top:6px"><input type="checkbox" id="pMilitary" style="width:auto;margin-right:8px" />Military or veteran</label>
       <label style="margin-top:6px"><input type="checkbox" id="pFirstResponder" style="width:auto;margin-right:8px" />First responder or healthcare worker</label>
-      <label>Birth year</label>
+      <label for="pBirthYear">Birth year</label>
       <input id="pBirthYear" type="number" inputmode="numeric" placeholder="1995" />
       <div class="row">
-        <div><label>Employer</label><input id="pEmployer" placeholder="e.g. Google" /></div>
-        <div><label>Occupation</label><input id="pOccupation" placeholder="e.g. Teacher" /></div>
+        <div><label for="pEmployer">Employer</label><input id="pEmployer" placeholder="e.g. Google" /></div>
+        <div><label for="pOccupation">Occupation</label><input id="pOccupation" placeholder="e.g. Teacher" /></div>
       </div>
 
       <!-- Financial-context fields - not used for deal matching, folded
@@ -1923,7 +1923,7 @@
            something real to reason about. -->
       <div class="muted" style="font-size:12px;margin:16px 0 4px;font-weight:700">Financial context</div>
       <div class="row">
-        <div><label>Housing</label>
+        <div><label for="pHousing">Housing</label>
           <select id="pHousing">
             <option value="">Not set</option>
             <option value="own">Own</option>
@@ -1931,7 +1931,7 @@
             <option value="other">Other</option>
           </select>
         </div>
-        <div><label>Employment</label>
+        <div><label for="pEmployment">Employment</label>
           <select id="pEmployment">
             <option value="">Not set</option>
             <option value="employed">Employed</option>
@@ -1943,13 +1943,13 @@
         </div>
       </div>
       <div class="row">
-        <div><label>Household size</label><input id="pHouseholdSize" type="number" inputmode="numeric" placeholder="2" /></div>
-        <div><label>Dependents</label><input id="pDependents" type="number" inputmode="numeric" placeholder="0" /></div>
+        <div><label for="pHouseholdSize">Household size</label><input id="pHouseholdSize" type="number" inputmode="numeric" placeholder="2" /></div>
+        <div><label for="pDependents">Dependents</label><input id="pDependents" type="number" inputmode="numeric" placeholder="0" /></div>
       </div>
-      <label>Financial goals</label>
+      <label for="pGoals">Financial goals</label>
       <input id="pGoals" placeholder="e.g. paying down credit card debt" />
 
-      <label>Notes</label>
+      <label for="pNotes">Notes</label>
       <input id="pNotes" placeholder="anything else that helps" />
       <div style="height:14px"></div>
       <button id="profileSave">Save profile</button>

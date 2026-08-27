@@ -1990,6 +1990,8 @@
            asset_price_findings, service_domains), which aren't this
            user's data to begin with (docs/ROADMAP.md Cross-cutting #2). -->
       <button class="secondary" id="downloadDataBtn">Download a copy of my data</button>
+        <div class="stack-2"></div>
+        <button class="secondary" id="downloadExpensesCsvBtn">Download all my spending as a spreadsheet</button>
     </div>
   </div>
 
@@ -2167,6 +2169,8 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-profile-top-right-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Profile (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-profile-top-right-body">
           <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Log page's Bills tab, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else. "Download a copy of my data" saves a file holding everything in your account. It asks you to confirm first, because that file is readable by anyone who can open it - only do it on a device you trust.</p>
+          <p><strong>Getting your history in and out.</strong> Two buttons at the bottom save a copy to your device, and both ask you to confirm first. <strong>Download a copy of my data</strong> writes everything as one file: balances, every transaction, and this profile. <strong>Download all my spending as a spreadsheet</strong> writes just your transactions, in the same format the app's own Import CSV reads back, so you can move a long history between devices without retyping it.</p>
+          <p>To bring history in, use <strong>Import CSV</strong> under Quick Add on the Log page. It reads files exported from a bank or another app, works out which columns are which, and lets you check everything before anything is saved. It handles money going out and money coming in from the same file.</p>
 
         <div class="help-topic" id="helpTopic-using-this-app-without-a-mouse">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-using-this-app-without-a-mouse-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Getting around, and what happens when something goes wrong</button></h3>

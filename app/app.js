@@ -6413,12 +6413,8 @@ $("exportCsvBtn").onclick = async () => {
   );
   if (!ok) return;
   const csv = buildExpensesCsv(monthRows, acctName);
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = `expenses-${ym}.csv`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `expenses-${ym}.csv`);
+  toast(`Saved ${monthRows.length} transaction${monthRows.length === 1 ? "" : "s"} from ${monthLabel(ym)}`);
 };
 
 // window.print() against an isolated new-tab document, not a CDN PDF
@@ -7651,6 +7647,26 @@ $("profileSave").onclick = async () => {
 // asset_price_findings, service_domains) - not this user's data, and
 // dumping deal_findings especially would mix in other users' unrelated
 // candidate/rejected rows that happen to still be readable.
+// Saves a blob to the device. The revoke MUST be deferred: a.click() only
+// queues the download, so revoking the object URL on the very next line
+// invalidates the blob before the browser has read it and the download
+// silently never starts. Both download sites did exactly that. Verified by
+// fetching an immediately-revoked blob URL, which throws, against a deferred
+// one, which returns 200.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    if (a.isConnected) a.remove();
+    URL.revokeObjectURL(url);
+  }, 60000);
+}
+
 const USER_DATA_TABLES = [
   "profiles", "accounts", "expenses", "category_rules", "subscriptions",
   "assets", "liabilities", "account_activity", "budgets", "net_worth_snapshots",
@@ -7674,13 +7690,31 @@ $("downloadDataBtn").onclick = async () => {
     dump[table] = data || [];
   }
   $("downloadDataBtn").disabled = false;
-  const blob = new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = `personal-finance-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  toast("Download started");
+  const rowCount = USER_DATA_TABLES.reduce((n, t) => n + (dump[t]?.length || 0), 0);
+  downloadBlob(
+    new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" }),
+    `personal-finance-backup-${new Date().toISOString().slice(0, 10)}.json`
+  );
+  toast(`Saved ${rowCount} record${rowCount === 1 ? "" : "s"} to your downloads`);
+};
+
+// Every expense the app holds, not one month. The Reports CSV button is
+// scoped to its month picker, which means rebuilding a long history elsewhere
+// would otherwise mean exporting month by month. This is also the format the
+// app's own importer reads back: verified round-trip, Date/Description/
+// Category/Amount all map on re-import.
+$("downloadExpensesCsvBtn").onclick = async () => {
+  if (!allExpenses.length) return toast("Nothing to save yet", "error");
+  const ok = await confirmModal(
+    `This saves all ${allExpenses.length} of your transactions to your device as a spreadsheet file. `
+      + "Anyone who can open that file can read what you bought and how much.",
+    { title: "Save all your spending to a file?", confirmLabel: "Save file" }
+  );
+  if (!ok) return;
+  const rows = [...allExpenses].sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at)));
+  downloadBlob(new Blob([buildExpensesCsv(rows, acctName)], { type: "text/csv;charset=utf-8" }),
+    `expenses-all-${new Date().toISOString().slice(0, 10)}.csv`);
+  toast(`Saved ${rows.length} transactions`);
 };
 
 // Only reachable while already signed in (via password or magic link), so

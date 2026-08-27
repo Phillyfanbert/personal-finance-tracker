@@ -301,6 +301,9 @@
     .text-xs { font-size: var(--fs-xs); }
     .text-sm { font-size: var(--fs-sm); }
     .danger { color: var(--err); }
+    /* Written by flagField(ids, message). Not below --fs-sm: this is the only
+       statement of what went wrong that stays on screen after the toast. */
+    .field-error { color: var(--err); font-size: var(--fs-sm); margin: var(--sp-1) 0 0; }
     .stack-1 { margin-top: var(--sp-1); }
     .stack-2 { margin-top: var(--sp-2); }
     .stack-3 { margin-top: var(--sp-3); }
@@ -2427,7 +2430,12 @@
     <button id="navReports">Reports</button>
   </nav>
 
-  <div id="toast" class="toast"></div>
+  <!-- role="status" + aria-live: this is the app's primary feedback channel
+       (every save confirmation, every validation failure, every DB error) and
+       it was silent to screen readers. It is also permanently in the DOM and
+       only animates opacity, so nothing reached assistive tech at all. See
+       toast() in app.js for the re-announcement handling. -->
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Supabase + Chart.js + PapaParse from CDN (no build step). PapaParse
        parses CSV imports (Log page) - correctly handles quoted fields with

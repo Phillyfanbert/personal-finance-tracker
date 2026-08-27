@@ -60,9 +60,34 @@ const fmtNum = (n) => Number(n || 0).toLocaleString(undefined, { minimumFraction
 // about what gets written to Supabase.
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-function toast(msg) {
-  const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 2200);
+// `severity` is "info" (default) or "error". An error switches the region to
+// role="alert"/assertive: a denial interrupts what the user was doing and
+// needs to be heard now, where a confirmation can wait for a pause.
+//
+// Two things here are not obvious:
+//
+// 1. The node is permanent and its text is REPLACED, so firing the same
+//    message twice ("Enter a valid amount", twice) is not a change as far as
+//    most screen readers are concerned and the second one is never spoken.
+//    Clearing the region and setting the text on the next tick is what makes
+//    the repeat register.
+// 2. The duration was a flat 2200ms for everything. WCAG 2.2.1 expects a
+//    message to be readable, and a 79-character sentence on the same timer as
+//    "Added" is not. It now scales with length, within bounds.
+let toastTimer = null;
+function toast(msg, severity = "info") {
+  const t = $("toast");
+  const isError = severity === "error";
+  t.setAttribute("role", isError ? "alert" : "status");
+  t.setAttribute("aria-live", isError ? "assertive" : "polite");
+  clearTimeout(toastTimer);
+  t.textContent = "";
+  setTimeout(() => {
+    t.textContent = msg;
+    t.classList.add("show");
+    const ms = Math.min(8000, Math.max(2200, 1200 + String(msg).length * 55));
+    toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+  }, 60);
 }
 // Generic red-border flag for a denied action (CLAUDE.md's "every denial
 // flags its field" rule) - call right before a `return toast(...)` that
@@ -78,12 +103,38 @@ function toast(msg) {
 // field. Silently does nothing for an id with no matching element (a
 // field this action isn't clearly about, or a page whose fields aren't
 // mounted in a force-unhide test) rather than throwing.
-function flagField(ids) {
+// The optional `message` renders the reason next to the field itself. Without
+// it the only statement of what went wrong is the toast, which lives in a
+// different part of the DOM, disappears, and is not associated with anything -
+// so a screen reader user got a red border they could not see and a sentence
+// they could not connect to it. aria-invalid + aria-describedby is what ties
+// the two together; the red border alone was also colour-only (WCAG 1.4.1).
+function flagField(ids, message) {
   for (const id of Array.isArray(ids) ? ids : [ids]) {
     const el = $(id);
     if (!el) continue;
     el.classList.add("field-required");
-    const clear = () => el.classList.remove("field-required");
+    el.setAttribute("aria-invalid", "true");
+
+    let note = null;
+    if (message) {
+      const noteId = `${id}-error`;
+      note = $(noteId);
+      if (!note) {
+        note = document.createElement("p");
+        note.id = noteId;
+        note.className = "field-error";
+        el.insertAdjacentElement("afterend", note);
+      }
+      note.textContent = message;
+      el.setAttribute("aria-describedby", noteId);
+    }
+
+    const clear = () => {
+      el.classList.remove("field-required");
+      el.removeAttribute("aria-invalid");
+      if (note) { el.removeAttribute("aria-describedby"); note.remove(); }
+    };
     el.addEventListener("input", clear, { once: true });
     el.addEventListener("change", clear, { once: true });
   }
@@ -6883,8 +6934,8 @@ $("saveIncomeBtn").onclick = async () => {
   updateIncomeFieldHighlighting();
   const source = $("incSource").value.trim();
   const amount = parseFloat($("incAmount").value);
-  if (!source) { flagField("incSource"); return toast("Source required"); }
-  if (!amount || amount <= 0) { flagField("incAmount"); return toast("Enter a valid amount"); }
+  if (!source) { flagField("incSource", "Give this income source a name."); return toast("Source required", "error"); }
+  if (!amount || amount <= 0) { flagField("incAmount", "Enter an amount greater than 0."); return toast("Enter a valid amount", "error"); }
   const cadence = $("incCadence").value;
   let semimonthlyDay1 = null;
   let semimonthlyDay2 = null;

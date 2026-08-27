@@ -35,7 +35,7 @@ export const TOUR_STEPS = {
     {
       target: "nav",
       title: "The four pages",
-      body: "Log is the one you are on: your day-to-day money. Subscriptions/Bills is for things that charge you every month, like a phone bill. Reports turns what you have entered into charts. Investments is for money you have invested, if you have any. Whichever page you leave off on is the one you come back to.",
+      body: "Log is the one you are on: your day-to-day money, including bills. Plan is for deciding what happens next - a spending limit, the order to clear what you owe, and where your balance is heading. Reports turns what you have entered into charts. Investments is for money you have invested, if you have any. Whichever page you leave off on is the one you come back to.",
       placement: "bottom",
     },
     {
@@ -158,7 +158,7 @@ export const TOUR_STEPS = {
     {
       target: "reportTotals",
       title: "The three totals",
-      body: "What you spent that month, how much of it was subscriptions, and how long your savings would last if your income stopped. That last one is worked out from your recent spending, and the small line underneath always says what it is based on.",
+      body: "What you spent in the month you picked, how much of that was subscriptions, and a third that changes with what you have recorded: what a normal month costs you, or - once the app knows about any money coming in - what you have left over after paying for everything. The small line underneath always says how many months it is based on, so a figure resting on very little is obvious.",
       placement: "bottom",
     },
     {
@@ -170,13 +170,13 @@ export const TOUR_STEPS = {
     {
       target: "rptExpListCard",
       title: "That month's list",
-      body: "Everything from the month you picked. Tap one to change it, or tick several to change them together. You can also save the list as a file if you need it elsewhere.",
+      body: "Everything from the month you picked. Tap one to change it, or tick several to change them together. CSV and Print/PDF save a copy outside the app; both ask you to confirm first, since that puts your spending somewhere anyone with the device can read it.",
       placement: "top",
     },
     {
       target: "trendCard",
       title: "The charts",
-      body: "Where your money goes by type, how the last six months compare, what came in against what went out, and what your balance is likely to look like over the next month based on bills and pay you have already told the app about.",
+      body: "Where your money goes, which you can switch between by type, by account and by how you paid. Then what came in against what went out over the last six months, one account's balance over time, and your net worth over time. The last three ignore the month picker on purpose - they are about the whole run of your history, not one month.",
       placement: "top",
     },
     {

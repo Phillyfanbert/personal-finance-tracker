@@ -324,10 +324,16 @@ function showView(v) {
   $("planView").classList.toggle("hidden", v !== "plan");
   $("reportsView").classList.toggle("hidden", v !== "reports");
   $("investView").classList.toggle("hidden", v !== "invest");
-  $("navLog").classList.toggle("active", v === "log");
-  $("navPlan").classList.toggle("active", v === "plan");
-  $("navReports").classList.toggle("active", v === "reports");
-  $("navInvest").classList.toggle("active", v === "invest");
+  // aria-current, not role="tab": these navigate between pages of the app,
+  // which is a different thing from a tab set. The .active class alone was
+  // also colour-only, so which page you are on was not stated anywhere a
+  // screen reader could reach.
+  for (const [id, view] of [["navLog", "log"], ["navPlan", "plan"], ["navReports", "reports"], ["navInvest", "invest"]]) {
+    const on = v === view;
+    $(id).classList.toggle("active", on);
+    if (on) $(id).setAttribute("aria-current", "page");
+    else $(id).removeAttribute("aria-current");
+  }
 }
 
 // ---- INIT ------------------------------------------------------------------
@@ -4629,7 +4635,15 @@ function wireInfoIcons() {
   document.querySelectorAll("[data-info]").forEach((icon) => {
     const text = document.getElementById(icon.dataset.info);
     if (!text) return;
-    const toggle = () => text.classList.toggle("hidden");
+    // The icon shows and hides a paragraph, so it is a disclosure: say so,
+    // and say what it controls. Neither was exposed before.
+    if (!text.id) text.id = `${icon.dataset.info}-text`;
+    icon.setAttribute("aria-controls", text.id);
+    icon.setAttribute("aria-expanded", text.classList.contains("hidden") ? "false" : "true");
+    const toggle = () => {
+      const shown = !text.classList.toggle("hidden");
+      icon.setAttribute("aria-expanded", shown ? "true" : "false");
+    };
     icon.addEventListener("click", toggle);
     icon.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
@@ -4736,6 +4750,12 @@ function setSubTab(barId, storageKey, subId) {
   bar.querySelectorAll("[data-subtab]").forEach((btn) => {
     const isActive = btn.dataset.subtab === subId;
     btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    // Roving tabindex: only the selected tab is in the Tab order, and the
+    // arrow keys move between them. Required by the ARIA tab pattern - adding
+    // role="tab" without this makes the experience worse than plain buttons,
+    // because Tab would land on every tab in turn and do nothing.
+    btn.tabIndex = isActive ? 0 : -1;
     const panel = document.getElementById(btn.dataset.subtab);
     if (panel) panel.classList.toggle("hidden", !isActive);
   });
@@ -4748,6 +4768,30 @@ function wireSubTabs(barId, storageKey, defaultSubId) {
   // Lets a caller holding only a panel id switch to it (showSubTabFor, used
   // by the tour) without a second copy of the group -> storage-key mapping.
   bar.dataset.subtabStore = storageKey;
+  bar.setAttribute("role", "tablist");
+  const tabs = [...bar.querySelectorAll("[data-subtab]")];
+  tabs.forEach((btn) => {
+    const panelId = btn.dataset.subtab;
+    const tabId = `${panelId}-tab`;
+    btn.id = tabId;
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-controls", panelId);
+    const panel = document.getElementById(panelId);
+    if (panel) {
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", tabId);
+    }
+  });
+  bar.addEventListener("keydown", (ev) => {
+    const step = ev.key === "ArrowRight" ? 1 : ev.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    ev.preventDefault();
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const next = tabs[(i + step + tabs.length) % tabs.length];
+    setSubTab(barId, storageKey, next.dataset.subtab);
+    next.focus();
+  });
   bar.querySelectorAll("[data-subtab]").forEach((btn) => {
     btn.onclick = () => preserveScrollAcross(bar, () => setSubTab(barId, storageKey, btn.dataset.subtab));
   });

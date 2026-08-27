@@ -299,6 +299,21 @@
         <div id="budgetWarningList" style="margin-top:6px;font-size:13px"></div>
       </div>
 
+      <!-- Log holds three genuinely different jobs, so it is split the same
+           way the Investments page already is: both panels stay in the DOM
+           and toggle with .hidden, so every render function keeps writing
+           into its own elements with no knowledge of which sub-tab is
+           showing, and a background refresh landing on a hidden panel still
+           lands correctly. Do not rebuild these on demand.
+           Subscriptions/bills moved in here (2026-08-26): a bill is a
+           recurring expense, and this is where expenses already live. -->
+      <div class="subtab-pills" id="logSubTabs">
+        <button class="subtab-pill" data-subtab="logSubSpending">Spending</button>
+        <button class="subtab-pill" data-subtab="logSubBills">Bills</button>
+        <button class="subtab-pill" data-subtab="logSubMoney">Money</button>
+      </div>
+
+      <div id="logSubSpending">
       <!-- Quick add -->
       <div class="card quickadd" id="quickAddCard">
         <strong>Expenses Quick Add</strong>
@@ -398,26 +413,123 @@
         <div id="expList" class="scroll-list" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
 
-      <!-- An ongoing monthly limit per category, not per-month-varying - set
-           once, applies every month until changed. Lives on the Log page,
-           beside the spending it constrains, so that Reports stays purely
-           analytics of data recorded elsewhere; setting a budget is an input,
-           not a report. Always scoped to the CURRENT month here, unlike when
-           it sat on Reports and followed that page's month selector - a
-           limit you are deciding right now is about the month you are in.
-           renderBudgets() is called from loadExpenses (app.js), not from
-           renderReports, for the same reason. -->
-      <div class="card" id="budgetsCard">
-        <strong>Budgets</strong>
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Monthly limit per category, for the current month.</p>
-        <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
-        <div class="row" style="margin-top:10px">
-          <select id="budgetCategory" style="flex:1"></select>
-          <input id="budgetLimit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1" />
-          <button id="saveBudgetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
+      </div>
+
+      <div id="logSubBills" class="hidden">
+        <div class="topbar" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <strong style="font-size:15px">Subscriptions and bills</strong>
+          <button class="secondary" id="addSubBtn" style="width:auto;padding:8px 12px">+ Add</button>
+        </div>
+
+      <div class="totals" id="subsTotals">
+        <div class="card"><div class="muted" style="font-size:12px">Monthly total</div><div class="big" id="subsTotalMonthly">$0</div></div>
+        <div class="card"><div class="muted" style="font-size:12px">Yearly</div><div class="big" id="subsTotalYearly">$0</div></div>
+      </div>
+
+      <!-- Recurring-expense detection (README appendix open decision,
+           docs/ROADMAP.md Log/Quick Add #1) - hidden unless at least one
+           candidate is found, unlike dealsCard below which always shows an
+           empty-state message; this is a discovery nudge, not a summary
+           that should always occupy space. -->
+      <div class="card hidden" id="recurringCard">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Recurring expenses found</strong>
+        </div>
+        <p class="muted" style="font-size:12px;margin:0 0 8px">These look like a bill based on your expense history - tap one to start tracking it here.</p>
+        <div id="recurringList"></div>
+      </div>
+
+      <!-- Savings / discount discovery (README §3.7 F6).
+           ONE card, because "where can I save money" is one question - it
+           used to be two ("Savings found" plus a separate "Found online"),
+           which meant two cards each saying "nothing found" for what a user
+           reads as the same thing.
+           The two trust tiers are still kept apart, just within the card
+           rather than as separate cards: checked plans come from the curated
+           catalog, the machine-found section below is labeled unverified,
+           carries its own source links, and is deliberately NOT added into
+           the yearly total in the header - that figure only ever sums
+           amounts the app can stand behind. -->
+      <div class="card" id="dealsCard">
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Savings found</strong>
+          <span class="muted" style="font-size:12px" id="dealsTotal"></span>
+        </div>
+        <div id="dealsList"></div>
+
+        <!-- Hidden unless DEAL_FINDINGS_ENABLED is set in config.js. -->
+        <div id="dealFindingsSection" class="hidden" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+          <div class="topbar" style="margin-bottom:4px">
+            <strong style="font-size:13px">Found online, not verified</strong>
+            <span class="muted" style="font-size:12px">tap a link to check the source</span>
+          </div>
+          <p class="muted" id="dealFindingsFreshness" style="font-size:11px;margin:0 0 6px"></p>
+          <p id="dealFindingsWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
+          <div id="dealFindingsList"></div>
         </div>
       </div>
 
+      <div class="card">
+        <strong>Upcoming renewals (30 days)</strong>
+        <div id="subUpcoming" style="margin-top:8px"><p class="muted">None in the next 30 days.</p></div>
+      </div>
+
+      <div class="card">
+        <strong>All subscriptions/bills</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
+        <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
+        <button class="secondary" id="addSubBtnBottom" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
+      </div>
+
+
+      <!-- Add / edit form (hidden until used) - placed below the full list
+           rather than up near the top of the page, so both "+ Add" entry
+           points (the topbar button and this list's own button) open it
+           somewhere already in view instead of scrolling all the way back
+           up past Savings found/Found online. openSubForm's scrollIntoView
+           (app.js) already scrolls to wherever this sits in the DOM, so
+           moving it here needed no JS change. -->
+      <div class="card hidden" id="subForm">
+        <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription/bill</strong></div>
+        <label>Service name</label>
+        <input id="sName" placeholder="Spotify" />
+        <!-- Free text with suggestions, not a fixed dropdown - same pattern
+             as acctBank below: pick a common category or type any label of
+             your own (see docs/subscription-bill-types-research.md). -->
+        <label>Category</label>
+        <input id="sCategory" placeholder="Streaming & Media" list="subCategorySuggestions" autocomplete="off" />
+        <datalist id="subCategorySuggestions"></datalist>
+        <div class="row">
+          <div><label>Amount</label><input id="sAmount" type="number" step="0.01" inputmode="decimal" /></div>
+          <div><label>Billing cycle</label>
+            <select id="sCycle"><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="semiannual">Semiannual</option><option value="annual">Annual</option><option value="other">Other</option></select>
+          </div>
+        </div>
+        <div class="row">
+          <div><label>Next renewal</label><input id="sRenewal" type="date" /></div>
+          <div><label>Account</label><select id="sAccount"></select></div>
+        </div>
+        <label><input type="checkbox" id="sActive" style="width:auto;margin-right:8px" checked />Active</label>
+        <!-- Just the flag - no "what could I cut" view reads it yet (docs/ROADMAP.md). -->
+        <label><input type="checkbox" id="sEssential" style="width:auto;margin-right:8px" />Essential (bill you need, not a discretionary subscription)</label>
+        <label>Notes</label>
+        <input id="sNotes" placeholder="e.g. shared family plan" />
+        <div style="height:12px"></div>
+        <!-- Logs today's charge as a real expense against the linked account
+             (same asset/liability effect as any other expense) and rolls
+             next_renewal forward one cycle - see markPaidBtn in app.js. -->
+        <button class="secondary hidden" id="markPaidBtn">Mark as paid - log this charge</button>
+        <div style="height:8px"></div>
+        <div class="row">
+          <button id="saveSubBtn">Save</button>
+          <button class="secondary" id="cancelSubBtn">Cancel</button>
+        </div>
+        <div style="height:8px"></div>
+        <button class="secondary hidden" id="deleteSubBtn" style="color:var(--err)">Delete subscription/bill</button>
+      </div>
+      </div>
+
+      <div id="logSubMoney" class="hidden">
       <!-- Net worth overview -->
       <div class="card" id="netWorthCard">
         <div class="muted" style="font-size:12px">Net worth</div>
@@ -812,19 +924,6 @@
         <button class="secondary hidden" id="deleteIncomeBtn" style="color:var(--err)">Delete income source</button>
       </div>
 
-      <!-- The explanation lives behind the "i" like every other card that
-           has one, rather than as a permanently-visible paragraph - see
-           wireInfoIcons(). -->
-      <div class="card" id="debtStrategyCard">
-        <div class="card-head">
-          <strong>Paying off what you owe</strong>
-          <span class="info-icon" tabindex="0" role="button" data-info="debtStrategyExplainer" title="Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.">i</span>
-        </div>
-        <p class="muted explainer hidden" id="debtStrategyExplainer">Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.</p>
-        <label>Spare money you could put toward debt each month</label>
-        <input id="debtStrategyExtra" type="number" step="0.01" inputmode="decimal" placeholder="0" />
-        <div id="debtStrategyResult" style="margin-top:10px;font-size:13px"></div>
-        <p class="muted" id="debtStrategyExcluded" style="font-size:12px;margin-top:8px"></p>
       </div>
     </div>
 
@@ -946,19 +1045,6 @@
         <div class="chartbox short"><canvas id="historyChart"></canvas></div>
       </div>
 
-      <!-- Forward-projecting mirror of the balance history card above -
-           see forecastCashFlow() (app/cashflow.js). Known scheduled items
-           only (active subscriptions + income sources tied to the picked
-           account) - deliberately no blended average-spending estimate,
-           same restraint as every other real-math-only card on this page. -->
-      <div class="card">
-        <div class="topbar" style="margin-bottom:6px">
-          <strong>Cash flow forecast</strong>
-          <select id="forecastAccountSelect" style="width:auto;font-size:12px"></select>
-        </div>
-        <div class="chartbox short"><canvas id="forecastChart"></canvas></div>
-        <p class="muted" style="font-size:12px;margin:8px 0 0">The next 30 days, using only bills and pay you have already told the app about. It does not try to guess your everyday spending.</p>
-      </div>
 
       <!-- One snapshot per calendar day the app was actually opened
            (snapshotNetWorthIfNeeded, app.js) - unlike account balance
@@ -976,122 +1062,76 @@
       <div id="rptEmpty" class="card hidden"><p class="muted" style="margin:0">No expenses in this month yet.</p></div>
     </div>
 
-    <!-- ============ APP: SUBSCRIPTIONS VIEW ============ -->
-    <div id="subsView" class="hidden">
+    <!-- ============ APP: PLAN VIEW ============ -->
+    <!-- Replaced the Subscriptions/Bills tab (2026-08-26). Bills moved into
+         Log, where the rest of this app's expenses live; what is left here is
+         the forward-looking set - a limit you are setting, a payoff order you
+         are weighing, and a balance you are projecting. All three answer
+         "what should I do next" rather than "what happened", which is the
+         line between this page and Reports. -->
+    <div id="planView" class="hidden">
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
-          <button class="secondary" id="backFromSubs" style="width:auto;padding:8px 10px">←</button>
-          <h1 style="margin:0">Subscriptions/Bills</h1>
-          <button class="help-btn" id="helpSubsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+          <button class="secondary" id="backFromPlan" style="width:auto;padding:8px 10px">&#8592;</button>
+          <h1 style="margin:0">Plan</h1>
+          <button class="help-btn" id="helpPlanBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
         </div>
-        <button class="secondary" id="addSubBtn" style="width:auto;padding:8px 12px">+ Add</button>
       </div>
-
-      <div class="totals" id="subsTotals">
-        <div class="card"><div class="muted" style="font-size:12px">Monthly total</div><div class="big" id="subsTotalMonthly">$0</div></div>
-        <div class="card"><div class="muted" style="font-size:12px">Yearly</div><div class="big" id="subsTotalYearly">$0</div></div>
-      </div>
-
-      <!-- Recurring-expense detection (README appendix open decision,
-           docs/ROADMAP.md Log/Quick Add #1) - hidden unless at least one
-           candidate is found, unlike dealsCard below which always shows an
-           empty-state message; this is a discovery nudge, not a summary
-           that should always occupy space. -->
-      <div class="card hidden" id="recurringCard">
-        <div class="topbar" style="margin-bottom:6px">
-          <strong>Recurring expenses found</strong>
-        </div>
-        <p class="muted" style="font-size:12px;margin:0 0 8px">These look like a bill based on your expense history - tap one to start tracking it here.</p>
-        <div id="recurringList"></div>
-      </div>
-
-      <!-- Savings / discount discovery (README §3.7 F6).
-           ONE card, because "where can I save money" is one question - it
-           used to be two ("Savings found" plus a separate "Found online"),
-           which meant two cards each saying "nothing found" for what a user
-           reads as the same thing.
-           The two trust tiers are still kept apart, just within the card
-           rather than as separate cards: checked plans come from the curated
-           catalog, the machine-found section below is labeled unverified,
-           carries its own source links, and is deliberately NOT added into
-           the yearly total in the header - that figure only ever sums
-           amounts the app can stand behind. -->
-      <div class="card" id="dealsCard">
-        <div class="topbar" style="margin-bottom:6px">
-          <strong>Savings found</strong>
-          <span class="muted" style="font-size:12px" id="dealsTotal"></span>
-        </div>
-        <div id="dealsList"></div>
-
-        <!-- Hidden unless DEAL_FINDINGS_ENABLED is set in config.js. -->
-        <div id="dealFindingsSection" class="hidden" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-          <div class="topbar" style="margin-bottom:4px">
-            <strong style="font-size:13px">Found online, not verified</strong>
-            <span class="muted" style="font-size:12px">tap a link to check the source</span>
-          </div>
-          <p class="muted" id="dealFindingsFreshness" style="font-size:11px;margin:0 0 6px"></p>
-          <p id="dealFindingsWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
-          <div id="dealFindingsList"></div>
+      <!-- An ongoing monthly limit per category, not per-month-varying - set
+           once, applies every month until changed. Moved here from Log
+           (2026-08-26): setting a limit is a decision about what happens
+           next, which is what this page is for, and it sits beside the other
+           two forward-looking cards rather than among the balances. Reports
+           stays purely analytics of data already recorded; a budget is an
+           input, not a report. Always scoped to the CURRENT month, unlike
+           when it briefly sat on Reports and followed that page's month
+           selector - a limit you are deciding right now is about the month
+           you are in. renderBudgets() is still called from loadExpenses
+           (app.js), not from renderReports, for the same reason, and the
+           warning banner it drives still appears on Log where the spending
+           actually happens. -->
+      <div class="card" id="budgetsCard">
+        <strong>Budgets</strong>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Monthly limit per category, for the current month.</p>
+        <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
+        <div class="row" style="margin-top:10px">
+          <select id="budgetCategory" style="flex:1"></select>
+          <input id="budgetLimit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1" />
+          <button id="saveBudgetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
         </div>
       </div>
 
+      <!-- The explanation lives behind the "i" like every other card that
+           has one, rather than as a permanently-visible paragraph - see
+           wireInfoIcons(). -->
+      <div class="card" id="debtStrategyCard">
+        <div class="card-head">
+          <strong>Paying off what you owe</strong>
+          <span class="info-icon" tabindex="0" role="button" data-info="debtStrategyExplainer" title="Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.">i</span>
+        </div>
+        <p class="muted explainer hidden" id="debtStrategyExplainer">Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.</p>
+        <label>Spare money you could put toward debt each month</label>
+        <input id="debtStrategyExtra" type="number" step="0.01" inputmode="decimal" placeholder="0" />
+        <div id="debtStrategyResult" style="margin-top:10px;font-size:13px"></div>
+        <p class="muted" id="debtStrategyExcluded" style="font-size:12px;margin-top:8px"></p>
+      </div>
+
+      <!-- Forward-projecting mirror of Reports' balance-history card - see
+           forecastCashFlow() (app/cashflow.js). Moved off Reports
+           (2026-08-26) because it is the one card there that describes what
+           has not happened yet, which is this page's whole remit. Known
+           scheduled items only (active subscriptions + income sources tied
+           to the picked account) - deliberately no blended average-spending
+           estimate, the same restraint every other real-math-only card in
+           this app holds. populateForecastAccountSelect/renderCashFlowForecast
+           moved out of loadReports into goToView's "plan" branch with it. -->
       <div class="card">
-        <strong>Upcoming renewals (30 days)</strong>
-        <div id="subUpcoming" style="margin-top:8px"><p class="muted">None in the next 30 days.</p></div>
-      </div>
-
-      <div class="card">
-        <strong>All subscriptions/bills</strong>
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
-        <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
-        <button class="secondary" id="addSubBtnBottom" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
-      </div>
-
-
-      <!-- Add / edit form (hidden until used) - placed below the full list
-           rather than up near the top of the page, so both "+ Add" entry
-           points (the topbar button and this list's own button) open it
-           somewhere already in view instead of scrolling all the way back
-           up past Savings found/Found online. openSubForm's scrollIntoView
-           (app.js) already scrolls to wherever this sits in the DOM, so
-           moving it here needed no JS change. -->
-      <div class="card hidden" id="subForm">
-        <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription/bill</strong></div>
-        <label>Service name</label>
-        <input id="sName" placeholder="Spotify" />
-        <!-- Free text with suggestions, not a fixed dropdown - same pattern
-             as acctBank below: pick a common category or type any label of
-             your own (see docs/subscription-bill-types-research.md). -->
-        <label>Category</label>
-        <input id="sCategory" placeholder="Streaming & Media" list="subCategorySuggestions" autocomplete="off" />
-        <datalist id="subCategorySuggestions"></datalist>
-        <div class="row">
-          <div><label>Amount</label><input id="sAmount" type="number" step="0.01" inputmode="decimal" /></div>
-          <div><label>Billing cycle</label>
-            <select id="sCycle"><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="semiannual">Semiannual</option><option value="annual">Annual</option><option value="other">Other</option></select>
-          </div>
+        <div class="topbar" style="margin-bottom:6px">
+          <strong>Cash flow forecast</strong>
+          <select id="forecastAccountSelect" style="width:auto;font-size:12px"></select>
         </div>
-        <div class="row">
-          <div><label>Next renewal</label><input id="sRenewal" type="date" /></div>
-          <div><label>Account</label><select id="sAccount"></select></div>
-        </div>
-        <label><input type="checkbox" id="sActive" style="width:auto;margin-right:8px" checked />Active</label>
-        <!-- Just the flag - no "what could I cut" view reads it yet (docs/ROADMAP.md). -->
-        <label><input type="checkbox" id="sEssential" style="width:auto;margin-right:8px" />Essential (bill you need, not a discretionary subscription)</label>
-        <label>Notes</label>
-        <input id="sNotes" placeholder="e.g. shared family plan" />
-        <div style="height:12px"></div>
-        <!-- Logs today's charge as a real expense against the linked account
-             (same asset/liability effect as any other expense) and rolls
-             next_renewal forward one cycle - see markPaidBtn in app.js. -->
-        <button class="secondary hidden" id="markPaidBtn">Mark as paid - log this charge</button>
-        <div style="height:8px"></div>
-        <div class="row">
-          <button id="saveSubBtn">Save</button>
-          <button class="secondary" id="cancelSubBtn">Cancel</button>
-        </div>
-        <div style="height:8px"></div>
-        <button class="secondary hidden" id="deleteSubBtn" style="color:var(--err)">Delete subscription/bill</button>
+        <div class="chartbox short"><canvas id="forecastChart"></canvas></div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">The next 30 days, using only bills and pay you have already told the app about. It does not try to guess your everyday spending.</p>
       </div>
     </div>
 
@@ -1829,7 +1869,7 @@
       <div class="topbar"><strong id="helpModalTitle">Help</strong><button class="secondary" id="helpClose" style="width:auto;padding:6px 12px">Close</button></div>
       <div class="help-pills">
         <button class="help-pill" data-help-page="log">Log</button>
-        <button class="help-pill" data-help-page="subs">Subscriptions/Bills</button>
+        <button class="help-pill" data-help-page="plan">Plan</button>
         <button class="help-pill" data-help-page="reports">Reports</button>
         <button class="help-pill" data-help-page="invest">Investments</button>
       </div>
@@ -1843,28 +1883,36 @@
 
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramLog" viewBox="0 0 680 498" xmlns="http://www.w3.org/2000/svg">
-            <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="39" fill="var(--text)" font-size="14">Expenses Quick Add</text>
-            <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="93" fill="var(--text)" font-size="14">Recent History</text>
-            <rect x="10" y="118" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="147" fill="var(--text)" font-size="14">Budgets</text>
-            <rect x="10" y="172" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="201" fill="var(--text)" font-size="14">Net worth</text>
-            <rect x="10" y="226" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="255" fill="var(--text)" font-size="14">Accounts</text>
-            <rect x="10" y="280" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="309" fill="var(--text)" font-size="14">Assets</text>
-            <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="363" fill="var(--text)" font-size="14">Liabilities</text>
-            <rect x="10" y="388" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="417" fill="var(--text)" font-size="14">Income sources</text>
-            <rect x="10" y="442" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="471" fill="var(--text)" font-size="14">Paying off what you owe</text>
+          <svg id="helpDiagramLog" viewBox="0 0 680 650" xmlns="http://www.w3.org/2000/svg">
+            <text x="28" y="24" fill="var(--muted)" font-size="12.5">This month / Entries / Income per year - always shown</text>
+            <text x="28" y="54" fill="var(--accent)" font-size="13" font-weight="600">Spending tab</text>
+            <rect x="10" y="74" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="98" fill="var(--text)" font-size="14">Expenses Quick Add</text>
+            <rect x="10" y="118" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="142" fill="var(--text)" font-size="14">Recent History</text>
+            <text x="28" y="186" fill="var(--accent)" font-size="13" font-weight="600">Bills tab</text>
+            <rect x="10" y="206" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="230" fill="var(--text)" font-size="14">Recurring expenses found (only when any are detected)</text>
+            <rect x="10" y="250" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="274" fill="var(--text)" font-size="14">Savings found</text>
+            <rect x="10" y="294" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="318" fill="var(--text)" font-size="14">Upcoming renewals (30 days)</text>
+            <rect x="10" y="338" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="362" fill="var(--text)" font-size="14">All subscriptions</text>
+            <text x="28" y="406" fill="var(--accent)" font-size="13" font-weight="600">Money tab</text>
+            <rect x="10" y="426" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="450" fill="var(--text)" font-size="14">Net worth</text>
+            <rect x="10" y="470" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="494" fill="var(--text)" font-size="14">Accounts</text>
+            <rect x="10" y="514" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="538" fill="var(--text)" font-size="14">Assets</text>
+            <rect x="10" y="558" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="582" fill="var(--text)" font-size="14">Liabilities</text>
+            <rect x="10" y="602" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="626" fill="var(--text)" font-size="14">Income sources</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. A budget-warning banner can appear above Quick Add when a category is close to or over its limit.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">This page has three tabs, and the three totals at the top stay on screen whichever one you are looking at. Spending is where you write things down, Bills is anything that charges you on a schedule, and Money is what you have and what you owe. A budget-warning banner can appear above the tabs when a category is close to or over its limit. Tap any row above to jump to what it does.</p>
 
         <div class="help-topic" id="helpTopic-expenses-quick-add">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Expenses Quick Add</h3>
@@ -1888,12 +1936,6 @@
           </div>
         </div>
 
-        <div class="help-topic" id="helpTopic-budgets">
-          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Budgets</h3>
-          <div class="help-topic-body hidden">
-          <p>A monthly spending limit per category. Unlike the charts on the Reports page, a budget always applies to the <em>current</em> real-world month - it doesn't follow any month picker. Once you're at 90% of a limit the bar turns amber; over it, red, and a "Budget warning" banner appears at the very top of this page (and a toast fires right at the moment a save actually crosses the line). Set a category's limit again to change it; tap the ✕ to remove it entirely.</p>
-          </div>
-        </div>
 
         <div class="help-topic" id="helpTopic-net-worth">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Net worth</h3>
@@ -1941,37 +1983,6 @@
           <p>The <strong>Income / yr</strong> tile at the top of this page annualizes every active recurring source. It reads <strong>$0</strong> until you add one, with a line underneath saying whether that's because nothing is recorded yet or because your only source is one-time - a one-time deposit isn't a yearly rate, so it deliberately isn't counted toward the total. This figure is also what the app checks against the two account types where income is a real legal requirement (see Accounts above).</p>
           </div>
         </div>
-        <div class="help-topic" id="helpTopic-debt-payoff-strategy">
-          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Paying off what you owe</h3>
-          <div class="help-topic-body hidden">
-          <p>If you owe money in more than one place, there are two common ways to decide where any spare money should go. One is to put it toward whichever debt charges the highest interest rate. The other is to put it toward whichever debt is smallest, so you clear one sooner. This card works out what each would actually cost you and shows both, side by side.</p>
-          <p>The box is for spare money you could put toward debt each month, on top of the smallest payment each one already requires. Leaving it at 0 is fine - the comparison still works, it just takes longer either way. For each option you get how many months until everything is paid off, and how much interest you would pay in total getting there.</p>
-          <p>It will never tell you which to choose. Both are reasonable, people pick differently for good reasons, and this app shows you the numbers rather than making that decision for you.</p>
-          <p>A debt is left out of the comparison if the app does not yet know its interest rate and smallest monthly payment, if it is already paid off, or if it is a home equity line you can still borrow more from (those work differently enough that including them would give a misleading answer). A short note under the numbers says how many were left out, and you can fill in the missing details by tapping that debt under Liabilities.</p>
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-profile-top-right">
-          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Profile (top right)</h3>
-          <div class="help-topic-body hidden">
-          <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Subscriptions/Bills page, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else. "Download a copy of my data" saves a file holding everything in your account. It asks you to confirm first, because that file is readable by anyone who can open it - only do it on a device you trust.</p>
-          </div>
-        </div>
-      </div>
-      <div id="helpContentSubs" class="hidden">
-        <div class="help-diagram">
-          <svg id="helpDiagramSubs" viewBox="0 0 680 282" xmlns="http://www.w3.org/2000/svg">
-            <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="39" fill="var(--text)" font-size="14">Recurring expenses found (only when any are detected)</text>
-            <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="93" fill="var(--text)" font-size="14">Savings found</text>
-            <rect x="10" y="118" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="147" fill="var(--text)" font-size="14">Upcoming renewals (30 days)</text>
-            <rect x="10" y="172" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="201" fill="var(--text)" font-size="14">All subscriptions/bills</text>
-          </svg>
-        </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">"Recurring expenses found" only appears when the app spots a bill-like pattern in your expense history. "Savings found" also has a second, clearly-marked part inside it for anything an optional background search turned up online, which only appears once there is something to show - see its own note below. Income sources used to sit on this page and now lives on the Log page instead, with the rest of your accounts and balances - this page is only money going out.</p>
 
         <div class="help-topic" id="helpTopic-monthly-total-yearly">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Monthly total / Yearly</h3>
@@ -2014,10 +2025,58 @@
           </div>
         </div>
 
+        <div class="help-topic" id="helpTopic-profile-top-right">
+          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Profile (top right)</h3>
+          <div class="help-topic-body hidden">
+          <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Subscriptions/Bills page, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else. "Download a copy of my data" saves a file holding everything in your account. It asks you to confirm first, because that file is readable by anyone who can open it - only do it on a device you trust.</p>
+          </div>
+        </div>
+      </div>
+      <div id="helpContentPlan" class="hidden">
+        <div class="help-diagram">
+          <svg id="helpDiagramPlan" viewBox="0 0 680 146" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="34" fill="var(--text)" font-size="14">Budgets</text>
+            <rect x="10" y="54" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="78" fill="var(--text)" font-size="14">Paying off what you owe</text>
+            <rect x="10" y="98" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="122" fill="var(--text)" font-size="14">Cash flow forecast</text>
+          </svg>
+        </div>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Everything on this page is about what happens <em>next</em>, which is what separates it from Reports: a limit you are setting, an order you are weighing up, and a balance projected forward. Nothing here changes any of your balances on its own. Subscriptions and bills used to be this tab and now live under Log, with the rest of your spending.</p>
+
+
+
+
+
+
+        <div class="help-topic" id="helpTopic-budgets">
+          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Budgets</h3>
+          <div class="help-topic-body hidden">
+          <p>A monthly spending limit per category. Unlike the charts on the Reports page, a budget always applies to the <em>current</em> real-world month - it doesn't follow any month picker. Once you're at 90% of a limit the bar turns amber; over it, red, and a "Budget warning" banner appears at the very top of this page (and a toast fires right at the moment a save actually crosses the line). Set a category's limit again to change it; tap the ✕ to remove it entirely.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-debt-payoff-strategy">
+          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Paying off what you owe</h3>
+          <div class="help-topic-body hidden">
+          <p>If you owe money in more than one place, there are two common ways to decide where any spare money should go. One is to put it toward whichever debt charges the highest interest rate. The other is to put it toward whichever debt is smallest, so you clear one sooner. This card works out what each would actually cost you and shows both, side by side.</p>
+          <p>The box is for spare money you could put toward debt each month, on top of the smallest payment each one already requires. Leaving it at 0 is fine - the comparison still works, it just takes longer either way. For each option you get how many months until everything is paid off, and how much interest you would pay in total getting there.</p>
+          <p>It will never tell you which to choose. Both are reasonable, people pick differently for good reasons, and this app shows you the numbers rather than making that decision for you.</p>
+          <p>A debt is left out of the comparison if the app does not yet know its interest rate and smallest monthly payment, if it is already paid off, or if it is a home equity line you can still borrow more from (those work differently enough that including them would give a misleading answer). A short note under the numbers says how many were left out, and you can fill in the missing details by tapping that debt under Liabilities.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-cash-flow-forecast">
+          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Cash flow forecast</h3>
+          <div class="help-topic-body hidden">
+          <p>Pick any account to see its balance projected forward 30 days, built only from what's actually known and scheduled: that account's active subscriptions/bills and active income sources. It deliberately does not blend in an average-spending estimate - a forecast built only from real scheduled items is honest about what it knows, rather than looking more predictive than this app can actually claim to be. A bill or paycheck due today isn't shown as a separate point (it's already reflected in the starting balance); one due tomorrow or later shows up as a change in the line on the day it's expected.</p>
+          </div>
+        </div>
       </div>
       <div id="helpContentReports" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramReports" viewBox="0 0 680 444" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramReports" viewBox="0 0 680 390" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="39" fill="var(--text)" font-size="14">Ask about your spending</text>
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -2031,9 +2090,7 @@
             <rect x="10" y="280" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="309" fill="var(--text)" font-size="14">Account balance history</text>
             <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="363" fill="var(--text)" font-size="14">Cash flow forecast</text>
-            <rect x="10" y="388" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="417" fill="var(--text)" font-size="14">Net worth trend</text>
+            <text x="40" y="363" fill="var(--text)" font-size="14">Net worth trend</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. The month selector (top right) and its "Selected month" / "Subscriptions/Bills" totals apply to everything except the last four cards - see below for which.</p>
@@ -2098,12 +2155,6 @@
           </div>
         </div>
 
-        <div class="help-topic" id="helpTopic-cash-flow-forecast">
-          <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Cash flow forecast</h3>
-          <div class="help-topic-body hidden">
-          <p>Pick any account to see its balance projected forward 30 days, built only from what's actually known and scheduled: that account's active subscriptions/bills and active income sources. It deliberately does not blend in an average-spending estimate - a forecast built only from real scheduled items is honest about what it knows, rather than looking more predictive than this app can actually claim to be. A bill or paycheck due today isn't shown as a separate point (it's already reflected in the starting balance); one due tomorrow or later shows up as a change in the line on the day it's expected.</p>
-          </div>
-        </div>
 
         <div class="help-topic" id="helpTopic-net-worth-trend">
           <h3 class="help-topic-head" role="button" tabindex="0" aria-expanded="false"><span class="help-chevron" aria-hidden="true">&#9656;</span>Net worth trend</h3>
@@ -2287,7 +2338,7 @@
   <!-- Top nav -->
   <nav id="nav" class="nav hidden">
     <button id="navLog" class="active">Log</button>
-    <button id="navSubs">Subscriptions/Bills</button>
+    <button id="navPlan">Plan</button>
     <button id="navInvest">Investments</button>
     <button id="navReports">Reports</button>
   </nav>

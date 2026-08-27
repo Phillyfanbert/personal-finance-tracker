@@ -205,7 +205,10 @@ sb.auth.getSession().then(({ data }) => renderAuth(data.session));
 // a single-page app with no routing. Falls back to "log" for a missing or
 // unrecognized value (a fresh browser, or a value from some future build
 // this one doesn't know).
-const VIEWS = ["log", "subs", "reports", "invest"];
+// "subs" was a view until 2026-08-26; a device that last had it stored
+// simply falls through the includes() check below and lands on "log",
+// which is where its content now lives anyway.
+const VIEWS = ["log", "plan", "reports", "invest"];
 const lastView = () => (VIEWS.includes(localStorage.getItem("lastView")) ? localStorage.getItem("lastView") : "log");
 
 function renderAuth(session) {
@@ -232,7 +235,7 @@ function renderAuth(session) {
       maybeStartTour(view);
     });
   }
-  else { $("logView").classList.add("hidden"); $("subsView").classList.add("hidden"); $("reportsView").classList.add("hidden"); $("investView").classList.add("hidden"); }
+  else { $("logView").classList.add("hidden"); $("planView").classList.add("hidden"); $("reportsView").classList.add("hidden"); $("investView").classList.add("hidden"); }
 }
 
 // ---- NAVIGATION ------------------------------------------------------------
@@ -245,7 +248,12 @@ function renderAuth(session) {
 // always-visible nav. It looked like the button did nothing.
 function goToView(view) {
   showView(view);
-  if (view === "subs") loadSubscriptions();
+  // Log owns subscriptions/bills now, so it needs the same load its own tab
+  // used to do. renderBudgets/renderDebtStrategy already run off loadExpenses
+  // and the liabilities load, so Plan only has to populate the one picker
+  // that used to be filled by loadReports.
+  if (view === "log") loadSubscriptions();
+  else if (view === "plan") { populateForecastAccountSelect(); renderCashFlowForecast(); renderDebtStrategy(); }
   else if (view === "reports") loadReports();
   else if (view === "invest") {
     renderInvestments(); renderInvestmentsTrend(); renderMarketOverview();
@@ -253,20 +261,20 @@ function goToView(view) {
   }
 }
 $("navLog").onclick = () => { goToView("log"); maybeStartTour("log"); };
-$("navSubs").onclick = () => { goToView("subs"); maybeStartTour("subs"); };
+$("navPlan").onclick = () => { goToView("plan"); maybeStartTour("plan"); };
 $("navReports").onclick = () => { goToView("reports"); maybeStartTour("reports"); };
 $("navInvest").onclick = () => { goToView("invest"); maybeStartTour("invest"); };
-$("backFromSubs").onclick = () => showView("log");
+$("backFromPlan").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
 $("backFromInvest").onclick = () => showView("log");
 function showView(v) {
   localStorage.setItem("lastView", v);
   $("logView").classList.toggle("hidden", v !== "log");
-  $("subsView").classList.toggle("hidden", v !== "subs");
+  $("planView").classList.toggle("hidden", v !== "plan");
   $("reportsView").classList.toggle("hidden", v !== "reports");
   $("investView").classList.toggle("hidden", v !== "invest");
   $("navLog").classList.toggle("active", v === "log");
-  $("navSubs").classList.toggle("active", v === "subs");
+  $("navPlan").classList.toggle("active", v === "plan");
   $("navReports").classList.toggle("active", v === "reports");
   $("navInvest").classList.toggle("active", v === "invest");
 }
@@ -4001,8 +4009,6 @@ async function loadReports() {
   loadInsights();
   populateHistoryAccountSelect();
   renderAccountHistory();
-  populateForecastAccountSelect();
-  renderCashFlowForecast();
   await renderNetWorthTrend();
 }
 
@@ -4669,35 +4675,40 @@ setInvestTab(localStorage.getItem("investTab") || "market");
 // PARENT already hides its children regardless of their own class - no
 // extra work is needed when the top-level tab itself changes.
 //
-// Generic across both groups rather than two near-duplicate functions,
-// since the only difference between Market's 4 sub-tabs and Portfolio's 5
-// is which buttons/storage key they use.
-function setInvestSubTab(barId, storageKey, subId) {
+// Generic across every group rather than near-duplicate functions per
+// group, since the only difference between them is which buttons and
+// storage key they use. Three groups use it now: Market's 4, Portfolio's 5,
+// and the Log page's 3.
+function setSubTab(barId, storageKey, subId) {
   const bar = $(barId);
   if (!bar) return;
-  bar.querySelectorAll("[data-invest-subtab]").forEach((btn) => {
-    const isActive = btn.dataset.investSubtab === subId;
+  bar.querySelectorAll("[data-subtab]").forEach((btn) => {
+    const isActive = btn.dataset.subtab === subId;
     btn.classList.toggle("active", isActive);
-    const panel = document.getElementById(btn.dataset.investSubtab);
+    const panel = document.getElementById(btn.dataset.subtab);
     if (panel) panel.classList.toggle("hidden", !isActive);
   });
   localStorage.setItem(storageKey, subId);
 }
 
-function wireInvestSubTabs(barId, storageKey, defaultSubId) {
+function wireSubTabs(barId, storageKey, defaultSubId) {
   const bar = $(barId);
   if (!bar) return;
-  bar.querySelectorAll("[data-invest-subtab]").forEach((btn) => {
-    btn.onclick = () => preserveScrollAcross(bar, () => setInvestSubTab(barId, storageKey, btn.dataset.investSubtab));
+  // Lets a caller holding only a panel id switch to it (showSubTabFor, used
+  // by the tour) without a second copy of the group -> storage-key mapping.
+  bar.dataset.subtabStore = storageKey;
+  bar.querySelectorAll("[data-subtab]").forEach((btn) => {
+    btn.onclick = () => preserveScrollAcross(bar, () => setSubTab(barId, storageKey, btn.dataset.subtab));
   });
   // Fall back to the default if a stale localStorage value no longer
   // matches a real sub-tab (e.g. after a future change to the tab list).
   const stored = localStorage.getItem(storageKey);
-  const valid = stored && bar.querySelector(`[data-invest-subtab="${stored}"]`);
-  setInvestSubTab(barId, storageKey, valid ? stored : defaultSubId);
+  const valid = stored && bar.querySelector(`[data-subtab="${stored}"]`);
+  setSubTab(barId, storageKey, valid ? stored : defaultSubId);
 }
-wireInvestSubTabs("investSubTabsMarket", "investSubTabMarket", "investSubOverview");
-wireInvestSubTabs("investSubTabsPortfolio", "investSubTabPortfolio", "investSubHoldings");
+wireSubTabs("logSubTabs", "logSubTab", "logSubSpending");
+wireSubTabs("investSubTabsMarket", "investSubTabMarket", "investSubOverview");
+wireSubTabs("investSubTabsPortfolio", "investSubTabPortfolio", "investSubHoldings");
 
 $("watchlistGearBtn").onclick = () => {
   renderWatchlistEditor();
@@ -4796,7 +4807,7 @@ function openPriceHistory(symbol) {
   }
   priceHistorySymbol = sym;
   setInvestTab("market");
-  setInvestSubTab("investSubTabsMarket", "investSubTabMarket", "investSubHistory");
+  setSubTab("investSubTabsMarket", "investSubTabMarket", "investSubHistory");
   renderPriceHistory();
   const card = $("priceHistoryCard");
   if (card) card.scrollIntoView({ block: "start" });
@@ -6956,8 +6967,8 @@ $("profileClose").onclick = () => $("profileModal").classList.add("hidden");
 // four separate modals, so browsing another page's help doesn't need a
 // close/reopen. Static content, no data to load - unlike every other
 // modal in this file, this one has no corresponding loadX()/renderX().
-const HELP_PAGES = ["log", "subs", "reports", "invest"];
-const HELP_TITLES = { log: "Log page help", subs: "Subscriptions/Bills help", reports: "Reports help", invest: "Investments help" };
+const HELP_PAGES = ["log", "plan", "reports", "invest"];
+const HELP_TITLES = { log: "Log page help", plan: "Plan page help", reports: "Reports help", invest: "Investments help" };
 // Help topics are collapsed by default and open one at a time on click.
 // Markup-driven and wired once, the same shape wireInfoIcons() uses: a new
 // topic is markup-only, no wiring call of its own.
@@ -7112,10 +7123,32 @@ let tourIndex = -1;
 // a small screen and not just a testing artifact. offsetParent is no good
 // here either - it is null for a position:fixed element, and the nav this
 // tour points at is fixed.
-function tourTargetShowable(id) {
-  const el = $(id);
-  if (!el) return false;
-  return el.getClientRects().length > 0;
+//
+// A step carrying `subtab` is measured with that panel temporarily revealed.
+// Without this, every card behind a Log sub-tab would be filtered out of the
+// tour whenever it is not the active one - the Log tour would silently run 7
+// steps instead of 12 depending on which tab you happened to leave it on.
+// Such a step IS reachable, because renderTourStep switches to its panel
+// before showing it. Both style writes are synchronous with no paint between
+// them, so nothing flickers.
+function tourTargetShowable(step) {
+  const panel = step.subtab ? $(step.subtab) : null;
+  const wasHidden = !!panel && panel.classList.contains("hidden");
+  if (wasHidden) panel.classList.remove("hidden");
+  const el = $(step.target);
+  const showable = !!el && el.getClientRects().length > 0;
+  if (wasHidden) panel.classList.add("hidden");
+  return showable;
+}
+
+// Switch to whichever sub-tab group owns this panel, given only the panel id.
+// The bar is found from its own button and the storage key from the bar's
+// dataset (written by wireSubTabs), so this needs no second copy of the
+// group -> key mapping to drift out of sync.
+function showSubTabFor(panelId) {
+  const btn = document.querySelector(`[data-subtab="${panelId}"]`);
+  const bar = btn && btn.closest(".subtab-pills");
+  if (bar) setSubTab(bar.id, bar.dataset.subtabStore, panelId);
 }
 
 function endTour(markSeen = true) {
@@ -7129,6 +7162,9 @@ function endTour(markSeen = true) {
 function renderTourStep() {
   const step = tourSteps[tourIndex];
   if (!step) return endTour();
+  // Before measuring anything: a step behind a sub-tab has to have that tab
+  // showing, or the spotlight would ring an element with no box.
+  if (step.subtab) showSubTabFor(step.subtab);
   const target = $(step.target);
   if (!target) return tourGo(1);
 
@@ -7275,7 +7311,7 @@ window.addEventListener("resize", repositionCurrentTourStep);
 window.addEventListener("scroll", repositionCurrentTourStep, { passive: true });
 
 $("helpLogBtn").onclick = () => openHelp("log");
-$("helpSubsBtn").onclick = () => openHelp("subs");
+$("helpPlanBtn").onclick = () => openHelp("plan");
 $("helpReportsBtn").onclick = () => openHelp("reports");
 $("helpInvestBtn").onclick = () => openHelp("invest");
 $("helpClose").onclick = () => $("helpModal").classList.add("hidden");

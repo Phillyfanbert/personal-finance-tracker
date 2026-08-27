@@ -14,7 +14,7 @@
 // **A step whose target is missing or hidden is dropped, not shown empty.**
 // That is the whole reason visibleSteps() exists: a large share of this app's
 // cards only appear once real data exists (the budget warning, Market
-// overview, the budget warning, Realized gain/loss), and a brand-new user -
+// overview, Realized gain/loss), and a brand-new user -
 // exactly the person taking this tour - has none of it. Pointing an arrow at
 // a collapsed or absent element is worse than skipping it silently.
 // ============================================================================
@@ -45,43 +45,56 @@ export const TOUR_STEPS = {
       placement: "bottom",
     },
     {
+      target: "logSubTabs",
+      title: "Three tabs on this page",
+      body: "Spending is where you write down what you bought. Bills is anything that charges you on a schedule, like a phone plan. Money is what you have and what you owe. The three numbers above stay put whichever tab you are on, and the app remembers which one you were last using.",
+      placement: "bottom",
+    },
+    {
       target: "quickAddCard",
+      subtab: "logSubSpending",
       title: "Writing down something you bought",
       body: "Type it however you would say it out loud, like \"14 lunch chipotle debit\". The app pulls out the amount, where you spent it, and which card or account you used, then shows you what it worked out before saving. Nothing is saved until you press Save, so it is safe to experiment. If you have a file of transactions from your bank, Import CSV brings those in instead.",
       placement: "bottom",
     },
     {
       target: "recentHistoryCard",
+      subtab: "logSubSpending",
       title: "Everything you have written down",
       body: "A list of everything, newest first, which you can search or narrow down. Tap any item to change it if you got something wrong. Every row also has an undo arrow that removes it and puts your balance back the way it was.",
       placement: "top",
     },
     {
-      target: "budgetsCard",
-      title: "Setting a spending limit",
-      body: "If you want to cap how much you spend on something each month - say $200 on eating out - you can set that here. The app warns you as you get close, not only once you have gone over.",
-      placement: "top",
+      target: "addSubBtn",
+      subtab: "logSubBills",
+      title: "Bills that charge you every month",
+      body: "Under the Bills tab, add anything that takes money on a schedule: a phone plan, streaming, insurance, rent. Tell the app once and it records the charge when it is due, so your balances stay right without you doing anything. If the same payment keeps appearing in what you have written down, the app offers to track it for you.",
+      placement: "bottom",
     },
     {
       target: "netWorthCard",
+      subtab: "logSubMoney",
       title: "Net worth, in plain terms",
       body: "Net worth is just everything you have, minus everything you owe. If you have $500 in the bank and owe $200 on a card, your net worth is $300. It can be a negative number, which is normal and very common, especially with student loans. This updates itself from what you enter below.",
       placement: "top",
     },
     {
       target: "accountsCard",
+      subtab: "logSubMoney",
       title: "Accounts: where your money sits",
       body: "Add each bank account, card or wallet you actually use. You pick the type and the bank, and the app sets up the rest. These are how you answer \"what did I pay with\" when you write down a purchase. Each type also tells you its real-world rules, like needing to be 18 to open it.",
       placement: "top",
     },
     {
       target: "assetsCard",
+      subtab: "logSubMoney",
       title: "What you have, and what you owe",
       body: "Two lists. Things you have that are worth money - savings, a car, investments - and things you owe, like a credit card balance or a loan. Both feed into the net worth number above. You do not need to fill in everything at once; add what you know and come back later.",
       placement: "top",
     },
     {
       target: "incomeSourcesCard",
+      subtab: "logSubMoney",
       title: "Telling the app about your pay",
       body: "Add your paycheck once: how much, and how often it arrives - weekly, every two weeks, twice a month, monthly, or one time only. After that the app records it for you each time it is due, so you do not have to remember. This is also where that yearly income figure at the top comes from.",
       placement: "top",
@@ -94,36 +107,36 @@ export const TOUR_STEPS = {
     },
   ],
 
-  subs: [
+  plan: [
     {
-      target: "subsView",
-      diagram: "helpDiagramSubs",
-      title: "Things that charge you every month",
-      body: "A subscription or bill is anything that takes money automatically on a schedule: a phone plan, streaming, insurance, rent. Tell the app about each one once, and it records the charge for you when it is due, so your balances stay right without you doing anything.",
+      target: "planView",
+      diagram: "helpDiagramPlan",
+      title: "Planning ahead",
+      body: "The other pages record what already happened. This one is about what happens next: a limit you want to stick to, the order to pay off what you owe, and where your balance is heading. Nothing here moves any of your money on its own - it only does the arithmetic and shows you.",
       placement: "center",
     },
     {
-      target: "subsTotals",
-      title: "What it all adds up to",
-      body: "The monthly total, and the same thing over a year. The yearly figure is often the surprising one - $15 a month is $180 a year. Anything you pay yearly is spread out so the two totals can be compared fairly.",
+      target: "budgetsCard",
+      title: "Setting a spending limit",
+      body: "If you want to cap how much you spend on something each month - say $200 on eating out - set it here. The app warns you as you get close, not only once you have gone over, and the warning shows up on the Log page where you are actually spending.",
       placement: "bottom",
     },
     {
-      target: "addSubBtn",
-      title: "Adding one",
-      body: "You need the name, how much it costs, how often it charges, and which account it comes out of. If you are not sure of the exact date, put your best guess - you can fix it later.",
-      placement: "bottom",
-    },
-    {
-      target: "recurringCard",
-      title: "Ones it spots for you",
-      body: "If the same payment keeps showing up in what you have written down, the app points it out and offers to track it properly, so you do not have to enter everything by hand.",
+      target: "debtStrategyCard",
+      title: "Which debt to pay off first",
+      body: "If you owe money on more than one thing, the order you clear them in changes how much interest you pay in total. Type what you could spare each month and this shows you two common approaches side by side: paying off the highest interest rate first, or the smallest balance first. It never tells you which to pick. You need at least two debts with their interest rate and smallest monthly payment filled in for this to say anything useful.",
       placement: "top",
     },
     {
-      target: "helpSubsBtn",
+      target: "forecastChart",
+      title: "Where your balance is heading",
+      body: "Pick an account and see the next 30 days, built only from bills and pay you have already told the app about. It does not try to guess your everyday spending, so treat it as the floor rather than a prediction.",
+      placement: "top",
+    },
+    {
+      target: "helpPlanBtn",
       title: "More on this page",
-      body: "Help covers what happens when a bill is due, how cheaper-plan suggestions work, and what to do when you cancel something.",
+      body: "Help explains each of these three in more detail, and you can replay this walkthrough from there any time.",
       placement: "bottom",
     },
   ],
@@ -220,18 +233,24 @@ export const TOUR_VIEWS = Object.keys(TOUR_STEPS);
 /**
  * Steps that can actually be pointed at right now.
  *
- * `isShowable(id)` is supplied by app.js (it needs the DOM); this stays pure
- * so the filtering rule itself can be tested without a browser. A step is
- * kept only when its target both exists and is currently visible - see this
- * file's header for why a hidden target must be dropped rather than shown.
+ * `isShowable(step)` is supplied by app.js (it needs the DOM); this stays
+ * pure so the filtering rule itself can be tested without a browser. A step
+ * is kept only when its target both exists and is currently visible - see
+ * this file's header for why a hidden target must be dropped rather than
+ * shown.
+ *
+ * It takes the whole STEP, not just the target id, because a step carrying
+ * `subtab` lives behind a sub-tab panel that is very often hidden right now.
+ * Such a step is genuinely reachable (app.js switches to that panel before
+ * showing it), so the caller needs the panel id to answer correctly.
  *
  * @param {Array<object>} steps
- * @param {(id: string) => boolean} isShowable
+ * @param {(step: object) => boolean} isShowable
  * @returns {Array<object>}
  */
 export function visibleSteps(steps, isShowable) {
   if (!Array.isArray(steps)) return [];
-  return steps.filter((s) => s && s.target && isShowable(s.target));
+  return steps.filter((s) => s && s.target && isShowable(s));
 }
 
 /**

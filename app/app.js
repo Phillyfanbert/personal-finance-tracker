@@ -621,10 +621,14 @@ function renderPricesAsOf(elId, foundAt) {
   // problem, which is exactly what made this line look broken every
   // evening. Only the CLOSED case is stated out loud; see marketStatus()'s
   // own comment for why a wrong "closed" would be worse than silence.
+  const stale = open && minutesAgo > PRICE_REFRESH_WARN_MINUTES;
+  // The words carry the staleness, not just the colour: this line read
+  // identically in both states and only changed tint, so with colour removed
+  // the fact disappeared entirely (WCAG 1.4.1).
   el.textContent = open
-    ? `Prices as of ${timeAgo(foundAt)}`
+    ? (stale ? `Prices may be out of date - last updated ${timeAgo(foundAt)}` : `Prices as of ${timeAgo(foundAt)}`)
     : `Market closed - prices as of ${timeAgo(foundAt)}`;
-  el.style.color = open && minutesAgo > PRICE_REFRESH_WARN_MINUTES ? "var(--warn)" : "";
+  el.style.color = stale ? "var(--warn)" : "";
 }
 
 // Only the columns something on this page actually reads, never select("*").
@@ -1614,10 +1618,12 @@ function renderAccountTypeRequirement(type) {
   if (!el) return;
   const rule = ACCOUNT_AGE_RULES[type];
   if (!rule) { el.textContent = ""; return; }
-  el.textContent = rule.note;
   // Amber only when this specific user looks short of the requirement, so
   // the line is informational by default and never scolds by simply existing.
+  // The "Check this" prefix is what carries that in words - the note itself
+  // is identical in both states, so the tint alone stated nothing reachable.
   const warn = accountEligibilityWarning(type, profile, incomeSources);
+  el.textContent = warn ? `Check this: ${rule.note}` : rule.note;
   el.style.color = warn ? "var(--warn)" : "";
 }
 $("acctType").onchange = () => setAcctType($("acctType").value);
@@ -4222,7 +4228,7 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
         <div class="row" style="justify-content:space-between;font-size:13px">
           <span>${esc(s.category)}</span>
           <span>
-            ${fmt(s.spent)} / ${fmt(s.limit)} (${s.pct}%)
+            ${fmt(s.spent)} / ${fmt(s.limit)} (${s.pct}%${s.over ? ", over" : s.warn ? ", close to the limit" : ""})
             <button type="button" class="x" data-del-budget="${esc(s.category)}" style="margin-left:8px" aria-label="Remove the ${esc(s.category)} budget">✕</button>
           </span>
         </div>
@@ -5019,9 +5025,14 @@ function renderPriceHistory() {
   const select = $("priceHistorySymbol");
   select.innerHTML = symbols.map((s) => `<option value="${esc(s)}"${s === priceHistorySymbol ? " selected" : ""}>${esc(s)}</option>`).join("");
 
-  $("priceHistoryRanges").innerHTML = PRICE_HISTORY_RANGES.map((r) => `
-    <button class="secondary" data-range="${r.days ?? ""}" style="width:auto;padding:6px 12px;font-size:12px;${
-      (r.days ?? null) === priceHistoryRangeDays ? "border-color:var(--accent);color:var(--accent)" : ""}">${r.label}</button>`).join("");
+  // aria-pressed and a weight change, not colour alone: which range is showing
+  // was previously stated only by a border and text tint.
+  $("priceHistoryRanges").innerHTML = PRICE_HISTORY_RANGES.map((r) => {
+    const on = (r.days ?? null) === priceHistoryRangeDays;
+    return `
+    <button type="button" class="btn-sm secondary" data-range="${r.days ?? ""}" aria-pressed="${on}" style="${
+      on ? "border-color:var(--accent);color:var(--accent);font-weight:700" : ""}">${r.label}</button>`;
+  }).join("");
   document.querySelectorAll("[data-range]").forEach((el) => {
     el.onclick = () => {
       priceHistoryRangeDays = el.dataset.range === "" ? null : Number(el.dataset.range);

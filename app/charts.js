@@ -97,6 +97,49 @@ let _charts = {};
 function destroy(id) { if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; } }
 
 /**
+ * Gives a canvas an accessible name and a text equivalent of its data.
+ *
+ * A <canvas> is an opaque bitmap: Chart.js paints the numbers into pixels, so
+ * none of it reaches assistive tech. For three of this app's charts (net worth
+ * trend, cash flow forecast, price history) the chart is the ONLY place those
+ * numbers appear anywhere, so without this they are simply unavailable.
+ *
+ * This module is otherwise pure logic, and it touches the DOM here for the
+ * same reason it already calls `new Chart(canvas, ...)`: the canvas is the one
+ * element it owns. The alternative was threading a summary back through ten
+ * call sites in app.js, which would drift.
+ *
+ * The table is visually hidden rather than rendered, because the chart already
+ * communicates this to sighted users. `rows` is [[rowLabel, value], ...].
+ */
+function describeChart(canvas, summary, rows, columns = ["", ""]) {
+  canvas.setAttribute("role", "img");
+  canvas.setAttribute("aria-label", summary);
+  const id = canvas.id + "-data";
+  let table = document.getElementById(id);
+  if (!rows.length) { if (table) table.remove(); return; }
+  if (!table) {
+    table = document.createElement("table");
+    table.id = id;
+    table.className = "sr-only";
+    canvas.insertAdjacentElement("afterend", table);
+  }
+  const cell = (v) => `<td>${escapeCell(v)}</td>`;
+  table.innerHTML = `<caption>${escapeCell(summary)}</caption>`
+    + `<thead><tr>${columns.map((h) => `<th scope="col">${escapeCell(h)}</th>`).join("")}</tr></thead>`
+    + `<tbody>${rows.map((r) => `<tr><th scope="row">${escapeCell(r[0])}</th>${r.slice(1).map(cell).join("")}</tr>`).join("")}</tbody>`;
+}
+
+// Local rather than imported: this module deliberately has no app.js import,
+// and the values here are user-typed category and account names.
+function escapeCell(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (ch) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+const money = (n) => "$" + Number(n ?? 0).toFixed(2);
+
+/**
  * Horizontal bar chart for any label/value breakdown (category, account,
  * account type, ...). Dollar amounts are baked into each row's label so
  * they're visible at a glance - no hover needed, and length-of-bar is far
@@ -107,6 +150,10 @@ function destroy(id) { if (_charts[id]) { _charts[id].destroy(); delete _charts[
 export function renderBreakdownBar(canvas, data) {
   destroy(canvas.id);
   const labels = data.map((d) => `${d.label} - $${d.value.toFixed(2)}`);
+  const total = data.reduce((s, d) => s + d.value, 0);
+  describeChart(canvas,
+    data.length ? `Breakdown of ${money(total)} across ${data.length} ${data.length === 1 ? "group" : "groups"}` : "No data yet",
+    data.map((d) => [d.label, money(d.value)]), ["Group", "Amount"]);
   _charts[canvas.id] = new Chart(canvas, {
     type: "bar",
     data: {
@@ -135,6 +182,12 @@ export function renderBreakdownBar(canvas, data) {
  */
 export function renderLineChart(canvas, labels, values) {
   destroy(canvas.id);
+  const nums = values.filter((v) => Number.isFinite(v));
+  describeChart(canvas,
+    nums.length
+      ? `${labels.length} ${labels.length === 1 ? "point" : "points"}, from ${money(nums[0])} on ${labels[0]} to ${money(nums[nums.length - 1])} on ${labels[labels.length - 1]}. Lowest ${money(Math.min(...nums))}, highest ${money(Math.max(...nums))}.`
+      : "No data yet",
+    labels.map((l, i) => [l, money(values[i])]), ["Date", "Value"]);
   _charts[canvas.id] = new Chart(canvas, {
     type: "line",
     data: {
@@ -172,6 +225,17 @@ export function renderLineChart(canvas, labels, values) {
  */
 export function renderTrendBar(canvas, months, totals, secondDataset = null) {
   destroy(canvas.id);
+  const labelFor = (m) => monthLabel(m);
+  describeChart(canvas,
+    months.length
+      ? (secondDataset
+          ? `${secondDataset.label} against money out, over ${months.length} ${months.length === 1 ? "month" : "months"}`
+          : `Totals over ${months.length} ${months.length === 1 ? "month" : "months"}`)
+      : "No data yet",
+    months.map((m, i) => secondDataset
+      ? [labelFor(m), money(secondDataset.data[i]), money(totals[i])]
+      : [labelFor(m), money(totals[i])]),
+    secondDataset ? ["Month", secondDataset.label, "Money out"] : ["Month", "Total"]);
   const datasets = [{
     label: secondDataset ? "Expense" : undefined,
     data: totals, backgroundColor: "#0ea5e9", borderRadius: 6,

@@ -312,6 +312,12 @@
     .text-xs { font-size: var(--fs-xs); }
     .text-sm { font-size: var(--fs-sm); }
     .danger { color: var(--err); }
+    /* Visually hidden but still in the accessibility tree. Used for the data
+       tables behind each chart: a <canvas> is an opaque bitmap, so the numbers
+       Chart.js paints into it reach nobody using a screen reader. */
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+      white-space: nowrap; border: 0; }
     /* A real button element that keeps the underlined-text look. These were spans
        with cursor:pointer and no keyboard access at all; the global button
        rule would otherwise make each one a full-width filled block. */

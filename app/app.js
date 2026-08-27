@@ -143,16 +143,101 @@ function flagField(ids, message) {
 // resolves true/false, same call shape as confirm() (await it, act on the
 // result), but rendered as an in-app modal so it matches the rest of the UI
 // instead of the browser's native dialog box.
+
+// ---- MODAL FOCUS MANAGEMENT ------------------------------------------------
+// Nine modals, none of which used to have dialog semantics, move focus, trap
+// Tab, restore focus, or close on Escape. With one open, a keyboard user tabbed
+// through the entire page behind it before reaching its content.
+//
+// A STACK, not a single record: confirmModal legitimately opens on top of
+// another modal (Profile's "download my data" is the live example), and the
+// background must stay inert until the LAST one closes.
+//
+// The modals are siblings of .wrap, so marking .wrap and the nav inert cannot
+// accidentally disable the dialog itself.
+const MODAL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const modalStack = [];
+
+function modalFocusable(el) {
+  return [...el.querySelectorAll(MODAL_FOCUSABLE)].filter((n) => n.offsetParent !== null || n === document.activeElement);
+}
+
+function setBackgroundInert(on) {
+  for (const sel of [".wrap", "#nav"]) {
+    const node = document.querySelector(sel);
+    if (!node) continue;
+    if (on) node.setAttribute("inert", "");
+    else node.removeAttribute("inert");
+  }
+}
+
+function openModal(id) {
+  const el = $(id);
+  if (!el) return;
+  modalStack.push({ id, returnFocus: document.activeElement });
+  el.classList.remove("hidden");
+  setBackgroundInert(true);
+  const first = modalFocusable(el)[0];
+  if (first) first.focus();
+  else { el.tabIndex = -1; el.focus(); }
+}
+
+function closeModal(id) {
+  const el = $(id);
+  if (el) el.classList.add("hidden");
+  const i = modalStack.map((m) => m.id).lastIndexOf(id);
+  const entry = i >= 0 ? modalStack.splice(i, 1)[0] : null;
+  if (!modalStack.length) setBackgroundInert(false);
+  // Guard the restore: the trigger may have been re-rendered away by whatever
+  // the modal just did (deleting the row it was opened from, for instance).
+  const back = entry && entry.returnFocus;
+  if (back && back.isConnected && typeof back.focus === "function") back.focus();
+}
+
+// One listener for all nine rather than nine listeners. Escape closes the
+// TOP modal only, so a confirm over a modal does not take both with it.
+document.addEventListener("keydown", (ev) => {
+  if (!modalStack.length) return;
+  const top = modalStack[modalStack.length - 1];
+  const el = $(top.id);
+  if (!el) return;
+  if (ev.key === "Escape") {
+    ev.preventDefault();
+    if (top.id === "confirmModal") closeConfirmModal(false);
+    else closeModal(top.id);
+    return;
+  }
+  if (ev.key !== "Tab") return;
+  const items = modalFocusable(el);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+  else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+});
+
+// Backdrop click closes; a click inside the sheet must not.
+for (const el of document.querySelectorAll(".modal")) {
+  el.addEventListener("click", (ev) => {
+    if (ev.target !== el) return;
+    if (el.id === "confirmModal") closeConfirmModal(false);
+    else closeModal(el.id);
+  });
+}
+
 let confirmModalResolve = null;
 function confirmModal(message, { title = "Are you sure?", confirmLabel = "Delete" } = {}) {
   $("confirmModalTitle").textContent = title;
   $("confirmModalMsg").textContent = message;
   $("confirmModalOk").textContent = confirmLabel;
-  $("confirmModal").classList.remove("hidden");
+  openModal("confirmModal");
   return new Promise((resolve) => { confirmModalResolve = resolve; });
 }
 function closeConfirmModal(result) {
-  $("confirmModal").classList.add("hidden");
+  closeModal("confirmModal");
+  // Resolved synchronously, in the same turn as the button's click handler.
+  // Do NOT introduce an await, a timeout or a rAF above this line: the
+  // Print/PDF export calls window.open() after awaiting confirmModal(), which
+  // only succeeds while that click's transient activation is still live.
   if (confirmModalResolve) { confirmModalResolve(result); confirmModalResolve = null; }
 }
 $("confirmModalCancel").onclick = () => closeConfirmModal(false);
@@ -1834,7 +1919,7 @@ function renderArchivedAccounts() {
   toggle.classList.toggle("hidden", archived.length === 0);
   toggle.textContent = `View archived (${archived.length})`;
   if (!archived.length) {
-    $("archivedAcctModal").classList.add("hidden"); // last one unarchived while open
+    closeModal("archivedAcctModal"); // last one unarchived while open
     return;
   }
   $("archivedAcctList").innerHTML = archived
@@ -1873,8 +1958,8 @@ function renderArchivedAccounts() {
     el.onclick = async () => { await deleteAccount(el.dataset.deleteArchivedAcct); };
   });
 }
-$("archivedAcctToggle").onclick = () => $("archivedAcctModal").classList.remove("hidden");
-$("archivedAcctClose").onclick = () => $("archivedAcctModal").classList.add("hidden");
+$("archivedAcctToggle").onclick = () => openModal("archivedAcctModal");
+$("archivedAcctClose").onclick = () => closeModal("archivedAcctModal");
 
 async function loadAccounts() {
   const { data } = await sb.from("accounts").select("*").order("created_at");
@@ -3042,7 +3127,7 @@ function openDebtBalanceForm(debtId, tab) {
 $("debtTabOwed").onclick = () => setDebtTab("owed");
 $("debtTabPaying").onclick = () => setDebtTab("paying");
 function closeDebtBalanceForm() {
-  $("debtBalanceForm").classList.add("hidden");
+  closeModal("debtBalanceForm");
   activeDebtId = null;
 }
 $("debtBalanceClose").onclick = closeDebtBalanceForm;
@@ -3396,10 +3481,10 @@ function resetCsvImportState() {
 }
 $("openCsvImportBtn").onclick = () => {
   resetCsvImportState();
-  $("csvImportModal").classList.remove("hidden");
+  openModal("csvImportModal");
 };
-$("csvImportClose").onclick = () => $("csvImportModal").classList.add("hidden");
-$("csvImportDone").onclick = () => $("csvImportModal").classList.add("hidden");
+$("csvImportClose").onclick = () => closeModal("csvImportModal");
+$("csvImportDone").onclick = () => closeModal("csvImportModal");
 
 function csvColumnOptions(selectedIdx) {
   return `<option value="">None</option>` +
@@ -3646,7 +3731,7 @@ $("csvUndoImportBtn").onclick = async () => {
   }
   await loadExpenses();
   await loadAccountActivity();
-  $("csvImportModal").classList.add("hidden");
+  closeModal("csvImportModal");
   toast("Import undone");
 };
 
@@ -3958,9 +4043,9 @@ function openEdit(row) {
   $("eAccount").value = row.account_id ?? "";
   $("eDate").value = row.occurred_at ?? new Date().toISOString().slice(0, 10);
   $("eLearn").checked = true;
-  $("editModal").classList.remove("hidden");
+  openModal("editModal");
 }
-$("editClose").onclick = () => { $("editModal").classList.add("hidden"); editing = null; };
+$("editClose").onclick = () => { closeModal("editModal"); editing = null; };
 
 $("editSave").onclick = async () => {
   if (!editing) return;
@@ -4029,7 +4114,7 @@ $("editSave").onclick = async () => {
     }
   }
   $("editSave").disabled = false;
-  $("editModal").classList.add("hidden"); editing = null;
+  closeModal("editModal"); editing = null;
   await loadExpenses();
   toast((categoryChanged ? "Saved - I'll remember that" : "Saved ✓") + budgetWarningToastSuffix(newCategory));
 };
@@ -4043,7 +4128,7 @@ $("editDelete").onclick = async () => {
   await applyAssetDelta(editing.account_id, editing.payment_type, Number(editing.amount), +1);
   await applyLiabilityDelta(editing.account_id, editing.payment_type, Number(editing.amount), -1);
   await loadAssets(); await loadDebts();
-  $("editModal").classList.add("hidden"); editing = null;
+  closeModal("editModal"); editing = null;
   await loadExpenses(); toast("Deleted");
 };
 
@@ -4538,7 +4623,7 @@ function openSellModal(asset) {
     .map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
 
   updateSellPreview();
-  $("sellHoldingModal").classList.remove("hidden");
+  openModal("sellHoldingModal");
 }
 
 // Live preview of exactly what will be recorded, so the realized number is
@@ -4562,7 +4647,7 @@ function updateSellPreview() {
     `${qty === held ? " (closes this position)" : ""}`;
 }
 ["sellQuantity", "sellPrice"].forEach((id) => $(id).addEventListener("input", updateSellPreview));
-$("sellClose").onclick = () => { $("sellHoldingModal").classList.add("hidden"); sellingHolding = null; };
+$("sellClose").onclick = () => { closeModal("sellHoldingModal"); sellingHolding = null; };
 
 $("sellConfirmBtn").onclick = async () => {
   if (!sellingHolding) return;
@@ -4606,7 +4691,7 @@ $("sellConfirmBtn").onclick = async () => {
   }
 
   const parentId = sellingHolding.parent_asset_id;
-  $("sellHoldingModal").classList.add("hidden");
+  closeModal("sellHoldingModal");
   sellingHolding = null;
   await loadAssets();
   await loadHoldingSales();
@@ -4807,9 +4892,9 @@ wireSubTabs("investSubTabsPortfolio", "investSubTabPortfolio", "investSubHolding
 
 $("watchlistGearBtn").onclick = () => {
   renderWatchlistEditor();
-  $("watchlistModal").classList.remove("hidden");
+  openModal("watchlistModal");
 };
-$("watchlistClose").onclick = () => $("watchlistModal").classList.add("hidden");
+$("watchlistClose").onclick = () => closeModal("watchlistModal");
 
 // ---- MARKET-WIDE MOVERS ----------------------------------------------------
 // The only card here that can see a stock outside the tracked list. Numbers
@@ -7052,9 +7137,9 @@ $("profileBtn").onclick = () => {
   $("pGoals").value = profile?.financial_goals ?? "";
   $("pNotes").value = profile?.notes ?? "";
   toggleStudentFields();
-  $("profileModal").classList.remove("hidden");
+  openModal("profileModal");
 };
-$("profileClose").onclick = () => $("profileModal").classList.add("hidden");
+$("profileClose").onclick = () => closeModal("profileModal");
 
 // ---- HELP MODAL --------------------------------------------------------
 // One shared modal (index.html) for all 4 pages' documentation - openHelp
@@ -7190,7 +7275,7 @@ function openHelp(page) {
     setHelpTopicOpen(t, false);
     t.classList.remove("flash");
   });
-  $("helpModal").classList.remove("hidden");
+  openModal("helpModal");
 }
 // ---- FIRST-RUN GUIDED TOUR -------------------------------------------------
 // Step content and the visibility filter live in tour.js (pure); everything
@@ -7409,12 +7494,12 @@ $("helpLogBtn").onclick = () => openHelp("log");
 $("helpPlanBtn").onclick = () => openHelp("plan");
 $("helpReportsBtn").onclick = () => openHelp("reports");
 $("helpInvestBtn").onclick = () => openHelp("invest");
-$("helpClose").onclick = () => $("helpModal").classList.add("hidden");
+$("helpClose").onclick = () => closeModal("helpModal");
 // Replays the tour for whichever page's help is currently open. Closes the
 // sheet first so the spotlight is measuring the real page, not a modal.
 $("helpReplayTour").onclick = () => {
   const page = document.querySelector("[data-help-page].active")?.dataset.helpPage || lastView();
-  $("helpModal").classList.add("hidden");
+  closeModal("helpModal");
   // Switch to the page first. The help sheet can show any page's help via its
   // pill row, so the page being read about is frequently NOT the one on
   // screen - and a tour whose targets are all hidden filters down to nothing
@@ -7460,7 +7545,7 @@ $("profileSave").onclick = async () => {
   $("profileSave").disabled = false;
   if (error) { flagField("pName"); return toast(error.message); }
   profile = row;
-  $("profileModal").classList.add("hidden");
+  closeModal("profileModal");
   renderDeals(); // eligibility may have changed (e.g. now a student, or military)
   toast("Profile saved");
 };

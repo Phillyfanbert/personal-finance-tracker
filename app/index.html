@@ -1638,7 +1638,7 @@
        actions (starting with account deletion) so the message and buttons
        match the rest of the app's look instead of the browser's native
        confirm() box. See confirmModal() in app.js. -->
-  <div id="confirmModal" class="modal hidden">
+  <div id="confirmModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
     <div class="sheet">
       <strong id="confirmModalTitle">Are you sure?</strong>
       <p id="confirmModalMsg" class="muted" style="font-size:14px;margin:10px 0 18px"></p>
@@ -1654,18 +1654,18 @@
        account's balance still counts toward net worth exactly as before
        (22_account_archive.sql) - that's why each row still shows its
        balance here rather than reading as a deleted account. -->
-  <div id="archivedAcctModal" class="modal hidden">
+  <div id="archivedAcctModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="archivedAcctTitle">
     <div class="sheet">
-      <div class="topbar"><strong>Archived accounts</strong><button class="secondary" id="archivedAcctClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="archivedAcctTitle">Archived accounts</strong><button class="secondary" id="archivedAcctClose" style="width:auto;padding:6px 12px">Close</button></div>
       <p class="muted" style="font-size:12px;margin:6px 0 10px">Accounts you have closed. They stay out of your lists, but what is in them still counts toward what you own.</p>
       <div id="archivedAcctList"></div>
     </div>
   </div>
 
   <!-- ============ EDIT MODAL ============ -->
-  <div id="editModal" class="modal hidden">
+  <div id="editModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
     <div class="sheet">
-      <div class="topbar"><strong>Edit expense</strong><button class="secondary" id="editClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="editModalTitle">Edit expense</strong><button class="secondary" id="editClose" style="width:auto;padding:6px 12px">Close</button></div>
       <!-- No separate Payment field - same as quick-add, payment type is
            derived from whichever account is selected below (app.js). -->
       <label for="eAmount">Amount</label>
@@ -1714,9 +1714,9 @@
        are computed over. Holdings are added to it automatically
        (syncHoldingsIntoWatchlist, app.js) - you never re-add a ticker you
        already own. -->
-  <div id="watchlistModal" class="modal hidden">
+  <div id="watchlistModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="watchlistTitle">
     <div class="sheet">
-      <div class="topbar"><strong>Tracked companies</strong><button class="secondary" id="watchlistClose" style="width:auto;padding:6px 12px">&#10005;</button></div>
+      <div class="topbar"><strong id="watchlistTitle">Tracked companies</strong><button class="secondary" id="watchlistClose" style="width:auto;padding:6px 12px">&#10005;</button></div>
 
       <p class="muted" style="font-size:12px;margin:4px 0 8px">Everything on the Market tab is built from this list - the written recap, the up/down count, today's top movers and the price-history charts. Changes take effect on the next background price run.</p>
       <div class="row">
@@ -1733,9 +1733,9 @@
     </div>
   </div>
 
-  <div id="sellHoldingModal" class="modal hidden">
+  <div id="sellHoldingModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sellModalTitle">
     <div class="sheet">
-      <div class="topbar"><strong>Sell <span id="sellSymbol"></span></strong><button class="secondary" id="sellClose" style="width:auto;padding:6px 12px">✕</button></div>
+      <div class="topbar"><strong id="sellModalTitle">Sell <span id="sellSymbol"></span></strong><button class="secondary" id="sellClose" style="width:auto;padding:6px 12px">✕</button></div>
       <p class="muted" style="font-size:12px;margin:0 0 8px">You hold <strong id="sellHeldQty">0</strong> shares, average cost <strong id="sellAvgCost">$0</strong> each.</p>
       <label for="sellQuantity">Shares to sell</label>
       <input id="sellQuantity" type="number" step="any" inputmode="decimal" />
@@ -1751,9 +1751,9 @@
     </div>
   </div>
 
-  <div id="debtBalanceForm" class="modal hidden">
+  <div id="debtBalanceForm" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="debtBalanceTitle">
     <div class="sheet">
-      <div class="topbar"><strong><span id="debtBalanceLabel"></span></strong><button class="secondary" id="debtBalanceClose" style="width:auto;padding:6px 12px">✕</button></div>
+      <div class="topbar"><strong id="debtBalanceTitle"><span id="debtBalanceLabel"></span></strong><button class="secondary" id="debtBalanceClose" style="width:auto;padding:6px 12px">✕</button></div>
       <p class="muted" style="font-size:12px;margin:0 0 8px">Owes <strong id="debtBalanceCurrent">$0</strong></p>
       <div class="row hidden" id="debtTabRow" style="margin-bottom:12px">
         <button class="secondary" id="debtTabOwed" style="padding:8px 0;font-size:13px">Owed</button>
@@ -1799,9 +1799,9 @@
        already happened, so the linked account's current balance already
        reflects them; replaying them through that pipeline would
        double-subtract and corrupt it. -->
-  <div id="csvImportModal" class="modal hidden">
+  <div id="csvImportModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="csvImportTitle">
     <div class="sheet">
-      <div class="topbar"><strong>Import CSV</strong><button class="secondary" id="csvImportClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="csvImportTitle">Import CSV</strong><button class="secondary" id="csvImportClose" style="width:auto;padding:6px 12px">Close</button></div>
 
       <div id="csvStep1">
         <p class="muted" style="font-size:13px">Bring in what you have spent and what you have been paid, from a bank export or another app. The file stays on your device - it is never uploaded anywhere.</p>
@@ -1869,9 +1869,9 @@
   </div>
 
   <!-- ============ PROFILE MODAL ============ -->
-  <div id="profileModal" class="modal hidden">
+  <div id="profileModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
     <div class="sheet">
-      <div class="topbar"><strong>Your profile</strong><button class="secondary" id="profileClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="profileTitle">Your profile</strong><button class="secondary" id="profileClose" style="width:auto;padding:6px 12px">Close</button></div>
 
       <!-- Surfaced first, above the deal/financial-context fields below -
            this is account-level, not profile data, and password sign-in
@@ -1971,7 +1971,7 @@
        this is long-form static reference text, not something computed
        from live data, so it belongs with the rest of this file's static
        structure the same way every other view's markup does. -->
-  <div id="helpModal" class="modal hidden">
+  <div id="helpModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
     <div class="sheet help-sheet">
       <div class="topbar"><strong id="helpModalTitle">Help</strong><button class="secondary" id="helpClose" style="width:auto;padding:6px 12px">Close</button></div>
       <div class="help-pills">

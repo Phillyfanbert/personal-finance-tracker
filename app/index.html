@@ -208,6 +208,12 @@
     /* Shared by every card that pairs a title with an "i" explainer, so a new
        card is markup-only - see wireInfoIcons() in app.js. */
     .card-head { display: flex; align-items: center; gap: 6px; }
+    /* Card titles are real headings now, so a view's heading list is navigable
+       instead of holding a single entry. They must LOOK exactly as the
+       <strong> they replaced did: browsers give h2/h3 a large size and big
+       margins by default, and this is a visual no-op by design. */
+    main h2, main h3 { font-size: var(--fs-base); font-weight: 700; margin: 0; display: inline; }
+    .card-head h2, .card-head h3, .topbar h2, .topbar h3 { display: block; }
     /* Ticker autocomplete under the Tracked companies symbol field.
        Absolutely positioned so appearing/disappearing never reflows the
        fields beneath it while someone is typing. */
@@ -322,6 +328,16 @@
   </style>
 </head>
 <body>
+  <!-- Ahead of the content in the DOM because it renders fixed at the TOP of
+       the screen. It used to sit second-to-last in <body>, so Tab reached the
+       app's main navigation only after every view and all nine modals. -->
+  <nav id="nav" class="nav hidden">
+    <button id="navLog" class="active">Log</button>
+    <button id="navPlan">Plan</button>
+    <button id="navInvest">Investments</button>
+    <button id="navReports">Reports</button>
+  </nav>
+
   <div class="wrap">
 
     <!-- ============ AUTH VIEW ============ -->
@@ -350,6 +366,9 @@
       <p class="muted" style="font-size:12px">First time on iPhone? After signing in, tap Share → “Add to Home Screen” to install. Use your password (not a magic link) to sign in on the installed icon, or it won't stay signed in.</p>
     </div>
 
+    <!-- Modals sit outside this landmark deliberately: they are overlays
+         over the page, not part of its primary content. -->
+    <main id="mainContent">
     <!-- ============ APP: LOG VIEW ============ -->
     <div id="logView" class="hidden">
       <!-- flex-wrap here (not on .topbar generally, used by every card
@@ -382,7 +401,7 @@
            Same threshold (90%+, or over) also drives the matching toast
            fired right when a save actually crosses it. -->
       <div id="budgetWarningNotice" class="card hidden" style="border-color:var(--err)">
-        <strong style="color:var(--err)">Budget warning</strong>
+        <h2 style="color:var(--err)">Budget warning</h2>
         <div id="budgetWarningList" style="margin-top:6px;font-size:13px"></div>
       </div>
 
@@ -403,7 +422,7 @@
       <div id="logSubSpending">
       <!-- Quick add -->
       <div class="card quickadd" id="quickAddCard">
-        <strong>Expenses Quick Add</strong>
+        <h2>Expenses Quick Add</h2>
         <label for="quick" class="hidden">Quick add</label>
         <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" style="margin-top:8px" />
         <p class="muted" style="font-size:12px;margin:8px 0 0">Type it however you would say it, like "14 lunch chipotle debit". The app fills in the rest for you to check before saving.</p>
@@ -433,7 +452,7 @@
 
       <!-- Expense list -->
       <div class="card" id="recentHistoryCard">
-        <strong>Recent History</strong>
+        <h2>Recent History</h2>
         <!-- Four independent filters, all AND-ed together (see
              filteredTransactions in app.js). A label above each one names
              what it filters by, so the option text itself can just say
@@ -504,7 +523,7 @@
 
       <div id="logSubBills" class="hidden">
         <div class="topbar" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">
-          <strong style="font-size:15px">Subscriptions and bills</strong>
+          <h2 style="font-size:15px">Subscriptions and bills</h2>
           <button class="secondary" id="addSubBtn" style="width:auto;padding:8px 12px">+ Add</button>
         </div>
 
@@ -520,7 +539,7 @@
            that should always occupy space. -->
       <div class="card hidden" id="recurringCard">
         <div class="topbar" style="margin-bottom:6px">
-          <strong>Recurring expenses found</strong>
+          <h2>Recurring expenses found</h2>
         </div>
         <p class="muted" style="font-size:12px;margin:0 0 8px">These look like a bill based on your expense history - tap one to start tracking it here.</p>
         <div id="recurringList"></div>
@@ -539,7 +558,7 @@
            amounts the app can stand behind. -->
       <div class="card" id="dealsCard">
         <div class="topbar" style="margin-bottom:6px">
-          <strong>Savings found</strong>
+          <h2>Savings found</h2>
           <span class="muted" style="font-size:12px" id="dealsTotal"></span>
         </div>
         <div id="dealsList"></div>
@@ -547,7 +566,7 @@
         <!-- Hidden unless DEAL_FINDINGS_ENABLED is set in config.js. -->
         <div id="dealFindingsSection" class="hidden" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
           <div class="topbar" style="margin-bottom:4px">
-            <strong style="font-size:13px">Found online, not verified</strong>
+            <h3 style="font-size:13px">Found online, not verified</h3>
             <span class="muted" style="font-size:12px">tap a link to check the source</span>
           </div>
           <p class="muted" id="dealFindingsFreshness" style="font-size:11px;margin:0 0 6px"></p>
@@ -557,12 +576,12 @@
       </div>
 
       <div class="card">
-        <strong>Upcoming renewals (30 days)</strong>
+        <h2>Upcoming renewals (30 days)</h2>
         <div id="subUpcoming" style="margin-top:8px"><p class="muted">None in the next 30 days.</p></div>
       </div>
 
       <div class="card">
-        <strong>All subscriptions/bills</strong>
+        <h2>All subscriptions/bills</h2>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
         <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
         <button class="secondary" id="addSubBtnBottom" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
@@ -577,7 +596,7 @@
            (app.js) already scrolls to wherever this sits in the DOM, so
            moving it here needed no JS change. -->
       <div class="card hidden" id="subForm">
-        <div class="topbar" style="margin-bottom:6px"><strong id="subFormTitle">New subscription/bill</strong></div>
+        <div class="topbar" style="margin-bottom:6px"><h2 id="subFormTitle">New subscription/bill</h2></div>
         <label>Service name</label>
         <input id="sName" placeholder="Spotify" />
         <!-- Free text with suggestions, not a fixed dropdown - same pattern
@@ -628,7 +647,7 @@
            separate from Assets/Liabilities per that distinction. -->
       <div class="card" id="accountsCard">
         <div class="topbar" style="margin-bottom:4px">
-          <strong>Accounts</strong>
+          <h2>Accounts</h2>
           <div>
             <button class="secondary" id="transferBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-right:6px">Transfer</button>
             <button class="secondary" id="addAcctBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
@@ -749,7 +768,7 @@
            above (payment methods) even if a bank account appears in both. -->
       <div class="card" id="assetsCard">
         <div class="topbar" style="margin-bottom:4px">
-          <strong>Assets</strong>
+          <h2>Assets</h2>
           <span class="muted" style="font-size:12px" id="assetsTotal">$0</span>
         </div>
         <p class="muted" style="font-size:12px;margin:0 0 10px">What you own - balances, investments, property. Counted in net worth.</p>
@@ -837,7 +856,7 @@
            not a separate pool - see renderNetWorth (app.js). -->
       <div class="card">
         <div class="topbar" style="margin-bottom:8px;align-items:flex-start">
-          <strong>Liabilities</strong>
+          <h2>Liabilities</h2>
           <div style="text-align:right">
             <div class="muted" style="font-size:11px">Total liabilities</div>
             <div style="font-size:20px;font-weight:800" id="liabilitiesTotal">$0</div>
@@ -892,7 +911,7 @@
              way to ever set them). Never touches balance - that stays
              strictly driven by real expenses/payments, see app.js. -->
         <div id="debtDetailsForm" class="hidden" style="margin-top:10px">
-          <div class="topbar" style="margin-bottom:6px"><strong>Liability details</strong></div>
+          <div class="topbar" style="margin-bottom:6px"><h2>Liability details</h2></div>
           <div class="row">
             <div><label>Interest rate % (optional)</label><input id="debtDetailsRate" type="number" step="0.01" inputmode="decimal" /></div>
             <div><label>Min payment (optional)</label><input id="debtDetailsMinPay" type="number" step="0.01" inputmode="decimal" /></div>
@@ -960,7 +979,7 @@
            cadence-stepping logic. -->
       <div class="card" id="incomeSourcesCard">
         <div class="topbar" style="margin-bottom:6px">
-          <strong>Income sources</strong>
+          <h2>Income sources</h2>
           <button class="secondary" id="addIncomeBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
         </div>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Recurring income (paychecks, etc.) - logged automatically once each one comes due, the same way a bill charge is. Tap one to edit.</p>
@@ -968,7 +987,7 @@
       </div>
 
       <div class="card hidden" id="incomeForm">
-        <div class="topbar" style="margin-bottom:6px"><strong id="incomeFormTitle">New income source</strong></div>
+        <div class="topbar" style="margin-bottom:6px"><h2 id="incomeFormTitle">New income source</h2></div>
         <label>Source (required)</label>
         <input id="incSource" placeholder="Employer paycheck" />
         <div class="row">
@@ -1044,7 +1063,7 @@
 
       <!-- Interactive spending Q&A (Gemma, optional/best-effort like Phase 3) -->
       <div class="card" id="qaCard">
-        <strong>Ask about your spending</strong>
+        <h2>Ask about your spending</h2>
         <div class="row" style="margin-top:8px">
           <input id="qaQuestion" placeholder="e.g. How much did I spend on food last month?" />
         </div>
@@ -1055,7 +1074,7 @@
 
       <!-- Monthly report, generated by tools/monthly-report.js on the server machine -->
       <div class="card" id="insightsCard">
-        <strong>Monthly report</strong>
+        <h2>Monthly report</h2>
         <div id="insightsBody" style="margin-top:8px;font-size:14px;white-space:pre-wrap" class="muted">No monthly reports yet.</div>
       </div>
 
@@ -1067,7 +1086,7 @@
            every chart below it far down the page - see renderReports (app.js). -->
       <div class="card" id="rptExpListCard">
         <div class="topbar" style="margin-bottom:4px">
-          <strong>Monthly Expense Log</strong>
+          <h2>Monthly Expense Log</h2>
           <div class="row" style="width:auto;gap:6px">
             <button class="secondary" id="exportCsvBtn" style="width:auto;padding:5px 10px;font-size:12px">CSV</button>
             <button class="secondary" id="exportPdfBtn" style="width:auto;padding:5px 10px;font-size:12px">Print / PDF</button>
@@ -1083,7 +1102,7 @@
            .subtab-pill pattern the Investments page uses. -->
       <div class="card" id="breakdownCard">
         <div class="card-head">
-          <strong>Where your money went</strong>
+          <h2>Where your money went</h2>
           <span class="info-icon" tabindex="0" role="button" data-info="breakdownExplainer" title="The same month's spending, split three ways. Use the buttons to switch between what you spent it on, which account it came out of, and how you paid.">i</span>
         </div>
         <p class="muted explainer hidden" id="breakdownExplainer">The same month's spending, split three ways. Use the buttons to switch between what you spent it on, which account it came out of, and how you paid.</p>
@@ -1108,7 +1127,7 @@
            income comparison, so it was strictly less informative. -->
       <div class="card" id="trendCard">
         <div class="card-head">
-          <strong>Money in and out</strong>
+          <h2>Money in and out</h2>
           <span class="info-icon" tabindex="0" role="button" data-info="incExpExplainer" title="What came in against what went out, for each of the last six months. Green is money in, blue is money out.">i</span>
         </div>
         <p class="muted explainer hidden" id="incExpExplainer">What came in against what went out, for each of the last six months. Green is money in, blue is money out.</p>
@@ -1126,7 +1145,7 @@
            lifetime. -->
       <div class="card">
         <div class="topbar" style="margin-bottom:6px">
-          <strong>Account balance history</strong>
+          <h2>Account balance history</h2>
           <select id="historyAccountSelect" style="width:auto;font-size:12px"></select>
         </div>
         <div class="chartbox short"><canvas id="historyChart"></canvas></div>
@@ -1141,7 +1160,7 @@
            scoped to the month selector, same reasoning as the account
            history card above. -->
       <div class="card">
-        <strong>Net worth trend</strong>
+        <h2>Net worth trend</h2>
         <div class="chartbox short"><canvas id="netWorthTrendChart"></canvas></div>
         <p class="muted" id="netWorthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
       </div>
@@ -1178,7 +1197,7 @@
            warning banner it drives still appears on Log where the spending
            actually happens. -->
       <div class="card" id="budgetsCard">
-        <strong>Budgets</strong>
+        <h2>Budgets</h2>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Monthly limit per category, for the current month.</p>
         <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
         <div class="row" style="margin-top:10px">
@@ -1193,7 +1212,7 @@
            wireInfoIcons(). -->
       <div class="card" id="debtStrategyCard">
         <div class="card-head">
-          <strong>Paying off what you owe</strong>
+          <h2>Paying off what you owe</h2>
           <span class="info-icon" tabindex="0" role="button" data-info="debtStrategyExplainer" title="Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.">i</span>
         </div>
         <p class="muted explainer hidden" id="debtStrategyExplainer">Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.</p>
@@ -1214,7 +1233,7 @@
            moved out of loadReports into goToView's "plan" branch with it. -->
       <div class="card">
         <div class="topbar" style="margin-bottom:6px">
-          <strong>Cash flow forecast</strong>
+          <h2>Cash flow forecast</h2>
           <select id="forecastAccountSelect" style="width:auto;font-size:12px"></select>
         </div>
         <div class="chartbox short"><canvas id="forecastChart"></canvas></div>
@@ -1237,7 +1256,7 @@
            so it stands as the permanent answer to "how am I doing?" while
            the tabs below hold the detail behind it. -->
       <div class="card" id="investHealthCard">
-        <strong>Daily health check</strong>
+        <h2>Daily health check</h2>
         <div id="investHealthList" style="margin-top:10px"></div>
         <div class="chartbox tiny" style="margin-top:10px"><canvas id="investHealthTrendChart"></canvas></div>
         <p class="muted" id="investHealthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
@@ -1291,7 +1310,7 @@
           summary, still numbers and links. -->
           <div class="card hidden" id="marketMoversCard">
           <div class="card-head">
-            <strong>Biggest movers today</strong>
+            <h2>Biggest movers today</h2>
             <span class="info-icon" tabindex="0" role="button" data-info="marketMoversExplainer" title="The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.">i</span>
           </div>
           <p class="muted" style="font-size:12px;margin:4px 0 2px" id="marketMoversDate"></p>
@@ -1325,7 +1344,7 @@
                own. -->
           <div class="card hidden" id="dailyRecapCard">
             <div class="card-head">
-              <strong>Daily recap</strong>
+              <h2>Daily recap</h2>
               <span class="info-icon" tabindex="0" role="button" data-info="dailyRecapExplainer" title="A short written recap of the trading day, based on the day's real price moves and the headlines actually published about the companies you track. Coverage is what was reported that day, not necessarily why a price moved.">i</span>
             </div>
             <p class="muted" style="font-size:12px;margin:4px 0 2px" id="dailyRecapDate"></p>
@@ -1353,7 +1372,7 @@
                movers yet, or vice versa). -->
           <div class="card hidden" id="marketOverviewCard">
             <div class="card-head">
-              <strong>Market overview</strong>
+              <h2>Market overview</h2>
               <span class="info-icon" tabindex="0" role="button" data-info="marketOverviewExplainer" title="Major US indexes - a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.">i</span>
             </div>
             <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
@@ -1364,7 +1383,7 @@
             <div id="marketOverviewList"></div>
             <div id="marketMoversSection" class="hidden" style="margin-top:14px">
               <div class="card-head">
-                <strong style="font-size:13px">Today's top movers</strong>
+                <h3 style="font-size:13px">Today's top movers</h3>
                 <span class="info-icon" tabindex="0" role="button" data-info="topMoversExplainer" title="Biggest moves (up or down) from a fixed watchlist of well-known large-cap stocks - not a scan of the whole market, and not a recommendation.">i</span>
               </div>
               <p class="muted explainer hidden" id="topMoversExplainer">Biggest moves (up or down) from a fixed watchlist of well-known large-cap stocks - not a scan of the whole market, and not a recommendation.</p>
@@ -1373,7 +1392,7 @@
             </div>
             <div id="marketNewsSection" class="hidden" style="margin-top:14px">
               <div class="card-head">
-                <strong style="font-size:13px">News from your tracked stocks</strong>
+                <h2 style="font-size:13px">News from your tracked stocks</h2>
                 <span class="info-icon" tabindex="0" role="button" data-info="trackedNewsExplainer" title="A short read of today's general market news coverage - not a prediction, and not a recommendation.">i</span>
               </div>
               <p class="muted explainer hidden" id="trackedNewsExplainer">A short read of today's general market news coverage - not a prediction, and not a recommendation.</p>
@@ -1399,7 +1418,7 @@
                for at least one symbol. -->
           <div class="card hidden" id="priceHistoryCard">
             <div class="card-head">
-              <strong>Price history</strong>
+              <h2>Price history</h2>
               <span class="info-icon" tabindex="0" role="button" data-info="priceHistoryExplainer" title="Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.">i</span>
             </div>
             <p class="muted explainer hidden" id="priceHistoryExplainer">Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.</p>
@@ -1430,7 +1449,7 @@
           <div class="card">
             <div class="topbar" style="margin-bottom:4px">
               <div class="card-head">
-                <strong>Holdings</strong>
+                <h2>Holdings</h2>
                 <span class="info-icon" tabindex="0" role="button" data-info="holdingsExplainer" title="Record the specific stocks, funds or coins you bought. An account's value is the total of its holdings.">i</span>
               </div>
               <button class="secondary" id="addHoldingBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add stock</button>
@@ -1507,7 +1526,7 @@
                PWA). A day the app wasn't opened just has no row. -->
           <div class="card">
             <div class="card-head">
-              <strong>Value over time</strong>
+              <h2>Value over time</h2>
               <span class="info-icon" tabindex="0" role="button" data-info="investTrendExplainer" title="One snapshot per day you actually open the app - a day you didn't open it simply has no point on the line.">i</span>
             </div>
             <p class="muted explainer hidden" id="investTrendExplainer">One snapshot per day you actually open the app - a day you didn't open it simply has no point on the line.</p>
@@ -1526,7 +1545,7 @@
                Hidden until something has actually been sold. -->
           <div class="card hidden" id="realizedGainCard">
             <div class="card-head">
-              <strong>Realized gain/loss</strong>
+              <h2>Realized gain/loss</h2>
               <span class="info-icon" tabindex="0" role="button" data-info="realizedExplainer" title="From holdings you've actually sold, using average cost basis. This is not a tax document - a broker reports individual shares differently.">i</span>
             </div>
             <p class="muted explainer hidden" id="realizedExplainer">From holdings you've actually sold, using average cost basis. This is not a tax document - a broker reports individual shares differently.</p>
@@ -1549,7 +1568,7 @@
                a group the user actually has a qualifying account in. -->
           <div class="card" id="contributionLimitsCard" style="display:none">
             <div class="card-head">
-              <strong>Contribution limits (this year)</strong>
+              <h2>Contribution limits (this year)</h2>
               <span class="info-icon" tabindex="0" role="button" data-info="limitsExplainer" title="Base annual limits only - doesn't account for catch-up contributions, income phase-outs, or filing status. Verify against current IRS figures for your situation.">i</span>
             </div>
             <p class="muted explainer hidden" id="limitsExplainer">Base annual limits only - doesn't account for catch-up contributions, income phase-outs, or filing status. Verify against current IRS figures for your situation.</p>
@@ -1563,7 +1582,7 @@
                suggests what to buy. -->
           <div class="card">
             <div class="card-head">
-              <strong>Target allocation</strong>
+              <h2>Target allocation</h2>
               <span class="info-icon" tabindex="0" role="button" data-info="targetExplainer" title="Set your own target mix and see how far off you are - this never picks investments for you.">i</span>
             </div>
             <p class="muted explainer hidden" id="targetExplainer">Set your own target mix and see how far off you are - this never picks investments for you.</p>
@@ -1594,7 +1613,7 @@
            Cash. amount/date only - kind='contribution' is what tells this
            apart from an ordinary asset_adjust (app.js). -->
       <div id="contributionForm" class="hidden" style="margin-bottom:12px;padding:12px;background:var(--panel-2);border-radius:10px">
-        <div class="topbar" style="margin-bottom:6px"><strong id="contributionLabel">Log a contribution</strong></div>
+        <div class="topbar" style="margin-bottom:6px"><h2 id="contributionLabel">Log a contribution</h2></div>
         <div class="row">
           <div><label>Amount</label><input id="contributionAmount" type="number" step="0.01" inputmode="decimal" placeholder="500" /></div>
           <div><label>Date</label><input id="contributionDate" type="date" /></div>
@@ -1611,6 +1630,7 @@
       
     </div>
 
+    </main>
   </div>
 
   <!-- ============ CONFIRM MODAL ============ -->
@@ -2423,13 +2443,6 @@
   </div>
 
   <!-- Top nav -->
-  <nav id="nav" class="nav hidden">
-    <button id="navLog" class="active">Log</button>
-    <button id="navPlan">Plan</button>
-    <button id="navInvest">Investments</button>
-    <button id="navReports">Reports</button>
-  </nav>
-
   <!-- role="status" + aria-live: this is the app's primary feedback channel
        (every save confirmation, every validation failure, every DB error) and
        it was silent to screen readers. It is also permanently in the DOM and

@@ -542,9 +542,10 @@
              Clear, a successful Apply, or a fresh loadExpenses(). -->
         <div class="row hidden" id="bulkActionBar" style="align-items:center;gap:8px;margin-top:8px;padding:8px;background:var(--panel-2);border-radius:8px">
           <span class="muted" style="font-size:12px;white-space:nowrap" id="bulkSelectedCount"></span>
-          <select id="bulkCategorySelect" aria-label="Category to apply to the selected transactions" style="flex:1;font-size:12px;padding:6px 8px"></select>
-          <button id="bulkApplyBtn" style="width:auto;padding:6px 12px;font-size:12px">Apply</button>
-          <button class="secondary" id="bulkClearBtn" style="width:auto;padding:6px 12px;font-size:12px">Clear</button>
+          <select id="bulkCategorySelect" aria-label="Category to apply to the selected transactions" style="flex:1;min-height:var(--target-min);font-size:var(--fs-sm);padding:6px 8px"></select>
+          <button id="bulkApplyBtn" class="btn-sm">Apply</button>
+          <button class="secondary btn-sm" id="bulkDeleteBtn" style="color:var(--err)">Delete</button>
+          <button class="secondary btn-sm" id="bulkClearBtn">Clear</button>
         </div>
         <div id="expList" class="scroll-list" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>

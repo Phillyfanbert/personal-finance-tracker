@@ -3819,6 +3819,36 @@ function updateBulkActionBar() {
   $("bulkSelectedCount").textContent = `${n} selected`;
 }
 $("bulkClearBtn").onclick = () => { selectedTxnIds.clear(); renderRecentTransactions(); };
+// Deletes every ticked expense and reverses its balance effect, the same
+// thing undoExpense does one row at a time. Only expenses can be ticked
+// (account_activity rows have no checkbox), so there is no activity case here.
+$("bulkDeleteBtn").onclick = async () => {
+  if (!selectedTxnIds.size) return;
+  const rows = allExpenses.filter((e) => selectedTxnIds.has(e.id));
+  if (!rows.length) return;
+  const total = rows.reduce((s, r) => s + Number(r.amount), 0);
+  const n = rows.length;
+  const imported = rows.filter(isImported).length;
+  const ok = await confirmModal(
+    `This deletes ${n} expense${n === 1 ? "" : "s"} totalling ${fmt(total)} and puts that money back on the accounts they came from.`
+      + (imported ? ` ${imported} of them came from an imported file, so ${imported === 1 ? "its" : "their"} balance is left alone.` : "")
+      + " This can't be undone.",
+    { title: `Delete ${n} expense${n === 1 ? "" : "s"}?`, confirmLabel: "Delete" }
+  );
+  if (!ok) return;
+  $("bulkDeleteBtn").disabled = true;
+  const { error } = await sb.from("expenses").delete().in("id", [...selectedTxnIds]);
+  if (error) { $("bulkDeleteBtn").disabled = false; flagField("bulkCategorySelect"); return toast(error.message, "error"); }
+  for (const [accountId, amount] of netAmountByAccount(rows)) {
+    await applyAssetDelta(accountId, null, amount, +1);
+    await applyLiabilityDelta(accountId, null, amount, -1);
+  }
+  $("bulkDeleteBtn").disabled = false;
+  selectedTxnIds.clear();
+  await loadAssets(); await loadDebts(); await loadExpenses();
+  toast(`Deleted ${n} expense${n === 1 ? "" : "s"}`);
+};
+
 $("bulkApplyBtn").onclick = async () => {
   const category = $("bulkCategorySelect").value;
   if (!category || !selectedTxnIds.size) return;
@@ -3858,10 +3888,35 @@ async function undoTransaction(row) {
 async function undoExpense(row) {
   const { error } = await sb.from("expenses").delete().eq("id", row.id);
   if (error) return toast(error.message);
-  await applyAssetDelta(row.account_id, row.payment_type, Number(row.amount), +1);
-  await applyLiabilityDelta(row.account_id, row.payment_type, Number(row.amount), -1);
+  // A CSV-imported row never applied a delta when it was created (see
+  // csvImport: an imported row is history that already happened, so the real
+  // balance already includes it). Reversing one here would ADD money that was
+  // never subtracted, inventing it out of nothing.
+  if (!isImported(row)) {
+    await applyAssetDelta(row.account_id, row.payment_type, Number(row.amount), +1);
+    await applyLiabilityDelta(row.account_id, row.payment_type, Number(row.amount), -1);
+  }
   await loadAssets(); await loadDebts(); await loadExpenses();
   toast("Expense undone");
+}
+
+const isImported = (row) => row.source === "import";
+
+// Sums the rows to reverse per ACCOUNT before touching any balance.
+//
+// applyAssetDelta reads `asset.value` from the cached `assets` array and does
+// not write the new value back into it, so calling it once per row in a loop
+// makes every call after the first read a stale value and clobber its
+// predecessor: deleting a $19 and a $14 expense on one account would restore
+// $14, not $33. Netting first means exactly one write per asset, which is
+// both correct and fewer round-trips.
+function netAmountByAccount(rows) {
+  const net = new Map();
+  for (const r of rows) {
+    if (!r.account_id || isImported(r)) continue;
+    net.set(r.account_id, (net.get(r.account_id) || 0) + Number(r.amount));
+  }
+  return net;
 }
 
 // account_activity rows carry a SIGNED amount for asset_adjust (see

@@ -7195,9 +7195,6 @@ function wireHelpTopics() {
       topic.classList.remove("flash");
     };
     head.onclick = toggle;
-    head.onkeydown = (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
-    };
   });
 
   // Group each diagram row's <rect>+<text> so the whole row is one target.
@@ -7244,6 +7241,19 @@ function wireHelpTopics() {
         const ry = parseFloat(r.getAttribute("y")), rh = parseFloat(r.getAttribute("height"));
         return Number.isFinite(ry) && Number.isFinite(rh) && y >= ry && y <= ry + rh;
       });
+      // The rows are real controls (clicking one opens its topic), so they
+      // need names and keyboard access, not just a pointer cursor. The <rect>
+      // carries them and the <text> is marked presentational, so the row is
+      // announced once rather than twice.
+      if (rect) {
+        rect.setAttribute("role", "button");
+        rect.setAttribute("tabindex", "0");
+        rect.setAttribute("aria-label", `${text.textContent.trim()} - open this topic`);
+        rect.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openHelpTopic(topic); }
+        });
+      }
+      text.setAttribute("aria-hidden", "true");
       for (const el of [text, rect]) {
         if (!el) continue;
         el.classList.add("diagram-row");

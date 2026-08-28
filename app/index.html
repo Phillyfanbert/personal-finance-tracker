@@ -149,6 +149,12 @@
        Above .modal's 70 so the tour can point at a modal's own controls
        later if needed, but below .toast's 80 so a toast fired mid-tour is
        still readable. */
+    /* Above the other modals, which all share z-index 70. confirmModal is
+       FIRST in the DOM, so at equal z-index every later modal painted on top
+       of it: a confirm opened from inside Profile or Edit expense rendered
+       BEHIND the modal that triggered it, and the button looked dead. Still
+       below the tour (75) and the toast (80). */
+    #confirmModal { z-index: 72; }
     .tour { position: fixed; inset: 0; z-index: 75; }
     /* One element does the dimming AND the ring: a huge spread box-shadow
        darkens everything outside this rect, so there is no clip-path and no
@@ -300,6 +306,17 @@
     .help-topic p:last-child { margin-bottom: 0; }
     .help-diagram { background: var(--panel-2); border: 1px solid var(--border);
       border-radius: 10px; padding: 10px; margin: 4px 0 18px; }
+    /* A file input's button is a separate shadow control that inherits none
+       of the styling above, so it rendered as the grey OS default. */
+    input[type="file"] { padding: 10px; cursor: pointer; }
+    input[type="file"]::file-selector-button {
+      font: inherit; font-size: var(--fs-sm); font-weight: 700;
+      margin-right: var(--sp-3); padding: 0 var(--sp-3); min-height: var(--target-min);
+      border: none; border-radius: var(--r-control);
+      background: var(--accent-2); color: #002233; cursor: pointer;
+    }
+    input[type="file"]::file-selector-button:hover { filter: brightness(1.08); }
+
     .help-diagram svg { display: block; width: 100%; height: auto; }
 
     /* Utilities. Each of these replaces an inline declaration repeated at

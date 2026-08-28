@@ -19,7 +19,10 @@ import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } fro
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
 } from "./csvImport.js";
-import { buildExpensesCsv, buildLogCsv, buildPlanCsv, buildInvestmentsCsv, buildReportsCsv } from "./export.js";
+import {
+  buildExpensesCsv, buildSectionedCsv, sectionsToJson, sectionsToSheets,
+  logSections, planSections, investmentsSections, reportsSections,
+} from "./export.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
@@ -3497,7 +3500,30 @@ function csvColumnOptions(selectedIdx) {
     csvHeaders.map((h, i) => `<option value="${i}" ${i === selectedIdx ? "selected" : ""}>${esc(h || `Column ${i + 1}`)}</option>`).join("");
 }
 
-$("csvFileInput").onchange = () => {
+// Everything downstream works on a plain array of rows, so a new file type
+// only has to produce that. PapaParse auto-detects the delimiter, which covers
+// tab- and semicolon-separated exports for free; Excel needs the same on-demand
+// library the Excel export uses.
+const isSpreadsheetFile = (file) => /\.(xlsx|xlsm|xlsb|xls)$/i.test(file.name);
+
+async function rowsFromFile(file) {
+  if (isSpreadsheetFile(file)) {
+    const XLSX = await loadSpreadsheetLib();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    // First sheet only, and say so: silently concatenating sheets with
+    // different columns would produce nonsense rows.
+    const first = wb.SheetNames[0];
+    if (!first) throw new Error("This workbook has no sheets.");
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[first], { header: 1, raw: false, defval: "" });
+    return { rows: rows.filter((r) => r.some((cell) => String(cell).trim() !== "")), sheet: first, sheetCount: wb.SheetNames.length };
+  }
+  const text = await file.text();
+  const result = Papa.parse(text, { skipEmptyLines: true });
+  if (result.errors?.length && !(result.data || []).length) throw new Error("Couldn't read this file. Save it as CSV and try again.");
+  return { rows: result.data || [] };
+}
+
+$("csvFileInput").onchange = async () => {
   const file = $("csvFileInput").files[0];
   $("csvFileError").textContent = "";
   if (!file) return;
@@ -3506,14 +3532,20 @@ $("csvFileInput").onchange = () => {
     $("csvFileInput").value = "";
     return;
   }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const result = Papa.parse(String(reader.result), { skipEmptyLines: true });
-    const rows = result.data || [];
-    if (result.errors?.length && !rows.length) {
-      $("csvFileError").textContent = "Couldn't parse this file as CSV.";
-      $("csvFileInput").value = "";
-      return;
+  let parsed;
+  try {
+    parsed = await rowsFromFile(file);
+  } catch (err) {
+    $("csvFileError").textContent = isSpreadsheetFile(file)
+      ? `Could not read this Excel file (${err.message}). Saving it as CSV from Excel will always work.`
+      : err.message;
+    $("csvFileInput").value = "";
+    return;
+  }
+  {
+    const rows = parsed.rows;
+    if (parsed.sheetCount > 1) {
+      $("csvFileError").textContent = `This workbook has ${parsed.sheetCount} tabs. Reading the first one, "${parsed.sheet}".`;
     }
     if (!rows.length) {
       $("csvFileError").textContent = "This file has no rows.";
@@ -3552,9 +3584,7 @@ $("csvFileInput").onchange = () => {
       : `<option value="">No account available - add one first</option>`;
     $("csvStep1").classList.add("hidden");
     $("csvStep2").classList.remove("hidden");
-  };
-  reader.onerror = () => { $("csvFileError").textContent = "Couldn't read this file."; };
-  reader.readAsText(file);
+  }
 };
 
 $("csvStep2Back").onclick = () => {
@@ -7667,58 +7697,122 @@ function downloadBlob(blob, filename) {
   }, 60000);
 }
 
-// One export per page, each built from the SAME already-computed values the
-// page renders, so a figure in the file can never disagree with the figure on
-// screen. Every one confirms first: this is the rule for any path that puts
-// data outside the app, not a special case for the big ones.
-async function exportPage(label, filename, build, hasData) {
-  if (!hasData) return toast("Nothing to export on this page yet", "error");
-  const csv = build();
-  if (!csv || !csv.trim()) return toast("Nothing to export on this page yet", "error");
-  const ok = await confirmModal(
-    `This saves ${label} to your device as a spreadsheet file. Anyone who can open that file can read it.`,
-    { title: "Save to a file?", confirmLabel: "Save file" }
-  );
-  if (!ok) return;
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
+// One export per page, built from the SAME already-computed values the page
+// renders, so a figure in a file can never disagree with the figure on screen.
+//
+// The page produces SECTIONS once; the chosen format renders them. That is
+// what keeps CSV, Excel and JSON from drifting apart as pages change.
+const EXPORT_FORMATS = {
+  csv:  { ext: "csv",  type: "text/csv;charset=utf-8", note: "Opens in Excel, Numbers or Google Sheets. Each part of the page is a titled block in one sheet." },
+  xlsx: { ext: "xlsx", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", note: "A real Excel workbook with each part of the page on its own tab. Best when a page has several tables." },
+  json: { ext: "json", type: "application/json", note: "For feeding into another program. Not meant to be read by eye." },
+};
+
+// SheetJS is ~316KB over the wire, far too much to load on every visit for a
+// format most people will never pick. Fetched the first time someone actually
+// chooses Excel, then reused.
+let xlsxLoader = null;
+function loadSpreadsheetLib() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (!xlsxLoader) {
+    xlsxLoader = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+      s.onload = () => (window.XLSX ? resolve(window.XLSX) : reject(new Error("loaded but were empty")));
+      s.onerror = () => { xlsxLoader = null; reject(new Error("could not be downloaded")); };
+      document.head.appendChild(s);
+    });
+  }
+  return xlsxLoader;
+}
+
+let pendingExport = null;
+
+function updateExportFormatNote() {
+  $("exportFormatNote").textContent = EXPORT_FORMATS[$("exportFormat").value]?.note ?? "";
+}
+$("exportFormat").onchange = updateExportFormatNote;
+$("exportModalClose").onclick = () => closeModal("exportModal");
+
+$("exportConfirmBtn").onclick = async () => {
+  if (!pendingExport) return;
+  const { baseName, sections, meta } = pendingExport;
+  const fmt = $("exportFormat").value;
+  const spec = EXPORT_FORMATS[fmt];
+  if (!spec) return;
+  $("exportConfirmBtn").disabled = true;
+  try {
+    let blob;
+    if (fmt === "csv") blob = new Blob([buildSectionedCsv(sections)], { type: spec.type });
+    else if (fmt === "json") blob = new Blob([sectionsToJson(sections, meta)], { type: spec.type });
+    else {
+      const XLSX = await loadSpreadsheetLib();
+      const wb = XLSX.utils.book_new();
+      for (const sheet of sectionsToSheets(sections)) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet.aoa), sheet.name);
+      }
+      blob = new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: spec.type });
+    }
+    downloadBlob(blob, `${baseName}.${spec.ext}`);
+  } catch (err) {
+    $("exportConfirmBtn").disabled = false;
+    // Only the Excel path can fail, and only by not reaching the CDN.
+    return toast(`Excel tools ${err.message}. Try the .csv option, which needs no download.`, "error");
+  }
+  $("exportConfirmBtn").disabled = false;
+  closeModal("exportModal");
+  pendingExport = null;
   toast("Saved to your downloads");
+};
+
+function exportPage(what, baseName, buildSections, hasData, meta) {
+  if (!hasData) return toast("Nothing to export on this page yet", "error");
+  const sections = buildSections();
+  if (!sections || !sections.length) return toast("Nothing to export on this page yet", "error");
+  pendingExport = { baseName, sections, meta };
+  $("exportModalTitle").textContent = "Export";
+  $("exportModalWhat").textContent = `This saves ${what} to your device. Anyone who can open the file can read it.`;
+  updateExportFormatNote();
+  openModal("exportModal");
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 $("exportLogBtn").onclick = () => exportPage(
-  "everything on the Log page: your spending, your bills, your accounts and what you own and owe",
-  `log-${today()}.csv`,
-  () => buildLogCsv({
+  "your spending, bills, income and balances",
+  `log-${today()}`,
+  () => logSections({
     expenses: [...allExpenses].sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at))),
     activity: accountActivity, subscriptions, accounts, assets, debts, income: incomeSources,
   }, acctName),
   allExpenses.length || accountActivity.length || subscriptions.length || accounts.length
-    || assets.length || debts.length || incomeSources.length);
+    || assets.length || debts.length || incomeSources.length,
+  { page: "Log" });
 
 $("exportPlanBtn").onclick = () => exportPage(
-  "your budgets, the payoff comparison and your cash flow forecast",
-  `plan-${today()}.csv`,
+  "your budgets, payoff comparison and forecast",
+  `plan-${today()}`,
   () => {
     const account = accounts.find((a) => a.id === $("forecastAccountSelect").value);
-    return buildPlanCsv({
+    return planSections({
       budgets: budgetStatus(budgets, sumBy(allExpenses, "category", monthKey())),
       payoff: compareDebtStrategies(debts, parseFloat($("debtStrategyExtra").value) || 0),
       forecast: account ? forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30) : [],
       forecastAccount: account ? acctLabel(account) : "",
     });
   },
-  budgets.length || debts.length || accounts.length);
+  budgets.length || debts.length || accounts.length,
+  { page: "Plan" });
 
 $("exportInvestBtn").onclick = () => exportPage(
-  "your investments: totals, holdings, realized gains, contribution limits and targets",
-  `investments-${today()}.csv`,
+  "your investments",
+  `investments-${today()}`,
   () => {
-    // Mirrors renderInvestments' own calls exactly, including the
-    // countable-vs-display split that stops holdings being counted twice.
+    // Mirrors renderInvestments' own calls, including the countable-vs-display
+    // split that stops holdings being counted twice.
     const countable = countableInvestmentAssets();
     const holdings = investmentHoldings(allInvestmentAssets(), assetPriceFindings);
-    return buildInvestmentsCsv({
+    return investmentsSections({
       totals: portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable),
       holdings,
       realized: holdingSales,
@@ -7726,19 +7820,20 @@ $("exportInvestBtn").onclick = () => exportPage(
       targets: allocationVsTarget(countable, holdings, investmentTargets),
     });
   },
-  allInvestmentAssets().length || holdingSales.length || investmentTargets.length);
+  allInvestmentAssets().length || holdingSales.length || investmentTargets.length,
+  { page: "Investments" });
 
 $("exportReportsBtn").onclick = () => {
   const ym = $("monthSel").value || monthKey();
   return exportPage(
     `your spending analysis for ${monthLabel(ym)}`,
-    `report-${ym}.csv`,
+    `report-${ym}`,
     () => {
       const byCat = sumBy(allExpenses, "category", ym);
       const labeled = allExpenses.map((e) => ({ ...e, payment_type: accountTypeLabel(e.payment_type) }));
       const total = byCat.reduce((s, d) => s + d.value, 0);
       const subs = byCat.filter((d) => d.label === "Subscriptions").reduce((s, d) => s + d.value, 0);
-      return buildReportsCsv({
+      return reportsSections({
         monthLabel: monthLabel(ym),
         totals: [["Spent in " + monthLabel(ym), total.toFixed(2)], ["Of that, subscriptions", subs.toFixed(2)]],
         byCategory: byCat,
@@ -7747,7 +7842,8 @@ $("exportReportsBtn").onclick = () => {
         incomeVsExpense: incomeVsExpense(accountActivity.filter((a) => a.kind === "income"), allExpenses, lastMonths(6, monthKey())),
       });
     },
-    allExpenses.some((e) => String(e.occurred_at || "").startsWith(ym)));
+    allExpenses.some((e) => String(e.occurred_at || "").startsWith(ym)),
+    { page: "Reports", month: ym });
 };
 
 const USER_DATA_TABLES = [

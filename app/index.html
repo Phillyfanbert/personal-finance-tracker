@@ -1690,6 +1690,30 @@
     </main>
   </div>
 
+  <!-- ============ EXPORT MODAL ============ -->
+  <!-- A format picker rather than a yes/no confirm: the choice and the
+       confirmation are the same decision, so asking twice would be noise.
+       Saving still requires a deliberate click, which is the rule for any
+       path that puts data outside the app. -->
+  <div id="exportModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
+    <div class="sheet">
+      <div class="topbar" style="margin-bottom:6px">
+        <strong id="exportModalTitle">Export</strong>
+        <button class="secondary btn-sm" id="exportModalClose">Close</button>
+      </div>
+      <p class="muted text-sm" id="exportModalWhat"></p>
+      <label for="exportFormat">File type</label>
+      <select id="exportFormat">
+        <option value="csv">Spreadsheet (.csv)</option>
+        <option value="xlsx">Excel workbook (.xlsx)</option>
+        <option value="json">Data file (.json)</option>
+      </select>
+      <p class="muted text-sm" id="exportFormatNote" style="margin:6px 0 0"></p>
+      <div class="stack-4"></div>
+      <button id="exportConfirmBtn">Save file</button>
+    </div>
+  </div>
+
   <!-- ============ CONFIRM MODAL ============ -->
   <!-- Generic yes/no dialog - replaces window.confirm() for destructive
        actions (starting with account deletion) so the message and buttons
@@ -1863,8 +1887,8 @@
       <div id="csvStep1">
         <p class="muted" style="font-size:13px">Bring in what you have spent and what you have been paid, from a bank export or another app. The file stays on your device - it is never uploaded anywhere.</p>
         <p class="muted" style="font-size:12px;margin-top:8px"><strong>Imported rows are added as history only. They never change an account balance.</strong> Your balances already include this money in real life, so changing them again would count it twice.</p>
-        <label style="margin-top:12px" for="csvFileInput">CSV file (up to 5MB, ~10,000 rows)</label>
-        <input id="csvFileInput" type="file" accept=".csv,text/csv" />
+        <label style="margin-top:12px" for="csvFileInput">Spreadsheet or CSV file (up to 5MB, ~10,000 rows)</label>
+        <input id="csvFileInput" type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xlsb,.xls,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
         <p class="muted" id="csvFileError" style="font-size:12px;color:var(--err);margin-top:6px"></p>
       </div>
 
@@ -2196,7 +2220,7 @@
           <div class="help-topic-body hidden" id="helpTopic-profile-top-right-body">
           <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Log page's Bills tab, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else. "Download a copy of my data" saves a file holding everything in your account. It asks you to confirm first, because that file is readable by anyone who can open it - only do it on a device you trust.</p>
           <p><strong>Getting your history in and out.</strong> Two buttons at the bottom save a copy to your device, and both ask you to confirm first. <strong>Download a copy of my data</strong> writes everything as one file: balances, every transaction, and this profile. <strong>Download all my spending as a spreadsheet</strong> writes just your transactions, in the same format the app's own Import CSV reads back, so you can move a long history between devices without retyping it.</p>
-          <p>To bring history in, use <strong>Import CSV</strong> under Quick Add on the Log page. It reads files exported from a bank or another app, works out which columns are which, and lets you check everything before anything is saved. It handles money going out and money coming in from the same file.</p>
+          <p>To bring history in, use <strong>Import CSV</strong> under Quick Add on the Log page. It reads a spreadsheet exported from a bank or another app: <strong>.csv</strong>, tab-separated <strong>.tsv</strong> or <strong>.txt</strong>, and Excel <strong>.xlsx</strong> and <strong>.xls</strong> files directly, with no need to convert them first. It works out which columns are which, and lets you check everything before anything is saved. It handles money going out and money coming in from the same file. An Excel workbook with several tabs is read from its first tab, and it tells you when that happens.</p>
 
         <div class="help-topic" id="helpTopic-using-this-app-without-a-mouse">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-using-this-app-without-a-mouse-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Getting around, and what happens when something goes wrong</button></h3>
@@ -2211,7 +2235,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-log-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-log-body">
           <p>Saves everything on this page as a spreadsheet: every purchase you have written down, every other money movement, your subscriptions and bills, your income sources, and your accounts with what you own and owe. It is written in the same format Import CSV reads back, so you can move a whole history onto another device without retyping it.</p>
-          <p>It asks you to confirm first, like everything here that puts a copy of your money outside the app.</p>
+          <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
           </div>
         </div>
           </div>
@@ -2263,7 +2287,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-plan-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-plan-body">
           <p>Saves this page as a spreadsheet: each budget with what you have spent against it, the two payoff approaches with how long each takes and what each costs in interest, and the projected balance for whichever account the forecast is showing.</p>
-          <p>It asks you to confirm first, like everything here that puts a copy of your money outside the app.</p>
+          <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
           </div>
         </div>
       </div>
@@ -2359,7 +2383,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-reports-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-reports-body">
           <p>Saves the analysis rather than the raw list: the month's totals, the same spending split three ways (by what you bought, which account paid, and how you paid), and money in against money out for the last six months with how much you kept. For the underlying transactions instead, use CSV on the Monthly Expense Log below.</p>
-          <p>It asks you to confirm first, like everything here that puts a copy of your money outside the app.</p>
+          <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
           </div>
         </div>
       </div>
@@ -2517,7 +2541,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-invest-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-invest-body">
           <p>Saves your investments as a spreadsheet: the totals, every holding with its cost and current value, anything you have sold and what you made on it, contribution limits for the year, and how your mix compares with your target. It never contains a suggestion about what to buy or sell, because this app does not make them.</p>
-          <p>It asks you to confirm first, like everything here that puts a copy of your money outside the app.</p>
+          <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
           </div>
         </div>
       </div>

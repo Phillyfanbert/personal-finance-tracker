@@ -63,9 +63,9 @@ export function buildSectionedCsv(sections) {
 }
 
 /** Log: what you spent, what charges you on a schedule, and what you hold. */
-export function buildLogCsv({ expenses = [], activity = [], subscriptions = [], accounts = [], assets = [], debts = [], income = [] }, accountName = () => "") {
+export function logSections({ expenses = [], activity = [], subscriptions = [], accounts = [], assets = [], debts = [], income = [] }, accountName = () => "") {
   const kind = { asset_adjust: "Balance change", liability_payment: "Payment", transfer: "Transfer", income: "Income", contribution: "Contribution", owed_adjust: "Amount owed changed", holding_sale: "Investment sold" };
-  return buildSectionedCsv([
+  return ([
     { title: "Spending", header: ["Date", "Description", "Category", "Payment Type", "Account", "Amount"],
       rows: expenses.map((r) => [r.occurred_at, r.description || r.merchant || "", r.category || "", r.payment_type || "", accountName(r.account_id) || "", money(r.amount)]) },
     { title: "Other money movements", header: ["Date", "What happened", "Type", "Account", "Amount"],
@@ -84,12 +84,12 @@ export function buildLogCsv({ expenses = [], activity = [], subscriptions = [], 
 }
 
 /** Plan: the limits you set, the payoff comparison, the projected balance. */
-export function buildPlanCsv({ budgets = [], payoff = null, forecast = [], forecastAccount = "" }) {
+export function planSections({ budgets = [], payoff = null, forecast = [], forecastAccount = "" }) {
   const strategy = (label, r) => !r ? null
     : r.neverPaysOff ? [label, "never at this payment", ""]
     : [label, `${r.months} months`, money(r.totalInterest)];
   const payoffRows = payoff ? [strategy("Highest interest rate first (avalanche)", payoff.avalanche), strategy("Smallest amount first (snowball)", payoff.snowball)].filter(Boolean) : [];
-  return buildSectionedCsv([
+  return ([
     { title: "Budgets (this month)", header: ["Category", "Limit", "Spent", "Percent used", "Status"],
       rows: budgets.map((b) => [b.category, money(b.limit), money(b.spent), `${b.pct}%`, b.over ? "over" : b.warn ? "close to the limit" : "ok"]) },
     { title: "Paying off what you owe", header: ["Approach", "Time to clear", "Total interest"], rows: payoffRows },
@@ -99,8 +99,8 @@ export function buildPlanCsv({ budgets = [], payoff = null, forecast = [], forec
 }
 
 /** Investments: holdings, limits and targets, never a recommendation. */
-export function buildInvestmentsCsv({ totals = null, holdings = [], realized = [], limits = [], targets = [] }) {
-  return buildSectionedCsv([
+export function investmentsSections({ totals = null, holdings = [], realized = [], limits = [], targets = [] }) {
+  return ([
     { title: "Totals", header: ["Measure", "Value"],
       rows: totals ? [["Total value", money(totals.totalValue)], ["Total cost basis", money(totals.totalCostBasis)],
                       ["Gain or loss", money(totals.totalGainLoss)],
@@ -117,9 +117,9 @@ export function buildInvestmentsCsv({ totals = null, holdings = [], realized = [
 }
 
 /** Reports: the analysis of a month, not the raw rows (those are on Log). */
-export function buildReportsCsv({ monthLabel = "", totals = [], byCategory = [], byAccount = [], byPaymentType = [], incomeVsExpense = [] }) {
+export function reportsSections({ monthLabel = "", totals = [], byCategory = [], byAccount = [], byPaymentType = [], incomeVsExpense = [] }) {
   const pct = (v) => (v == null ? "" : `${Math.round(v * 1000) / 10}%`);
-  return buildSectionedCsv([
+  return ([
     { title: `Summary - ${monthLabel}`, header: ["Measure", "Value"], rows: totals },
     { title: "Where your money went - by category", header: ["Category", "Amount"], rows: byCategory.map((d) => [d.label, money(d.value)]) },
     { title: "Where your money went - by account", header: ["Account", "Amount"], rows: byAccount.map((d) => [d.label, money(d.value)]) },
@@ -127,4 +127,47 @@ export function buildReportsCsv({ monthLabel = "", totals = [], byCategory = [],
     { title: "Money in and out (last 6 months)", header: ["Month", "Money in", "Money out", "Left over", "Share kept"],
       rows: incomeVsExpense.map((r) => [r.month, money(r.income), money(r.expense), money(r.income - r.expense), pct(r.savingsRate)]) },
   ]);
+}
+
+// One definition of each page's data, rendered three ways. CSV and JSON are
+// built here; XLSX needs a library and is built in app.js, which loads that
+// library on demand - see exportPage(). Keeping the SECTIONS as the single
+// source is what stops the three formats drifting apart.
+export function buildLogCsv(data, accountName) { return buildSectionedCsv(logSections(data, accountName)); }
+export function buildPlanCsv(data) { return buildSectionedCsv(planSections(data)); }
+export function buildInvestmentsCsv(data) { return buildSectionedCsv(investmentsSections(data)); }
+export function buildReportsCsv(data) { return buildSectionedCsv(reportsSections(data)); }
+
+/**
+ * Sections as JSON: one key per section, each an array of objects keyed by
+ * that section's own column headers. Far easier for another program to read
+ * than the sectioned CSV, which needs a human to spot where a table starts.
+ */
+export function sectionsToJson(sections, meta = {}) {
+  const out = { exported_at: new Date().toISOString(), ...meta };
+  for (const s of sections) {
+    if (!s || !s.rows) continue;
+    out[s.title] = s.rows.map((r) => Object.fromEntries((s.header || []).map((h, i) => [h, r[i] ?? ""])));
+  }
+  return JSON.stringify(out, null, 2);
+}
+
+/**
+ * Sections as sheet definitions: [{name, aoa}], where aoa is the header row
+ * followed by the data rows. `name` is trimmed to Excel's 31-character sheet
+ * limit and stripped of the characters Excel rejects in a sheet name, which
+ * silently corrupts a workbook rather than erroring.
+ */
+export function sectionsToSheets(sections) {
+  const used = new Set();
+  const out = [];
+  for (const s of sections) {
+    if (!s || !s.rows) continue;
+    let name = String(s.title).replace(/[\\/?*\[\]:]/g, " ").trim().slice(0, 31) || "Sheet";
+    let n = 2;
+    while (used.has(name.toLowerCase())) name = `${name.slice(0, 28)} ${n++}`;
+    used.add(name.toLowerCase());
+    out.push({ name, aoa: [s.header || [], ...s.rows] });
+  }
+  return out;
 }

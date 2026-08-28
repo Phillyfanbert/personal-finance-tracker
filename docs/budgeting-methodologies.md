@@ -473,28 +473,12 @@ budget, and they are worth naming once rather than repeating per framework:
 
 ---
 
-## 12. What this means for this app
+## 12. Where this research goes next
 
-This document is reference material, not a design decision by itself, but
-two things in it are directly load-bearing for any budgeting feature built
-on top of it, and are recorded here so they are not re-derived later:
-
-**This app shows the math of a framework; it does not tell the user which
-framework, or how to spend, is right for them.** That boundary already
-exists elsewhere in this codebase (`compareDebtStrategies()` shows
-avalanche vs. snowball side by side and explicitly never states which to
-pick; the credit-utilization line and the allocation-target calculator show
-real numbers with no "aim for X%" framing) and section 8's own research is
-exactly why: avalanche and snowball are not "better" and "worse" in any
-context-free sense, they answer different questions, and the same is true
-across the frameworks in this document. Recommending one over another for a
-specific user would cross from calculation into personalized financial
-advice, which is out of scope for this app.
-
-**A budget limit should be presented as a ceiling, not a target**, per
-section 9's finding that visible limits get spent toward. This app's
-existing budget-warning behavior (warn at 90%, not only once over, and never
-color-code a category as "on track" toward its limit as if reaching it were
-the goal) is already consistent with this; it is worth keeping that
-consistency in mind for however the feature grows next, rather than
-introducing a progress-bar framing that implies filling the bar is success.
+This document is reference material: what the frameworks are, where each
+came from, and what independent research says about them. Turning that into
+an actual feature, including a dashboard design, category and rollover
+decisions grounded in this app's real schema, and draft "getting started"
+copy for a first-time user, is written up separately in
+[`docs/budgeting-feature-design.md`](./budgeting-feature-design.md). Read
+that document before building or changing anything in the Budgets card.

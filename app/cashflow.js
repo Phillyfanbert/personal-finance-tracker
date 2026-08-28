@@ -30,6 +30,14 @@ const MAX_OCCURRENCES = 36; // same defensive cap autoLogDueSubscriptions/autoLo
  */
 export function forecastCashFlow(account, currentBalance, subscriptions, incomeSources, days, today = new Date()) {
   const windowDays = days || 30;
+  // A liability-linked account's balance is what is OWED, so every delta
+  // flips: a bill charged to a card makes the debt bigger, not smaller.
+  // Without this the forecast ran backwards for any credit account - the
+  // picker offers them, so selecting one showed a $500 card falling to $450
+  // as a $50 bill came due. Same isLiability branch, and the same reason, as
+  // accountHistory.js's buildBalanceHistory(), which is this function's
+  // backward-walking mirror and has always had it.
+  const sign = account.linked_liability_id ? -1 : 1;
   const todayStr = today.toISOString().slice(0, 10);
   const horizon = new Date(today);
   horizon.setDate(horizon.getDate() + windowDays);
@@ -50,7 +58,7 @@ export function forecastCashFlow(account, currentBalance, subscriptions, incomeS
     let renewal = sub.next_renewal;
     let occurrences = 0;
     while (renewal <= horizonStr && occurrences < MAX_OCCURRENCES) {
-      add(renewal, -Number(sub.amount));
+      add(renewal, sign * -Number(sub.amount));
       const next = advanceRenewal(renewal, sub.billing_cycle);
       if (next === renewal) break; // 'other' cycle never advances - avoid looping forever
       renewal = next;
@@ -63,7 +71,7 @@ export function forecastCashFlow(account, currentBalance, subscriptions, incomeS
     let expected = src.next_expected;
     let occurrences = 0;
     while (expected <= horizonStr && occurrences < MAX_OCCURRENCES) {
-      add(expected, Number(src.amount));
+      add(expected, sign * Number(src.amount));
       if (src.cadence === "one_time") break; // never advances
       expected = advanceIncomeDate(expected, src.cadence, src.semimonthly_day_1, src.semimonthly_day_2);
       occurrences++;

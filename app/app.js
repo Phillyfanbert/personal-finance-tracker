@@ -4601,14 +4601,20 @@ $("saveBudgetBtn").onclick = async () => {
   const monthly_limit = parseFloat($("budgetLimit").value);
   if (!category) { flagField("budgetCategory"); return toast("Pick a category"); }
   if (!Number.isFinite(monthly_limit) || monthly_limit <= 0) { flagField("budgetLimit"); return toast("Enter a valid monthly limit"); }
+  // Read before writing: the upsert silently replaces an existing limit, and
+  // a bare "Budget set" gave no sign whether a category had just been added
+  // or quietly overwritten. The picker also kept its last value, so setting a
+  // second category meant re-picking it or overwriting the first by accident.
+  const replacing = budgets.some((b) => b.category === category);
   const { error } = await sb.from("budgets")
     .upsert({ category, monthly_limit }, { onConflict: "user_id,category" });
   if (error) { flagField("budgetLimit"); return toast(error.message); }
   $("budgetLimit").value = "";
+  $("budgetCategory").value = "";
   await loadBudgets();
   renderBudgets();
   renderBudgetWarnings(); // a changed limit can newly trigger (or clear) a Log-page warning
-  toast("Budget set");
+  toast(replacing ? `${category} limit changed to ${fmt(monthly_limit)}` : `${category} limit set to ${fmt(monthly_limit)}`);
 };
 
 // ---- INVESTMENTS TAB --------------------------------------------------------
@@ -6444,13 +6450,29 @@ $("forecastAccountSelect").onchange = renderCashFlowForecast;
 
 function renderCashFlowForecast() {
   const account = accounts.find((a) => a.id === $("forecastAccountSelect").value);
-  if (!account) return;
+  const note = $("forecastNote");
+  // A blank chart with no words looks identical to a broken one, which is the
+  // same reason renderLoadError exists for the list loaders.
+  if (!account) {
+    renderLineChart($("forecastChart"), [], []);
+    note.textContent = "Add an account on the Log page and this will project its balance forward.";
+    return;
+  }
   const points = forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30);
   const labels = points.map((p) => {
     const [y, m, d] = p.date.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   });
   renderLineChart($("forecastChart"), labels, points.map((p) => p.balance));
+
+  // A rising line means opposite things for the two kinds of account, so the
+  // chart has to say which one it is drawing rather than leaving the reader
+  // to infer it from the account name.
+  const owed = !!account.linked_liability_id;
+  const what = owed ? "how much you would owe" : "your balance";
+  note.textContent = points.length > 1
+    ? `Showing ${what} over the next 30 days, using only bills and pay you have already told the app about. It does not try to guess your everyday spending.`
+    : `Nothing is scheduled on this account in the next 30 days, so this is just ${owed ? "what you owe" : "your balance"} today. Add a bill or an income source on the Log page to see it move.`;
 }
 
 // Latest monthly report, generated server-side by tools/monthly-report.js.

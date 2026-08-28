@@ -1236,7 +1236,7 @@
           <button class="secondary" id="backFromPlan" style="width:auto;padding:8px 10px">&#8592;</button>
           <h1 style="margin:0">Plan</h1>
           <button class="help-btn" id="helpPlanBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
-          <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+          <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
       </div>
       <!-- The headline number for this page, added 2026-08-28 after research
@@ -1255,9 +1255,9 @@
       <div class="card" id="safeToSpendCard">
         <div class="card-head">
           <h2>Safe to spend</h2>
-          <span class="info-icon" tabindex="0" role="button" data-info="safeToSpendExplainer" title="What's left in the categories you've set a monthly limit for, minus any subscription or bill due before the month ends that hasn't been charged yet. Categories with no limit set aren't counted, and a category already over its limit doesn't reduce this - that money already left a real account.">i</span>
+          <span class="info-icon" tabindex="0" role="button" data-info="safeToSpendExplainer" title="What's left across the categories you've set a monthly limit for, minus what you have already committed to this month: bills due before the month ends, and anything you are setting aside. Going over on a category does count against it, and the card says so underneath.">i</span>
         </div>
-        <p class="muted explainer hidden" id="safeToSpendExplainer">What's left in the categories you've set a monthly limit for, minus any subscription or bill due before the month ends that hasn't been charged yet. Categories with no limit set aren't counted, and a category already over its limit doesn't reduce this - that money already left a real account.</p>
+        <p class="muted explainer hidden" id="safeToSpendExplainer">What's left across the categories you've set a monthly limit for, minus what you have already committed to this month: bills due before the month ends, and anything you are setting aside. Going over on a category does count against it, and the card says so underneath.</p>
         <div id="safeToSpendEmpty"><p class="muted" style="font-size:13px;margin:8px 0 0">Set a budget below to see how much you have left to spend safely.</p></div>
         <div id="safeToSpendBody" class="hidden">
           <div class="big" id="safeToSpendAmount" style="font-size:30px;margin-top:4px">$0</div>
@@ -1319,7 +1319,11 @@
            warning banner it drives still appears on Log where the spending
            actually happens. -->
       <div class="card" id="budgetsCard">
-        <h2>Budgets</h2>
+        <div class="card-head">
+          <h2>Budgets</h2>
+          <span class="info-icon" tabindex="0" role="button" data-info="budgetsExplainer" title="A limit is a ceiling, not a target to spend up to. The bar turns amber at 90 percent and red once over, and the words beside it say the same thing so colour is never carrying it alone. This always means the current real-world month, whatever month the Reports page is showing.">i</span>
+        </div>
+        <p class="muted explainer hidden" id="budgetsExplainer">A limit is a ceiling, not a target to spend up to. The bar turns amber at 90 percent and red once over, and the words beside it say the same thing so colour is never carrying it alone. This always means the current real-world month, whatever month the Reports page is showing.</p>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Monthly limit per category, for the current month.</p>
         <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
         <div class="row" style="margin-top:10px">
@@ -1358,13 +1362,20 @@
            estimate, the same restraint every other real-math-only card in
            this app holds. populateForecastAccountSelect/renderCashFlowForecast
            moved out of loadReports into goToView's "plan" branch with it. -->
-      <div class="card">
+      <div class="card" id="forecastCard">
         <div class="topbar" style="margin-bottom:6px">
-          <h2>Cash flow forecast</h2>
+          <div class="card-head">
+            <h2>Cash flow forecast</h2>
+            <span class="info-icon" tabindex="0" role="button" data-info="forecastExplainer" title="Where one account is heading over the next 30 days, built only from bills and pay you have already entered. It never guesses your day-to-day spending, so treat the line as the best case rather than a prediction. Pick an account you owe money on and it projects what you would owe instead.">i</span>
+          </div>
           <select id="forecastAccountSelect" aria-label="Account to forecast" style="width:auto;font-size:12px"></select>
         </div>
+        <p class="muted explainer hidden" id="forecastExplainer">Where one account is heading over the next 30 days, built only from bills and pay you have already entered. It never guesses your day-to-day spending, so treat the line as the best case rather than a prediction. Pick an account you owe money on and it projects what you would owe instead.</p>
         <div class="chartbox short"><canvas id="forecastChart"></canvas></div>
-        <p class="muted" style="font-size:12px;margin:8px 0 0">The next 30 days, using only bills and pay you have already told the app about. It does not try to guess your everyday spending.</p>
+        <!-- Written by renderCashFlowForecast: the wording changes with the
+             account, since a rising line means opposite things for money you
+             hold and money you owe. -->
+        <p class="muted" id="forecastNote" style="font-size:12px;margin:8px 0 0">The next 30 days, using only bills and pay you have already told the app about. It does not try to guess your everyday spending.</p>
       </div>
     </div>
 
@@ -2400,7 +2411,9 @@
         <div class="help-topic" id="helpTopic-cash-flow-forecast">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-cash-flow-forecast-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Cash flow forecast</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-cash-flow-forecast-body">
-          <p>Pick any account to see its balance projected forward 30 days, built only from what's actually known and scheduled: that account's active subscriptions/bills and active income sources. It deliberately does not blend in an average-spending estimate - a forecast built only from real scheduled items is honest about what it knows, rather than looking more predictive than this app can actually claim to be. A bill or paycheck due today isn't shown as a separate point (it's already reflected in the starting balance); one due tomorrow or later shows up as a change in the line on the day it's expected.</p>
+          <p>Pick any account to see it projected forward 30 days, built only from what's actually known and scheduled: that account's active subscriptions/bills and active income sources. It deliberately does not blend in an average-spending estimate - a forecast built only from real scheduled items is honest about what it knows, rather than looking more predictive than this app can actually claim to be. A bill or paycheck due today isn't shown as a separate point (it's already reflected in the starting balance); one due tomorrow or later shows up as a change in the line on the day it's expected.</p>
+          <p><strong>Pick a credit card or a loan and the line means the opposite thing</strong>, so the sentence under the chart changes with it. For an account holding money, a bill pushes the line down. For an account you owe on, a bill charged to it pushes the line <em>up</em>, because you now owe more. The wording always says which of the two you are looking at rather than leaving you to work it out from the account name.</p>
+          <p>If nothing is scheduled on the account in the next 30 days, the line is just today's figure and it says so, rather than leaving a flat line looking like a fault.</p>
           </div>
         </div>
 

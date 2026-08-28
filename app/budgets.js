@@ -60,10 +60,22 @@ const AUTO_LOG_CYCLES = new Set(["monthly", "quarterly", "semiannual", "annual"]
  * merely due - that is why the boundary below is strictly "> today", not
  * "today or later".
  *
- * A category already over its own limit contributes $0, never a negative,
- * to the total - its overspend already happened and already shows up in the
- * real account balance; letting it eat into other categories' room here
- * would hide the overspend rather than surface it.
+ * **Overspend counts against this total, and is reported separately so it
+ * can be named on screen.** An earlier version floored each category at $0
+ * on the reasoning that an overspend has already left the real account, so
+ * subtracting it again would double-count. That is true of a per-category
+ * reading but wrong for an AGGREGATE one: if $300 is budgeted across two
+ * categories and $290 is spent, $10 is left, not $60. Flooring overstates
+ * what is safe to spend, which is exactly backwards for a number whose job
+ * is to stop you overcommitting. `overspent` is returned alongside so the
+ * caller can say so in words rather than letting a quietly smaller total be
+ * the only signal.
+ *
+ * `fundsMonthly` (from sinkingFundMonthlyTotal below) is netted off for the
+ * same reason as `upcoming`: money you have committed to setting aside this
+ * month is not free to spend, and it is disjoint from both other sources -
+ * contributing to a sinking fund writes no expense, so it has never reduced
+ * any category's `spent`.
  *
  * Returns null when there are no budgeted categories at all - there is
  * nothing honest to compute yet, and a $0 or negative figure derived from
@@ -71,13 +83,17 @@ const AUTO_LOG_CYCLES = new Set(["monthly", "quarterly", "semiannual", "annual"]
  *
  * @param {ReturnType<typeof budgetStatus>} statuses
  * @param {object[]} subscriptions rows from the `subscriptions` table
+ * @param {number} [fundsMonthly] from sinkingFundMonthlyTotal()
  * @param {Date} [today]
- * @returns {{budgetedRoom:number, upcoming:number, available:number}|null}
+ * @returns {{budgetedRoom:number, overspent:number, upcoming:number, funds:number, available:number}|null}
  */
-export function safeToSpend(statuses, subscriptions, today = new Date()) {
+export function safeToSpend(statuses, subscriptions, fundsMonthly = 0, today = new Date()) {
   if (!statuses.length) return null;
 
-  const budgetedRoom = statuses.reduce((sum, s) => sum + Math.max(0, s.limit - s.spent), 0);
+  // Signed, not floored: total limits minus total spent.
+  const budgetedRoom = statuses.reduce((sum, s) => sum + (s.limit - s.spent), 0);
+  // How much of that shortfall is real overspend, for naming it on screen.
+  const overspent = statuses.reduce((sum, s) => sum + Math.max(0, s.spent - s.limit), 0);
 
   const todayStr = today.toISOString().slice(0, 10);
   // Last real day of the current month, whatever its length - not a fixed 30.
@@ -88,5 +104,86 @@ export function safeToSpend(statuses, subscriptions, today = new Date()) {
     .filter((s) => s.next_renewal > todayStr && s.next_renewal <= monthEndStr)
     .reduce((sum, s) => sum + Number(s.amount || 0), 0);
 
-  return { budgetedRoom: r2(budgetedRoom), upcoming: r2(upcoming), available: r2(budgetedRoom - upcoming) };
+  const funds = r2(Math.max(0, Number(fundsMonthly) || 0));
+
+  return {
+    budgetedRoom: r2(budgetedRoom),
+    overspent: r2(overspent),
+    upcoming: r2(upcoming),
+    funds,
+    available: r2(budgetedRoom - upcoming - funds),
+  };
+}
+
+/**
+ * Progress toward a dated savings goal, per docs/budgeting-feature-design.md
+ * section 3: a sinking fund is money set aside for a known, irregular cost
+ * (car registration, an annual insurance premium), not a monthly spending
+ * ceiling. Deliberately its own concept rather than a rollover flag on a
+ * budget category - see that doc for the comparison against how EveryDollar,
+ * YNAB, Goodbudget, Copilot and Monarch each implement this.
+ *
+ * `monthlyNeeded` is the headline: total still needed divided by whole
+ * months remaining until the target date, which is the number that makes a
+ * large irregular bill plannable. It is null when there is no target date,
+ * because without one there is no deadline to divide by and inventing one
+ * would state something the app does not know.
+ *
+ * A fund already at or past its target reports `monthlyNeeded: 0`, not a
+ * negative - there is genuinely nothing more to set aside. A target date
+ * already in the past with money still owed reports the full remaining
+ * amount as due now (`monthsLeft: 0`), rather than dividing by zero or
+ * quietly showing a stale monthly figure.
+ *
+ * @param {object[]} funds rows from the `sinking_funds` table
+ * @param {Date} [today]
+ */
+export function sinkingFundStatus(funds, today = new Date()) {
+  return funds.map((f) => {
+    const target = Number(f.target_amount) || 0;
+    const saved = Number(f.saved) || 0;
+    const remaining = r2(Math.max(0, target - saved));
+    const pct = target > 0 ? Math.round((saved / target) * 100) : 0;
+
+    let monthsLeft = null;
+    let monthlyNeeded = null;
+    if (f.target_date) {
+      const [y, m] = String(f.target_date).split("-").map(Number);
+      // Whole months between now and the target month, floored at 0. Counted
+      // in calendar months rather than days because a contribution is a
+      // monthly act; a target 40 days out is two more paydays, not 1.3.
+      monthsLeft = Math.max(0, (y - today.getFullYear()) * 12 + (m - 1 - today.getMonth()));
+      monthlyNeeded = remaining === 0 ? 0 : r2(monthsLeft > 0 ? remaining / monthsLeft : remaining);
+    }
+
+    return {
+      id: f.id,
+      name: f.name,
+      target: r2(target),
+      saved: r2(saved),
+      remaining,
+      pct,
+      complete: remaining === 0 && target > 0,
+      targetDate: f.target_date || null,
+      monthsLeft,
+      monthlyNeeded,
+      // Past its date with money still owed. Worth flagging separately from
+      // "complete" so the UI can say the deadline passed rather than only
+      // showing a large monthlyNeeded with no explanation.
+      overdue: !!f.target_date && monthsLeft === 0 && remaining > 0,
+    };
+  });
+}
+
+/**
+ * What every fund still needs THIS month, combined. This is the figure that
+ * belongs alongside safe-to-spend: money you have committed to setting aside
+ * is not money that is free to spend.
+ *
+ * Only funds with a target date contribute - without a deadline there is no
+ * per-month obligation to compute, so counting them would invent a
+ * commitment the user never made.
+ */
+export function sinkingFundMonthlyTotal(statuses) {
+  return r2(statuses.reduce((sum, s) => sum + (s.monthlyNeeded || 0), 0));
 }

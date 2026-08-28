@@ -13,7 +13,7 @@ import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
-import { budgetStatus, safeToSpend } from "./budgets.js";
+import { budgetStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, FULL_YEAR_DAYS } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import {
@@ -288,12 +288,14 @@ let marketMoverSummary = null; // the optional beginner-friendly paragraph for t
 let agentRunStatus = {}; // { "deal-agent": {...}, "price-agent": {...} } - last-run freshness/health (agent_run_status)
 let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
 let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
+let sinkingFunds = []; // saving-up-for goals (sinking_funds) - Plan page
 let investmentTargets = []; // per-bucket allocation targets (Investments tab)
 let assets = [];      // net-worth assets (Log page)
 let debts = [];        // tracked debts, i.e. rows in the `liabilities` table (Log page)
 let accountActivity = []; // non-expense money movements (asset adjust, liability pay) - Recent History
 let editing = null;   // expense row currently in the edit modal
 let editingSub = null; // subscription row currently in the sub form
+let editingFund = null; // sinking_funds row currently in the fund form
 let editingIncome = null; // income row currently in the income form
 let userId = null;    // signed-in user's uuid
 let userEmail = null; // signed-in user's email, shown read-only in Profile
@@ -392,7 +394,7 @@ function goToView(view) {
   // and the liabilities load, so Plan only has to populate the one picker
   // that used to be filled by loadReports.
   if (view === "log") loadSubscriptions();
-  else if (view === "plan") { populateForecastAccountSelect(); renderCashFlowForecast(); renderDebtStrategy(); }
+  else if (view === "plan") { populateForecastAccountSelect(); renderCashFlowForecast(); renderDebtStrategy(); renderSinkingFunds(); }
   else if (view === "reports") loadReports();
   else if (view === "invest") {
     renderInvestments(); renderInvestmentsTrend(); renderMarketOverview();
@@ -438,7 +440,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadSinkingFunds(), loadInvestmentTargets()]);
   // Both assets and assetPriceFindings are guaranteed loaded by the
   // Promise.all above (no race) - this is what keeps Net Worth/the Assets
   // card/the net-worth trend chart in sync with live prices on every app
@@ -4165,6 +4167,7 @@ async function loadExpenses() {
   renderNetWorth();
   renderBudgetWarnings();
   renderBudgets(); // Log-page card now, so it refreshes with the expense list
+  renderSinkingFunds();
 
   populateTxnCategoryFilter();
   renderRecentTransactions();
@@ -4396,21 +4399,173 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
 // not include, and why null (no budgets at all) is a real, distinct state
 // from $0.
 function renderSafeToSpend(statuses) {
-  const result = safeToSpend(statuses, subscriptions);
+  const fundsMonthly = sinkingFundMonthlyTotal(sinkingFundStatus(sinkingFunds));
+  const result = safeToSpend(statuses, subscriptions, fundsMonthly);
   $("safeToSpendEmpty").classList.toggle("hidden", !!result);
   $("safeToSpendBody").classList.toggle("hidden", !result);
   if (!result) return;
-  const { budgetedRoom, upcoming, available } = result;
+  const { budgetedRoom, overspent, upcoming, funds, available } = result;
   $("safeToSpendAmount").textContent = fmt(available);
   // A negative figure is a real, useful fact (you're short for what's
   // already coming due), never floored to hide it - the color and the
   // words both say so, matching this app's rule that a fact is never
   // stated in color alone.
   $("safeToSpendAmount").style.color = available < 0 ? "var(--err)" : "";
-  $("safeToSpendNote").textContent = upcoming > 0
-    ? `${fmt(budgetedRoom)} left across your budgets, minus ${fmt(upcoming)} due before the month ends`
+
+  // Built as clauses so the note only ever mentions a deduction that is
+  // really there, rather than printing "minus $0.00" twice.
+  const deductions = [];
+  if (upcoming > 0) deductions.push(`${fmt(upcoming)} due before the month ends`);
+  if (funds > 0) deductions.push(`${fmt(funds)} you are setting aside`);
+  $("safeToSpendNote").textContent = deductions.length
+    ? `${fmt(budgetedRoom)} left across your budgets, minus ${deductions.join(" and ")}`
     : `Based on ${fmt(budgetedRoom)} left across your budgets`;
+
+  // Overspending is named, never left as only a quietly smaller total. The
+  // headline already counts it (see safeToSpend's own note on why flooring
+  // per category overstates an aggregate), but a number on its own cannot
+  // say WHY it shrank, and the whole point of catching an overspend is that
+  // the user sees it happened.
+  const overEl = $("safeToSpendOverspent");
+  overEl.classList.toggle("hidden", !(overspent > 0));
+  if (overspent > 0) {
+    const n = statuses.filter((s) => s.over).length;
+    overEl.textContent = `Already ${fmt(overspent)} over on ${n === 1 ? "one category" : `${n} categories`}. That is counted above, so this figure is what is left after it.`;
+  }
 }
+
+// ---- SINKING FUNDS (Plan page) ----------------------------------------------
+// Saving toward a known irregular cost. Deliberately never moves real money -
+// see supabase/59_sinking_funds.sql's header for why, and
+// docs/budgeting-feature-design.md section 3 for the design.
+async function loadSinkingFunds() {
+  const { data } = await sb.from("sinking_funds").select("*").order("target_date", { nullsFirst: false });
+  sinkingFunds = data || [];
+}
+
+function renderSinkingFunds() {
+  const statuses = sinkingFundStatus(sinkingFunds);
+  $("sinkingFundsList").innerHTML = statuses.length
+    ? statuses.map((s) => {
+        const pctClamped = Math.min(100, s.pct);
+        const barColor = s.complete ? "var(--ok)" : s.overdue ? "var(--err)" : "var(--accent-2)";
+        // Every line states its own meaning in words; color is never the
+        // only thing carrying it.
+        let when = "No date set, so no monthly amount worked out";
+        if (s.complete) when = "Fully saved";
+        else if (s.overdue) when = `Needed by ${s.targetDate}, so all ${fmt(s.remaining)} is due now`;
+        else if (s.monthlyNeeded != null) {
+          when = `${fmt(s.monthlyNeeded)} a month to be ready by ${s.targetDate} (${s.monthsLeft} ${s.monthsLeft === 1 ? "month" : "months"} left)`;
+        }
+        // Actions sit on their own line under the bar rather than crowding the
+        // figures: two text controls plus an amount wrap badly on a phone.
+        return `
+      <div style="margin-bottom:14px">
+        <div class="row" style="justify-content:space-between;font-size:13px;gap:8px">
+          <span>${esc(s.name)}</span>
+          <span>${fmt(s.saved)} / ${fmt(s.target)} (${s.pct}%)</span>
+        </div>
+        <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
+          <div style="background:${barColor};width:${pctClamped}%;height:100%"></div>
+        </div>
+        <div class="row" style="justify-content:space-between;align-items:center;gap:10px;margin-top:2px">
+          <span class="muted text-xs ${s.overdue ? "danger" : ""}">${esc(when)}</span>
+          <span style="white-space:nowrap">
+            <button type="button" class="link-action" data-add-fund="${esc(s.id)}" aria-label="Set money aside for ${esc(s.name)}">Add money</button>
+            <button type="button" class="link-action" data-edit-fund="${esc(s.id)}" style="margin-left:12px" aria-label="Edit ${esc(s.name)}">Edit</button>
+          </span>
+        </div>
+      </div>`;
+      }).join("")
+    : `<p class="muted" style="font-size:13px">Nothing being saved for yet.</p>`;
+
+  document.querySelectorAll("[data-edit-fund]").forEach((el) => {
+    el.onclick = () => openFundForm(sinkingFunds.find((f) => f.id === el.dataset.editFund) || null);
+  });
+  document.querySelectorAll("[data-add-fund]").forEach((el) => {
+    el.onclick = () => contributeToFund(sinkingFunds.find((f) => f.id === el.dataset.addFund));
+  });
+}
+
+// Raising `saved` is the whole operation: no asset is debited and no
+// account_activity row is written. Setting money aside is a plan for money
+// already held, not a movement of it - applying a balance delta here would
+// invent a transaction that never happened.
+let contributingFund = null;
+function contributeToFund(fund) {
+  if (!fund) return;
+  contributingFund = fund;
+  const st = sinkingFundStatus([fund])[0];
+  $("fundContributeSub").textContent = `${fund.name}: ${fmt(st.saved)} of ${fmt(st.target)} set aside, ${fmt(st.remaining)} to go.`;
+  $("fundContributeAmount").value = "";
+  openModal("fundContributeModal");
+}
+$("fundContributeClose").onclick = () => closeModal("fundContributeModal");
+$("fundContributeConfirmBtn").onclick = async () => {
+  if (!contributingFund) return;
+  const amount = parseFloat($("fundContributeAmount").value);
+  if (!Number.isFinite(amount) || amount <= 0) { flagField("fundContributeAmount", "Enter an amount greater than zero"); return toast("Enter an amount greater than zero", "error"); }
+  const saved = Math.round((Number(contributingFund.saved || 0) + amount) * 100) / 100;
+  const { error } = await sb.from("sinking_funds").update({ saved }).eq("id", contributingFund.id);
+  if (error) { flagField("fundContributeAmount", error.message); return toast(error.message, "error"); }
+  const name = contributingFund.name;
+  closeModal("fundContributeModal");
+  contributingFund = null;
+  await loadSinkingFunds();
+  renderSinkingFunds();
+  renderBudgets(); // a smaller remaining need changes safe-to-spend
+  toast(`${fmt(amount)} set aside for ${name}`);
+};
+
+function openFundForm(fund) {
+  editingFund = fund;
+  $("fundFormTitle").textContent = fund ? "Edit what you are saving for" : "New thing to save for";
+  $("fundName").value = fund?.name ?? "";
+  $("fundTarget").value = fund?.target_amount ?? "";
+  $("fundSaved").value = fund?.saved ?? "";
+  $("fundDate").value = fund?.target_date ?? "";
+  $("fundNotes").value = fund?.notes ?? "";
+  $("deleteFundBtn").classList.toggle("hidden", !fund);
+  $("fundForm").classList.remove("hidden");
+  $("fundForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function closeFundForm() { $("fundForm").classList.add("hidden"); editingFund = null; }
+
+$("addFundBtn").onclick = () => openFundForm(null);
+$("cancelFundBtn").onclick = closeFundForm;
+
+$("saveFundBtn").onclick = async () => {
+  const name = $("fundName").value.trim();
+  const target_amount = parseFloat($("fundTarget").value);
+  const savedRaw = $("fundSaved").value.trim();
+  const saved = savedRaw === "" ? 0 : parseFloat(savedRaw);
+  if (!name) { flagField("fundName", "Give this a name so you can tell it apart"); return toast("Name required", "error"); }
+  if (!Number.isFinite(target_amount) || target_amount <= 0) { flagField("fundTarget", "Enter how much you need in total"); return toast("Enter a valid total", "error"); }
+  if (!Number.isFinite(saved) || saved < 0) { flagField("fundSaved", "This cannot be less than zero"); return toast("Enter a valid amount set aside", "error"); }
+
+  const row = { name, target_amount, saved, target_date: $("fundDate").value || null, notes: $("fundNotes").value.trim() || null };
+  const { error } = editingFund
+    ? await sb.from("sinking_funds").update(row).eq("id", editingFund.id)
+    : await sb.from("sinking_funds").insert(row);
+  if (error) { flagField("fundName", error.message); return toast(error.message, "error"); }
+  closeFundForm();
+  await loadSinkingFunds();
+  renderSinkingFunds();
+  renderBudgets();
+  toast("Saved");
+};
+
+$("deleteFundBtn").onclick = async () => {
+  if (!editingFund) return;
+  if (!(await confirmModal(`Stop saving for ${editingFund.name}? This only removes the goal - it does not touch any of your accounts.`, { title: "Remove this goal", confirmLabel: "Remove" }))) return;
+  const { error } = await sb.from("sinking_funds").delete().eq("id", editingFund.id);
+  if (error) return toast(error.message, "error");
+  closeFundForm();
+  await loadSinkingFunds();
+  renderSinkingFunds();
+  renderBudgets();
+  toast("Removed");
+};
 
 $("saveBudgetBtn").onclick = async () => {
   const category = $("budgetCategory").value;

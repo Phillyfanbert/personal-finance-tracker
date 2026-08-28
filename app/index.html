@@ -1262,7 +1262,47 @@
         <div id="safeToSpendBody" class="hidden">
           <div class="big" id="safeToSpendAmount" style="font-size:30px;margin-top:4px">$0</div>
           <p class="muted text-xs" id="safeToSpendNote" style="margin:4px 0 0"></p>
+          <!-- Overspend is named in words, never left as only a smaller
+               total - the number alone cannot tell you WHY it shrank. -->
+          <p class="text-xs danger hidden" id="safeToSpendOverspent" style="margin:4px 0 0"></p>
         </div>
+      </div>
+
+      <!-- Sinking funds: saving toward a known irregular cost, added
+           2026-08-28 per docs/budgeting-feature-design.md section 3. A
+           separate concept from a budget on purpose - a budget is a monthly
+           ceiling, this is progress toward one dated goal. It never moves
+           real money (see supabase/59_sinking_funds.sql for why). -->
+      <div class="card" id="sinkingFundsCard">
+        <div class="card-head">
+          <h2>Saving up for something</h2>
+          <span class="info-icon" tabindex="0" role="button" data-info="sinkingFundsExplainer" title="For costs that don't come every month - car registration, an annual insurance bill, holiday gifts. Give it a total and a date, and the app works out how much to set aside each month so the bill is already covered when it lands. Nothing here moves your money; it only keeps track of what you've set aside.">i</span>
+        </div>
+        <p class="muted explainer hidden" id="sinkingFundsExplainer">For costs that don't come every month - car registration, an annual insurance bill, holiday gifts. Give it a total and a date, and the app works out how much to set aside each month so the bill is already covered when it lands. Nothing here moves your money; it only keeps track of what you've set aside.</p>
+        <div id="sinkingFundsList" style="margin-top:8px"><p class="muted" style="font-size:13px">Nothing being saved for yet.</p></div>
+        <button class="secondary btn-xs" id="addFundBtn" style="margin-top:10px">+ Add something to save for</button>
+      </div>
+
+      <div class="card hidden" id="fundForm">
+        <div class="topbar" style="margin-bottom:6px"><h2 id="fundFormTitle">New thing to save for</h2></div>
+        <label for="fundName">What is it for (required)</label>
+        <input id="fundName" placeholder="Car registration" />
+        <div class="row">
+          <div><label for="fundTarget">Total needed (required)</label><input id="fundTarget" type="number" step="0.01" min="0" inputmode="decimal" /></div>
+          <div><label for="fundSaved">Set aside so far</label><input id="fundSaved" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0" /></div>
+        </div>
+        <label for="fundDate">Needed by</label>
+        <input id="fundDate" type="date" />
+        <p class="muted text-xs" id="fundDateNote" style="margin:4px 0 0">Add a date and the app can tell you how much to put aside each month. Without one it just tracks progress.</p>
+        <label for="fundNotes">Notes</label>
+        <input id="fundNotes" placeholder="e.g. renewal is every October" />
+        <div class="stack-3"></div>
+        <div class="row">
+          <button id="saveFundBtn">Save</button>
+          <button class="secondary" id="cancelFundBtn">Cancel</button>
+        </div>
+        <div class="stack-2"></div>
+        <button class="secondary hidden danger" id="deleteFundBtn">Delete this</button>
       </div>
 
       <!-- An ongoing monthly limit per category, not per-month-varying - set
@@ -1858,6 +1898,17 @@
     </div>
   </div>
 
+  <div id="fundContributeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fundContributeTitle">
+    <div class="sheet">
+      <div class="topbar"><strong id="fundContributeTitle">Set money aside</strong><button class="secondary" id="fundContributeClose" style="width:auto;padding:6px 12px" aria-label="Close">✕</button></div>
+      <p class="muted" style="font-size:12px;margin:0 0 8px" id="fundContributeSub"></p>
+      <label for="fundContributeAmount">How much are you setting aside</label>
+      <input id="fundContributeAmount" type="number" step="0.01" min="0" inputmode="decimal" />
+      <p class="muted" style="font-size:11px;margin:2px 0 8px">This only updates the goal. It does not move money between your accounts - if you really moved it, record that as a transfer on the Log page.</p>
+      <button id="fundContributeConfirmBtn">Set aside</button>
+    </div>
+  </div>
+
   <div id="debtBalanceForm" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="debtBalanceTitle">
     <div class="sheet">
       <div class="topbar"><strong id="debtBalanceTitle"><span id="debtBalanceLabel"></span></strong><button class="secondary" id="debtBalanceClose" style="width:auto;padding:6px 12px">✕</button></div>
@@ -2279,15 +2330,17 @@
       </div>
       <div id="helpContentPlan" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramPlan" role="group" aria-label="The Plan page, card by card, in the order they appear" viewBox="0 0 680 190" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramPlan" role="group" aria-label="The Plan page, card by card, in the order they appear" viewBox="0 0 680 234" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="34" fill="var(--text)" font-size="14">Safe to spend</text>
             <rect x="10" y="54" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="78" fill="var(--text)" font-size="14">Budgets</text>
+            <text x="40" y="78" fill="var(--text)" font-size="14">Saving up for something</text>
             <rect x="10" y="98" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="122" fill="var(--text)" font-size="14">Paying off what you owe</text>
+            <text x="40" y="122" fill="var(--text)" font-size="14">Budgets</text>
             <rect x="10" y="142" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="166" fill="var(--text)" font-size="14">Cash flow forecast</text>
+            <text x="40" y="166" fill="var(--text)" font-size="14">Paying off what you owe</text>
+            <rect x="10" y="186" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="210" fill="var(--text)" font-size="14">Cash flow forecast</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Everything on this page is about what happens <em>next</em>, which is what separates it from Reports: a limit you are setting, an order you are weighing up, and a balance projected forward. Nothing here changes any of your balances on its own. Subscriptions and bills used to be this tab and now live under Log, with the rest of your spending.</p>
@@ -2300,9 +2353,20 @@
         <div class="help-topic" id="helpTopic-safe-to-spend">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-safe-to-spend-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Safe to spend</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-safe-to-spend-body">
-          <p>What's left in the categories you've set a monthly limit for below, minus any subscription or bill due before the month ends that hasn't been charged to an account yet. It's a narrower number on purpose: a category with no limit set isn't part of it at all, and a category you've already gone over doesn't make this number worse - that money already left a real account, so counting it twice here wouldn't be honest.</p>
-          <p>If it shows a negative number, that means what's already coming due this month adds up to more than you have left across your budgets. It's shown as a real number, not hidden, because it's telling you something worth knowing.</p>
+          <p>What's left in the categories you've set a monthly limit for below, minus two things you've already committed to: any subscription or bill due before the month ends that hasn't been charged yet, and whatever you still need to set aside this month for the things you're saving up for. It's a narrower number on purpose - a category with no limit set isn't part of it at all.</p>
+          <p>Going over on one category <em>does</em> make this number smaller, and the card says so in words underneath. If you've budgeted $300 in total and spent $290, what's left is $10, not $60 - pretending the overspend didn't happen would tell you it's safe to spend money you no longer have.</p>
+          <p>If it shows a negative number, that means what's already coming due this month adds up to more than you have left. It's shown as a real number, not hidden, because it's telling you something worth knowing.</p>
           <p>This card doesn't appear until you've set at least one budget below.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-saving-up-for-something">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-saving-up-for-something-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Saving up for something</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-saving-up-for-something-body">
+          <p>Some costs don't arrive every month, so a monthly budget never sees them coming: car registration once a year, an insurance premium, a holiday season, a trip. When one lands it can look like a disastrous month even though you always knew it was coming.</p>
+          <p>Add it here with the total you'll need and the date you'll need it by, and the app divides one by the other: "$150 a month to be ready by 2026-11-01". Set aside a bit each month and the bill is already covered when it turns up. If you don't give it a date, the app just tracks your progress and doesn't invent a monthly amount, because without a deadline there's nothing to divide by.</p>
+          <p><strong>This never moves your money.</strong> "Add money" only records that you set some aside - no account is debited and nothing appears in your spending. If you genuinely moved cash into a separate savings account, record that as a transfer on the Log page as well. Deleting a goal removes the goal only; your accounts are untouched.</p>
+          <p>Whatever you still need to set aside this month is subtracted from Safe to spend above, because money you've committed to putting away isn't free to spend.</p>
           </div>
         </div>
 

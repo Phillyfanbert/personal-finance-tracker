@@ -118,7 +118,13 @@ export const TOUR_STEPS = {
     {
       target: "safeToSpendCard",
       title: "How much you can still spend",
-      body: "Once you have set at least one limit below, this shows what is actually left to spend: what is under your limits right now, minus anything already coming due before the month ends. It is not everything you own, just the part this app can say for certain is still free to spend.",
+      body: "Once you have set at least one limit below, this shows what is actually left to spend: what is under your limits right now, minus anything already coming due before the month ends and anything you are setting aside. If you have gone over on something, that counts against this number and the card says so - it will not tell you money is free to spend when it already went somewhere.",
+      placement: "bottom",
+    },
+    {
+      target: "sinkingFundsCard",
+      title: "Saving up for something",
+      body: "Some costs do not come every month - car registration, a yearly insurance bill, presents. Put in the total and when you need it by, and the app works out how much to put aside each month so it is already covered when it arrives. Nothing here moves your money; it only keeps track of what you have set aside.",
       placement: "bottom",
     },
     {

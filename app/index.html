@@ -1338,6 +1338,11 @@
           <span class="info-icon" tabindex="0" role="button" data-info="debtStrategyExplainer" title="Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.">i</span>
         </div>
         <p class="muted explainer hidden" id="debtStrategyExplainer">Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.</p>
+        <!-- A short line saying what the card IS, always visible. The concept
+             explanation stays behind the "i". Without this the first thing on
+             the card was a form field, so it asked for a number before saying
+             what the number was for - reported as exactly that confusion. -->
+        <p class="muted text-sm" id="debtStrategyLead" style="margin:0 0 10px">When you owe money in more than one place, the order you pay them off in changes how much interest you pay in total. Put in what you could spare each month and this compares the two usual orders.</p>
         <label for="debtStrategyExtra">Spare money you could put toward debt each month</label>
         <input id="debtStrategyExtra" type="number" step="0.01" inputmode="decimal" placeholder="0" />
         <div id="debtStrategyResult" style="margin-top:10px;font-size:13px"></div>
@@ -2385,7 +2390,8 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-debt-payoff-strategy-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Paying off what you owe</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-debt-payoff-strategy-body">
           <p>If you owe money in more than one place, there are two common ways to decide where any spare money should go. One is to put it toward whichever debt charges the highest interest rate. The other is to put it toward whichever debt is smallest, so you clear one sooner. This card works out what each would actually cost you and shows both, side by side.</p>
-          <p>The box is for spare money you could put toward debt each month, on top of the smallest payment each one already requires. Leaving it at 0 is fine - the comparison still works, it just takes longer either way. For each option you get how many months until everything is paid off, and how much interest you would pay in total getting there.</p>
+          <p>The box is for spare money you could put toward debt each month, on top of the smallest payment each one already requires. For each option you get how many months until everything is paid off, and how much interest you would pay in total getting there.</p>
+          <p><strong>The box is what makes the two differ.</strong> Left at 0, every debt only ever gets its own smallest required payment, so there is no spare money to send anywhere and the order you choose changes nothing - the card shows a single result and says so, rather than printing the same numbers twice. Put an amount in and the two orders separate, because that is the money each one is deciding where to send. With only one debt there is likewise no order to choose, and the card says that too.</p>
           <p>It will never tell you which to choose. Both are reasonable, people pick differently for good reasons, and this app shows you the numbers rather than making that decision for you.</p>
           <p>A debt is left out of the comparison if the app does not yet know its interest rate and smallest monthly payment, if it is already paid off, or if it is a home equity line you can still borrow more from (those work differently enough that including them would give a misleading answer). A short note under the numbers says how many were left out, and you can fill in the missing details by tapping that debt under Liabilities.</p>
           </div>

@@ -3478,11 +3478,12 @@ let csvLastImportedIds = []; // this session's last import - Undo target
 let csvLastImportedActivityIds = [];
 
 function resetCsvImportState() {
-  csvHeaders = []; csvDataRows = [];
+  csvHeaders = []; csvDataRows = []; csvWorkbook = null;
   csvMapping = { dateCol: null, amountCol: null, descCol: null, categoryCol: null };
   csvPreviewRows = []; csvSkippedCount = 0; csvLastImportedIds = [];
   $("csvFileInput").value = "";
   $("csvFileError").textContent = "";
+  $("csvSheetPicker").classList.add("hidden");
   $("csvStep1").classList.remove("hidden");
   $("csvStep2").classList.add("hidden");
   $("csvStep3").classList.add("hidden");
@@ -3506,16 +3507,30 @@ function csvColumnOptions(selectedIdx) {
 // library the Excel export uses.
 const isSpreadsheetFile = (file) => /\.(xlsx|xlsm|xlsb|xls)$/i.test(file.name);
 
+// Kept as the workbook itself, not pre-extracted rows, ONLY while a sheet
+// picker is on screen for a multi-tab file - reading a sheet is cheap, so
+// there is no reason to re-read the File object when the user switches tabs.
+// Cleared by resetCsvImportState.
+let csvWorkbook = null;
+
+function rowsFromSheet(XLSX, wb, sheetName) {
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: "" });
+  return rows.filter((r) => r.some((cell) => String(cell).trim() !== ""));
+}
+
+// For a single-sheet file (the common case) this returns rows directly, same
+// as before. For a workbook with more than one sheet it returns the workbook
+// itself instead of guessing which tab has the real data - a silent "read the
+// first tab" was tried and rejected: a real bank/broker export routinely puts
+// a summary or disclosures page first, which would import as nonsense with no
+// visible sign anything was wrong.
 async function rowsFromFile(file) {
   if (isSpreadsheetFile(file)) {
     const XLSX = await loadSpreadsheetLib();
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-    // First sheet only, and say so: silently concatenating sheets with
-    // different columns would produce nonsense rows.
-    const first = wb.SheetNames[0];
-    if (!first) throw new Error("This workbook has no sheets.");
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[first], { header: 1, raw: false, defval: "" });
-    return { rows: rows.filter((r) => r.some((cell) => String(cell).trim() !== "")), sheet: first, sheetCount: wb.SheetNames.length };
+    if (!wb.SheetNames.length) throw new Error("This workbook has no sheets.");
+    if (wb.SheetNames.length === 1) return { rows: rowsFromSheet(XLSX, wb, wb.SheetNames[0]) };
+    return { workbook: wb, sheetNames: wb.SheetNames };
   }
   const text = await file.text();
   const result = Papa.parse(text, { skipEmptyLines: true });
@@ -3523,9 +3538,56 @@ async function rowsFromFile(file) {
   return { rows: result.data || [] };
 }
 
+// The shared tail of both paths: validate the row count, guess the column
+// mapping, and move to the mapping step. Split out so the direct
+// single-sheet/CSV path and "Continue" from the sheet picker land in exactly
+// the same place.
+function proceedWithRows(rows) {
+  if (!rows.length) {
+    $("csvFileError").textContent = "This file has no rows.";
+    $("csvFileInput").value = "";
+    return;
+  }
+  if (rows.length - 1 > CSV_MAX_ROWS) {
+    $("csvFileError").textContent = `This file has more than ${CSV_MAX_ROWS.toLocaleString()} rows - split it into smaller files.`;
+    $("csvFileInput").value = "";
+    return;
+  }
+  csvHeaders = rows[0];
+  csvDataRows = rows.slice(1);
+  csvMapping = guessColumnMapping(csvHeaders);
+  $("csvMapDate").innerHTML = csvColumnOptions(csvMapping.dateCol);
+  $("csvMapAmount").innerHTML = csvColumnOptions(csvMapping.amountCol);
+  $("csvMapDebit").innerHTML = csvColumnOptions(csvMapping.debitCol);
+  $("csvMapCredit").innerHTML = csvColumnOptions(csvMapping.creditCol);
+  $("csvMapDesc").innerHTML = csvColumnOptions(csvMapping.descCol);
+  $("csvMapCategory").innerHTML = csvColumnOptions(csvMapping.categoryCol);
+  // A file with separate money-out/money-in columns states the direction
+  // by which column a value sits in, so the sign question does not apply
+  // and asking it would only confuse.
+  const hasPair = csvMapping.debitCol != null && csvMapping.creditCol != null;
+  $("csvDebitCreditCols").classList.toggle("hidden", !hasPair);
+  $("csvAmountCol").classList.toggle("hidden", hasPair);
+  $("csvFlipSignLabel").classList.toggle("hidden", hasPair);
+  $("csvFlipSign").checked = !hasPair && guessSignConvention(csvDataRows, csvMapping);
+  // Default to whichever reading the file itself supports: a pair or a
+  // signed column can carry both directions, so start on "both".
+  $("csvRowKind").value = "auto";
+  updateCsvRowKindHint();
+  const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at);
+  $("csvAccount").innerHTML = spendable.length
+    ? spendable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("")
+    : `<option value="">No account available - add one first</option>`;
+  $("csvSheetPicker").classList.add("hidden");
+  $("csvStep1").classList.add("hidden");
+  $("csvStep2").classList.remove("hidden");
+}
+
 $("csvFileInput").onchange = async () => {
   const file = $("csvFileInput").files[0];
   $("csvFileError").textContent = "";
+  $("csvSheetPicker").classList.add("hidden");
+  csvWorkbook = null;
   if (!file) return;
   if (file.size > CSV_MAX_FILE_BYTES) {
     $("csvFileError").textContent = `File is too large (max ${CSV_MAX_FILE_BYTES / 1024 / 1024}MB).`;
@@ -3542,49 +3604,23 @@ $("csvFileInput").onchange = async () => {
     $("csvFileInput").value = "";
     return;
   }
-  {
-    const rows = parsed.rows;
-    if (parsed.sheetCount > 1) {
-      $("csvFileError").textContent = `This workbook has ${parsed.sheetCount} tabs. Reading the first one, "${parsed.sheet}".`;
-    }
-    if (!rows.length) {
-      $("csvFileError").textContent = "This file has no rows.";
-      $("csvFileInput").value = "";
-      return;
-    }
-    if (rows.length - 1 > CSV_MAX_ROWS) {
-      $("csvFileError").textContent = `This file has more than ${CSV_MAX_ROWS.toLocaleString()} rows - split it into smaller files.`;
-      $("csvFileInput").value = "";
-      return;
-    }
-    csvHeaders = rows[0];
-    csvDataRows = rows.slice(1);
-    csvMapping = guessColumnMapping(csvHeaders);
-    $("csvMapDate").innerHTML = csvColumnOptions(csvMapping.dateCol);
-    $("csvMapAmount").innerHTML = csvColumnOptions(csvMapping.amountCol);
-    $("csvMapDebit").innerHTML = csvColumnOptions(csvMapping.debitCol);
-    $("csvMapCredit").innerHTML = csvColumnOptions(csvMapping.creditCol);
-    $("csvMapDesc").innerHTML = csvColumnOptions(csvMapping.descCol);
-    $("csvMapCategory").innerHTML = csvColumnOptions(csvMapping.categoryCol);
-    // A file with separate money-out/money-in columns states the direction
-    // by which column a value sits in, so the sign question does not apply
-    // and asking it would only confuse.
-    const hasPair = csvMapping.debitCol != null && csvMapping.creditCol != null;
-    $("csvDebitCreditCols").classList.toggle("hidden", !hasPair);
-    $("csvAmountCol").classList.toggle("hidden", hasPair);
-    $("csvFlipSignLabel").classList.toggle("hidden", hasPair);
-    $("csvFlipSign").checked = !hasPair && guessSignConvention(csvDataRows, csvMapping);
-    // Default to whichever reading the file itself supports: a pair or a
-    // signed column can carry both directions, so start on "both".
-    $("csvRowKind").value = "auto";
-    updateCsvRowKindHint();
-    const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at);
-    $("csvAccount").innerHTML = spendable.length
-      ? spendable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("")
-      : `<option value="">No account available - add one first</option>`;
-    $("csvStep1").classList.add("hidden");
-    $("csvStep2").classList.remove("hidden");
+  if (parsed.workbook) {
+    // More than one tab: ask which one has the transactions rather than
+    // guessing. Stays on step 1 until the user picks and continues.
+    csvWorkbook = parsed.workbook;
+    $("csvSheetSelect").innerHTML = parsed.sheetNames
+      .map((name, i) => `<option value="${i}">${esc(name)}</option>`).join("");
+    $("csvSheetPicker").classList.remove("hidden");
+    return;
   }
+  proceedWithRows(parsed.rows);
+};
+
+$("csvSheetContinueBtn").onclick = async () => {
+  if (!csvWorkbook) return;
+  const XLSX = await loadSpreadsheetLib(); // already resolved and cached by rowsFromFile
+  const sheetName = csvWorkbook.SheetNames[Number($("csvSheetSelect").value)];
+  proceedWithRows(rowsFromSheet(XLSX, csvWorkbook, sheetName));
 };
 
 $("csvStep2Back").onclick = () => {

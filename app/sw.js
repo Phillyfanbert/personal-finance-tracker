@@ -1,11 +1,35 @@
 // Minimal service worker - enables "Add to Home Screen" install on iOS/Android.
 // Caches the app shell only. The server (Supabase) stays the source of truth
 // per README §2.4; we do NOT cache API responses.
-const CACHE = "expense-shell-v7";
+//
+// SHELL only pre-warms the cache during install, before the first navigation
+// even completes - it is NOT what keeps the app usable offline day to day.
+// That is the fetch handler below: app.js is loaded as a real ES module, so
+// its entire static-import graph (every app/*.js file it pulls in) is fetched
+// by the browser on any single successful online load, and every one of
+// those GETs passes through the network-first cache-as-you-go logic below
+// regardless of whether it is named here. Confirmed live: after exactly one
+// full page load, all 20+ modules were in the cache even though only 6 were
+// ever listed in SHELL.
+//
+// This list had drifted to 6 of the 20+ real modules and nothing noticed,
+// because the fetch-handler safety net silently covered for it in the only
+// case that matters (a user who has opened the app before). The one gap that
+// safety net cannot cover is the FIRST-EVER load being interrupted before the
+// module graph finishes fetching (a flaky connection during install) - kept
+// current here to close that gap too, not because normal offline use depends
+// on it. If it drifts again, that narrow case regresses; ordinary offline use
+// after a successful first run does not.
+const CACHE = "expense-shell-v8";
 const SHELL = [
-  "./index.html", "./app.js", "./categorize.js", "./charts.js",
-  "./subscriptions.js", "./discounts.js", "./gemma.js", "./config.js",
-  "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png",
+  "./index.html", "./config.js", "./manifest.json",
+  "./icons/icon-192.png", "./icons/icon-512.png",
+  "./app.js", "./accountHistory.js", "./bankNames.js", "./budgets.js",
+  "./cashflow.js", "./categorize.js", "./charts.js", "./creditCycle.js",
+  "./csvImport.js", "./depreciation.js", "./discounts.js", "./export.js",
+  "./gemma.js", "./income.js", "./insights.js", "./investments.js",
+  "./networth.js", "./payoff.js", "./subscriptions.js", "./tickers.js",
+  "./tour.js",
 ];
 
 self.addEventListener("install", (e) => {

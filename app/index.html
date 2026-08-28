@@ -1890,6 +1890,16 @@
         <label style="margin-top:12px" for="csvFileInput">Spreadsheet or CSV file (up to 5MB, ~10,000 rows)</label>
         <input id="csvFileInput" type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xlsb,.xls,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
         <p class="muted" id="csvFileError" style="font-size:12px;color:var(--err);margin-top:6px"></p>
+        <!-- Only shown for a workbook with more than one tab. A silent
+             "read the first tab" was tried and rejected: a real bank/broker
+             export routinely puts a summary or disclosures page first, which
+             would import as nonsense with no visible sign anything was
+             wrong - see rowsFromFile's comment in app.js. -->
+        <div class="hidden" id="csvSheetPicker" style="margin-top:12px">
+          <label for="csvSheetSelect">Which tab has your transactions?</label>
+          <select id="csvSheetSelect"></select>
+          <button id="csvSheetContinueBtn" class="btn-sm" style="margin-top:8px">Continue</button>
+        </div>
       </div>
 
       <div id="csvStep2" class="hidden">

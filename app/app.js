@@ -19,7 +19,7 @@ import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } fro
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
 } from "./csvImport.js";
-import { buildExpensesCsv } from "./export.js";
+import { buildExpensesCsv, buildLogCsv, buildPlanCsv, buildInvestmentsCsv, buildReportsCsv } from "./export.js";
 import {
   monthlyAmount, totalMonthly, daysUntil, upcomingRenewals, renewalLabel, advanceRenewal,
   detectRecurringExpenses,
@@ -7666,6 +7666,89 @@ function downloadBlob(blob, filename) {
     URL.revokeObjectURL(url);
   }, 60000);
 }
+
+// One export per page, each built from the SAME already-computed values the
+// page renders, so a figure in the file can never disagree with the figure on
+// screen. Every one confirms first: this is the rule for any path that puts
+// data outside the app, not a special case for the big ones.
+async function exportPage(label, filename, build, hasData) {
+  if (!hasData) return toast("Nothing to export on this page yet", "error");
+  const csv = build();
+  if (!csv || !csv.trim()) return toast("Nothing to export on this page yet", "error");
+  const ok = await confirmModal(
+    `This saves ${label} to your device as a spreadsheet file. Anyone who can open that file can read it.`,
+    { title: "Save to a file?", confirmLabel: "Save file" }
+  );
+  if (!ok) return;
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
+  toast("Saved to your downloads");
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+$("exportLogBtn").onclick = () => exportPage(
+  "everything on the Log page: your spending, your bills, your accounts and what you own and owe",
+  `log-${today()}.csv`,
+  () => buildLogCsv({
+    expenses: [...allExpenses].sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at))),
+    activity: accountActivity, subscriptions, accounts, assets, debts, income: incomeSources,
+  }, acctName),
+  allExpenses.length || accountActivity.length || subscriptions.length || accounts.length
+    || assets.length || debts.length || incomeSources.length);
+
+$("exportPlanBtn").onclick = () => exportPage(
+  "your budgets, the payoff comparison and your cash flow forecast",
+  `plan-${today()}.csv`,
+  () => {
+    const account = accounts.find((a) => a.id === $("forecastAccountSelect").value);
+    return buildPlanCsv({
+      budgets: budgetStatus(budgets, sumBy(allExpenses, "category", monthKey())),
+      payoff: compareDebtStrategies(debts, parseFloat($("debtStrategyExtra").value) || 0),
+      forecast: account ? forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30) : [],
+      forecastAccount: account ? acctLabel(account) : "",
+    });
+  },
+  budgets.length || debts.length || accounts.length);
+
+$("exportInvestBtn").onclick = () => exportPage(
+  "your investments: totals, holdings, realized gains, contribution limits and targets",
+  `investments-${today()}.csv`,
+  () => {
+    // Mirrors renderInvestments' own calls exactly, including the
+    // countable-vs-display split that stops holdings being counted twice.
+    const countable = countableInvestmentAssets();
+    const holdings = investmentHoldings(allInvestmentAssets(), assetPriceFindings);
+    return buildInvestmentsCsv({
+      totals: portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable),
+      holdings,
+      realized: holdingSales,
+      limits: contributionLimitUsage(assets, accountActivity.filter((a) => a.kind === "contribution"), CONTRIBUTION_LIMIT_GROUPS),
+      targets: allocationVsTarget(countable, holdings, investmentTargets),
+    });
+  },
+  allInvestmentAssets().length || holdingSales.length || investmentTargets.length);
+
+$("exportReportsBtn").onclick = () => {
+  const ym = $("monthSel").value || monthKey();
+  return exportPage(
+    `your spending analysis for ${monthLabel(ym)}`,
+    `report-${ym}.csv`,
+    () => {
+      const byCat = sumBy(allExpenses, "category", ym);
+      const labeled = allExpenses.map((e) => ({ ...e, payment_type: accountTypeLabel(e.payment_type) }));
+      const total = byCat.reduce((s, d) => s + d.value, 0);
+      const subs = byCat.filter((d) => d.label === "Subscriptions").reduce((s, d) => s + d.value, 0);
+      return buildReportsCsv({
+        monthLabel: monthLabel(ym),
+        totals: [["Spent in " + monthLabel(ym), total.toFixed(2)], ["Of that, subscriptions", subs.toFixed(2)]],
+        byCategory: byCat,
+        byAccount: sumBy(allExpenses, "account", ym, acctName),
+        byPaymentType: sumBy(labeled, "payment_type", ym),
+        incomeVsExpense: incomeVsExpense(accountActivity.filter((a) => a.kind === "income"), allExpenses, lastMonths(6, monthKey())),
+      });
+    },
+    allExpenses.some((e) => String(e.occurred_at || "").startsWith(ym)));
+};
 
 const USER_DATA_TABLES = [
   "profiles", "accounts", "expenses", "category_rules", "subscriptions",

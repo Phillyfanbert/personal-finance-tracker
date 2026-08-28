@@ -206,6 +206,11 @@
       color: var(--accent); font-weight: 600; font-size: var(--fs-sm); cursor: pointer;
       min-height: var(--target-min); transition: background-color .15s; }
     .help-btn:hover, .help-btn:focus-visible { background: rgba(56, 189, 248, .22); }
+    /* Export is a peer of Help, not a primary action: same pill, quieter tone
+       so it never competes with the page's own content for attention. */
+    .export-btn { background: transparent; border-color: var(--border-strong); color: var(--text); }
+    .export-btn:hover, .export-btn:focus-visible { background: var(--panel-2); border-color: var(--accent); }
+    .export-btn .help-glyph { background: var(--border-strong); color: var(--text); }
     /* The glyph keeps its own circle so the pill still reads as "? = help"
        at a glance, without the word having to carry it alone. */
     .help-btn .help-glyph { display: inline-flex; align-items: center; justify-content: center;
@@ -426,6 +431,7 @@
         <div style="display:flex;align-items:center;gap:10px">
           <h1 style="margin:0;font-size:17px">Personal Finance Tracker</h1>
           <button class="help-btn" id="helpLogBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+          <button class="help-btn export-btn" id="exportLogBtn" title="Export everything on the Log page as a spreadsheet" aria-label="Export everything on the Log page as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
         <div style="display:flex;gap:8px">
           <button class="secondary" id="profileBtn" style="width:auto;padding:8px 12px">Profile</button>
@@ -1088,6 +1094,7 @@
           <button class="secondary" id="backFromReports" style="width:auto;padding:8px 10px">←</button>
           <h1 style="margin:0">Reports</h1>
           <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+          <button class="help-btn export-btn" id="exportReportsBtn" title="Export this month's analysis as a spreadsheet" aria-label="Export this month's analysis as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
         <select id="monthSel" aria-label="Month to show" style="width:auto"></select>
       </div>
@@ -1229,6 +1236,7 @@
           <button class="secondary" id="backFromPlan" style="width:auto;padding:8px 10px">&#8592;</button>
           <h1 style="margin:0">Plan</h1>
           <button class="help-btn" id="helpPlanBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+          <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
       </div>
       <!-- An ongoing monthly limit per category, not per-month-varying - set
@@ -1296,6 +1304,7 @@
           <button class="secondary" id="backFromInvest" style="width:auto;padding:8px 10px">←</button>
           <h1 style="margin:0">Investments</h1>
           <button class="help-btn" id="helpInvestBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+          <button class="help-btn export-btn" id="exportInvestBtn" title="Export your investments as a spreadsheet" aria-label="Export your investments as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
       </div>
 
@@ -2197,6 +2206,14 @@
           <p>If a list fails to load, you get a red box saying so with a <strong>Try again</strong> button, rather than an empty space. That matters because an empty space looks the same as having no data, which would send you looking for the wrong problem. Anything the app tells you in the small message at the bottom of the screen is also read out by screen readers, and a rejected field is outlined in red with the reason written next to it.</p>
           </div>
         </div>
+
+        <div class="help-topic" id="helpTopic-export-log">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-log-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-export-log-body">
+          <p>Saves everything on this page as a spreadsheet: every purchase you have written down, every other money movement, your subscriptions and bills, your income sources, and your accounts with what you own and owe. It is written in the same format Import CSV reads back, so you can move a whole history onto another device without retyping it.</p>
+          <p>It asks you to confirm first, like everything here that puts a copy of your money outside the app.</p>
+          </div>
+        </div>
           </div>
         </div>
       </div>
@@ -2239,6 +2256,14 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-cash-flow-forecast-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Cash flow forecast</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-cash-flow-forecast-body">
           <p>Pick any account to see its balance projected forward 30 days, built only from what's actually known and scheduled: that account's active subscriptions/bills and active income sources. It deliberately does not blend in an average-spending estimate - a forecast built only from real scheduled items is honest about what it knows, rather than looking more predictive than this app can actually claim to be. A bill or paycheck due today isn't shown as a separate point (it's already reflected in the starting balance); one due tomorrow or later shows up as a change in the line on the day it's expected.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-export-plan">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-plan-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-export-plan-body">
+          <p>Saves this page as a spreadsheet: each budget with what you have spent against it, the two payoff approaches with how long each takes and what each costs in interest, and the projected balance for whichever account the forecast is showing.</p>
+          <p>It asks you to confirm first, like everything here that puts a copy of your money outside the app.</p>
           </div>
         </div>
       </div>
@@ -2327,6 +2352,14 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-net-worth-trend-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Net worth trend</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-net-worth-trend-body">
           <p>One point per calendar day you actually had the app open (net worth is snapshotted automatically on load, at most once a day) - a day you never opened the app simply has no point, rather than a guessed value filling the gap. Also not scoped to the month selector, for the same whole-lifetime reason as the account history chart above. Needs at least two days of history before a line can be drawn at all.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-export-reports">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-reports-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-export-reports-body">
+          <p>Saves the analysis rather than the raw list: the month's totals, the same spending split three ways (by what you bought, which account paid, and how you paid), and money in against money out for the last six months with how much you kept. For the underlying transactions instead, use CSV on the Monthly Expense Log below.</p>
+          <p>It asks you to confirm first, like everything here that puts a copy of your money outside the app.</p>
           </div>
         </div>
       </div>
@@ -2477,6 +2510,14 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-target-allocation-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Target allocation</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-target-allocation-body">
           <p>A calculator, not advice: set a risk label for your own reference (it isn't used in any calculation) and a target percentage for each bucket (Stocks, Bonds, Cash, Crypto, Real Estate, Other) that you've tagged your assets/holdings with. It only ever shows your current percentage against that target and the dollar gap between them - it never tells you what to actually buy or sell, and never will.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-export-invest">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-invest-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-export-invest-body">
+          <p>Saves your investments as a spreadsheet: the totals, every holding with its cost and current value, anything you have sold and what you made on it, contribution limits for the year, and how your mix compares with your target. It never contains a suggestion about what to buy or sell, because this app does not make them.</p>
+          <p>It asks you to confirm first, like everything here that puts a copy of your money outside the app.</p>
           </div>
         </div>
       </div>

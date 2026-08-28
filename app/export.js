@@ -84,7 +84,7 @@ export function logSections({ expenses = [], activity = [], subscriptions = [], 
 }
 
 /** Plan: the limits you set, the payoff comparison, the projected balance. */
-export function planSections({ budgets = [], payoff = null, forecast = [], forecastAccount = "" }) {
+export function planSections({ budgets = [], funds = [], payoff = null, forecast = [], forecastAccount = "" }) {
   const strategy = (label, r) => !r ? null
     : r.neverPaysOff ? [label, "never at this payment", ""]
     : [label, `${r.months} months`, money(r.totalInterest)];
@@ -92,6 +92,10 @@ export function planSections({ budgets = [], payoff = null, forecast = [], forec
   return ([
     { title: "Budgets (this month)", header: ["Category", "Limit", "Spent", "Percent used", "Status"],
       rows: budgets.map((b) => [b.category, money(b.limit), money(b.spent), `${b.pct}%`, b.over ? "over" : b.warn ? "close to the limit" : "ok"]) },
+    // "Needed each month" is blank rather than 0 for an undated fund: there is
+    // no deadline to divide by, and a 0 would read as "nothing more to save".
+    { title: "Saving up for something", header: ["Goal", "Target", "Set aside", "Still needed", "Needed by", "Needed each month"],
+      rows: funds.map((f) => [f.name, money(f.target), money(f.saved), money(f.remaining), f.targetDate || "", f.monthlyNeeded != null ? money(f.monthlyNeeded) : ""]) },
     { title: "Paying off what you owe", header: ["Approach", "Time to clear", "Total interest"], rows: payoffRows },
     { title: `Cash flow forecast${forecastAccount ? " - " + forecastAccount : ""}`, header: ["Date", "Projected balance"],
       rows: forecast.map((p) => [p.date, money(p.balance)]) },

@@ -8010,12 +8010,13 @@ $("exportPlanBtn").onclick = () => exportPage(
     const account = accounts.find((a) => a.id === $("forecastAccountSelect").value);
     return planSections({
       budgets: budgetStatus(budgets, sumBy(allExpenses, "category", monthKey())),
+      funds: sinkingFundStatus(sinkingFunds),
       payoff: compareDebtStrategies(debts, parseFloat($("debtStrategyExtra").value) || 0),
       forecast: account ? forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30) : [],
       forecastAccount: account ? acctLabel(account) : "",
     });
   },
-  budgets.length || debts.length || accounts.length,
+  budgets.length || sinkingFunds.length || debts.length || accounts.length,
   { page: "Plan" });
 
 $("exportInvestBtn").onclick = () => exportPage(

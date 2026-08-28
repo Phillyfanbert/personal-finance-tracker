@@ -116,6 +116,12 @@ export const TOUR_STEPS = {
       placement: "center",
     },
     {
+      target: "safeToSpendCard",
+      title: "How much you can still spend",
+      body: "Once you have set at least one limit below, this shows what is actually left to spend: what is under your limits right now, minus anything already coming due before the month ends. It is not everything you own, just the part this app can say for certain is still free to spend.",
+      placement: "bottom",
+    },
+    {
       target: "budgetsCard",
       title: "Setting a spending limit",
       body: "If you want to cap how much you spend on something each month - say $200 on eating out - set it here. The app warns you as you get close, not only once you have gone over, and the warning shows up on the Log page where you are actually spending.",

@@ -1239,6 +1239,32 @@
           <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
       </div>
+      <!-- The headline number for this page, added 2026-08-28 after research
+           on real budgeting apps (docs/budgeting-feature-design.md section
+           2.1): "how much can I still spend right now without breaking
+           anything I've already committed to." Deliberately narrower than
+           YNAB's "age of money" or "safe to spend", since this app is not
+           zero-based - there is no unassigned-money pool to draw a whole-
+           paycheck figure from. This is remaining room across BUDGETED
+           categories only, netted against subscription renewals due before
+           the month ends that have not posted yet - see safeToSpend() in
+           budgets.js for why that netting does not double-count. Hidden
+           behind an empty state (not a fake $0) until at least one budget
+           exists, matching safeToSpend()'s own null-when-nothing-to-compute
+           return. -->
+      <div class="card" id="safeToSpendCard">
+        <div class="card-head">
+          <h2>Safe to spend</h2>
+          <span class="info-icon" tabindex="0" role="button" data-info="safeToSpendExplainer" title="What's left in the categories you've set a monthly limit for, minus any subscription or bill due before the month ends that hasn't been charged yet. Categories with no limit set aren't counted, and a category already over its limit doesn't reduce this - that money already left a real account.">i</span>
+        </div>
+        <p class="muted explainer hidden" id="safeToSpendExplainer">What's left in the categories you've set a monthly limit for, minus any subscription or bill due before the month ends that hasn't been charged yet. Categories with no limit set aren't counted, and a category already over its limit doesn't reduce this - that money already left a real account.</p>
+        <div id="safeToSpendEmpty"><p class="muted" style="font-size:13px;margin:8px 0 0">Set a budget below to see how much you have left to spend safely.</p></div>
+        <div id="safeToSpendBody" class="hidden">
+          <div class="big" id="safeToSpendAmount" style="font-size:30px;margin-top:4px">$0</div>
+          <p class="muted text-xs" id="safeToSpendNote" style="margin:4px 0 0"></p>
+        </div>
+      </div>
+
       <!-- An ongoing monthly limit per category, not per-month-varying - set
            once, applies every month until changed. Moved here from Log
            (2026-08-26): setting a limit is a decision about what happens
@@ -2253,13 +2279,15 @@
       </div>
       <div id="helpContentPlan" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramPlan" role="group" aria-label="The Plan page, card by card, in the order they appear" viewBox="0 0 680 146" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramPlan" role="group" aria-label="The Plan page, card by card, in the order they appear" viewBox="0 0 680 190" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="34" fill="var(--text)" font-size="14">Budgets</text>
+            <text x="40" y="34" fill="var(--text)" font-size="14">Safe to spend</text>
             <rect x="10" y="54" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="78" fill="var(--text)" font-size="14">Paying off what you owe</text>
+            <text x="40" y="78" fill="var(--text)" font-size="14">Budgets</text>
             <rect x="10" y="98" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="122" fill="var(--text)" font-size="14">Cash flow forecast</text>
+            <text x="40" y="122" fill="var(--text)" font-size="14">Paying off what you owe</text>
+            <rect x="10" y="142" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="166" fill="var(--text)" font-size="14">Cash flow forecast</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Everything on this page is about what happens <em>next</em>, which is what separates it from Reports: a limit you are setting, an order you are weighing up, and a balance projected forward. Nothing here changes any of your balances on its own. Subscriptions and bills used to be this tab and now live under Log, with the rest of your spending.</p>
@@ -2268,6 +2296,15 @@
 
 
 
+
+        <div class="help-topic" id="helpTopic-safe-to-spend">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-safe-to-spend-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Safe to spend</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-safe-to-spend-body">
+          <p>What's left in the categories you've set a monthly limit for below, minus any subscription or bill due before the month ends that hasn't been charged to an account yet. It's a narrower number on purpose: a category with no limit set isn't part of it at all, and a category you've already gone over doesn't make this number worse - that money already left a real account, so counting it twice here wouldn't be honest.</p>
+          <p>If it shows a negative number, that means what's already coming due this month adds up to more than you have left across your budgets. It's shown as a real number, not hidden, because it's telling you something worth knowing.</p>
+          <p>This card doesn't appear until you've set at least one budget below.</p>
+          </div>
+        </div>
 
         <div class="help-topic" id="helpTopic-budgets">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-budgets-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Budgets</button></h3>

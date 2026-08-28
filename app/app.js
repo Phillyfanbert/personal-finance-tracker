@@ -13,7 +13,7 @@ import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
-import { budgetStatus } from "./budgets.js";
+import { budgetStatus, safeToSpend } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, FULL_YEAR_DAYS } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import {
@@ -4387,6 +4387,29 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
       toast("Budget removed");
     };
   });
+  renderSafeToSpend(statuses);
+}
+
+// Takes the already-computed statuses rather than recomputing budgetStatus()
+// a second time - renderBudgets() above is the only caller and already has
+// them. See safeToSpend() in budgets.js for what this number does and does
+// not include, and why null (no budgets at all) is a real, distinct state
+// from $0.
+function renderSafeToSpend(statuses) {
+  const result = safeToSpend(statuses, subscriptions);
+  $("safeToSpendEmpty").classList.toggle("hidden", !!result);
+  $("safeToSpendBody").classList.toggle("hidden", !result);
+  if (!result) return;
+  const { budgetedRoom, upcoming, available } = result;
+  $("safeToSpendAmount").textContent = fmt(available);
+  // A negative figure is a real, useful fact (you're short for what's
+  // already coming due), never floored to hide it - the color and the
+  // words both say so, matching this app's rule that a fact is never
+  // stated in color alone.
+  $("safeToSpendAmount").style.color = available < 0 ? "var(--err)" : "";
+  $("safeToSpendNote").textContent = upcoming > 0
+    ? `${fmt(budgetedRoom)} left across your budgets, minus ${fmt(upcoming)} due before the month ends`
+    : `Based on ${fmt(budgetedRoom)} left across your budgets`;
 }
 
 $("saveBudgetBtn").onclick = async () => {

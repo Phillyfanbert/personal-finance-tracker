@@ -981,6 +981,7 @@
           <div id="debtDetailsLimitSection" class="hidden">
             <label for="debtDetailsLimit">Credit limit (optional)</label>
             <input id="debtDetailsLimit" type="number" step="0.01" inputmode="decimal" placeholder="e.g. 5000" />
+            <p class="muted text-xs" style="margin:4px 0 0">Setting this does two things: it shows how much of the limit you have used, and it starts refusing any new charge that would push the balance past it, the way a real card declines. Correcting the balance by hand, interest, and imported history are never blocked, since a real balance can genuinely go over. Leave it blank if you do not know the limit.</p>
           </div>
           <!-- Credit-account-only (openDebtDetailsForm, app.js). Interest on
                a card is decided by the grace period, not by lateness: pay

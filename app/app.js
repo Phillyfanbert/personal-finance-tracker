@@ -3078,7 +3078,17 @@ $("debtDetailsSaveBtn").onclick = async () => {
   if (CREDIT_LIMIT_LIABILITY_TYPES.has(editingDebtDetails.type)) {
     touchedIds.push("debtDetailsLimit");
     const limit = $("debtDetailsLimit").value !== "" ? parseFloat($("debtDetailsLimit").value) : null;
-    if (limit !== null && (!Number.isFinite(limit) || limit < 0)) { flagField("debtDetailsLimit"); return toast("Credit limit can't be negative"); }
+    // Zero is refused, not just negatives. Both creditLimitError() and the
+    // utilization line treat a limit of 0 as UNKNOWN and skip, so saving one
+    // stored a number that silently did nothing - no ceiling, no utilization
+    // line, no explanation. A $0 limit is not a real thing either; leaving
+    // the field blank is how you say the limit is unknown.
+    if (limit !== null && (!Number.isFinite(limit) || limit <= 0)) {
+      flagField("debtDetailsLimit", limit === 0
+        ? "A limit of 0 would do nothing. Leave this blank if you do not know the limit."
+        : "Enter a limit greater than zero.");
+      return toast(limit === 0 ? "Leave the limit blank rather than entering 0" : "Credit limit can't be negative", "error");
+    }
     patch.credit_limit = limit;
   }
   if (GRACE_PERIOD_LIABILITY_TYPES.has(editingDebtDetails.type)) {

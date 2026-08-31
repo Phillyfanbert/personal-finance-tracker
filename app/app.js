@@ -2536,6 +2536,43 @@ function creditLimitError(deltas) {
   return null;
 }
 
+// Everything that must refuse a genuinely NEW charge, in one place: the
+// credit-limit ceiling above, plus rules where real life does not permit the
+// borrowing at all. Called by the four spending paths (quick add, expense
+// edit, subscription auto-log, mark as paid).
+//
+// The deliberate exemptions are unchanged and must stay: correcting an owed
+// balance by hand, a logged interest charge and CSV import all bypass this,
+// because a real balance genuinely does move past a limit through an
+// over-limit fee, interest, or the lender cutting the line - and a balance
+// that reality produced has to remain recordable. This refuses new SPENDING,
+// never the recording of something that already happened.
+function chargeRefusalReason(deltas) {
+  const drawn = helocDrawPeriodError(deltas);
+  return drawn || creditLimitError(deltas);
+}
+
+// A HELOC stops being borrowable the day its draw period ends - the balance
+// then only amortises down. The app offered no ceiling on this at all, so a
+// line whose draw window closed years ago still accepted new charges up to
+// its limit, which no lender permits.
+function helocDrawPeriodError(deltas) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  for (const { accountId, amount, sign } of deltas) {
+    if (!accountId || sign * Number(amount) <= 0) continue;
+    const account = accounts.find((a) => a.id === accountId);
+    if (!account || !account.linked_liability_id) continue;
+    const debt = debts.find((d) => d.id === account.linked_liability_id);
+    // No draw_period_end recorded means the phase is unknown, not ended -
+    // same omit-rather-than-assert rule the rest of this app holds.
+    if (!debt || debt.type !== "heloc" || !debt.draw_period_end) continue;
+    if (debt.draw_period_end < todayStr) {
+      return `${debt.name}'s draw period ended ${debt.draw_period_end}, so it can't be borrowed against any more - only paid down. Interest and a correction to what's owed still go through.`;
+    }
+  }
+  return null;
+}
+
 async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
   if (!accountId) return;
   const account = accounts.find((a) => a.id === accountId);
@@ -2777,23 +2814,41 @@ const GRACE_PERIOD_LIABILITY_TYPES = new Set([
   "credit_card", "charge_card", "secured_credit_card", "store_card", "medical_credit_card",
 ]);
 
-// Liability types where "credit limit" is a real, revolving ceiling the
-// balance sits against - what credit utilization (balance / limit) is
-// computed from below. Deliberately NOT the same set as
-// GRACE_PERIOD_LIABILITY_TYPES: a HELOC/personal line of credit/overdraft
-// line has no grace period (interest above) but absolutely has a credit
-// limit, while a charge card has a grace period but, by definition, no
-// preset spending limit at all ("no preset spending limit" is the
-// traditional charge card's whole distinguishing feature) - so it's
-// excluded here for the opposite reason it's included there. BNPL is
-// excluded too: a pay-in-4 plan has a fixed installment amount for that one
-// purchase, not a revolving limit you utilize a percentage of. Per-type,
-// not per-category, same rule as BANK_VALIDATED_TYPES/GRACE_PERIOD_
-// LIABILITY_TYPES above.
+// Liability types where an optional real-world spending ceiling can be
+// entered and enforced, powering both credit utilization (balance / limit)
+// below and the charge-refusal check in chargeRefusalReason(). NOT the same
+// set as GRACE_PERIOD_LIABILITY_TYPES above, and deliberately so in both
+// directions: a HELOC/personal line of credit/overdraft line has a real
+// limit but no grace period, while a charge card and BNPL have a grace
+// period AND (since 2026-08-31) a real optional ceiling of their own -
+// see this set's own header comment below for why charge_card/bnpl were
+// added here rather than excluded. Per-type, not per-category, same rule
+// as BANK_VALIDATED_TYPES/GRACE_PERIOD_LIABILITY_TYPES above.
 const CREDIT_LIMIT_LIABILITY_TYPES = new Set([
   "credit_card", "secured_credit_card", "store_card", "medical_credit_card",
   "personal_line_of_credit", "heloc", "overdraft_line",
+  // charge_card and bnpl were excluded until 2026-08-31, on the reasoning
+  // that a charge card has "no preset spending limit" and a BNPL pay-in-4 is
+  // one fixed installment rather than a revolving line. Both readings were
+  // about the PRODUCT and missed what actually happens to a cardholder: an
+  // Amex charge card declines against a real (published, "approved spending
+  // power") ceiling, and Klarna/Affirm approve a specific amount you cannot
+  // exceed. Leaving them unenforced let the app permit what real life
+  // refuses. Both stay OPTIONAL - blank means unknown and nothing is
+  // enforced - so the default behaviour for anyone who has not entered a
+  // figure is exactly as before.
+  "charge_card", "bnpl",
 ]);
+
+// The ceiling means a different real-world thing per product, and the form
+// should not call an Amex charge card's spending power a "credit limit".
+const CREDIT_LIMIT_LABEL = {
+  charge_card: "Approved spending power (optional)",
+  bnpl: "Approved amount (optional)",
+  heloc: "Credit line (optional)",
+  personal_line_of_credit: "Credit line (optional)",
+  overdraft_line: "Overdraft limit (optional)",
+};
 
 // The phase is always derived from today vs draw_period_end, never stored
 // as its own enum - see 28_heloc_draw_period.sql. null (not a HELOC, or a
@@ -3035,7 +3090,12 @@ function openDebtDetailsForm(debt) {
   $("debtDetailsDue").value = debt.due_date ?? "";
   const hasLimit = CREDIT_LIMIT_LIABILITY_TYPES.has(debt.type);
   $("debtDetailsLimitSection").classList.toggle("hidden", !hasLimit);
-  if (hasLimit) $("debtDetailsLimit").value = debt.credit_limit ?? "";
+  if (hasLimit) {
+    $("debtDetailsLimit").value = debt.credit_limit ?? "";
+    // A charge card's ceiling is not called a credit limit, and a BNPL plan's
+    // is an approved amount - naming it wrong invites the wrong number.
+    $("debtDetailsLimitLabel").textContent = CREDIT_LIMIT_LABEL[debt.type] || "Credit limit (optional)";
+  }
   const hasCycle = GRACE_PERIOD_LIABILITY_TYPES.has(debt.type);
   $("debtDetailsCycleSection").classList.toggle("hidden", !hasCycle);
   if (hasCycle) {
@@ -3471,7 +3531,7 @@ $("saveBtn").onclick = async () => {
   if (assetErr) { flagField("fAccount"); return toast(assetErr); }
   // A charge on a credit account can't exceed its limit, the same way a
   // real card declines. Signed for the LIABILITY side: +1 is more owed.
-  const limitErr = creditLimitError([{ accountId, amount, sign: +1 }]);
+  const limitErr = chargeRefusalReason([{ accountId, amount, sign: +1 }]);
   if (limitErr) { flagField(["fAccount", "fAmount"]); return toast(limitErr); }
   const desc = $("fDesc").value.trim();
   const fullText = $("quick").value.trim();
@@ -4271,7 +4331,7 @@ $("editSave").onclick = async () => {
   // Same netting as above, on the liability side: the old charge comes off
   // before the new one goes on, so raising an existing charge is judged on
   // the difference rather than on its full amount.
-  const limitErr = creditLimitError([
+  const limitErr = chargeRefusalReason([
     { accountId: prevAccountId, amount: prevAmount, sign: -1 },
     { accountId: patch.account_id, amount, sign: +1 },
   ]);
@@ -6855,7 +6915,7 @@ async function autoLogDueSubscriptions() {
       // A renewal that would breach the card's limit is held back rather
       // than silently pushing the balance over, exactly like an
       // insufficient-funds renewal already is.
-      if (creditLimitError([{ accountId: sub.account_id, amount, sign: +1 }])) {
+      if (chargeRefusalReason([{ accountId: sub.account_id, amount, sign: +1 }])) {
         blockedNames.add(sub.name);
         break;
       }
@@ -7288,7 +7348,7 @@ $("markPaidBtn").onclick = async () => {
   const paymentType = account.type;
   const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
   if (assetErr) { flagField("sAccount"); return toast(assetErr); }
-  const limitErr = creditLimitError([{ accountId: sub.account_id, amount, sign: +1 }]);
+  const limitErr = chargeRefusalReason([{ accountId: sub.account_id, amount, sign: +1 }]);
   if (limitErr) { flagField("sAccount"); return toast(limitErr); }
 
   const row = {

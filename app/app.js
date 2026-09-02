@@ -832,7 +832,7 @@ async function syncHoldingsIntoWatchlist() {
 
 async function loadDailyRecaps() {
   const { data } = await sb.from("daily_recaps")
-    .select("trade_date,movers,breadth,index_moves,summary,generated_by")
+    .select("trade_date,movers,breadth,index_moves,summary,generated_by,context_headlines")
     .order("trade_date", { ascending: false })
     .limit(RECAP_HISTORY_DAYS);
   dailyRecaps = data || [];
@@ -5768,6 +5768,20 @@ function renderDailyRecap() {
   // than the two-sentence caption it started as, so it can legitimately run
   // to more than one paragraph. esc() first, then turn the surviving newlines
   // into real breaks - never the other way round.
+  // Market-wide coverage. Deliberately rendered independently of the AI
+  // summary: these are real linked articles that explain what the day was
+  // about, and they are the only market-wide "why" this card has on the
+  // days the summary is absent. Headlines are publisher text, so esc()'d.
+  const ctx = recap.contextHeadlines || [];
+  $("dailyRecapContext").classList.toggle("hidden", !ctx.length);
+  if (ctx.length) {
+    $("dailyRecapContextList").innerHTML = ctx.map((h) => `
+      <div style="margin-bottom:6px">
+        <a href="${esc(h.url)}" target="_blank" rel="noopener noreferrer" style="font-size:13px">${esc(h.title)}</a>
+        ${h.source ? `<span class="muted" style="font-size:11px"> - ${esc(h.source)}</span>` : ""}
+      </div>`).join("");
+  }
+
   const summaryEl = $("dailyRecapSummary");
   if (recap.summary) {
     summaryEl.innerHTML = `<span class="muted" style="font-size:11px">AI-written from the day's real prices and headlines</span><br>${esc(recap.summary).replace(/\n+/g, "<br><br>")}`;

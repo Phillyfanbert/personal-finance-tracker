@@ -526,6 +526,73 @@ async function writeDailyCandles(results) {
   }
 }
 
+// ---- Market-wide context headlines (one Tavily search, zero Gemini) --------
+//
+// The gap this closes: every other headline in this app comes from
+// /company-news?symbol=X, so nothing in the pipeline could ever surface a
+// macro story (a rate decision, an inflation print, a jobs report). The
+// recap could say WHAT the market did and never WHY.
+//
+// Costs ONE Tavily search per weekday run - about 22/month against the free
+// 1,000, on top of the ~200-370 this script and deal-agent already use
+// together. Deliberately NO Gemini call of its own: the headlines are real,
+// linked and useful with no model involved, and they are additionally
+// folded into the recap's single existing synthesis call, so the daily
+// Gemini count is unchanged at 1.
+const MARKET_CONTEXT_QUERY = "stock market today what moved the market";
+const MAX_CONTEXT_HEADLINES = 4;
+
+// The two previous attempts at market-wide news both failed on RELEVANCE
+// (Finnhub's general feed returned Gaza funding and a cocktail-bar feature;
+// its `related` tagging matched nothing) - see fetchTrackedStockNews's own
+// comment. The difference here is that we choose the query and the domains,
+// but a trusted finance domain still publishes plenty that is not a market
+// wrap, so results are gated rather than trusted. Whole-word matching, same
+// lookaround idiom as categorize.js and pickRelevantHeadline, because "sp"
+// must not match inside "spending".
+const MARKET_WRAP_TERMS = [
+  "stock", "stocks", "market", "markets", "wall street",
+  "dow", "s&p", "sp 500", "nasdaq", "investors", "shares",
+];
+function mentionsWholeTerm(text, term) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "i").test(text);
+}
+function isMarketWideHeadline(title) {
+  if (!title || typeof title !== "string") return false;
+  const t = title.trim();
+  // A bare section front ("Markets") carries no information; a real wrap
+  // headline is a sentence.
+  if (t.length < 25) return false;
+  return MARKET_WRAP_TERMS.some((term) => mentionsWholeTerm(t, term));
+}
+
+// Best-effort by construction. Returns [] on anything going wrong, and the
+// caller treats [] exactly like today's behaviour. Deliberately does NOT
+// touch queryAttempts/queryFailures: this is an optional extra layered onto
+// a card that is complete without it, so it must never flip the daily-recap
+// status to degraded - the same treatment findRecapSummary already gets.
+async function findMarketContext() {
+  try {
+    const results = await tavilySearch(MARKET_CONTEXT_QUERY);
+    const seen = new Set();
+    const picked = [];
+    for (const r of results) {
+      if (!hostAllowed(r.url, TRUSTED_NEWS_DOMAINS)) continue;
+      const title = (r.title || "").trim();
+      if (!isMarketWideHeadline(title) || seen.has(r.url)) continue;
+      seen.add(r.url);
+      picked.push({ title, url: r.url, source: hostOf(r.url) });
+      if (picked.length >= MAX_CONTEXT_HEADLINES) break;
+    }
+    if (!picked.length) console.warn("No market-wide headline passed the relevance gate this run - recap keeps its existing shape.");
+    return picked;
+  } catch (err) {
+    console.warn(`Market context lookup failed (non-fatal, recap unaffected): ${err.message}`);
+    return [];
+  }
+}
+
 const RECAP_MOVER_COUNT = 5;
 // The synthesis reads far more coverage than the five movers' own
 // headlines, which is what lets it write about the day's actual themes
@@ -751,7 +818,7 @@ const INDEX_PLAIN_NAMES = {
   IWM: "the Russell 2000, which tracks around 2,000 smaller US companies",
 };
 
-function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames = {}, newsPool = []) {
+function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames = {}, newsPool = [], contextHeadlines = []) {
   // Company names are passed IN rather than left to the model. The rule
   // below forbids using its own knowledge of these companies, so without
   // this it could only ever write bare tickers - and "WMT fell 9%" is
@@ -786,6 +853,12 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
       : "",
     indexLines.length ? "How the wider market did:" : "",
     ...indexLines,
+    contextHeadlines.length ? "" : "",
+    contextHeadlines.length
+      ? "What the financial press reported about the market as a whole today:"
+      : "",
+    ...contextHeadlines.map((h) => `- "${h.title}" (${h.source || "unknown source"})`),
+    "",
     "Biggest movers among the companies they track:",
     ...moverLines,
     "",
@@ -795,7 +868,24 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
     "",
     "Rules for summary:",
     "- Write TWO short paragraphs, separated by one blank line.",
-    "  Paragraph 1: how the market did overall today, using the numbers above.",
+    contextHeadlines.length
+      ? "  Paragraph 1: how the market did overall today, using the numbers"
+      : "  Paragraph 1: how the market did overall today, using the numbers above.",
+    contextHeadlines.length
+      ? "  above, AND what the press said was going on in the market as a"
+      : "",
+    contextHeadlines.length
+      ? "  whole, from the market-wide headlines listed above. This is the"
+      : "",
+    contextHeadlines.length
+      ? "  part a beginner actually wants: not just that the market fell, but"
+      : "",
+    contextHeadlines.length
+      ? "  what was being reported around it. Attribute it ('coverage pointed"
+      : "",
+    contextHeadlines.length
+      ? "  to...'), never state it as the proven cause."
+      : "",
     "  Paragraph 2: what was actually being REPORTED - the two or three",
     "  biggest themes running through the coverage listed above (for example a",
     "  partnership, a big investment in new facilities, a company planning to",
@@ -876,9 +966,9 @@ async function loadDisplayCompanyNames(fallbackNames) {
   return names;
 }
 
-async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames, newsPool = []) {
+async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames, newsPool = [], contextHeadlines = []) {
   try {
-    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool));
+    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool, contextHeadlines));
     const summary = validateRecapSummary(parseJsonLoose(text));
     if (!summary) console.warn("No usable recap summary this run - keeping the zero-LLM recap.");
     return summary;
@@ -1167,7 +1257,7 @@ async function buildMarketMovers(tradeDate) {
 // than off the calendar, so market holidays need no special-casing and no
 // holiday list - the same call marketStatus() already makes. A weekend run
 // simply rebuilds Friday's recap, which is idempotent.
-async function buildDailyRecap() {
+async function buildDailyRecap(contextHeadlines = []) {
   queryAttempts++;
   const dateRows = await sbGet("daily_prices?select=trade_date&order=trade_date.desc&limit=200");
   const days = [...new Set(dateRows.map((r) => r.trade_date))];
@@ -1304,7 +1394,7 @@ async function buildDailyRecap() {
       }
       if (newsPool.length >= RECAP_NEWS_POOL_MAX) break;
     }
-    summary = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames, newsPool);
+    summary = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames, newsPool, contextHeadlines);
     // Only claim Gemini touched this row if it actually produced something
     // usable - generated_by has to stay an honest record of how the row
     // was made, since the whole card is built on not overstating itself.
@@ -1317,6 +1407,9 @@ async function buildDailyRecap() {
     breadth,
     index_moves,
     summary,
+    // Null rather than [] when nothing passed the gate: the client treats
+    // "no macro coverage found" as absent, not as an empty list to render.
+    context_headlines: contextHeadlines.length ? contextHeadlines : null,
     generated_by: generatedBy,
     updated_at: new Date().toISOString(),
   }], "trade_date");
@@ -1446,6 +1539,16 @@ async function loadMoversWatchlist() {
 
 function buildQueries(symbol) {
   return [`${symbol} price today`, `${symbol} current price USD`];
+}
+
+// The publisher name shown under a headline. Bare hostname on purpose - it
+// is what the URL actually says, with no mapping table to drift.
+function hostOf(urlStr) {
+  try {
+    return new URL(urlStr).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
 }
 
 function hostAllowed(urlStr, domains) {
@@ -2187,7 +2290,13 @@ async function main() {
     // un-rate-limitable and must not be given up. The two steps after it
     // are separate cards with their own graceful degradation, not part of
     // the recap.
-    await buildDailyRecap();
+    // Fetched OUTSIDE buildDailyRecap on purpose. That function's zero-
+    // outbound-call property is what makes the recap un-rate-limitable, and
+    // it is load-bearing - so the one network call lives here and the result
+    // is handed in. An empty array means buildDailyRecap behaves exactly as
+    // it did before this feature existed.
+    const contextHeadlines = await findMarketContext();
+    await buildDailyRecap(contextHeadlines);
 
     // Moved here from the weekly run: a DAILY news digest on a weekly
     // cadence was never the right shape, and it only sat in the weekly job

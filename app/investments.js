@@ -541,6 +541,13 @@ export function latestRecap(recaps) {
       ? latest.index_moves.filter((i) => i && i.symbol && i.change_pct != null)
       : [],
     summary: latest.summary || null,
+    // Market-wide coverage for the day (60_market_context_headlines.sql).
+    // Real, linked headlines that need no model, so they stand on their own
+    // whenever the AI summary is absent - which production shows is the
+    // common case, not the exception.
+    contextHeadlines: Array.isArray(latest.context_headlines)
+      ? latest.context_headlines.filter((h) => h && h.title && h.url)
+      : [],
     generatedBy: latest.generated_by || "rollup",
   };
 }

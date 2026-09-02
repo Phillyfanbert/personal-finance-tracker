@@ -434,6 +434,7 @@ async function init() {
   fillCategorySelect($("bulkCategorySelect"));
   fillCategorySelect($("budgetCategory"));
   $("fDate").value = localDateISO();
+  capBackwardLookingDates();
   await ensureCashAccount();
   await ensureWatchlistSymbols();
   await loadWatchlistSymbols();
@@ -1783,6 +1784,55 @@ $("saveAcctBtn").onclick = async () => {
   toast(autoMsg || "Account added");
 };
 
+// A fat-finger guard, NOT a limit. There is no real ceiling on what a
+// transaction can be worth, so this never refuses - it asks once, the same
+// confirm-to-override shape isKnownBank() and accountEligibilityWarning()
+// already use for "this looks unusual, but you would know". An extra couple
+// of zeros otherwise sails straight through and wrecks every average, chart
+// and budget it touches, with nothing on screen suggesting anything is odd.
+const LARGE_AMOUNT_CONFIRM_THRESHOLD = 100000;
+
+async function confirmLargeAmount(amount, what = "this") {
+  if (!Number.isFinite(amount) || amount < LARGE_AMOUNT_CONFIRM_THRESHOLD) return true;
+  return confirmModal(
+    `${fmt(amount)} is a lot larger than usual. If that is right, carry on - this is only here to catch an extra zero.`,
+    { title: `Check the amount for ${what}`, confirmLabel: "Yes, that is correct" }
+  );
+}
+
+// Records of things that have ALREADY happened cannot be dated in the
+// future. A future-dated expense is not harmless: monthKey() puts it in the
+// current month the moment the date lands in it, so a mistyped year or a
+// date three weeks out immediately counts against this month's budget and
+// drags safe-to-spend negative for money nobody has spent.
+//
+// Only the backward-looking fields go through this. A subscription's next
+// renewal, a paycheck's next expected date, a payment due date, a HELOC draw
+// end and a savings target date are all SUPPOSED to be in the future.
+function futureDateError(dateStr, label) {
+  if (!dateStr) return null;
+  return dateStr > localDateISO() ? `${label} can't be in the future.` : null;
+}
+
+// Stops the picker offering a future day at all. The save handlers still
+// re-check, because a max attribute is a browser hint that is not enforced
+// on a typed or pasted value - the same lesson as min/max on a number.
+const BACKWARD_LOOKING_DATE_FIELDS = [
+  "fDate", "eDate", "sellDate", "contributionDate",
+  "assetPurchaseDate", "debtDetailsStatementDate",
+];
+function capBackwardLookingDates() {
+  const today = localDateISO();
+  for (const id of BACKWARD_LOOKING_DATE_FIELDS) {
+    const el = $(id);
+    if (el) el.max = today;
+  }
+}
+// Once at load as well as on each form open. The per-form calls sit in code
+// paths that only run after sign-in, so without this the pickers would still
+// offer future days to anyone looking at the app before init() finishes.
+capBackwardLookingDates();
+
 const ACCT_COLORS = ["#0ea5e9", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6", "#22d3ee", "#fb923c"];
 
 // Renders the account circles from the current accounts/assets/debts globals
@@ -2104,6 +2154,7 @@ function openAssetForm(asset) {
   $("assetValue").value = asset?.value ?? "";
   $("assetPurchasePrice").value = asset?.purchase_price ?? "";
   $("assetPurchaseDate").value = asset?.purchase_date ?? "";
+  capBackwardLookingDates();
   $("assetDepRate").value = asset?.depreciation_rate != null ? Number(asset.depreciation_rate) * 100 : "";
   $("assetPriceSymbol").value = asset?.price_symbol ?? "";
   $("assetQuantity").value = asset?.quantity ?? "";
@@ -2165,6 +2216,8 @@ $("saveAssetBtn").onclick = async () => {
   const purchase_price = isVehicle && $("assetPurchasePrice").value !== "" ? parseFloat($("assetPurchasePrice").value)
     : isInvestment && $("assetCostBasis").value !== "" ? parseFloat($("assetCostBasis").value)
     : null;
+  const purchaseFutureErr = futureDateError(isVehicle ? $("assetPurchaseDate").value : "", "The purchase date");
+  if (purchaseFutureErr) { flagField("assetPurchaseDate", purchaseFutureErr); return toast(purchaseFutureErr, "error"); }
   const purchase_date = isVehicle && $("assetPurchaseDate").value ? $("assetPurchaseDate").value : null;
   // min="0" max="100" on the input is a browser hint only: it is never
   // enforced on a typed or pasted value, and nothing here called
@@ -3121,6 +3174,7 @@ function openDebtDetailsForm(debt) {
     $("debtDetailsDueDay").value = debt.due_day ?? "";
     $("debtDetailsStatementBalance").value = debt.last_statement_balance ?? "";
     $("debtDetailsStatementDate").value = debt.last_statement_date ?? "";
+    capBackwardLookingDates();
     const dates = cycleDates(debt.statement_day, debt.due_day);
     $("debtDetailsCycleInfo").textContent = dates
       ? `Current cycle closed ${dates.statementDate}, payment due ${dates.dueDate}. Paying the statement balance in full by the due date avoids interest entirely; paying only the minimum does not.`
@@ -3183,6 +3237,8 @@ $("debtDetailsSaveBtn").onclick = async () => {
       flagField("debtDetailsStatementBalance");
       return toast("Statement balance can't be negative");
     }
+    const stmtFutureErr = futureDateError($("debtDetailsStatementDate").value, "The statement date");
+    if (stmtFutureErr) { flagField("debtDetailsStatementDate", stmtFutureErr); return toast(stmtFutureErr, "error"); }
     patch.statement_day = statementDay;
     patch.due_day = dueDay;
     patch.last_statement_balance = stmtBalance;
@@ -3542,9 +3598,28 @@ $("saveBtn").onclick = async () => {
   if (!category) { flagField("fCategory"); return toast("Select a category"); }
   const occurredAt = $("fDate").value;
   if (!occurredAt) { flagField("fDate"); return toast("Select a date"); }
+  const futureErr = futureDateError(occurredAt, "The date");
+  if (futureErr) { flagField("fDate", futureErr); return toast(futureErr, "error"); }
+  // Resolved BEFORE the confirmation below, so a stale picker fails with a
+  // message rather than after asking the user a question. This used to be an
+  // unguarded .type on the find(), which threw an uncaught TypeError and made
+  // Save look like it simply did nothing - no toast, no red border, the exact
+  // silent-no-op this file warns about. Reachable whenever the picker is
+  // stale: an account deleted or archived in another tab or on another
+  // device, which a household app with an always-open home-screen icon makes
+  // a real case rather than a hypothetical.
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account) {
+    flagField("fAccount", "That account is no longer available. Pick another one.");
+    return toast("That account is no longer available", "error");
+  }
+  // A large-amount confirmation is the LAST gate, so every cheap rejection
+  // has already happened and the user is only asked once everything else is
+  // known to be fine.
+  if (!(await confirmLargeAmount(amount, "this expense"))) { flagField("fAmount"); return; }
   // No separate Payment field - the account IS the payment type, since
   // account.type and payment_type share the same values (cash/debit/credit).
-  const paymentType = accounts.find((a) => a.id === accountId).type;
+  const paymentType = account.type;
   const assetErr = assetDeltaError([{ accountId, paymentType, amount, sign: -1 }]);
   if (assetErr) { flagField("fAccount"); return toast(assetErr); }
   // A charge on a credit account can't exceed its limit, the same way a
@@ -4307,6 +4382,7 @@ function openEdit(row) {
   $("eCategory").value = row.category ?? CATEGORIES[0];
   $("eAccount").value = row.account_id ?? "";
   $("eDate").value = row.occurred_at ?? localDateISO();
+  capBackwardLookingDates(); // re-stamped on open: an app left open past midnight would otherwise cap to yesterday
   $("eLearn").checked = true;
   openModal("editModal");
 }
@@ -4322,11 +4398,21 @@ $("editSave").onclick = async () => {
   if (!newCategory) { flagField("eCategory"); return toast("Select a category"); }
   const occurredAt = $("eDate").value;
   if (!occurredAt) { flagField("eDate"); return toast("Select a date"); }
+  const eFutureErr = futureDateError(occurredAt, "The date");
+  if (eFutureErr) { flagField("eDate", eFutureErr); return toast(eFutureErr, "error"); }
+  // Same stale-picker guard as quick-add above, and for the same reason: an
+  // unguarded .type here threw an uncaught TypeError and made Save look inert.
+  const eAccount = accounts.find((a) => a.id === accountId);
+  if (!eAccount) {
+    flagField("eAccount", "That account is no longer available. Pick another one.");
+    return toast("That account is no longer available", "error");
+  }
+  if (!(await confirmLargeAmount(amount, "this expense"))) { flagField("eAmount"); return; }
   // No separate Payment field - same as quick-add, the account IS the
   // payment type. This also removes the only way payment_type and the
   // selected account could ever disagree, so there's no credit-account
   // mismatch left to guard against here.
-  const paymentType = accounts.find((a) => a.id === accountId).type;
+  const paymentType = eAccount.type;
   const desc = $("eDesc").value.trim();
   const categoryChanged = newCategory !== editing.category;
   const prevAccountId = editing.account_id, prevPaymentType = editing.payment_type, prevAmount = Number(editing.amount);
@@ -5086,6 +5172,7 @@ function openSellModal(asset) {
   $("sellQuantity").value = "";
   $("sellPrice").value = findLivePrice(asset.price_symbol || "") ?? "";
   $("sellDate").value = localDateISO();
+  capBackwardLookingDates();
 
   // Asset-backed accounts only - proceeds have to land somewhere that
   // actually holds a balance, the same filter Transfer's pickers use and
@@ -5134,6 +5221,8 @@ $("sellConfirmBtn").onclick = async () => {
   if (qty > held) { flagField("sellQuantity"); return toast(`You only hold ${held} shares`); }
   if (!Number.isFinite(price) || price < 0) { flagField("sellPrice"); return toast("Enter the price per share"); }
   if (!soldOn) { flagField("sellDate"); return toast("Pick the date you sold"); }
+  const sellFutureErr = futureDateError(soldOn, "The sale date");
+  if (sellFutureErr) { flagField("sellDate", sellFutureErr); return toast(sellFutureErr, "error"); }
 
   const proceeds = Math.round(qty * price * 100) / 100;
   const costOut = Math.round(basis * (qty / held) * 100) / 100;
@@ -6466,6 +6555,7 @@ function openContributionForm(assetId) {
   $("contributionLabel").textContent = `Log a contribution to ${asset.name}`;
   $("contributionAmount").value = "";
   $("contributionDate").value = localDateISO();
+  capBackwardLookingDates();
   $("contributionAmount").classList.remove("field-required");
   $("contributionForm").classList.remove("hidden");
   $("contributionForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -6478,6 +6568,8 @@ $("saveContributionBtn").onclick = async () => {
   const asset = assets.find((a) => a.id === contributingAssetId);
   if (!asset) return closeContributionForm();
   if (!$("contributionAmount").value) { flagField("contributionAmount"); return toast("Enter an amount"); }
+  const contribFutureErr = futureDateError($("contributionDate").value, "The contribution date");
+  if (contribFutureErr) { flagField("contributionDate", contribFutureErr); return toast(contribFutureErr, "error"); }
   const amount = parseFloat($("contributionAmount").value);
   if (!Number.isFinite(amount) || amount <= 0) { flagField("contributionAmount"); return toast("Enter a positive amount"); }
   const occurred_at = $("contributionDate").value || localDateISO();

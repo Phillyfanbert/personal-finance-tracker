@@ -2530,7 +2530,7 @@ function creditLimitError(deltas) {
     const newBalance = Math.round((Number(debt.balance) + net) * 100) / 100;
     if (newBalance > limit) {
       const available = Math.max(0, Math.round((limit - Number(debt.balance)) * 100) / 100);
-      return `${debt.name} only has ${fmt(available)} left of its ${fmt(limit)} limit. Pay the balance down before charging more.`;
+      return `${debt.name} only has ${fmt(available)} left of its ${fmt(limit)} ${creditLimitNoun(debt.type)}. Pay the balance down before charging more.`;
     }
   }
   return null;
@@ -2840,15 +2840,18 @@ const CREDIT_LIMIT_LIABILITY_TYPES = new Set([
   "charge_card", "bnpl",
 ]);
 
-// The ceiling means a different real-world thing per product, and the form
-// should not call an Amex charge card's spending power a "credit limit".
-const CREDIT_LIMIT_LABEL = {
-  charge_card: "Approved spending power (optional)",
-  bnpl: "Approved amount (optional)",
-  heloc: "Credit line (optional)",
-  personal_line_of_credit: "Credit line (optional)",
-  overdraft_line: "Overdraft limit (optional)",
+// The ceiling means a different real-world thing per product, and neither the
+// form nor the utilization line should call an Amex charge card's spending
+// power a "credit limit". One noun, used by both, so the field a user fills
+// in and the sentence reporting it back can never drift apart.
+const CREDIT_LIMIT_NOUN = {
+  charge_card: "approved spending power",
+  bnpl: "approved amount",
+  heloc: "credit line",
+  personal_line_of_credit: "credit line",
+  overdraft_line: "overdraft limit",
 };
+const creditLimitNoun = (type) => CREDIT_LIMIT_NOUN[type] || "credit limit";
 
 // The phase is always derived from today vs draw_period_end, never stored
 // as its own enum - see 28_heloc_draw_period.sql. null (not a HELOC, or a
@@ -2897,7 +2900,7 @@ async function loadDebts() {
   const utilizationLine = (d) => {
     if (!CREDIT_LIMIT_LIABILITY_TYPES.has(d.type) || d.credit_limit == null || !d.credit_limit) return "";
     const pct = Math.round((Number(d.balance) / Number(d.credit_limit)) * 100);
-    return `<div class="meta">${fmt(d.balance)} of ${fmt(d.credit_limit)} limit used (${pct}%)</div>`;
+    return `<div class="meta">${fmt(d.balance)} of ${fmt(d.credit_limit)} ${esc(creditLimitNoun(d.type))} used (${pct}%)</div>`;
   };
   // The plain-language version of creditCycle.js's three end-of-cycle
   // outcomes. Deliberately explicit that paying the minimum does not stop
@@ -3094,7 +3097,7 @@ function openDebtDetailsForm(debt) {
     $("debtDetailsLimit").value = debt.credit_limit ?? "";
     // A charge card's ceiling is not called a credit limit, and a BNPL plan's
     // is an approved amount - naming it wrong invites the wrong number.
-    $("debtDetailsLimitLabel").textContent = CREDIT_LIMIT_LABEL[debt.type] || "Credit limit (optional)";
+    $("debtDetailsLimitLabel").textContent = `${cap(creditLimitNoun(debt.type))} (optional)`;
   }
   const hasCycle = GRACE_PERIOD_LIABILITY_TYPES.has(debt.type);
   $("debtDetailsCycleSection").classList.toggle("hidden", !hasCycle);

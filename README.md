@@ -303,15 +303,42 @@ Two layers, so the app is always responsive:
 
 ### 3.10 Cost & no-card checklist
 
+Every outbound call this project makes, and what it costs. Re-verified
+2026-09-02.
+
 | Component | Free tier | Credit card? |
 |-----------|-----------|--------------|
-| Supabase (DB/Auth/RLS) | Yes | No |
-| Cloudflare Pages (hosting) | Yes | No |
+| Supabase (DB/Auth/RLS) | Yes - 500 MB Postgres, ~5 GB egress | No |
+| Cloudflare Workers (hosting + `/api/price`) | Yes - 100k req/day; no paid bindings declared in `wrangler.jsonc` | No |
 | Cloudflare Tunnel (Gemma access) | Yes | No |
 | Ollama + Gemma (local) | Yes (your hardware) | No |
+| jsDelivr CDN (Supabase JS, Chart.js, PapaParse) | Yes - public CDN | No |
+| **Tavily** (deal/index search) | Yes - 1,000 credits/month | No |
+| **Gemini API** (extraction, recap prose) | Yes - 20 requests/DAY | No - and a billing account is deliberately NOT attached, see below |
+| **Finnhub** (quotes, company news) | Yes - 60 calls/min, personal/non-commercial | No |
+| **Alpha Vantage** (market-wide movers) | Yes - 25 requests/day | No |
 | PWA (vs native app) | Yes | No - avoids Apple's $99/yr |
-| Auth via email/OAuth (not SMS) | Yes | No - SMS would cost money |
-| Cloudflare Worker cron (keep-alive) | Yes | No |
+| Auth via email/password (not SMS) | Yes | No - SMS would cost money |
+
+**The property that actually makes this safe is that no card is on file
+anywhere, not that usage stays under the caps.** With no payment method
+attached, exceeding a free tier makes requests *fail* - it cannot produce a
+bill. That is why the rule is "no card anywhere" rather than the softer
+"nothing that actually bills us": see `docs/F6-live-deals-proposal.md` for
+the Brave Search API, which in February 2026 converted the card it had
+promised would "only be used to confirm your identity and will not be
+charged" into an active billing instrument with no published spending cap.
+A promise not to charge a stored card is a reversible policy, not a
+guarantee.
+
+Two things that are genuinely NOT free, and are not vendor charges:
+**electricity and the home machine itself**, which runs Ollama/Gemma and the
+scheduled `tools/` agents.
+
+Two operational notes that are not costs but behave like limits: a Supabase
+free project **pauses after 7 days of inactivity**, and Gemini's 20/day cap
+is shared across `deal-agent.js` and `price-agent.js`, which is why the
+weekly runs are scheduled on different days.
 
 ---
 

@@ -6,6 +6,7 @@
 // history table needed for the day-change/trend math below.
 // ============================================================================
 import { effectiveAssetValue } from "./depreciation.js";
+import { localDateISO } from "./dates.js";
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const pct = (num, denom) => (denom ? r2((num / denom) * 100) : null);
@@ -625,7 +626,7 @@ export function priceSeries(dailyPrices, symbol, windowDays = null, today = new 
     // windowDays - 1, so the window is INCLUSIVE of today: "last 30 days"
     // means today plus the 29 before it, not 31 dates. Using windowDays
     // directly reaches back one day too far.
-    const cutoff = new Date(today.getTime() - (windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const cutoff = localDateISO(new Date(today.getTime() - (windowDays - 1) * 86400000));
     rows = rows.filter((r) => r.trade_date >= cutoff);
   }
   return rows

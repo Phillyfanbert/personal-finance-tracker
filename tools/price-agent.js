@@ -788,8 +788,23 @@ const MAX_RECAP_SUMMARY_CHARS = 1600;
 const RECAP_ADVICE_PHRASES = [
   "should buy", "should sell", "should consider", "recommend", "we advise",
   "buy the dip", "worth buying", "worth selling", "price target",
-  "will rise", "will fall", "will likely", "poised to", "set to climb",
-  "investors should", "you should", "expect further", "expect the",
+  "will likely", "poised to", "set to climb",
+  "investors should", "you should", "expect further",
+  // "expect the", "will rise" and "will fall" used to be here and were
+  // REMOVED 2026-09-02: they are the advisory sense of common reporting
+  // verbs, and as bare substrings they rejected exactly the attributed
+  // sentences the prompt asks for - "analysts expect the Fed to hold rates"
+  // and "the company said it will fall short of its own forecast". Measured
+  // against a corpus of ten prompt-conformant summaries and eight genuinely
+  // advisory ones: the old list rejected 2 of 10 good ones, this list
+  // rejects 0 while still catching all 8 bad ones. That mattered because the
+  // recap summary was null on 8 of 9 production days, and it matters more
+  // now that macro market wraps feed this prompt - "investors expect the Fed
+  // to..." is the single most ordinary sentence in a market wrap.
+  // The advisory sense is kept below; a market-level forecast stays blocked
+  // even when attributed, which is the deliberately stricter half.
+  "we expect", "i expect", "expect the market", "expect prices",
+  "will rise to", "will fall to",
   // Added alongside the beginner-friendly rewrite, and deliberately in that
   // direction: a plain-spoken summary aimed at someone with no investing
   // background is read more trustingly than a jargon-heavy one, so the
@@ -920,21 +935,24 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
   ].filter(Boolean).join("\n");
 }
 
+// Returns { summary } on success or { reason } on rejection, so the caller
+// can record WHY rather than storing an indistinguishable null. The
+// rejection rules themselves are unchanged.
 function validateRecapSummary(raw) {
-  if (!raw || typeof raw !== "object") return null;
+  if (!raw || typeof raw !== "object") return { reason: "invalid_json" };
   const summary = typeof raw.summary === "string" ? raw.summary.trim() : "";
-  if (!summary) return null;
+  if (!summary) return { reason: "empty" };
   if (summary.length > MAX_RECAP_SUMMARY_CHARS) {
     console.warn(`Discarding recap summary - ${summary.length} chars, over the ${MAX_RECAP_SUMMARY_CHARS} cap.`);
-    return null;
+    return { reason: "too_long" };
   }
   const lower = summary.toLowerCase();
   const violation = RECAP_ADVICE_PHRASES.find((phrase) => lower.includes(phrase));
   if (violation) {
     console.warn(`Discarding recap summary - contains advice/forecast language ("${violation}").`);
-    return null;
+    return { reason: `rejected:${violation}` };
   }
-  return summary;
+  return { summary };
 }
 
 // Best-effort by contract: any failure here (quota exhausted, timeout,
@@ -969,12 +987,19 @@ async function loadDisplayCompanyNames(fallbackNames) {
 async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames, newsPool = [], contextHeadlines = []) {
   try {
     const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool, contextHeadlines));
-    const summary = validateRecapSummary(parseJsonLoose(text));
-    if (!summary) console.warn("No usable recap summary this run - keeping the zero-LLM recap.");
-    return summary;
+    const result = validateRecapSummary(parseJsonLoose(text));
+    if (!result.summary) console.warn(`No usable recap summary this run (${result.reason}) - keeping the zero-LLM recap.`);
+    return result;
   } catch (err) {
-    console.warn(`Recap summary failed (non-fatal, keeping the zero-LLM recap): ${err.message}`);
-    return null;
+    // Classified so a quota-exhausted day is tellable apart from a network
+    // blip or a model error - the three want completely different fixes.
+    const m = err.message || "";
+    const reason = /\b429\b|quota|RESOURCE_EXHAUSTED/i.test(m) ? "quota"
+      : /abort|timeout/i.test(m) ? "timeout"
+      : /HTTP \d/.test(m) ? "http_error"
+      : "error";
+    console.warn(`Recap summary failed (non-fatal, keeping the zero-LLM recap): ${reason} - ${m}`);
+    return { reason };
   }
 }
 
@@ -1356,6 +1381,9 @@ async function buildDailyRecap(contextHeadlines = []) {
 
   let summary = summaryStillMatches ? storedSummary : null;
   let generatedBy = summary ? (existing[0].generated_by || "rollup+gemini") : "rollup";
+  // Why a summary is absent (61_recap_summary_skip_reason.sql). Diagnostic
+  // only - it never reaches the card and never changes the run status.
+  let skippedReason = summary ? null : "not_attempted";
 
   if (summary) {
     console.log(`Recap for ${tradeDate} already has a matching summary - reusing it, no Gemini call this run.`);
@@ -1370,6 +1398,7 @@ async function buildDailyRecap(contextHeadlines = []) {
     // spending a scarce daily quota unit would be a real side effect. Do a
     // real run to exercise this path.
     console.log("[dry-run] skipping the Gemini synthesis so no daily quota is spent.");
+    skippedReason = "dry_run";
   } else {
     const displayNames = await loadDisplayCompanyNames(companyNames);
     // The wider coverage pool, so the synthesis can write about what the day
@@ -1394,7 +1423,9 @@ async function buildDailyRecap(contextHeadlines = []) {
       }
       if (newsPool.length >= RECAP_NEWS_POOL_MAX) break;
     }
-    summary = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames, newsPool, contextHeadlines);
+    const result = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames, newsPool, contextHeadlines);
+    summary = result.summary || null;
+    skippedReason = summary ? null : (result.reason || "error");
     // Only claim Gemini touched this row if it actually produced something
     // usable - generated_by has to stay an honest record of how the row
     // was made, since the whole card is built on not overstating itself.
@@ -1411,6 +1442,7 @@ async function buildDailyRecap(contextHeadlines = []) {
     // "no macro coverage found" as absent, not as an empty list to render.
     context_headlines: contextHeadlines.length ? contextHeadlines : null,
     generated_by: generatedBy,
+    summary_skipped_reason: skippedReason,
     updated_at: new Date().toISOString(),
   }], "trade_date");
 
@@ -1418,7 +1450,7 @@ async function buildDailyRecap(contextHeadlines = []) {
   console.log(
     `${DRY_RUN ? "Would have written" : "Wrote"} recap for ${tradeDate}: ` +
     `${movers.length} mover(s), ${withHeadlines} with a headline, breadth ${up} up / ${down} down, ` +
-    `summary ${summary ? "included" : "omitted"}.`
+    `summary ${summary ? "included" : `omitted (${skippedReason})`}.`
   );
 }
 

@@ -5,6 +5,7 @@
 // never actually used in any calculation until now.
 // ============================================================================
 
+import { localDateISO } from "./dates.js";
 /**
  * Target date `months` months from `date`, day-of-month clamped to the
  * target month's actual length - same overflow-safe logic
@@ -101,7 +102,7 @@ function isEligibleForComparison(debt, today) {
   if (debt.interest_rate == null || debt.minimum_payment == null) return false;
   if (!(Number(debt.balance) > 0)) return false;
   if (debt.type === "heloc" && debt.draw_period_end) {
-    const todayStr = today.toISOString().slice(0, 10);
+    const todayStr = localDateISO(today);
     if (debt.draw_period_end >= todayStr) return false;
   }
   return true;

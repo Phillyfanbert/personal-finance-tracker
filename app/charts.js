@@ -4,9 +4,10 @@
 // Chart.js is loaded from CDN in index.html as global `Chart`.
 // ============================================================================
 
+import { localMonthKey } from "./dates.js";
 /** YYYY-MM string for a Date. */
 export function monthKey(d = new Date()) {
-  return d.toISOString().slice(0, 7);
+  return localMonthKey(d);
 }
 
 /** Human label for a YYYY-MM key, e.g. "2026-07" -> "Jul 2026". */

@@ -17,6 +17,7 @@
 // ============================================================================
 import { advanceRenewal } from "./subscriptions.js";
 import { advanceIncomeDate } from "./income.js";
+import { localDateISO } from "./dates.js";
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const MAX_OCCURRENCES = 36; // same defensive cap autoLogDueSubscriptions/autoLogDueIncome use
@@ -38,10 +39,10 @@ export function forecastCashFlow(account, currentBalance, subscriptions, incomeS
   // accountHistory.js's buildBalanceHistory(), which is this function's
   // backward-walking mirror and has always had it.
   const sign = account.linked_liability_id ? -1 : 1;
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = localDateISO(today);
   const horizon = new Date(today);
   horizon.setDate(horizon.getDate() + windowDays);
-  const horizonStr = horizon.toISOString().slice(0, 10);
+  const horizonStr = localDateISO(horizon);
 
   const deltasByDate = new Map();
   // Today's own already-happened activity is already reflected in

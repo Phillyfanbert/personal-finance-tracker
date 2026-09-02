@@ -8,6 +8,7 @@
 // rather than needing a separate snapshot table to duplicate it.
 // ============================================================================
 
+import { localDateISO } from "./dates.js";
 const r2 = (n) => Math.round(n * 100) / 100;
 
 /**
@@ -66,7 +67,7 @@ export function buildBalanceHistory(account, currentBalance, expenses, accountAc
   }
 
   const datesDescending = [...deltasByDate.keys()].sort().reverse();
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = localDateISO(today);
   let running = Number(currentBalance);
   const points = [];
   if (!datesDescending.length || datesDescending[0] !== todayStr) points.push({ date: todayStr, balance: r2(running) });

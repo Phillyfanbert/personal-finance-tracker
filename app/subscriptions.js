@@ -3,6 +3,7 @@
 // Pure, unit-testable helpers. UI wiring lives in app.js.
 // ============================================================================
 
+import { localDateISO } from "./dates.js";
 /** Normalize a subscription's charge to a monthly-equivalent dollar amount. */
 export function monthlyAmount(sub) {
   const amt = Number(sub.amount || 0);
@@ -26,7 +27,7 @@ export function totalMonthly(subs) {
 export function daysUntil(isoDate, today = new Date()) {
   if (!isoDate) return null;
   const d = new Date(isoDate + "T00:00:00");
-  const t = new Date(today.toISOString().slice(0, 10) + "T00:00:00");
+  const t = new Date(localDateISO(today) + "T00:00:00");
   return Math.round((d - t) / 86400000);
 }
 
@@ -141,7 +142,7 @@ export function detectRecurringExpenses(expenses, subscriptions, today = new Dat
   }
 
   const activeSubNames = subscriptions.filter((s) => s.is_active).map((s) => s.name);
-  const todayMs = new Date(today.toISOString().slice(0, 10) + "T00:00:00").getTime();
+  const todayMs = new Date(localDateISO(today) + "T00:00:00").getTime();
   const candidates = [];
 
   for (const rows of groups.values()) {

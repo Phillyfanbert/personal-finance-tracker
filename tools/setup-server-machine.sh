@@ -156,76 +156,13 @@ EOF
   echo "Wrote $ENV_FILE (mode 600)."
 fi
 
-# ---- 2. SearXNG one-time settings ------------------------------------------
-SEARXNG_DIR="$TOOLS_DIR/searxng"
-SETTINGS="$SEARXNG_DIR/searxng-config/settings.yml"
-if [ ! -f "$SETTINGS" ]; then
-  log "Bootstrapping SearXNG config (first docker compose up/down)"
-  (cd "$SEARXNG_DIR" && docker compose up -d && sleep 3 && docker compose down)
-fi
-if [ -f "$SETTINGS" ]; then
-  if grep -q "^\s*formats:" "$SETTINGS"; then
-    echo "settings.yml already has a formats: line - leaving it."
-  else
-    log "Enabling JSON output format in settings.yml"
-    # The bundled settings.yml a fresh docker-compose bootstrap produces has
-    # gotten much slimmer across SearXNG image versions than this script
-    # originally assumed - confirmed live it can be as little as
-    # use_default_settings: true plus a server: block, with no top-level
-    # search: key at all to insert under. use_default_settings: true means
-    # any top-level key added here (search:, same as server: already is)
-    # gets merged with the image's real defaults rather than replacing them
-    # wholesale - verified live (a real docker compose up + a real
-    # ?format=json query against a freshly-appended search: block returned
-    # real JSON results), so appending a brand new section when none exists
-    # is the correct fix, not just a fallback guess.
-    python3 - "$SETTINGS" <<'PYEOF'
-import sys
-path = sys.argv[1]
-with open(path) as f:
-    lines = f.readlines()
-out = []
-inserted = False
-for line in lines:
-    out.append(line)
-    if not inserted and line.rstrip() == "search:":
-        out.append("  formats:\n")
-        out.append("    - html\n")
-        out.append("    - json\n")
-        inserted = True
-if not inserted:
-    if out and out[-1].strip() != "":
-        out.append("\n")
-    out.append("search:\n")
-    out.append("  formats:\n")
-    out.append("    - html\n")
-    out.append("    - json\n")
-    inserted = True
-with open(path, "w") as f:
-    f.writelines(out)
-print("inserted formats: [html, json]")
-PYEOF
-  fi
-
-  if grep -qE '^\s*secret_key:\s*"?ultrasecretkey"?' "$SETTINGS"; then
-    log "Setting a real SearXNG secret_key"
-    NEW_SECRET="$(openssl rand -hex 32)"
-    python3 - "$SETTINGS" "$NEW_SECRET" <<'PYEOF'
-import re, sys
-path, secret = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    content = f.read()
-content = re.sub(r'secret_key:\s*"?ultrasecretkey"?', f'secret_key: "{secret}"', content)
-with open(path, "w") as f:
-    f.write(content)
-print("secret_key set")
-PYEOF
-  else
-    echo "settings.yml secret_key doesn't look like the default placeholder - leaving it (verify by hand if SearXNG ever fails to start)."
-  fi
-else
-  echo "WARNING: $SETTINGS still doesn't exist after bootstrap attempt - check docker compose output above and finish this step by hand (see tools/searxng/docker-compose.yml's header)."
-fi
+# ---- 2. (removed) SearXNG bootstrap ----------------------------------------
+# This step used to bring up a SearXNG container and patch its settings.yml.
+# Nothing has used SearXNG since the migration to Tavily for search: no script
+# in this repo references it, and tools/searxng/ was deleted along with this
+# block. It was left behind as a no-op for a while, which made a fresh server
+# setup try to `docker compose up` a service the app does not use - slow at
+# best, and a hard failure on a machine without Docker installed.
 
 # ---- 3. gemma-auth-proxy LaunchAgent + repoint the tunnel ------------------
 PROXY_PLIST="$LAUNCH_AGENTS_DIR/com.gemma-auth-proxy.plist"

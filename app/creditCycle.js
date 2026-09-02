@@ -29,8 +29,9 @@
 // anything new was swiped.
 // ============================================================================
 
+import { localDateISO } from "./dates.js";
 const r2 = (n) => Math.round(n * 100) / 100;
-const iso = (d) => d.toISOString().slice(0, 10);
+const iso = (d) => localDateISO(d);
 
 // A cycle day is a day-of-month (1-31) that has to survive landing in a
 // short month - a statement that closes on the 31st closes on the 28th in

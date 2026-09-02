@@ -8,6 +8,7 @@
 // tolerate an endpoint that returns the parsed object directly.
 // ============================================================================
 import { CATEGORIES } from "./categorize.js";
+import { localDateISO } from "./dates.js";
 
 const PAYMENTS = ["credit", "debit", "cash"];
 // Ollama's per-request override for how long a model stays loaded after
@@ -79,7 +80,7 @@ function extractPayload(data) {
  */
 export async function parseWithGemma(text, opts = {}) {
   const { endpoint, model = "gemma", key, timeoutMs = 4000 } = opts;
-  const today = opts.today || new Date().toISOString().slice(0, 10);
+  const today = opts.today || localDateISO();
   if (!endpoint) throw new Error("Gemma endpoint not configured");
 
   const controller = new AbortController();

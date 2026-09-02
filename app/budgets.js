@@ -3,6 +3,7 @@
 // unit-testable - same style as networth.js/depreciation.js.
 // ============================================================================
 
+import { localDateISO } from "./dates.js";
 const r2 = (n) => Math.round(n * 100) / 100;
 
 // A category counts as "approaching" its budget at 90% spent, not just
@@ -95,9 +96,9 @@ export function safeToSpend(statuses, subscriptions, fundsMonthly = 0, today = n
   // How much of that shortfall is real overspend, for naming it on screen.
   const overspent = statuses.reduce((sum, s) => sum + Math.max(0, s.spent - s.limit), 0);
 
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = localDateISO(today);
   // Last real day of the current month, whatever its length - not a fixed 30.
-  const monthEndStr = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+  const monthEndStr = localDateISO(new Date(today.getFullYear(), today.getMonth() + 1, 0));
 
   const upcoming = subscriptions
     .filter((s) => s.is_active && s.next_renewal && AUTO_LOG_CYCLES.has(s.billing_cycle))

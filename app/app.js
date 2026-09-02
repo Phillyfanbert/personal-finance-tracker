@@ -35,6 +35,7 @@ import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 import { TOUR_STEPS, visibleSteps, clampStep } from "./tour.js";
+import { localDateISO } from "./dates.js";
 
 const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, GEMMA_EMBED_MODEL, GEMMA_AUTH_KEY, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 // Ollama's embeddings endpoint, derived from GEMMA_ENDPOINT (the full
@@ -432,7 +433,7 @@ async function init() {
   fillCategorySelect($("eCategory"));
   fillCategorySelect($("bulkCategorySelect"));
   fillCategorySelect($("budgetCategory"));
-  $("fDate").value = new Date().toISOString().slice(0, 10);
+  $("fDate").value = localDateISO();
   await ensureCashAccount();
   await ensureWatchlistSymbols();
   await loadWatchlistSymbols();
@@ -2557,7 +2558,7 @@ function chargeRefusalReason(deltas) {
 // line whose draw window closed years ago still accepted new charges up to
 // its limit, which no lender permits.
 function helocDrawPeriodError(deltas) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateISO();
   for (const { accountId, amount, sign } of deltas) {
     if (!accountId || sign * Number(amount) <= 0) continue;
     const account = accounts.find((a) => a.id === accountId);
@@ -2643,7 +2644,7 @@ async function logActivity(kind, description, amount, occurred_at, accountId, re
   // movement, so its amount is always 0 and it must still be recorded.
   if (!rounded && kind !== "account_created") return;
   const { error } = await sb.from("account_activity").insert({
-    kind, description, amount: rounded, occurred_at: occurred_at || new Date().toISOString().slice(0, 10),
+    kind, description, amount: rounded, occurred_at: occurred_at || localDateISO(),
     account_id: accountId, related_account_id: relatedAccountId, liability_id: liabilityId, asset_id: assetId,
   });
   if (!error) await loadAccountActivity();
@@ -2858,7 +2859,7 @@ const creditLimitNoun = (type) => CREDIT_LIMIT_NOUN[type] || "credit limit";
 // HELOC with no draw_period_end set yet) means "don't show anything."
 function helocPhaseInfo(d, today = new Date()) {
   if (d.type !== "heloc" || !d.draw_period_end) return null;
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = localDateISO(today);
   return d.draw_period_end < todayStr
     ? { phase: "repayment", label: `Repayment period (draw ended ${d.draw_period_end})` }
     : { phase: "draw", label: `Draw period (interest-only) - ends ${d.draw_period_end}` };
@@ -3384,7 +3385,7 @@ async function snapshotNetWorthIfNeeded() {
   // archived-account assets/liabilities) apply to the daily snapshot too.
   const depreciatedAssets = topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) }));
   const nw = computeNetWorth(depreciatedAssets, countableDebts());
-  const snapshot_date = new Date().toISOString().slice(0, 10);
+  const snapshot_date = localDateISO();
   await sb.from("net_worth_snapshots").upsert(
     { snapshot_date, assets_total: nw.assetsTotal, liabilities_total: nw.liabilitiesTotal, net_worth: nw.netWorth },
     { onConflict: "user_id,snapshot_date" }
@@ -4291,7 +4292,7 @@ function openEdit(row) {
   $("eDesc").value = row.description ?? "";
   $("eCategory").value = row.category ?? CATEGORIES[0];
   $("eAccount").value = row.account_id ?? "";
-  $("eDate").value = row.occurred_at ?? new Date().toISOString().slice(0, 10);
+  $("eDate").value = row.occurred_at ?? localDateISO();
   $("eLearn").checked = true;
   openModal("editModal");
 }
@@ -4602,9 +4603,18 @@ function contributeToFund(fund) {
   $("fundContributeAmount").value = "";
   openModal("fundContributeModal");
 }
-$("fundContributeClose").onclick = () => closeModal("fundContributeModal");
+$("fundContributeClose").onclick = () => {
+  closeModal("fundContributeModal");
+  contributingFund = null;
+};
 $("fundContributeConfirmBtn").onclick = async () => {
-  if (!contributingFund) return;
+  // The modal's own visibility is the source of truth for "is this flow
+  // still live", not the variable: Escape and a backdrop click both go
+  // through the generic closeModal() and cannot clear a per-flow reference,
+  // so checking the variable alone would act on a fund whose modal the user
+  // had already dismissed. Guarding on the element covers every close path,
+  // including any added later.
+  if (!contributingFund || $("fundContributeModal").classList.contains("hidden")) return;
   const amount = parseFloat($("fundContributeAmount").value);
   if (!Number.isFinite(amount) || amount <= 0) { flagField("fundContributeAmount", "Enter an amount greater than zero"); return toast("Enter an amount greater than zero", "error"); }
   const saved = Math.round((Number(contributingFund.saved || 0) + amount) * 100) / 100;
@@ -4703,7 +4713,7 @@ async function snapshotPortfolioIfNeeded() {
   const investmentAssets = countableInvestmentAssets();
   const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
   const totals = portfolioTotals(holdings, investmentAssets);
-  const snapshot_date = new Date().toISOString().slice(0, 10);
+  const snapshot_date = localDateISO();
   await sb.from("portfolio_snapshots").upsert(
     { snapshot_date, total_value: totals.totalValue, total_cost_basis: totals.totalCostBasis },
     { onConflict: "user_id,snapshot_date" }
@@ -5044,7 +5054,7 @@ function openSellModal(asset) {
   $("sellAvgCost").textContent = fmt(basis / held);
   $("sellQuantity").value = "";
   $("sellPrice").value = findLivePrice(asset.price_symbol || "") ?? "";
-  $("sellDate").value = new Date().toISOString().slice(0, 10);
+  $("sellDate").value = localDateISO();
 
   // Asset-backed accounts only - proceeds have to land somewhere that
   // actually holds a balance, the same filter Transfer's pickers use and
@@ -6424,7 +6434,7 @@ function openContributionForm(assetId) {
   contributingAssetId = assetId;
   $("contributionLabel").textContent = `Log a contribution to ${asset.name}`;
   $("contributionAmount").value = "";
-  $("contributionDate").value = new Date().toISOString().slice(0, 10);
+  $("contributionDate").value = localDateISO();
   $("contributionAmount").classList.remove("field-required");
   $("contributionForm").classList.remove("hidden");
   $("contributionForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -6439,7 +6449,7 @@ $("saveContributionBtn").onclick = async () => {
   if (!$("contributionAmount").value) { flagField("contributionAmount"); return toast("Enter an amount"); }
   const amount = parseFloat($("contributionAmount").value);
   if (!Number.isFinite(amount) || amount <= 0) { flagField("contributionAmount"); return toast("Enter a positive amount"); }
-  const occurred_at = $("contributionDate").value || new Date().toISOString().slice(0, 10);
+  const occurred_at = $("contributionDate").value || localDateISO();
   const newValue = Math.round((Number(asset.value) + amount) * 100) / 100;
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) { flagField("contributionAmount"); return toast(error.message); }
@@ -6908,7 +6918,7 @@ async function loadIncome() {
 // balance without a full reload per iteration. loadAssets/loadDebts at the
 // end resync everything for real.
 async function autoLogDueSubscriptions() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateISO();
   let loggedCount = 0;
   const blockedNames = new Set();
 
@@ -6979,7 +6989,7 @@ async function autoLogDueSubscriptions() {
 // per-source catch-up loop, the 36-cycle cap, updating next_expected only
 // if it actually moved) is the same shape.
 async function autoLogDueIncome() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateISO();
   let loggedCount = 0;
 
   for (const src of incomeSources) {
@@ -7371,7 +7381,7 @@ $("markPaidBtn").onclick = async () => {
   const row = {
     amount, description: sub.name, merchant: sub.name,
     category: "Subscriptions", payment_type: paymentType,
-    account_id: sub.account_id, occurred_at: new Date().toISOString().slice(0, 10),
+    account_id: sub.account_id, occurred_at: localDateISO(),
     source: "manual",
   };
   $("markPaidBtn").disabled = true;
@@ -8128,7 +8138,7 @@ function exportPage(what, baseName, buildSections, hasData, meta) {
   openModal("exportModal");
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localDateISO();
 
 $("exportLogBtn").onclick = () => exportPage(
   "your spending, bills, income and balances",
@@ -8225,7 +8235,7 @@ $("downloadDataBtn").onclick = async () => {
   const rowCount = USER_DATA_TABLES.reduce((n, t) => n + (dump[t]?.length || 0), 0);
   downloadBlob(
     new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" }),
-    `personal-finance-backup-${new Date().toISOString().slice(0, 10)}.json`
+    `personal-finance-backup-${localDateISO()}.json`
   );
   toast(`Saved ${rowCount} record${rowCount === 1 ? "" : "s"} to your downloads`);
 };
@@ -8245,7 +8255,7 @@ $("downloadExpensesCsvBtn").onclick = async () => {
   if (!ok) return;
   const rows = [...allExpenses].sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at)));
   downloadBlob(new Blob([buildExpensesCsv(rows, acctName)], { type: "text/csv;charset=utf-8" }),
-    `expenses-all-${new Date().toISOString().slice(0, 10)}.csv`);
+    `expenses-all-${localDateISO()}.csv`);
   toast(`Saved ${rows.length} transactions`);
 };
 

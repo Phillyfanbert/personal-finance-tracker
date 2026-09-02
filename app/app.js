@@ -1889,7 +1889,9 @@ function renderAccountsList() {
         ${a.type === "cash" ? "" : `<button type="button" class="x" data-del-acct="${a.id}" aria-label="Delete ${esc(acctLabel(a))}">✕</button>`}
         <div class="name">${esc(bankLabel)}</div>
         <div class="type">${a.name}</div>
-        ${balance != null ? `<div class="balance">${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}</div>` : ""}
+        ${balance != null ? `<div class="balance"${!a.linked_liability_id && balance < 0 ? ` style="color:var(--err)"` : ""}>${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}</div>` : ""}
+        ${!a.linked_liability_id && balance != null && balance < 0
+          ? `<div class="type" style="color:var(--err)">Overdrawn</div>` : ""}
         ${a.type === "cash" ? "" : `<button type="button" class="link-action muted" data-archive-acct="${a.id}" aria-label="Archive ${esc(acctLabel(a))}">Archive</button>`}
       </div>`;
       }).join("")
@@ -2414,11 +2416,18 @@ async function loadAssets() {
   const countable = countableInvestmentAssets();
   const investTotal = portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable).totalValue;
 
-  const rowFor = (a) => `
+  // A negative value here is an overdraft, and it is labelled in WORDS as
+  // well as coloured - a bare red "-$120.00" in a list of positive balances
+  // reads as a rendering fault rather than as a real state of the account.
+  const rowFor = (a) => {
+    const v = effectiveAssetValue(a);
+    const overdrawn = v < 0;
+    return `
       <div class="exp" ${linkedAssetIds.has(a.id) ? "" : `data-edit-asset="${a.id}" style="cursor:pointer"`}>
-        <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}</div>`}${esc(a.name)}</div>
-        <span class="amt">${fmt(effectiveAssetValue(a))}${linkedAssetIds.has(a.id) ? "" : `<button type="button" class="x" data-del-asset="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(a.name)}">✕</button>`}</span>
+        <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}${overdrawn ? " - overdrawn" : ""}</div>`}${esc(a.name)}</div>
+        <span class="amt"${overdrawn ? ` style="color:var(--err)"` : ""}>${fmt(v)}${linkedAssetIds.has(a.id) ? "" : `<button type="button" class="x" data-del-asset="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(a.name)}">✕</button>`}</span>
       </div>`;
+  };
   // Tapping it goes to the Investments page rather than opening an edit
   // form: there is no single asset behind this line to edit.
   const investmentRow = investmentRows.length ? `
@@ -2511,6 +2520,31 @@ async function loadAssets() {
 // work correctly here automatically, including ones added after this was
 // written - `paymentType` is still accepted for signature stability with
 // existing call sites but is no longer used for this decision.
+// Deposit types where a real bank genuinely lets the balance go below zero.
+// Per type, not per category, the same rule BANK_VALIDATED_TYPES and
+// NON_SPENDABLE_ACCOUNT_TYPES follow - Specialty is a deliberate mix, and
+// most of it cannot be overdrawn at all.
+//
+// Excluded on purpose: `cash` (there is no minus forty dollars in a pocket),
+// `cd` (a term deposit you cannot draw from at will), every investment and
+// retirement type, and the stored-value products - a prepaid or payroll card
+// declines rather than going negative, which is the whole point of them.
+// `second_chance_checking` is included because it is still a checking
+// account; real second-chance products often have overdraft switched off,
+// which is exactly what leaving the limit blank expresses.
+const OVERDRAFT_ELIGIBLE_ASSET_TYPES = new Set([
+  "bank", "savings", "money_market", "cash_management",
+  "second_chance_checking", "digital_wallet", "multi_currency",
+]);
+
+// The allowance is stored POSITIVE (500 means the balance may reach -500).
+// Null, blank or an ineligible type all mean the old behaviour: floor at 0.
+function overdraftAllowance(asset) {
+  if (!asset || !OVERDRAFT_ELIGIBLE_ASSET_TYPES.has(asset.type)) return 0;
+  const limit = Number(asset.overdraft_limit);
+  return Number.isFinite(limit) && limit > 0 ? limit : 0;
+}
+
 function assetDeltaError(deltas) {
   const netByAsset = new Map(); // assetId -> { asset, net }
   for (const { accountId, amount, sign } of deltas) {
@@ -2525,7 +2559,15 @@ function assetDeltaError(deltas) {
   }
   for (const { asset, net } of netByAsset.values()) {
     const newValue = Math.round((Number(asset.value) + net) * 100) / 100;
-    if (newValue < 0) return `${asset.name} can't go below $0 - not enough to cover this.`;
+    // The floor is -allowance, not 0. A real checking account with an
+    // overdraft goes negative and keeps working until the allowance is used
+    // up, at which point the bank declines - which is what this refusal is.
+    const allowance = overdraftAllowance(asset);
+    if (newValue < -allowance) {
+      return allowance > 0
+        ? `${asset.name} only has ${fmt(Number(asset.value) + allowance)} available, including its ${fmt(allowance)} overdraft.`
+        : `${asset.name} can't go below $0 - not enough to cover this.`;
+    }
   }
   return null;
 }
@@ -2766,7 +2808,50 @@ function openAssetAdjust(accountId) {
   const showMaturity = asset.type === "cd";
   $("adjustMaturitySection").classList.toggle("hidden", !showMaturity);
   if (showMaturity) $("adjustMaturityDate").value = asset.maturity_date ?? "";
+  // Deposit types only - see 62_asset_overdraft_limit.sql. Hidden entirely
+  // rather than shown disabled: an overdraft on a CD or a prepaid card is not
+  // a thing, so offering the field would suggest it were.
+  const showOverdraft = OVERDRAFT_ELIGIBLE_ASSET_TYPES.has(asset.type);
+  $("adjustOverdraftSection").classList.toggle("hidden", !showOverdraft);
+  if (showOverdraft) $("adjustOverdraftLimit").value = asset.overdraft_limit ?? "";
   panel.classList.remove("hidden");
+}
+
+$("adjustOverdraftSaveBtn").onclick = async () => {
+  const asset = assets.find((a) => a.id === adjustingAssetId);
+  if (!asset) return;
+  const raw = $("adjustOverdraftLimit").value.trim();
+  // Blank clears it back to "no overdraft", which is the honest way to say
+  // this account does not have one. Zero is refused for the same reason a
+  // zero credit limit is: it stores a number that does nothing at all.
+  let limit = null;
+  if (raw !== "") {
+    limit = parseFloat(raw);
+    if (!Number.isFinite(limit) || limit < 0) {
+      flagField("adjustOverdraftLimit", "Enter an amount of 0 or more, or leave it blank.");
+      return toast("Overdraft allowance can't be negative", "error");
+    }
+    if (limit === 0) {
+      flagField("adjustOverdraftLimit", "An allowance of 0 is the same as having none. Leave it blank instead.");
+      return toast("Leave it blank rather than entering 0", "error");
+    }
+  }
+  // Lowering an allowance below what is already overdrawn would leave the
+  // account past a limit it can no longer reach - a real bank does cut an
+  // overdraft, but the balance it already advanced does not vanish, so this
+  // refuses rather than silently leaving an unreachable state.
+  if (limit !== null && Number(asset.value) < -limit) {
+    flagField("adjustOverdraftLimit", `${asset.name} is already overdrawn by ${fmt(-Number(asset.value))}. Pay some back before lowering the allowance.`);
+    return toast(`Already overdrawn by more than ${fmt(limit)}`, "error");
+  }
+  if (limit === null && Number(asset.value) < 0) {
+    flagField("adjustOverdraftLimit", `${asset.name} is overdrawn by ${fmt(-Number(asset.value))}. Bring it back to $0 before removing the overdraft.`);
+    return toast("Can't remove the overdraft while the account is overdrawn", "error");
+  }
+  const { error } = await sb.from("assets").update({ overdraft_limit: limit }).eq("id", asset.id);
+  if (error) { flagField("adjustOverdraftLimit", error.message); return toast(error.message, "error"); }
+  await loadAssets();
+  toast(limit === null ? "Overdraft removed" : `Overdraft allowance set to ${fmt(limit)}`);
 }
 
 $("adjustAddBtn").onclick = async () => {
@@ -2787,7 +2872,13 @@ $("adjustSubtractBtn").onclick = async () => {
   if (!amount || amount <= 0) { flagField("adjustAmount"); return toast("Enter a valid amount"); }
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
-  if (amount > Number(asset.value)) { flagField("adjustAmount"); return toast("Balance can't go negative - not enough in " + asset.name); }
+  const subAllowance = overdraftAllowance(asset);
+  if (amount > Number(asset.value) + subAllowance) {
+    flagField("adjustAmount");
+    return toast(subAllowance > 0
+      ? `${asset.name} only has ${fmt(Number(asset.value) + subAllowance)} available, including its ${fmt(subAllowance)} overdraft.`
+      : "Balance can't go negative - not enough in " + asset.name);
+  }
   const newValue = Math.round((Number(asset.value) - amount) * 100) / 100;
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
   if (error) { flagField("adjustAmount"); return toast(error.message); }
@@ -2799,9 +2890,17 @@ $("adjustSubtractBtn").onclick = async () => {
 $("adjustSetBtn").onclick = async () => {
   const newValue = parseFloat($("adjustNewBalance").value);
   if (!Number.isFinite(newValue)) { flagField("adjustNewBalance"); return toast("Enter a valid balance"); }
-  if (newValue < 0) { flagField("adjustNewBalance"); return toast("Balance can't go negative"); }
+  // Asset resolved BEFORE the floor check, because the floor now depends on
+  // this account's own overdraft allowance rather than being a flat zero.
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
+  const setAllowance = overdraftAllowance(asset);
+  if (newValue < -setAllowance) {
+    flagField("adjustNewBalance");
+    return toast(setAllowance > 0
+      ? `${asset.name} can only go down to ${fmt(-setAllowance)} with its ${fmt(setAllowance)} overdraft.`
+      : "Balance can't go negative", "error");
+  }
   const rounded = Math.round(newValue * 100) / 100;
   const oldValue = Number(asset.value);
   const { error } = await sb.from("assets").update({ value: rounded }).eq("id", asset.id);

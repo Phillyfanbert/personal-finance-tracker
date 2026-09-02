@@ -788,8 +788,9 @@
              the full balance" field (look up and type the real number), and
              +/- for when you just know the change, not the total. Cash is
              also the only account with no delete option - it's auto-managed
-             (app.js ensureCashAccount). Balances never go negative - every
-             action here is blocked with an error instead. -->
+             (app.js ensureCashAccount). A balance floors at $0 unless the
+             account has an overdraft allowance set below, in which case it
+             floors at minus that allowance - see 62_asset_overdraft_limit.sql. -->
         <div id="assetAdjustForm" class="hidden" style="margin-top:10px">
           <div class="muted" style="font-size:12px;margin-bottom:6px"><span id="adjustAssetLabel">Value</span>: <strong id="adjustCurrentValue">$0</strong></div>
 
@@ -797,6 +798,17 @@
             <input id="adjustNewBalance" aria-label="New balance" type="number" step="0.01" inputmode="decimal" placeholder="New balance" />
             <div style="height:8px"></div>
             <button id="adjustSetBtn">Save balance</button>
+          </div>
+
+          <!-- Overdraft opt-in. Shown only for deposit types that really have
+               one (OVERDRAFT_ELIGIBLE_ASSET_TYPES); hidden entirely for cash,
+               CDs, cards and investment accounts, which cannot be overdrawn. -->
+          <div id="adjustOverdraftSection" class="hidden" style="margin-top:14px">
+            <label for="adjustOverdraftLimit">Overdraft allowance (optional)</label>
+            <input id="adjustOverdraftLimit" type="number" step="0.01" min="0" inputmode="decimal" placeholder="e.g. 500" />
+            <p class="muted text-xs" style="margin:4px 0 0">How far below zero your bank lets this account go. Leave it blank if it has no overdraft, and the balance simply cannot go below zero. Setting it does not create any money: it only lets the balance show as negative, the way your real statement does when you are overdrawn. No fee is ever added for you.</p>
+            <div style="height:8px"></div>
+            <button class="secondary" id="adjustOverdraftSaveBtn">Save overdraft allowance</button>
           </div>
 
           <div class="muted" style="font-size:12px;margin:12px 0 6px">Or adjust by an amount</div>
@@ -2258,6 +2270,8 @@
           <div class="help-topic-body hidden" id="helpTopic-accounts-body">
           <p>Payment methods only - which card, bank, or wallet you paid with. Accounts are <strong>not</strong> counted in net worth by themselves; every account automatically gets its own linked Asset (a debit/deposit-style account) or Liability (a credit-style account) behind the scenes, and that linked balance is what actually counts. "+ Add" walks you through picking a type (this decides the account's name, like Checking or Credit Card) and typing the bank or institution name - for a real bank/credit union this is checked against a large built-in list as you type, and if it's genuinely not on the list you're offered an "add it anyway" option rather than being blocked outright.</p>
           <p>Tap any account circle to adjust its balance directly: type the new total, or use +/- if you only know the change. A credit-type account instead shows Pay/adjust-owed controls from the Liabilities card below, plus a credit-utilization line and (once you've filled in its statement-cycle details there) a paid-in-full / carrying-a-balance / missed-minimum status. Archiving an account (the small "Archive" link under a circle) removes it from every list and total while keeping its full history intact and fully reversible from "View archived" - unlike the ✕ delete, which is permanent and unassigns its past expenses.</p>
+          <p><strong>Overdrafts.</strong> By default a balance cannot go below zero: spending more than an account holds is refused. Real current accounts do go negative though, so if yours has an overdraft you can say how big it is, in the same panel where you adjust the balance. After that the account is allowed to go that far below zero and shows as <em>Overdrawn</em> in red, exactly as your real statement would. Going past the overdraft is still refused, the way a bank declines.</p>
+          <p>Setting an allowance does not create money or add anything to your balance - it only changes how far down the balance is allowed to go. Nothing charges you an overdraft fee automatically either; if your bank charges one, record it yourself like any other expense. Being overdrawn lowers your net worth, because it is money you owe. Only accounts that really have overdrafts offer this: you will not see it on cash, a certificate of deposit, a prepaid card or an investment account, because none of those can go below zero in real life.</p>
           <p>Each account type shows its real-world <strong>opening requirement</strong> under the type picker - most need you to be 18, but plenty don't, and a few work differently than people expect. An IRA has no minimum age at all (it needs earned income instead, so a teenager with a job can hold one); a custodial UTMA/UGMA works the other way around, where the <em>beneficiary</em> has to be a minor; and 401(k)-style minimums are set by the employer's plan rather than by law. If your profile's birth year suggests you'd be under the usual age, the app asks you to confirm rather than refusing - it records accounts you already have, so a custodial account, a joint account, or one opened years ago all need to go in. With no birth year saved, it never asks at all.</p>
           <p><strong>Transfer</strong> (button next to "+ Add") moves money between two of your own accounts - Checking to Savings, for example. Only accounts with a real balance behind them can be picked (not a credit card or loan - moving money onto a card is paying it down, which stays on the Liabilities card's own Pay flow below). Shows up in Recent History as a single undoable entry, and reduces the "from" account's balance the moment it's confirmed the same way any other spending does.</p>
           </div>

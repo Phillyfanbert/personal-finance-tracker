@@ -1506,6 +1506,17 @@ async function purgeExpiredFindings() {
 // queryFailures above (tracked inside searchAndExtract()) for what this
 // is based on; "no trusted-domain result" doesn't count as a failure
 // here, only a real thrown API/network error does.
+// Names the service that actually failed. "rate limits or timeouts" was a
+// guess printed for every cause alike, including a Finnhub 500 and a Gemini
+// quota exhaustion, which want completely different fixes.
+function failureBreakdown() {
+  const parts = [];
+  if (outcomes.tavilyFail) parts.push(`${outcomes.tavilyFail} search`);
+  if (outcomes.geminiFail) parts.push(`${outcomes.geminiFail} AI extraction`);
+  if (outcomes.finnhubFail) parts.push(`${outcomes.finnhubFail} price lookup`);
+  return parts.length ? parts.join(", ") : "cause not attributed";
+}
+
 async function writeRunStatus(crashError) {
   let status, detail;
   if (crashError) {
@@ -1516,11 +1527,20 @@ async function writeRunStatus(crashError) {
     detail = null;
   } else if (queryFailures < queryAttempts) {
     status = "degraded";
-    detail = `${queryFailures} of ${queryAttempts} live searches failed this run (rate limits or timeouts) - some data may be stale or incomplete.`;
+    detail = `${queryFailures} of ${queryAttempts} calls failed this run (${failureBreakdown()}) - some data may be stale or incomplete.`;
   } else {
     status = "failed";
-    detail = `All ${queryAttempts} live searches failed this run - data may be significantly stale.`;
+    detail = `All ${queryAttempts} calls failed this run (${failureBreakdown()}) - data may be significantly stale.`;
   }
+  // Always logged, even on an "ok" run: the silent outcomes are exactly the
+  // ones that never show up in a status and are the reason a completely
+  // unproductive run can report itself healthy.
+  console.log(
+    `Run outcomes: ${queryFailures}/${queryAttempts} failed ` +
+    `(tavily ${outcomes.tavilyFail}, gemini ${outcomes.geminiFail}, finnhub ${outcomes.finnhubFail}); ` +
+    `no trusted-domain result ${outcomes.noTrustedResult}; ` +
+    `extraction found nothing usable ${outcomes.emptyExtraction}.`
+  );
   try {
     await sbUpsert("agent_run_status", {
       agent: RECAP_ONLY ? "daily-recap" : FAST_ONLY ? "price-agent-fast" : "price-agent",
@@ -1648,28 +1668,56 @@ function buildSourcesBlock(results) {
 // which isn't what "results may be stale" should mean.
 let queryAttempts = 0;
 let queryFailures = 0;
+// Failures broken down by which SERVICE actually failed, plus the two
+// silent non-failure outcomes. queries_failed alone said "7 of 40 live
+// searches failed (rate limits or timeouts)" for what could equally be a
+// Finnhub 500, a Gemini quota exhaustion or a Tavily timeout - three
+// problems with three different fixes - and said nothing at all about the
+// far more common case of a search returning nothing usable, which is why
+// this script wrote 0 explanations across 192 findings without ever
+// reporting a problem.
+const outcomes = {
+  tavilyFail: 0,
+  geminiFail: 0,
+  finnhubFail: 0,
+  noTrustedResult: 0,   // search worked, nothing on an allowlisted domain
+  emptyExtraction: 0,   // Gemini answered, but found no usable value
+};
 
 async function searchAndExtract(query, domains, instructionsPrompt) {
   queryAttempts++;
+  let trusted;
   try {
     const results = await tavilySearch(query);
-    const trusted = results.filter((r) => hostAllowed(r.url, domains));
-    if (!trusted.length) {
-      return { text: null, citations: [] };
-    }
-    const prompt = [
-      instructionsPrompt,
-      "",
-      "Base your answer ONLY on the real search results below. Do not use any",
-      "other knowledge you may have. If the answer isn't in these results, say",
-      "so via the null value specified above rather than guessing.",
-      "",
-      buildSourcesBlock(trusted),
-    ].join("\n");
+    trusted = results.filter((r) => hostAllowed(r.url, domains));
+  } catch (err) {
+    queryFailures++;
+    outcomes.tavilyFail++;
+    throw err;
+  }
+  // Not a failure - the domain allowlist working as intended. But it IS the
+  // single most common reason this script produces nothing, so it is counted
+  // rather than being invisible: a run with 0 findings and 0 failures used to
+  // look identical to a run that simply had nothing to say.
+  if (!trusted.length) {
+    outcomes.noTrustedResult++;
+    return { text: null, citations: [] };
+  }
+  const prompt = [
+    instructionsPrompt,
+    "",
+    "Base your answer ONLY on the real search results below. Do not use any",
+    "other knowledge you may have. If the answer isn't in these results, say",
+    "so via the null value specified above rather than guessing.",
+    "",
+    buildSourcesBlock(trusted),
+  ].join("\n");
+  try {
     const text = await extractWithGemini(prompt);
     return { text, citations: trusted.map((r) => r.url) };
   } catch (err) {
     queryFailures++;
+    outcomes.geminiFail++;
     throw err;
   }
 }
@@ -1684,9 +1732,12 @@ async function searchOnly(query, domains) {
   queryAttempts++;
   try {
     const results = await tavilySearch(query);
-    return results.filter((r) => hostAllowed(r.url, domains));
+    const trusted = results.filter((r) => hostAllowed(r.url, domains));
+    if (!trusted.length) outcomes.noTrustedResult++;
+    return trusted;
   } catch (err) {
     queryFailures++;
+    outcomes.tavilyFail++;
     throw err;
   }
 }
@@ -1797,6 +1848,12 @@ async function findExplanation(symbol) {
     return null;
   }
   const extracted = validateExplanation(parseJsonLoose(result.text));
+  // Gemini answered and honestly reported no usable reason in the sources it
+  // was given. Counted, because this is the outcome that produced 0 stored
+  // explanations across 192 findings while every health signal said "ok" -
+  // the Gemini call is spent either way, so a run where this is high is
+  // burning a 20/day quota for nothing.
+  if (!extracted) outcomes.emptyExtraction++;
   return extracted ? extracted.explanation : null;
 }
 
@@ -2064,6 +2121,7 @@ async function fetchFinnhubFinding(symbol, fetchNews) {
     raw = await fetchFinnhubQuote(symbol);
   } catch (err) {
     queryFailures++;
+    outcomes.finnhubFail++;
     console.warn(`[${symbol}] Finnhub quote failed: ${err.message}`);
     return null;
   }
@@ -2205,6 +2263,7 @@ async function processAllIndexes() {
     text = await extractWithGemini(buildBatchedIndexPrompt(indexesWithSources, sourcesByIndex));
   } catch (err) {
     queryFailures++;
+    outcomes.geminiFail++;
     console.warn(`Batched index price extraction failed: ${err.message}`);
     return [];
   }

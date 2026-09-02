@@ -39,9 +39,14 @@ const iso = (d) => localDateISO(d);
 // 30-day month silently overflows to the next month, which is exactly the
 // class of bug already found once in this repo's subscription renewal math,
 // so the day is clamped to the month's real length instead.
+// Local-calendar throughout, matching localDateISO() and the rest of the app.
+// This module used to build these with Date.UTC and format them back with a
+// UTC formatter - internally consistent, but it silently became one day early
+// for every user west of UTC the moment the formatter switched to local
+// components. Mixing the two is the bug; picking one and holding it is the fix.
 function dateOnDay(year, monthIndex, day) {
-  const lastDayOfMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(year, monthIndex, Math.min(day, lastDayOfMonth)));
+  const lastDayOfMonth = new Date(year, monthIndex + 1, 0).getDate();
+  return new Date(year, monthIndex, Math.min(day, lastDayOfMonth));
 }
 
 /**
@@ -54,16 +59,16 @@ function dateOnDay(year, monthIndex, day) {
  */
 export function cycleDates(statementDay, dueDay, today = new Date()) {
   if (!statementDay || !dueDay) return null;
-  const y = today.getUTCFullYear();
-  const m = today.getUTCMonth();
+  const y = today.getFullYear();
+  const m = today.getMonth();
   let statement = dateOnDay(y, m, statementDay);
   if (statement > today) statement = dateOnDay(y, m - 1, statementDay);
   // The due date is the next occurrence of dueDay strictly after the close,
   // which lands in the following month whenever dueDay <= statementDay (the
   // usual shape of a real card: closes the 5th, due the 2nd of next month).
-  let due = dateOnDay(statement.getUTCFullYear(), statement.getUTCMonth(), dueDay);
+  let due = dateOnDay(statement.getFullYear(), statement.getMonth(), dueDay);
   if (due <= statement) {
-    due = dateOnDay(statement.getUTCFullYear(), statement.getUTCMonth() + 1, dueDay);
+    due = dateOnDay(statement.getFullYear(), statement.getMonth() + 1, dueDay);
   }
   return { statementDate: iso(statement), dueDate: iso(due) };
 }
@@ -128,7 +133,7 @@ export function cycleStatus(liability, activity, today = new Date()) {
   if (remaining <= 0) return { ...base, state: "paid_in_full", interestEstimate: null };
   if (!pastDue) {
     const daysUntilDue = Math.round(
-      (new Date(dueDate + "T00:00:00Z") - new Date(todayStr + "T00:00:00Z")) / 86400000
+      (new Date(dueDate + "T00:00:00") - new Date(todayStr + "T00:00:00")) / 86400000
     );
     return { ...base, state: "due_soon", daysUntilDue };
   }

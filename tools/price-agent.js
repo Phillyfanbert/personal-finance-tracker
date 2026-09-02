@@ -1022,6 +1022,13 @@ const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mentionsWholeWord = (text, term) =>
   new RegExp(`(?<![a-z0-9])${escapeRegex(term.toLowerCase())}(?![a-z0-9])`, "i").test(text);
 
+// Same relevance rule as pickRelevantHeadline below, minus the used-URL
+// bookkeeping: an explanation may draw on several headlines, and the same
+// story legitimately informs more than one symbol's explanation.
+function headlineNamesCompany(title, symbol, companyName) {
+  return mentionsWholeWord(title, symbol) || (!!companyName && mentionsWholeWord(title, companyName));
+}
+
 function pickRelevantHeadline(symbol, candidates, usedUrls, companyNames) {
   if (!Array.isArray(candidates)) return null;
   // Null for a user-added symbol nobody has a company name for yet, in
@@ -1539,6 +1546,7 @@ async function writeRunStatus(crashError) {
     `Run outcomes: ${queryFailures}/${queryAttempts} failed ` +
     `(tavily ${outcomes.tavilyFail}, gemini ${outcomes.geminiFail}, finnhub ${outcomes.finnhubFail}); ` +
     `no trusted-domain result ${outcomes.noTrustedResult}; ` +
+    `no stored headline for the company ${outcomes.noStoredHeadlines}; ` +
     `extraction found nothing usable ${outcomes.emptyExtraction}.`
   );
   try {
@@ -1682,6 +1690,7 @@ const outcomes = {
   finnhubFail: 0,
   noTrustedResult: 0,   // search worked, nothing on an allowlisted domain
   emptyExtraction: 0,   // Gemini answered, but found no usable value
+  noStoredHeadlines: 0, // no stored headline names the company, so no explanation
 };
 
 async function searchAndExtract(query, domains, instructionsPrompt) {
@@ -1804,18 +1813,31 @@ function validateFinding(raw) {
 // guessing"). Kept the Gemini call, but stopped calling it for every
 // symbol - see MAX_GEMINI_EXPLANATIONS_PER_RUN below for how call volume
 // actually gets kept under budget instead.
-function buildExplanationPrompt(symbol) {
+// Built from the REAL company-news headlines already stored against this
+// symbol, not from a web search. See findExplanation() below for why.
+function buildExplanationPrompt(symbol, headlines, companyName) {
+  const who = companyName ? `${companyName} (${symbol})` : symbol;
   return [
-    `You explain why a stock or crypto price moved, based only on the real`,
-    "search results provided below.",
+    "You explain why a company's share price moved, based ONLY on the real",
+    "news headlines listed below. They were published about this company on",
+    "or around the day in question.",
     'Respond with ONLY a JSON object, no prose, no code fences. Use this',
     'exact shape: { "explanation": string|null, "confidence": number }',
-    `The symbol is "${symbol}". explanation should be a short, neutral,`,
-    "1-2 sentence summary of why the price moved today, only if the results",
-    "give an actual reason (earnings, news, a market-wide move, etc).",
-    "confidence is 0..1, how sure you are this reason is real and specific",
-    "to this exact symbol. If there's no clear reason in the results, set",
-    "explanation to null rather than guessing.",
+    "",
+    `The company is ${who}.`,
+    "Headlines published about it:",
+    ...headlines.map((h) => `- "${h.title}"${h.source ? ` (${h.source})` : ""}`),
+    "",
+    "explanation is a short, neutral, 1-2 sentence summary of what was being",
+    "reported, only if these headlines give an actual substantive reason",
+    "(earnings, a deal, a product, a regulatory decision, guidance).",
+    "Say what was REPORTED. Never assert the reporting caused the price move,",
+    "and never predict what the price will do next.",
+    "Do not use any knowledge of this company beyond the headlines above.",
+    "confidence is 0..1, how sure you are the reason is real and specific to",
+    "this exact company. If the headlines are generic market roundups, a",
+    "listicle, or say nothing substantive, set explanation to null rather",
+    "than padding it out.",
   ].join("\n");
 }
 
@@ -1833,26 +1855,57 @@ function validateExplanation(raw) {
 // get one - not every symbol anymore). Every failure mode here is caught
 // and logged, never thrown - this must never take down a run that
 // otherwise found a valid price.
-async function findExplanation(symbol) {
-  let result;
+// Why a price moved, written from the real Finnhub /company-news headlines
+// this script already stores against the symbol - NOT from a web search.
+//
+// It used to run a Tavily search for "{symbol} stock price today news"
+// restricted to TRUSTED_NEWS_DOMAINS, which is mostly quote-page hosts
+// (Yahoo Finance, MarketWatch, Nasdaq, Morningstar). Those pages are price
+// dashboards, not narrative, so Gemini was handed chrome and honestly
+// answered "no reason here" essentially every time: **0 of 192 findings in
+// production ever carried an explanation.** The identical failure is already
+// recorded in this file for the reverted stock-PRICE search experiment,
+// against the same domain list.
+//
+// The headlines are strictly better input and cost nothing extra: they are
+// already fetched, already stored, and inherently about the company rather
+// than merely mentioning it. This also removes one Tavily search per
+// explained symbol (5-7 per weekly run) and leaves the Gemini call as the
+// only spend, which matters because that 20/day quota is shared with the
+// daily recap summary.
+//
+// Headlines are passed IN rather than read here, so one latestHeadlinesBySymbol()
+// round trip serves every symbol in a run instead of one query each.
+async function findExplanation(symbol, headlines, companyName) {
+  // Only headlines that actually name this company. /company-news guarantees
+  // a story MENTIONS the ticker, never that it is about it - the same reason
+  // pickRelevantHeadline() exists for the recap, and skipping that gate here
+  // is how generic "which stocks are moving today" listicles used to become
+  // the basis of an explanation.
+  const relevant = (headlines || []).filter(
+    (h) => h && h.title && headlineNamesCompany(h.title, symbol, companyName)
+  );
+  if (!relevant.length) {
+    outcomes.noStoredHeadlines++;
+    console.warn(`[${symbol}] no stored headline names this company - no explanation this run`);
+    return null;
+  }
+
+  queryAttempts++;
+  let text;
   try {
-    result = await searchAndExtract(`${symbol} stock price today news`, TRUSTED_NEWS_DOMAINS, buildExplanationPrompt(symbol));
+    text = await extractWithGemini(
+      buildExplanationPrompt(symbol, relevant.slice(0, MAX_EXPLANATION_HEADLINES), companyName)
+    );
   } catch (err) {
-    console.warn(`[${symbol}] explanation search failed: ${err.message}`);
+    queryFailures++;
+    outcomes.geminiFail++;
+    console.warn(`[${symbol}] explanation extraction failed: ${err.message}`);
     return null;
   }
   await sleep(REQUEST_DELAY_MS);
 
-  if (!result.text) {
-    console.warn(`[${symbol}] no trusted-domain result for explanation - discarding`);
-    return null;
-  }
-  const extracted = validateExplanation(parseJsonLoose(result.text));
-  // Gemini answered and honestly reported no usable reason in the sources it
-  // was given. Counted, because this is the outcome that produced 0 stored
-  // explanations across 192 findings while every health signal said "ok" -
-  // the Gemini call is spent either way, so a run where this is high is
-  // burning a 20/day quota for nothing.
+  const extracted = validateExplanation(parseJsonLoose(text));
   if (!extracted) outcomes.emptyExtraction++;
   return extracted ? extracted.explanation : null;
 }
@@ -2189,12 +2242,22 @@ async function fetchFinnhubFindings(symbols, checkBudgetFn, fetchNews) {
 // comment) turned out unreliable in practice - restores real Gemini
 // judgment, just no longer unconditionally for all 20 fixed watchlist
 // symbols every run.
+// Enough context for a real reason without inflating a prompt that runs
+// once per explained symbol against a 20/day quota.
+const MAX_EXPLANATION_HEADLINES = 6;
+
 const MAX_GEMINI_EXPLANATIONS_PER_RUN = 5;
 
 async function attachTopMoverExplanations(results) {
   const ranked = [...results].sort((a, b) => b.absDayChangePercent - a.absDayChangePercent);
-  for (const { finding } of ranked.slice(0, MAX_GEMINI_EXPLANATIONS_PER_RUN)) {
-    const explanation = await findExplanation(finding.symbol);
+  const slice = ranked.slice(0, MAX_GEMINI_EXPLANATIONS_PER_RUN);
+  if (!slice.length) return;
+  // One round trip for every symbol in the slice, not one each.
+  const [bySymbol, { names }] = await Promise.all([latestHeadlinesBySymbol(), loadMoversWatchlist()]);
+  for (const { finding } of slice) {
+    const sym = (finding.symbol || "").toUpperCase();
+    const stored = bySymbol.get(sym);
+    const explanation = await findExplanation(finding.symbol, stored && stored.headlines, names[sym]);
     if (explanation) finding.explanation = explanation;
   }
 }
@@ -2297,10 +2360,12 @@ async function processAllIndexes() {
     });
   }
 
-  for (const finding of findings) {
-    const explanation = await findExplanation(finding.symbol);
-    if (explanation) finding.explanation = explanation;
-  }
+  // No explanation pass here any more. Explanations are now written from
+  // Finnhub /company-news, and an index label ("S&P 500") is not a company
+  // Finnhub covers - there is no headline set to reason from, so calling it
+  // would spend a Gemini request to produce null every time. The index
+  // level itself is unaffected; the market-wide "why" now lives on the
+  // daily recap's context_headlines instead.
   return findings;
 }
 
@@ -2486,8 +2551,11 @@ async function main() {
   if (FAST_ONLY) {
     console.log("FAST_ONLY: skipping watchlist explanations (Gemini) this run.");
   } else {
+    const [bySymbol, { names }] = await Promise.all([latestHeadlinesBySymbol(), loadMoversWatchlist()]);
     for (const { finding } of watchlistPriced) {
-      const explanation = await findExplanation(finding.symbol);
+      const sym = (finding.symbol || "").toUpperCase();
+      const stored = bySymbol.get(sym);
+      const explanation = await findExplanation(finding.symbol, stored && stored.headlines, names[sym]);
       if (explanation) finding.explanation = explanation;
     }
   }

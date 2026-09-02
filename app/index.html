@@ -1745,6 +1745,10 @@
               <option value="aggressive">Aggressive</option>
             </select>
             <div id="investTargetsList" style="margin-top:12px"><p class="muted" style="font-size:13px">No targets set yet.</p></div>
+            <!-- Written by renderInvestments: each target is valid on its own
+                 but the set can still add to more than 100%, which makes every
+                 dollar gap below measure toward an impossible mix. -->
+            <p class="text-xs hidden" id="investTargetTotal" style="margin:6px 0 0"></p>
             <div class="row" style="margin-top:10px">
               <select id="investTargetBucket" aria-label="Investment type" style="flex:1"></select>
               <input id="investTargetPercent" aria-label="Target percentage" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />

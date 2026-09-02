@@ -52,11 +52,32 @@ export function parseAmount(str) {
   const s = (str || "").trim();
   if (!s) return null;
   const negParens = /^\(.*\)$/.test(s);
-  const cleaned = s.replace(/[()$,\s]/g, "");
-  if (!cleaned) return null;
-  const n = Number(cleaned);
+  // Strip currency/space/parens but NOT the separators yet - which of "," and
+  // "." is the decimal point has to be decided first.
+  let body = s.replace(/[()$\s]/g, "").replace(/[A-Za-z]{3}$/, "");
+  const lastComma = body.lastIndexOf(",");
+  const lastDot = body.lastIndexOf(".");
+  // European convention: the comma is the decimal separator, e.g. "1.234,56"
+  // or "1234,56". Detected by the comma coming AFTER the last period, or by a
+  // lone comma followed by exactly two digits. Blindly stripping commas the
+  // US way turned "1.234,56" into 1.23456 and "1234,56" into 123456 - a
+  // silent 1000x error on a real bank export, with no warning anywhere.
+  const commaIsDecimal =
+    (lastComma > -1 && lastDot > -1 && lastComma > lastDot) ||
+    (lastComma > -1 && lastDot === -1 && /,\d{1,2}$/.test(body));
+  if (commaIsDecimal) {
+    body = body.replace(/\./g, "").replace(",", ".");
+  } else {
+    body = body.replace(/,/g, "");
+  }
+  // A trailing minus is how some bank exports mark a debit ("45.00-").
+  const trailingMinus = /-$/.test(body);
+  if (trailingMinus) body = body.slice(0, -1);
+  if (!body) return null;
+  const n = Number(body);
   if (!Number.isFinite(n)) return null;
-  return negParens ? -Math.abs(n) : n;
+  const magnitude = negParens || trailingMinus ? -Math.abs(n) : n;
+  return magnitude;
 }
 
 // Ordered most-specific first: "transaction date" should win over a bare

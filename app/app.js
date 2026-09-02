@@ -2166,7 +2166,21 @@ $("saveAssetBtn").onclick = async () => {
     : isInvestment && $("assetCostBasis").value !== "" ? parseFloat($("assetCostBasis").value)
     : null;
   const purchase_date = isVehicle && $("assetPurchaseDate").value ? $("assetPurchaseDate").value : null;
-  const depreciation_rate = isVehicle && $("assetDepRate").value !== "" ? parseFloat($("assetDepRate").value) / 100 : null;
+  // min="0" max="100" on the input is a browser hint only: it is never
+  // enforced on a typed or pasted value, and nothing here called
+  // checkValidity(), so a rate of -50 stored -0.5 and made the asset
+  // APPRECIATE - a $30,000 car came out at $44,987 after one year, silently
+  // inflating net worth. Validated for real now, like every other number on
+  // this form.
+  const depRateRaw = $("assetDepRate").value;
+  if (isVehicle && depRateRaw !== "") {
+    const pct = parseFloat(depRateRaw);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      flagField("assetDepRate", "Enter a depreciation rate from 0 to 100 percent.");
+      return toast("Depreciation rate must be between 0 and 100 percent", "error");
+    }
+  }
+  const depreciation_rate = isVehicle && depRateRaw !== "" ? parseFloat(depRateRaw) / 100 : null;
   const price_symbol = $("assetPriceSymbol").value.trim() || null;
   const quantity = $("assetQuantity").value !== "" ? parseFloat($("assetQuantity").value) : null;
   const investment_bucket = isInvestment ? ($("assetInvestBucket").value.trim() || null) : null;
@@ -4939,6 +4953,23 @@ function renderInvestments() {
         </div>
       </div>`;
   }).join("") : `<p class="muted" style="font-size:13px">No targets set yet.</p>`;
+
+  // Each target is validated 0-100 on its own, but nothing checked the
+  // TOTAL, so a mix adding to 150% was accepted and the card then printed
+  // dollar gaps toward an allocation that cannot exist. Stated rather than
+  // blocked: part-way through entering buckets the total is legitimately
+  // under 100, so refusing a save would make the card unusable to fill in.
+  const targetTotal = Math.round(investmentTargets.reduce((sum, t) => sum + (Number(t.target_percent) || 0), 0) * 10) / 10;
+  const totalEl = $("investTargetTotal");
+  totalEl.classList.toggle("hidden", !investmentTargets.length);
+  if (investmentTargets.length) {
+    const off = Math.abs(targetTotal - 100) > 0.05;
+    totalEl.textContent = off
+      ? `Your targets add up to ${targetTotal}%, not 100%. The gaps below are measured against that, so they will not add up either until this is 100%.`
+      : `Your targets add up to 100%.`;
+    totalEl.style.color = off ? "var(--warn)" : "";
+  }
+
   document.querySelectorAll("[data-del-invest-target]").forEach((el) => {
     el.onclick = async () => {
       const { error } = await sb.from("investment_targets").delete().eq("bucket", el.dataset.delInvestTarget);
@@ -7543,6 +7574,18 @@ $("saveIncomeBtn").onclick = async () => {
   if (cadence === "semimonthly") {
     semimonthlyDay1 = parseInt($("incSemimonthlyDay1").value, 10) || null;
     semimonthlyDay2 = parseInt($("incSemimonthlyDay2").value, 10) || null;
+    // Range-checked, not just present. This used to test only truthiness, so
+    // a typed -3 passed (parseInt gives -3, which is truthy) and
+    // advanceIncomeDate then produced the malformed string "2026-09--3" for
+    // a `date` column. The identical field on the liability form has always
+    // been validated this way; the income form simply never was.
+    for (const [label, v, id] of [["First pay day", semimonthlyDay1, "incSemimonthlyDay1"],
+                                  ["Second pay day", semimonthlyDay2, "incSemimonthlyDay2"]]) {
+      if (v !== null && (!Number.isInteger(v) || v < 1 || v > 31)) {
+        flagField(id, "Enter a day of the month from 1 to 31.");
+        return toast(`${label} must be a day from 1 to 31`, "error");
+      }
+    }
     if (!semimonthlyDay1 || !semimonthlyDay2) {
       flagField(["incSemimonthlyDay1", "incSemimonthlyDay2"]);
       return toast("Enter both pay days for a semimonthly source");

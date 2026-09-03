@@ -367,6 +367,28 @@
     .stack-3 { margin-top: var(--sp-3); }
     .stack-4 { margin-top: var(--sp-4); }
 
+    /* ONE busy indicator for the whole app, so "is this doing something?"
+       always looks the same. Two surfaces, one meaning:
+         .spinner   inside a button, for an action the user just took
+         #appBusy   a bar under the nav, for work with no button behind it
+       The bar sits at z-index 41, directly above the nav's 40 and well below
+       modal 70 - it must stay visible while a modal is open, since a save
+       inside one is exactly when you want to know something is happening. */
+    .spinner { display: inline-block; width: 13px; height: 13px; margin-right: 7px;
+      vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent;
+      border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    button[aria-busy="true"] { opacity: .85; cursor: progress; }
+
+    #appBusy { position: fixed; left: 0; right: 0; top: 52px; height: 3px; z-index: 41;
+      background: transparent; overflow: hidden; pointer-events: none; }
+    #appBusy::after { content: ""; display: block; width: 40%; height: 100%;
+      background: var(--accent-2); border-radius: 0 3px 3px 0;
+      animation: appBusySweep 1.1s ease-in-out infinite; }
+    @keyframes appBusySweep {
+      0% { margin-left: -40%; } 100% { margin-left: 100%; }
+    }
+
     /* Vestibular disorders are common and animation can cause real nausea.
        There was not one @media query in this file before now.
        app.js also calls scrollIntoView({behavior:"smooth"}) in six places,
@@ -376,10 +398,20 @@
         animation-duration: .01ms !important; animation-iteration-count: 1 !important;
         transition-duration: .01ms !important; scroll-behavior: auto !important;
       }
+      /* Killing the animation must not kill the SIGNAL. A frozen quarter-width
+         bar reads as a rendering fault, and a static broken ring reads as
+         nothing at all - so both become a plain, full, still indicator that
+         is unmistakably "busy" without moving. */
+      .spinner { border-right-color: currentColor; opacity: .55; }
+      #appBusy::after { width: 100%; margin-left: 0; border-radius: 0; opacity: .7; }
     }
   </style>
 </head>
 <body>
+  <!-- App-wide "something is happening" bar. role=status so a screen reader
+       hears it once per transition; refcounted and delayed in app.js, so a
+       fast action never flashes it. -->
+  <div id="appBusy" class="hidden" role="status" aria-live="polite"></div>
   <!-- Ahead of the content in the DOM because it renders fixed at the TOP of
        the screen. It used to sit second-to-last in <body>, so Tab reached the
        app's main navigation only after every view and all nine modals. -->

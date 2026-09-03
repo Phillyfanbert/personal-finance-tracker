@@ -80,6 +80,115 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 //    message to be readable, and a 79-character sentence on the same timer as
 //    "Added" is not. It now scales with length, within bounds.
 let toastTimer = null;
+// ---- "Something is happening" -----------------------------------------------
+// One mechanism for the whole app, so a user can always tell a working app
+// from a stuck one. Two surfaces with one meaning: a spinner inside the
+// button you just pressed, and a bar under the nav for work with no button
+// behind it (initial load, a view fetching its data).
+//
+// Refcounted, because several things overlap constantly at startup - a plain
+// boolean would have the first finisher hide the bar while five others are
+// still running.
+let busyCount = 0;
+let busyShowTimer = null;
+
+// The BAR waits 150ms; the BUTTON does not. That asymmetry is deliberate.
+// A button is answering "did my tap register?", which has to be immediate or
+// the tap gets repeated - and its label is already in the place the user is
+// looking. The bar is app chrome appearing in the corner of the eye, so for
+// the many actions that finish in under 150ms it would be pure flicker with
+// nothing gained. Measured live: button spinner at 100ms, bar at 200ms, both
+// cleared by 1200ms.
+const BUSY_SHOW_DELAY_MS = 150;
+
+function busyStart() {
+  busyCount++;
+  if (busyCount === 1 && !busyShowTimer) {
+    busyShowTimer = setTimeout(() => {
+      busyShowTimer = null;
+      if (busyCount > 0) {
+        $("appBusy").classList.remove("hidden");
+        $("appBusy").textContent = "Working";
+      }
+    }, BUSY_SHOW_DELAY_MS);
+  }
+}
+
+function busyEnd() {
+  busyCount = Math.max(0, busyCount - 1);
+  if (busyCount > 0) return;
+  clearTimeout(busyShowTimer);
+  busyShowTimer = null;
+  $("appBusy").classList.add("hidden");
+  $("appBusy").textContent = "";
+}
+
+/**
+ * Track a promise as app-level work: the bar shows while it runs, and if a
+ * button is given, that button spins and goes disabled with it.
+ *
+ * The spinner is PREPENDED and the label kept. Replacing the label with
+ * "Working..." was the first version and it was wrong: the app has plenty of
+ * narrow buttons ("Set", "Pay", "CSV", a 36px back arrow), and swapping a
+ * three-character label for an eleven-character one stretches the row it
+ * sits in. Prepending costs a fixed ~20px instead, and reads better anyway,
+ * since the button still says what it is doing.
+ *
+ * `aria-busy` carries the state for a screen reader rather than the spinner
+ * glyph, which is decorative and aria-hidden.
+ */
+async function trackBusy(promise, btn = null) {
+  busyStart();
+  let label = null;
+  if (btn && !btn.dataset.busy) {
+    btn.dataset.busy = "1";
+    label = btn.innerHTML;
+    btn.setAttribute("aria-busy", "true");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" aria-hidden="true"></span>' + label;
+  }
+  try {
+    return await promise;
+  } finally {
+    busyEnd();
+    if (btn && label !== null) {
+      btn.innerHTML = label;
+      btn.disabled = false;
+      btn.removeAttribute("aria-busy");
+      delete btn.dataset.busy;
+    }
+  }
+}
+
+/** For work with no button behind it - a load, a refresh, a background fetch. */
+const withBusy = (promise) => trackBusy(promise, null);
+
+/**
+ * Give EVERY button that runs async work a spinner, without editing 59
+ * handlers by hand and without a future one having to remember.
+ *
+ * Wraps each button's existing onclick once, at startup: if the handler
+ * returns a promise it is tracked, and if it returns anything else nothing
+ * happens at all. That is why this is safe to apply blindly - a synchronous
+ * handler is untouched, so no button that opens a modal or toggles a tab
+ * gets a spurious spinner.
+ *
+ * Same markup-driven shape as wireInfoIcons(): a new button needs no wiring,
+ * only to exist by the time this runs.
+ */
+function wireBusyButtons() {
+  for (const btn of document.querySelectorAll("button")) {
+    const original = btn.onclick;
+    if (typeof original !== "function" || btn.dataset.busyWired) continue;
+    btn.dataset.busyWired = "1";
+    btn.onclick = function (ev) {
+      const result = original.call(this, ev);
+      if (result && typeof result.then === "function") return trackBusy(result, btn);
+      return result;
+    };
+  }
+}
+
 function toast(msg, severity = "info") {
   const t = $("toast");
   const isError = severity === "error";
@@ -392,13 +501,16 @@ function renderAuth(session) {
 // always-visible nav. It looked like the button did nothing.
 function goToView(view) {
   showView(view);
+  // Switching pages fetches. Without this the app looks frozen between the
+  // tap and the first card painting, which is the exact "is it working?"
+  // gap this indicator exists to close.
   // Log owns subscriptions/bills now, so it needs the same load its own tab
   // used to do. renderBudgets/renderDebtStrategy already run off loadExpenses
   // and the liabilities load, so Plan only has to populate the one picker
   // that used to be filled by loadReports.
-  if (view === "log") loadSubscriptions();
+  if (view === "log") withBusy(loadSubscriptions());
   else if (view === "plan") { populateForecastAccountSelect(); renderCashFlowForecast(); renderDebtStrategy(); renderSinkingFunds(); }
-  else if (view === "reports") loadReports();
+  else if (view === "reports") withBusy(loadReports());
   else if (view === "invest") {
     renderInvestments(); renderInvestmentsTrend(); renderMarketOverview();
     renderPriceHistory(); renderRealizedGains(); renderWatchlistEditor();
@@ -431,6 +543,18 @@ function showView(v) {
 
 // ---- INIT ------------------------------------------------------------------
 async function init() {
+  // The longest wait in the app, and it had no indicator of any kind. Ends
+  // in the finally below so a failed load cannot leave the bar spinning
+  // forever, which would be worse than no bar.
+  busyStart();
+  try {
+    await initInner();
+  } finally {
+    busyEnd();
+  }
+}
+
+async function initInner() {
   // Fire-and-forget, as early as possible: a genuinely cold model measured
   // ~31s to load (gemma.js's warmUpGemma comment), and Quick Add is often
   // the very first thing used after sign-in - starting this here, not just
@@ -7088,7 +7212,16 @@ $("qaAskBtn").onclick = async () => {
     // Tier 1: computed outright. Exact by construction and instant, because
     // no model runs at all. Returns null rather than guessing at a question
     // whose shape it does not recognise.
-    const computed = answerQuestion(question, { expenses: allExpenses, subscriptions, today: new Date() });
+    // Facts are derived FRESH here rather than read from the stored rows.
+    // The stored ones are refreshed once a day, so an expense logged this
+    // morning would not be in them yet - and an answer labelled "exact" that
+    // is a day behind is not exact. Deriving costs a few passes over data
+    // already in memory. Dismissed facts are still honoured: removing one
+    // means the user does not want to be told it, in an answer either.
+    const dismissedKeys = new Set(wikiFacts.filter((f) => f.dismissed_at).map((f) => f.key));
+    const liveFacts = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() })
+      .filter((f) => !dismissedKeys.has(f.key));
+    const computed = answerQuestion(question, { expenses: allExpenses, subscriptions, facts: liveFacts, today: new Date() });
     if (computed) {
       showQaAnswer(computed.answer, "computed");
       await saveQaCache(question, computed.answer, "computed");
@@ -8782,6 +8915,8 @@ $("downloadExpensesCsvBtn").onclick = async () => {
 $("setPasswordBtn").onclick = async () => {
   const pw = $("pNewPassword").value;
   if (!pw || pw.length < 6) { flagField("pNewPassword"); return toast("Password must be at least 6 characters"); }
+  // Manages its own label, so wireBusyButtons() leaves it alone (dataset.busy
+  // is already set by the time the wrapper would swap it).
   $("setPasswordBtn").disabled = true;
   $("setPasswordBtn").textContent = "Saving...";
   const { error } = await sb.auth.updateUser({ password: pw });
@@ -8797,3 +8932,8 @@ $("setPasswordBtn").onclick = async () => {
   $("passwordSetMsg").textContent = "Password updated ✓";
   toast("Password updated ✓");
 };
+
+// Every button is bound by this point, so one pass covers the whole app.
+// Anything created later (a row rebuilt by a render function) is handled by
+// its own delegated listener, which routes through trackBusy directly.
+wireBusyButtons();

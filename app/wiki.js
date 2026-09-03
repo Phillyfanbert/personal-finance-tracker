@@ -274,7 +274,18 @@ export function resolveCategory(question, expenses) {
  *
  * @returns {{answer:string, figures:object}|null}
  */
-export function answerQuestion(question, { expenses = [], subscriptions = [], today = new Date() } = {}) {
+export function answerQuestion(question, { expenses = [], subscriptions = [], facts = [], today = new Date() } = {}) {
+  const direct = answerFromTransactions(question, { expenses, subscriptions, today });
+  if (direct) return direct;
+  // Facts are tried only after the direct paths, which are more specific.
+  // This is what makes tier 1's coverage GROW as knowledge accumulates: a
+  // question about a merchant or a standout month has no direct path, but
+  // once the pattern behind it has been noticed it can be answered exactly
+  // and instantly instead of falling through to the model.
+  return answerFromFacts(question, facts);
+}
+
+function answerFromTransactions(question, { expenses = [], subscriptions = [], today = new Date() } = {}) {
   const q = String(question || "").toLowerCase().trim();
   if (!q) return null;
 
@@ -336,6 +347,63 @@ export function answerQuestion(question, { expenses = [], subscriptions = [], to
     answer: `You spent $${total.toFixed(2)}${what}${when}, across ${scoped.length} transaction${scoped.length === 1 ? "" : "s"}.`,
     figures: { total, count: scoped.length },
   };
+}
+
+/** Whole-word match, the same lookaround idiom categorize.js uses. */
+function mentionsWholeWord(text, term) {
+  const t = String(term || "").trim();
+  if (!t) return false;
+  const escaped = t.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).test(text);
+}
+
+/**
+ * Answer from an accumulated fact, when the question is unmistakably about
+ * that one fact. This is what makes the app get better at answering as it
+ * learns more, rather than staying at whatever tier 1 could do on day one.
+ *
+ * **Exactly one candidate, or nothing.** Two facts matching means the
+ * question was ambiguous, and answering the wrong one precisely is worse
+ * than declining - the same rule `selectAccountFromText()` (app.js) already
+ * applies when more than one account matches a typed description.
+ *
+ * Both a SUBJECT and an INTENT must match, never just a topic word. A
+ * question merely containing "Netflix" is not necessarily asking what
+ * Netflix costs, and returning a real figure for a question nobody asked is
+ * the same class of confidently-wrong answer this whole design exists to
+ * prevent.
+ */
+function answerFromFacts(question, facts = []) {
+  const q = String(question || "").toLowerCase().trim();
+  if (!q || !facts.length) return null;
+
+  const wantsCost = /\b(cost|costs|spend|spent|spending|pay|paying|charge|charged|how much)\b/.test(q);
+  const candidates = [];
+
+  for (const f of facts) {
+    const sep = f.key.indexOf(":");
+    const kind = sep === -1 ? f.key : f.key.slice(0, sep);
+    const subject = sep === -1 ? "" : f.key.slice(sep + 1);
+
+    if (kind === "recurring") {
+      if (mentionsWholeWord(q, subject) && (wantsCost || /\b(regular|regularly|often|every month|monthly|subscription)\b/.test(q))) candidates.push(f);
+    } else if (kind === "price_change") {
+      if (mentionsWholeWord(q, subject) && /\b(price|prices|increase|increased|went up|gone up|go up|cheaper|dearer|more expensive|changed|change)\b/.test(q)) candidates.push(f);
+    } else if (kind === "month_outlier") {
+      const monthWord = monthName(subject).split(" ")[0].toLowerCase();
+      if (mentionsWholeWord(q, monthWord) && /\b(why|unusual|high|higher|stand out|stands out|spike|expensive|so much)\b/.test(q)) candidates.push(f);
+    } else if (kind === "spend_average") {
+      if (/\b(usually|typically|normally|average|typical|normal)\b/.test(q) && /\b(spend|spending|month)\b/.test(q)) candidates.push(f);
+    }
+    // category: and subscriptions_total: deliberately skipped - the direct
+    // paths above already answer those from live transactions, and a second
+    // route to the same answer could only ever disagree with the first.
+    // profile_context: has no figures and answers no question on its own.
+  }
+
+  if (candidates.length !== 1) return null;
+  const hit = candidates[0];
+  return { answer: hit.body, figures: hit.figures || {} };
 }
 
 // ---- Tier 2: the context a model is allowed to see -------------------------

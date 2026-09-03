@@ -101,13 +101,16 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
   // savings-runway tile: one month of data out of six understated real
   // spending sixfold before anything else compounded the error.
   const monthsWithData = [...monthTotals.keys()].sort();
-  if (monthsWithData.length) {
+  // Two months minimum. Averaged over ONE month this is just that month's
+  // total, which the Reports stat tile already shows, and calling a single
+  // month "typical" is not something the data supports.
+  if (monthsWithData.length >= 2) {
     const total = r2([...monthTotals.values()].reduce((a, b) => a + b, 0));
     const average = r2(total / monthsWithData.length);
     facts.push({
       key: "spend_average",
       title: "Typical month",
-      body: `You spend about $${average.toFixed(2)} in a month, averaged over the ${monthsWithData.length} month${monthsWithData.length === 1 ? "" : "s"} that have spending recorded.`,
+      body: `You spend about $${average.toFixed(2)} in a typical month, averaged across the ${monthsWithData.length} months that have spending recorded.`,
       figures: { average, months_counted: monthsWithData.length, window_total: total },
       as_of: asOf,
     });
@@ -120,25 +123,24 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
     const total = r2([...catMonths.values()].reduce((a, b) => a + b, 0));
     if (total <= 0) continue;
     const average = r2(total / catMonths.size);
-    const figures = { total, average, months_counted: catMonths.size };
 
-    // Direction only when both halves of the window contain data - otherwise
-    // "up 100%" would just mean the earlier half is empty, which is a
-    // statement about logging rather than about spending.
+    // A category fact is only worth stating when it can say something the
+    // Reports bar chart cannot, which means a comparison ACROSS time. With a
+    // single month there is no comparison to make and the "fact" is just the
+    // chart bar restated in a sentence - the redundancy this whole card is
+    // supposed to avoid. Both halves must contain spending: comparing
+    // against an empty earlier half would report a change in LOGGING as if
+    // it were a change in spending.
     const mid = shiftMonth(thisMonth, Math.floor(windowMonths / 2) - 1);
     const recent = totalFor(rows, (e) => monthOf(e) >= mid);
     const earlier = totalFor(rows, (e) => monthOf(e) < mid);
-    let body = `${cat} costs about $${average.toFixed(2)} a month, $${total.toFixed(2)} in total over the last ${catMonths.size} month${catMonths.size === 1 ? "" : "s"} with spending.`;
-    if (recent > 0 && earlier > 0) {
-      const changePct = r2(((recent - earlier) / earlier) * 100);
-      figures.recent_half = recent;
-      figures.earlier_half = earlier;
-      figures.change_pct = changePct;
-      const dir = changePct > 0 ? "up" : changePct < 0 ? "down" : "level";
-      body += changePct === 0
-        ? " That is level with the first half of the window."
-        : ` That is ${dir} ${Math.abs(changePct).toFixed(1)}% against the first half of the window.`;
-    }
+    if (!(recent > 0 && earlier > 0)) continue;
+
+    const changePct = r2(((recent - earlier) / earlier) * 100);
+    const figures = { total, average, months_counted: catMonths.size, recent_half: recent, earlier_half: earlier, change_pct: changePct };
+    const body = changePct === 0
+      ? `${cat} runs about $${average.toFixed(2)} a month, level with where it was earlier in the year.`
+      : `${cat} runs about $${average.toFixed(2)} a month, ${changePct > 0 ? "up" : "down"} ${Math.abs(changePct).toFixed(0)}% on the first half of the last ${windowMonths} months.`;
     facts.push({ key: `category:${cat}`, title: cat, body, figures, as_of: asOf });
   }
 
@@ -205,18 +207,11 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
     }
   }
 
-  const activeSubs = subscriptions.filter((s) => s.is_active);
-  if (activeSubs.length) {
-    const monthlyTotal = r2(activeSubs.reduce(
-      (sum, s) => sum + (s.billing_cycle === "annual" ? num(s.amount) / 12 : num(s.amount)), 0));
-    facts.push({
-      key: "subscriptions_total",
-      title: "Subscriptions and bills",
-      body: `${activeSubs.length} active subscription${activeSubs.length === 1 ? "" : "s"}, costing about $${monthlyTotal.toFixed(2)} a month.`,
-      figures: { count: activeSubs.length, monthly_total: monthlyTotal },
-      as_of: asOf,
-    });
-  }
+  // No subscriptions fact. The figure is already on the Subscriptions page,
+  // in the monthly report's own tile, and answerable directly by tier 1 - a
+  // fourth copy on this card would be the same number in four places and
+  // nothing learned. buildVerifiedContext() still passes the total to the
+  // model as a computed aggregate, so nothing downstream loses it.
 
   // Stable context the user typed themselves. No figures, so it never enters
   // the verification allow-list - it is not a number and cannot be misquoted
@@ -395,9 +390,11 @@ function answerFromFacts(question, facts = []) {
     } else if (kind === "spend_average") {
       if (/\b(usually|typically|normally|average|typical|normal)\b/.test(q) && /\b(spend|spending|month)\b/.test(q)) candidates.push(f);
     }
-    // category: and subscriptions_total: deliberately skipped - the direct
-    // paths above already answer those from live transactions, and a second
-    // route to the same answer could only ever disagree with the first.
+    // category: deliberately skipped - the direct path above already answers
+    // it from live transactions, and a second route to the same answer could
+    // only ever disagree with the first. (Subscriptions has no fact at all
+    // any more, for the same reason plus three other places already showing
+    // the figure.)
     // profile_context: has no figures and answers no question on its own.
   }
 

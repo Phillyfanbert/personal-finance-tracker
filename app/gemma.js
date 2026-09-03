@@ -203,7 +203,7 @@ export function buildQaPrompt(question, context) {
     "regular recent-months transactions list. If the data doesn't contain",
     "enough to answer, say so plainly instead of guessing.",
     "Be concise - a few sentences or a short list. Use $ for dollar amounts.",
-    "Never use an em dash or en dash. Use a plain hyphen instead.",
+    "Never use an em dash or en dash. Use a comma instead.",
     "",
     // The hard accuracy rule this feature is built to. Every figure in the
     // data was computed by the app; the model's job is to phrase them, not
@@ -269,8 +269,18 @@ export class QaAdviceRejectedError extends Error {}
 export function plainDashes(text) {
   if (typeof text !== "string") return "";
   return text
+    // A range stays a range.
     .replace(/(\d)\s*[\u2013\u2014\u2015]\s*(\d)/g, "$1-$2")
-    .replace(/\s*[\u2013\u2014\u2015]\s*/g, " - ");
+    // Opening a line, it is a list marker rather than punctuation.
+    .replace(/(^|\n)[ \t]*[\u2013\u2014\u2015][ \t]*/g, "$1- ")
+    // Everywhere else it is doing a comma's job, so use a comma. A spaced
+    // hyphen was the first substitution and it read as machine output:
+    // "spending - like groceries or dining out - to better pinpoint" is not
+    // a sentence anyone writes.
+    .replace(/\s*[\u2013\u2014\u2015]\s*/g, ", ")
+    // The dash may already have sat next to a comma; never leave two.
+    .replace(/,[\s,]*,/g, ",")
+    .replace(/\s+,/g, ",");
 }
 
 // Never legitimate in this feature's context: buildQaContext (insights.js)

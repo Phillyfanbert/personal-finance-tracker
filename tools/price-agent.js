@@ -945,7 +945,12 @@ function plainDashes(text) {
   if (typeof text !== "string") return "";
   return text
     .replace(/(\d)\s*[\u2013\u2014\u2015]\s*(\d)/g, "$1-$2")
-    .replace(/\s*[\u2013\u2014\u2015]\s*/g, " - ");
+    .replace(/(^|\n)[ \t]*[\u2013\u2014\u2015][ \t]*/g, "$1- ")
+    // A comma, not a spaced hyphen: the hyphen version read as machine
+    // output in a real shipped report.
+    .replace(/\s*[\u2013\u2014\u2015]\s*/g, ", ")
+    .replace(/,[\s,]*,/g, ",")
+    .replace(/\s+,/g, ",");
 }
 
 // Returns { summary } on success or { reason } on rejection, so the caller
@@ -2064,7 +2069,7 @@ function buildNewsSentimentPrompt(headlines) {
     ...headlines.map((h) => `- ${h.title} (${h.source || "unknown source"})`),
     "",
     "sentiment_reason must be one sentence grounded in these headlines.",
-    "Never use an em dash or en dash. Use a plain hyphen instead.",
+    "Never use an em dash or en dash. Use a comma instead.",
     "Rules:",
     "- These are a few companies' stories, NOT the market. Never say",
     "  anything about 'the market' or overall market sentiment - you are",

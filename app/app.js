@@ -7047,7 +7047,7 @@ function renderWiki() {
   const live = wikiFacts.filter((f) => !f.dismissed_at);
   const el = $("wikiList");
   if (!live.length) {
-    el.innerHTML = `<p class="muted" style="font-size:13px">Nothing worked out yet. These build up as you log spending - things like a category's usual cost, a price that changed, or a month that stands out. A note you add to a transaction will show up here too.</p>`;
+    el.innerHTML = `<p class="muted" style="font-size:13px">Nothing here yet. This card only shows things you cannot see on a chart, so it needs a couple of months before it has anything to say: whether a category is drifting up or down, a price that changed, a month well above your usual, a payment that comes round every month. A note you add to a transaction will show up here too.</p>`;
     return;
   }
   el.innerHTML = live.map((f) => `

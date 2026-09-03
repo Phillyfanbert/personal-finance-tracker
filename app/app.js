@@ -429,6 +429,13 @@ function showView(v) {
 
 // ---- INIT ------------------------------------------------------------------
 async function init() {
+  // Fire-and-forget, as early as possible: a genuinely cold model measured
+  // ~31s to load (gemma.js's warmUpGemma comment), and Quick Add is often
+  // the very first thing used after sign-in - starting this here, not just
+  // when the Reports page opens, gives it the longest possible head start.
+  // Never awaited and never surfaced to the user, same as loadReports()'s
+  // own call below - a genuinely dead endpoint costs nothing extra here.
+  if (GEMMA_ENDPOINT) warmUpGemma({ endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY });
   fillCategorySelect($("fCategory"));
   fillCategorySelect($("eCategory"));
   fillCategorySelect($("bulkCategorySelect"));
@@ -4584,9 +4591,10 @@ $("editDelete").onclick = async () => {
 
 // ---- REPORTS ---------------------------------------------------------------
 async function loadReports() {
-  // Fire-and-forget: loads the model into memory in the background so it's
-  // likely already warm by the time the user finishes reading this page and
-  // clicks Ask - see warmUpGemma()'s own comment in gemma.js for why.
+  // Second attempt at the same warm-up init() already fired on app load -
+  // harmless if the model is already warm (a quick real call, not another
+  // 30s wait), and covers the case where Reports is opened long enough
+  // after sign-in that a keep-alive-less cold model went back to sleep.
   if (GEMMA_ENDPOINT) warmUpGemma({ endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY });
   if (!allExpenses.length) await loadExpenses();
   // Build month selector from the last 12 months.
@@ -6846,9 +6854,10 @@ $("qaAskBtn").onclick = async () => {
   $("qaAskBtn").disabled = true;
   $("qaAnswer").classList.add("hidden");
   // Sets an honest expectation up front rather than a bare "Thinking…" -
-  // the home model can take up to ~20s (askGemma's own timeout) if it
-  // wasn't already warmed up by loadReports() opening this page.
-  $("qaStatus").textContent = "Thinking… (can take up to ~20s on the home model, less if you've had this page open a bit)";
+  // the home model can take up to ~45s (askGemma's own timeout, matched to
+  // the real measured cold-load time) if it wasn't already warmed up by
+  // init() or loadReports() opening this page.
+  $("qaStatus").textContent = "Thinking… (can take up to ~45s on the home model if it's cold, usually just a few seconds otherwise)";
   try {
     if (!allExpenses.length) await loadExpenses();
     const since = lastMonths(6)[0] + "-01"; // same boundary buildQaContext computes internally

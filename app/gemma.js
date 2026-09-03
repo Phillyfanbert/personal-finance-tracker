@@ -79,7 +79,16 @@ function extractPayload(data) {
  * @param {{endpoint:string, model?:string, key?:string, timeoutMs?:number, today?:string}} opts
  */
 export async function parseWithGemma(text, opts = {}) {
-  const { endpoint, model = "gemma", key, timeoutMs = 4000 } = opts;
+  // Measured live against the real tunnel+model 2026-09-02: a WARM request
+  // takes 2.9-3.6s, so the old 4000ms default was already failing on
+  // ordinary variance, not just a cold model - this is what made Quick Add
+  // show "Gemma unavailable" far more often than the endpoint was actually
+  // unreachable. Still deliberately short of the real cold-load time
+  // (measured ~31s, see warmUpGemma below) - Quick Add is an inline typing
+  // flow and blocking it for 30s on a cold model would be worse than
+  // falling back to the local keyword parser, which is the existing,
+  // correct behavior on any timeout here.
+  const { endpoint, model = "gemma", key, timeoutMs = 8000 } = opts;
   const today = opts.today || localDateISO();
   if (!endpoint) throw new Error("Gemma endpoint not configured");
 
@@ -105,16 +114,22 @@ export async function parseWithGemma(text, opts = {}) {
 /**
  * Fire a minimal "ping" prompt to load the model into memory ahead of a
  * real request - same warm-up shape tools/price-agent.js already uses
- * server-side. Called when the Reports page opens (before the user has
- * typed a question) so the ~11-16s cold-load measured on the home machine
- * (docs/SESSION-NOTES.md) happens in the background instead of counting
- * against the Ask button's wait. Fire-and-forget by design: any failure
- * here (unreachable endpoint, timeout) just means the next real call pays
- * the cold-start cost instead, exactly like today - never surface an error
- * to the user for a warm-up they didn't ask for.
+ * server-side. Called from init() (before the user has done anything) and
+ * again when the Reports page opens, so a genuinely cold model has two
+ * chances to finish loading in the background before it counts against a
+ * real click. Fire-and-forget by design: any failure here (unreachable
+ * endpoint, timeout) just means the next real call pays the cold-start
+ * cost instead, exactly like today - never surface an error to the user
+ * for a warm-up they didn't ask for.
+ *
+ * Measured live against the real tunnel+model 2026-09-02: a genuinely cold
+ * load took 30.9s, not the ~11-16s this comment previously stated - the
+ * old 20000ms abort was shorter than that, so this warm-up was silently
+ * giving up before the model had even finished loading on every cold run,
+ * defeating its entire purpose. Raised well past the measured figure.
  */
 export async function warmUpGemma(opts = {}) {
-  const { endpoint, model = "gemma", key, timeoutMs = 20000 } = opts;
+  const { endpoint, model = "gemma", key, timeoutMs = 45000 } = opts;
   if (!endpoint) return;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -233,7 +248,11 @@ export function validateQaAnswer(raw) {
  * the caller can tell the two apart and never display the rejected text.
  */
 export async function askGemma(question, context, opts = {}) {
-  const { endpoint, model = "gemma", key, timeoutMs = 20000 } = opts;
+  // Matches warmUpGemma's own timeout and its comment on the real measured
+  // cold-load time (30.9s, 2026-09-02) - this used to be 20000ms, shorter
+  // than a genuine cold load, so a first-of-the-session question could
+  // abort before Gemma ever finished thinking rather than actually failing.
+  const { endpoint, model = "gemma", key, timeoutMs = 45000 } = opts;
   if (!endpoint) throw new Error("Gemma endpoint not configured");
   if (!question || !question.trim()) throw new Error("Ask a question first");
 
@@ -278,7 +297,14 @@ export async function askGemma(question, context, opts = {}) {
  * history, same posture as every other Gemma call in this file).
  */
 export async function embedText(text, opts = {}) {
-  const { endpoint, model = "gemma", key, timeoutMs = 10000 } = opts;
+  // A separate model from GEMMA_MODEL (nomic-embed-text vs. gemma4:e4b),
+  // loaded independently by Ollama - warmUpGemma warming the generation
+  // model does nothing for this one. Given some margin over the generation
+  // model's own measured cold-load (30.9s) since an embedding model is
+  // usually smaller and faster to load, but not assumed instant either.
+  // Best-effort like every other call here: retrieveRelevantHistory()
+  // (app.js) already degrades to no relevant history on any failure.
+  const { endpoint, model = "gemma", key, timeoutMs = 20000 } = opts;
   if (!endpoint) throw new Error("Gemma embeddings endpoint not configured");
   if (!text || !text.trim()) throw new Error("Nothing to embed");
 

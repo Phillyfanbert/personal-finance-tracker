@@ -6853,6 +6853,7 @@ $("qaAskBtn").onclick = async () => {
   }
   $("qaAskBtn").disabled = true;
   $("qaAnswer").classList.add("hidden");
+  $("qaProgress").textContent = "";
   // Sets an honest expectation up front rather than a bare "Thinking…". This
   // one really is slow and saying otherwise just makes it look broken: a full
   // answer measured ~50s against the real endpoint, almost all of it the
@@ -6864,7 +6865,23 @@ $("qaAskBtn").onclick = async () => {
     const since = lastMonths(6)[0] + "-01"; // same boundary buildQaContext computes internally
     const relevantHistory = await retrieveRelevantHistory(question, since);
     const context = buildQaContext(allExpenses, subscriptions, 6, profile, relevantHistory);
-    const answer = await askGemma(question, context, { endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY });
+    // The answer streams in, but nothing is painted until it has passed
+    // validateQaAnswer() - onProgress carries counts only, never the text
+    // (see readStreamedAnswer()'s comment in gemma.js). This exists so a
+    // ~45s wait reads as working rather than frozen, without weakening the
+    // guardrail to get there. Throttled: chunks land ~15 times a second and
+    // a word count flickering that fast is harder to read than no count.
+    let lastProgressAt = 0;
+    const answer = await askGemma(question, context, {
+      endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY,
+      onProgress: ({ words }) => {
+        const now = Date.now();
+        if (!words || now - lastProgressAt < 250) return;
+        lastProgressAt = now;
+        $("qaProgress").textContent = `Writing your answer… ${words} word${words === 1 ? "" : "s"} so far`;
+      },
+    });
+    $("qaProgress").textContent = "";
     $("qaAnswer").textContent = answer;
     $("qaAnswer").classList.remove("hidden");
     // Transparency, matching this app's existing "state the real math/
@@ -6885,6 +6902,7 @@ $("qaAskBtn").onclick = async () => {
       : "Couldn't get an answer - is Gemma reachable? (" + err.message + ")";
   } finally {
     $("qaAskBtn").disabled = false;
+    $("qaProgress").textContent = "";
   }
 };
 

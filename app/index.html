@@ -1136,7 +1136,12 @@
           <input id="qaQuestion" aria-label="Your question about your spending" placeholder="e.g. How much did I spend on food last month?" />
         </div>
         <button id="qaAskBtn" style="margin-top:8px">Ask</button>
-        <p class="muted" id="qaStatus" style="font-size:12px;margin:8px 0 0"></p>
+        <p class="muted" id="qaStatus" aria-live="polite" style="font-size:12px;margin:8px 0 0"></p>
+        <!-- Live word count while the answer streams in. Deliberately OUTSIDE
+             the aria-live region above and aria-hidden: it changes several
+             times a second, which would flood a screen reader, while qaStatus
+             announces only the meaningful transitions. -->
+        <p class="muted" id="qaProgress" aria-hidden="true" style="font-size:12px;margin:4px 0 0"></p>
         <div id="qaAnswer" class="hidden" style="margin-top:10px;padding:10px;background:var(--panel-2);border-radius:10px;font-size:14px;white-space:pre-wrap"></div>
       </div>
 

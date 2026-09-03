@@ -279,6 +279,69 @@ export function validateQaAnswer(raw) {
   return { answer: text };
 }
 
+function countWords(text) {
+  const t = text.trim();
+  return t ? t.split(/\s+/).length : 0;
+}
+
+/**
+ * Read an Ollama NDJSON stream, accumulating the answer and reporting only
+ * how MUCH has arrived, never what it says.
+ *
+ * That split is the whole point of streaming here. The obvious way to make a
+ * ~45s answer feel fast is to paint tokens on screen as they arrive, but
+ * validateQaAnswer() has to see the COMPLETE answer before any of it is
+ * shown - a sentence that turns into investment advice by its second clause
+ * cannot be un-read once displayed. So this buffers the text privately and
+ * hands the caller counts alone: app.js literally cannot render unvalidated
+ * model output, even by mistake, because it is never given it.
+ *
+ * Falls back to a plain single-object read when the endpoint doesn't stream -
+ * tools/mock-gemma-server.js ignores `stream` and answers with one JSON
+ * object, and a leftover-buffer parse covers the same case mid-stream.
+ */
+async function readStreamedAnswer(res, { onActivity, onProgress }) {
+  if (!res.body || typeof res.body.getReader !== "function") {
+    const data = await res.json();
+    if (data && data.error) throw new Error(`Gemma error: ${data.error}`);
+    return typeof data.response === "string" ? data.response : "";
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  let answer = "";
+
+  const consumeLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let data;
+    // A partial line is normal - a chunk boundary can land mid-object, and
+    // the remainder arrives next read. Skipping an unparseable fragment is
+    // correct; the completed line is parsed on a later pass.
+    try { data = JSON.parse(trimmed); } catch { return; }
+    if (data.error) throw new Error(`Gemma error: ${data.error}`);
+    if (typeof data.response === "string") answer += data.response;
+  };
+
+  const report = () => { if (onProgress) onProgress({ chars: answer.length, words: countWords(answer) }); };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onActivity();
+    pending += decoder.decode(value, { stream: true });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) consumeLine(line);
+    report();
+  }
+  pending += decoder.decode();
+  consumeLine(pending);
+  report();
+  return answer;
+}
+
 /**
  * Ask Gemma a free-text question about the given context. Resolves to the
  * plain-text answer, or throws - a connectivity/HTTP failure throws a plain
@@ -287,30 +350,35 @@ export function validateQaAnswer(raw) {
  * the caller can tell the two apart and never display the rejected text.
  */
 export async function askGemma(question, context, opts = {}) {
-  // Sized to a real measured answer, not to a guess. With hidden reasoning
-  // off (GEMMA_THINK), a full Reports question over a 150-transaction context
-  // measured 49.6s wall: ~8s to read the context in, then ~610 tokens of
-  // answer at ~15 tokens/second. That rate is the M2's honest ceiling for an
-  // 8B model, so the wait is real and cannot be tuned away here - 90000ms
-  // covers even a QA_OPTIONS-length runaway (~63s) rather than aborting a
-  // request that was going to succeed. Every earlier value (20000, then
-  // 45000) was below the real figure, so this feature could only ever fail.
-  const { endpoint, model = "gemma", key, timeoutMs = 90000 } = opts;
+  // timeoutMs is now an INACTIVITY budget, not a total duration - the gap
+  // allowed between streamed chunks (and so also the wait for the first one,
+  // which covers a cold load plus ~8s of reading the context in). Streaming
+  // is what makes this possible, and it is strictly better than the fixed
+  // ceiling it replaces: a healthy answer that simply takes 60s of writing is
+  // no longer killed mid-sentence, while a genuinely dead connection is
+  // noticed in 45s instead of 90. maxTotalMs stays as a hard backstop so a
+  // model dribbling one token per 40s cannot hang the UI forever.
+  const { endpoint, model = "gemma", key, timeoutMs = 45000, maxTotalMs = 180000, onProgress } = opts;
   if (!endpoint) throw new Error("Gemma endpoint not configured");
   if (!question || !question.trim()) throw new Error("Ask a question first");
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let idleTimer;
+  const armIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), timeoutMs);
+  };
+  const hardTimer = setTimeout(() => controller.abort(), maxTotalMs);
+  armIdle();
   try {
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(key ? { "X-Gemma-Key": key } : {}) },
-      body: JSON.stringify({ model, prompt: buildQaPrompt(question, context), stream: false, think: GEMMA_THINK, keep_alive: GEMMA_KEEP_ALIVE, options: QA_OPTIONS }),
+      body: JSON.stringify({ model, prompt: buildQaPrompt(question, context), stream: true, think: GEMMA_THINK, keep_alive: GEMMA_KEEP_ALIVE, options: QA_OPTIONS }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
-    const data = await res.json();
-    const text = typeof data.response === "string" ? data.response.trim() : "";
+    const text = (await readStreamedAnswer(res, { onActivity: armIdle, onProgress })).trim();
     if (!text) throw new Error("Gemma returned an empty answer");
     const validated = validateQaAnswer(text);
     if (!validated.answer) {
@@ -320,7 +388,8 @@ export async function askGemma(question, context, opts = {}) {
     }
     return validated.answer;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(idleTimer);
+    clearTimeout(hardTimer);
   }
 }
 

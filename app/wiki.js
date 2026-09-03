@@ -338,6 +338,74 @@ export function answerQuestion(question, { expenses = [], subscriptions = [], to
   };
 }
 
+// ---- Tier 2: the context a model is allowed to see -------------------------
+
+/**
+ * Build what tier 2 hands the model, and the allow-list its prose is checked
+ * against. Deliberately a different shape from insights.js's buildQaContext():
+ * that one exists to give the model as much raw material as possible, and
+ * this one exists to give it as little arithmetic to do as possible.
+ *
+ * Transactions ARE included, because detail questions ("what did I buy at
+ * Chipotle") need them - but every individual amount goes into `allowed` too,
+ * so quoting a real row verifies while a total the model added up itself does
+ * not. Pre-computed aggregates are included for the same reason: the more
+ * that is computed here, the fewer honest questions end up declined.
+ *
+ * @returns {{context:object, allowed:number[]}}
+ */
+export function buildVerifiedContext({ expenses = [], subscriptions = [], facts = [], today = new Date(), windowMonths = 6, maxTransactions = 150 } = {}) {
+  const thisMonth = localMonthKey(today);
+  const oldest = shiftMonth(thisMonth, windowMonths - 1);
+  const inWindow = expenses.filter((e) => monthOf(e) >= oldest && monthOf(e) <= thisMonth);
+
+  const monthly_totals = {};
+  for (const [ym, total] of totalsByMonth(inWindow)) monthly_totals[ym] = total;
+
+  const category_totals = {};
+  for (const cat of categoriesIn(inWindow)) {
+    category_totals[cat] = totalFor(inWindow, (e) => e.category === cat);
+  }
+
+  const transactions = inWindow
+    .slice(0, maxTransactions)
+    .map((e) => ({
+      date: e.occurred_at,
+      amount: r2(num(e.amount)),
+      category: e.category || null,
+      description: e.description || e.merchant || null,
+      note: (e.note || "").trim() || null,
+    }));
+
+  const activeSubs = subscriptions.filter((s) => s.is_active);
+  const subscriptions_monthly_total = r2(activeSubs.reduce(
+    (sum, s) => sum + (s.billing_cycle === "annual" ? num(s.amount) / 12 : num(s.amount)), 0));
+
+  const window_total = r2(Object.values(monthly_totals).reduce((a, b) => a + b, 0));
+
+  const live = facts.filter((f) => !f.dismissed_at);
+  const context = {
+    months_covered: Object.keys(monthly_totals).sort(),
+    monthly_totals,
+    category_totals,
+    window_total,
+    subscriptions_monthly_total,
+    known_facts: live.map((f) => ({ about: f.title, says: f.body })),
+    transactions,
+    transactions_truncated: inWindow.length > maxTransactions,
+  };
+
+  const allowed = collectAllowedFigures(live, [
+    ...Object.values(monthly_totals),
+    ...Object.values(category_totals),
+    ...transactions.map((t) => t.amount),
+    subscriptions_monthly_total,
+    window_total,
+  ]);
+
+  return { context, allowed };
+}
+
 // ---- Tier 2: verifying a model's prose against computed figures ------------
 
 /** Every number the model is allowed to state, gathered from what it was given. */

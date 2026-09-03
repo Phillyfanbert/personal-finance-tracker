@@ -31,6 +31,7 @@ import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
+import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures } from "./wiki.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
@@ -301,6 +302,7 @@ let editingIncome = null; // income row currently in the income form
 let userId = null;    // signed-in user's uuid
 let userEmail = null; // signed-in user's email, shown read-only in Profile
 let profile = null;   // the user's profiles row
+let wikiFacts = [];   // wiki_facts rows - durable, code-computed knowledge (migration 63)
 let entrySource = "manual"; // 'manual' | 'parsed' - set to 'parsed' when Gemma fills fields
 let gemmaTimer = null;      // debounce handle for background parsing
 
@@ -449,7 +451,7 @@ async function init() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadSinkingFunds(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadSinkingFunds(), loadInvestmentTargets(), loadWikiFacts()]);
   // Both assets and assetPriceFindings are guaranteed loaded by the
   // Promise.all above (no race) - this is what keeps Net Worth/the Assets
   // card/the net-worth trend chart in sync with live prices on every app
@@ -460,6 +462,9 @@ async function init() {
   await autoLogDueIncome();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
+  // After loadExpenses()/loadSubscriptions() above, since it derives from
+  // both. Once a day, same shape as the two snapshots either side of it.
+  await refreshWikiIfNeeded();
   // After loadAssets(), since this reads assets.price_symbol.
   await syncHoldingsIntoWatchlist();
   // The two findings loaders above already pulled a headline batch, so the
@@ -4485,6 +4490,7 @@ function openEdit(row) {
   editing = row;
   $("eAmount").value = row.amount ?? "";
   $("eDesc").value = row.description ?? "";
+  $("eNote").value = row.note ?? "";
   $("eCategory").value = row.category ?? CATEGORIES[0];
   $("eAccount").value = row.account_id ?? "";
   $("eDate").value = row.occurred_at ?? localDateISO();
@@ -4527,6 +4533,7 @@ $("editSave").onclick = async () => {
     amount, description: desc || null, merchant: desc.split(/\s+/)[0] || editing.merchant,
     category: newCategory, payment_type: paymentType,
     account_id: accountId, occurred_at: occurredAt,
+    note: $("eNote").value.trim() || null,
   };
 
   // Check both the reversal (old effect undone) and the new effect together -
@@ -4573,6 +4580,11 @@ $("editSave").onclick = async () => {
   $("editSave").disabled = false;
   closeModal("editModal"); editing = null;
   await loadExpenses();
+  // Forced, not the once-a-day path: a note is written precisely so it shows
+  // up in the wiki, and waiting until tomorrow to reflect it would read as
+  // the field having done nothing.
+  await refreshWikiIfNeeded(true);
+  renderWiki();
   toast((categoryChanged ? "Saved - I'll remember that" : "Saved ✓") + budgetWarningToastSuffix(newCategory));
 };
 
@@ -4607,6 +4619,7 @@ async function loadReports() {
   }
   renderReports();
   loadInsights();
+  renderWiki();
   populateHistoryAccountSelect();
   renderAccountHistory();
   await renderNetWorthTrend();
@@ -6839,6 +6852,174 @@ async function loadInsights() {
     </div>`).join("");
 }
 
+// ---- THE WIKI (migration 63) ----------------------------------------------
+// Durable, code-computed knowledge about this user. Every figure here is
+// calculated in app/wiki.js and never by a model - see that file's header for
+// the measurement that made this a hard rule.
+
+async function loadWikiFacts() {
+  const { data, error } = await sb.from("wiki_facts").select("*").order("key");
+  if (error) { wikiFacts = []; return; }
+  wikiFacts = data || [];
+}
+
+/**
+ * Recompute derived facts at most once a day, mirroring
+ * snapshotNetWorthIfNeeded()'s shape. Runs client-side rather than on the
+ * server machine deliberately: the arithmetic is over data already loaded
+ * here, so it needs no service_role and, unlike the launchd agents, does not
+ * go stale whenever the home MacBook is asleep.
+ *
+ * Honours the two flags that let "recomputed" and "editable" coexist:
+ * `dismissed_at` means the user removed a fact and a refresh must never
+ * resurrect it, and `body_overridden` means they rewrote the sentence, so the
+ * figures underneath refresh while their wording stays.
+ */
+async function refreshWikiIfNeeded(force = false) {
+  const today = localDateISO();
+  if (!force && localStorage.getItem("wikiRefreshedOn") === today) return;
+
+  const derived = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() });
+  const existing = new Map(wikiFacts.map((f) => [f.key, f]));
+
+  const rows = [];
+  for (const fact of derived) {
+    const prior = existing.get(fact.key);
+    if (prior && prior.dismissed_at) continue; // removed on purpose - stays removed
+    rows.push({
+      key: fact.key,
+      source: "computed",
+      title: fact.title,
+      // A rewritten sentence is the user's; the numbers under it are ours.
+      body: prior && prior.body_overridden ? prior.body : fact.body,
+      body_overridden: prior ? prior.body_overridden : false,
+      figures: fact.figures,
+      as_of: fact.as_of ? fact.as_of + "-01" : null,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  if (rows.length) {
+    const { error } = await sb.from("wiki_facts").upsert(rows, { onConflict: "user_id,key" });
+    if (error) return; // best-effort: a failed refresh must never block the page
+  }
+
+  // A derived fact whose underlying pattern no longer holds (a merchant that
+  // stopped recurring) would otherwise linger as a stale claim forever.
+  const derivedKeys = new Set(derived.map((f) => f.key));
+  const stale = wikiFacts.filter((f) => f.source === "computed" && !derivedKeys.has(f.key)).map((f) => f.id);
+  if (stale.length) await sb.from("wiki_facts").delete().in("id", stale);
+
+  localStorage.setItem("wikiRefreshedOn", today);
+  await loadWikiFacts();
+}
+
+/**
+ * Render the wiki. Facts are shown with the date their numbers describe, so
+ * one can never silently imply it is current when it is not, and a reworded
+ * fact says so - otherwise a user's own sentence would be indistinguishable
+ * from a computed one on a later read.
+ */
+function renderWiki() {
+  const live = wikiFacts.filter((f) => !f.dismissed_at);
+  const el = $("wikiList");
+  if (!live.length) {
+    el.innerHTML = `<p class="muted" style="font-size:13px">Nothing worked out yet. These build up as you log spending - things like a category's usual cost, a price that changed, or a month that stands out. A note you add to a transaction will show up here too.</p>`;
+    return;
+  }
+  el.innerHTML = live.map((f) => `
+    <div class="exp" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div><strong>${esc(f.title)}</strong></div>
+        <div class="meta" style="white-space:normal">${esc(f.body)}</div>
+        <div class="meta" style="font-size:11px">${f.as_of ? "as of " + esc(monthLabel(String(f.as_of).slice(0, 7))) : ""}${f.body_overridden ? " - reworded by you" : ""}</div>
+      </div>
+      <button class="link-action" data-wiki-edit="${esc(f.id)}" aria-label="Reword ${esc(f.title)}">Reword</button>
+      <button class="x" data-wiki-remove="${esc(f.id)}" aria-label="Remove the fact ${esc(f.title)}">&#10005;</button>
+    </div>`).join("");
+}
+
+let editingWikiFact = null;
+
+// Delegated, because these rows are rebuilt on every render and per-row
+// handlers would need rebinding each time - same shape as wireInfoIcons().
+$("wikiList").addEventListener("click", async (ev) => {
+  const editBtn = ev.target.closest("[data-wiki-edit]");
+  if (editBtn) {
+    editingWikiFact = wikiFacts.find((f) => f.id === editBtn.dataset.wikiEdit) || null;
+    if (!editingWikiFact) return;
+    $("wikiEditBody").value = editingWikiFact.body || "";
+    openModal("wikiEditModal");
+    return;
+  }
+  const removeBtn = ev.target.closest("[data-wiki-remove]");
+  if (!removeBtn) return;
+  const fact = wikiFacts.find((f) => f.id === removeBtn.dataset.wikiRemove);
+  if (!fact) return;
+  if (!(await confirmModal("It will not come back the next time this refreshes.", { title: `Remove "${fact.title}"?` }))) return;
+  // Marked dismissed rather than deleted: refreshWikiIfNeeded() checks this
+  // flag, so a removed fact stays removed instead of being recreated on the
+  // next recompute, which would make the button look broken.
+  const { error } = await sb.from("wiki_facts").update({ dismissed_at: new Date().toISOString() }).eq("id", fact.id);
+  if (error) return toast(error.message);
+  await loadWikiFacts();
+  renderWiki();
+  toast("Removed");
+});
+
+$("wikiEditClose").onclick = () => closeModal("wikiEditModal");
+
+$("wikiEditSave").onclick = async () => {
+  if (!editingWikiFact) return;
+  const body = $("wikiEditBody").value.trim();
+  if (!body) { flagField("wikiEditBody", "Write something, or put the original wording back."); return; }
+  const { error } = await sb.from("wiki_facts")
+    .update({ body, body_overridden: true, updated_at: new Date().toISOString() })
+    .eq("id", editingWikiFact.id);
+  if (error) { flagField("wikiEditBody"); return toast(error.message); }
+  closeModal("wikiEditModal");
+  editingWikiFact = null;
+  await loadWikiFacts();
+  renderWiki();
+  toast("Saved");
+};
+
+$("wikiEditReset").onclick = async () => {
+  if (!editingWikiFact) return;
+  // Clearing the flag is enough: the next refresh recomputes the sentence
+  // from the figures, which is where the original wording comes from.
+  const { error } = await sb.from("wiki_facts").update({ body_overridden: false }).eq("id", editingWikiFact.id);
+  if (error) return toast(error.message);
+  closeModal("wikiEditModal");
+  editingWikiFact = null;
+  await refreshWikiIfNeeded(true);
+  renderWiki();
+  toast("Original wording restored");
+};
+
+// ---- The answer cache (qa_cache, migration 63) -----------------------------
+// Exact repeats within a short window, by explicit choice over invalidating
+// on data change. Expected to hit rarely - mostly on a retry after a failure.
+const QA_CACHE_TTL_MS = 60 * 60 * 1000;
+const normalizeQuestion = (q) => String(q || "").trim().toLowerCase();
+
+async function lookupQaCache(question) {
+  const { data } = await sb.from("qa_cache").select("*")
+    .eq("question", normalizeQuestion(question))
+    .gt("expires_at", new Date().toISOString())
+    .limit(1);
+  return (data || [])[0] || null;
+}
+
+async function saveQaCache(question, answer, answerKind) {
+  await sb.from("qa_cache").upsert({
+    question: normalizeQuestion(question),
+    answer,
+    answer_kind: answerKind,
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + QA_CACHE_TTL_MS).toISOString(),
+  }, { onConflict: "user_id,question" });
+}
+
 // ---- INTERACTIVE Q&A (Gemma, optional/best-effort like Phase 3) -----------
 
 // RAG retrieval, additive to buildQaContext's recent-window data (see
@@ -6872,33 +7053,64 @@ async function retrieveRelevantHistory(question, sinceDate) {
   }
 }
 
+// Shows an answer together with HOW it was produced. The label is not
+// decoration: a computed answer is exact by construction and a written one
+// is a model restating figures it was handed, and the reader should never
+// have to guess which they are looking at.
+function showQaAnswer(answer, kind, note = "") {
+  const label = kind === "computed"
+    ? '<span class="muted" style="font-size:11px">Exact - counted from your own records, no AI involved</span><br>'
+    : '<span class="muted" style="font-size:11px">AI-written from figures this app calculated</span><br>';
+  $("qaAnswer").innerHTML = label + esc(answer);
+  $("qaAnswer").classList.remove("hidden");
+  $("qaStatus").textContent = note;
+}
+
 $("qaAskBtn").onclick = async () => {
   const question = $("qaQuestion").value.trim();
   if (!question) { flagField("qaQuestion"); return toast("Type a question first"); }
-  if (!GEMMA_ENDPOINT) {
-    $("qaStatus").textContent = "Not configured - set GEMMA_ENDPOINT in config.js (SETUP.md §3.6).";
-    return;
-  }
   $("qaAskBtn").disabled = true;
   $("qaAnswer").classList.add("hidden");
   $("qaProgress").textContent = "";
-  // Sets an honest expectation up front rather than a bare "Thinking…". This
-  // one really is slow and saying otherwise just makes it look broken: a full
-  // answer measured ~50s against the real endpoint, almost all of it the
-  // model writing at ~15 tokens/second, which is the home machine's honest
-  // ceiling for an 8B model rather than anything this app can tune away.
-  $("qaStatus").textContent = "Thinking… this usually takes about a minute - the answer is written on your own machine, and it writes at about the speed you read.";
+  $("qaStatus").textContent = "";
+
   try {
     if (!allExpenses.length) await loadExpenses();
-    const since = lastMonths(6)[0] + "-01"; // same boundary buildQaContext computes internally
+
+    // Tier 0: an identical question asked recently. Keeps its original
+    // label, so a reused answer never loses the note saying how it was made.
+    const cached = await lookupQaCache(question);
+    if (cached) {
+      showQaAnswer(cached.answer, cached.answer_kind, "Answered a moment ago, reused.");
+      return;
+    }
+
+    // Tier 1: computed outright. Exact by construction and instant, because
+    // no model runs at all. Returns null rather than guessing at a question
+    // whose shape it does not recognise.
+    const computed = answerQuestion(question, { expenses: allExpenses, subscriptions, today: new Date() });
+    if (computed) {
+      showQaAnswer(computed.answer, "computed");
+      await saveQaCache(question, computed.answer, "computed");
+      return;
+    }
+
+    // Tier 2: the model, but handed ONLY figures this app calculated, and
+    // checked afterwards against them.
+    if (!GEMMA_ENDPOINT) {
+      $("qaStatus").textContent = "That one needs the AI assistant, which is not set up. Try asking about a category or a month, which this app can answer exactly on its own.";
+      return;
+    }
+    const since = lastMonths(6)[0] + "-01";
     const relevantHistory = await retrieveRelevantHistory(question, since);
-    const context = buildQaContext(allExpenses, subscriptions, 6, profile, relevantHistory);
-    // The answer streams in, but nothing is painted until it has passed
-    // validateQaAnswer() - onProgress carries counts only, never the text
-    // (see readStreamedAnswer()'s comment in gemma.js). This exists so a
-    // ~45s wait reads as working rather than frozen, without weakening the
-    // guardrail to get there. Throttled: chunks land ~15 times a second and
-    // a word count flickering that fast is harder to read than no count.
+    const { context, allowed } = buildVerifiedContext({
+      expenses: allExpenses, subscriptions, facts: wikiFacts, today: new Date(),
+    });
+    if (relevantHistory.length) context.relevant_history = relevantHistory;
+
+    $("qaStatus").textContent = "Working it out… this usually takes about a minute, and the answer is written on your own machine.";
+    // Streams, but buffers: onProgress carries counts only, never the text,
+    // so nothing unvalidated can reach the screen (see readStreamedAnswer()).
     let lastProgressAt = 0;
     const answer = await askGemma(question, context, {
       endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY,
@@ -6910,16 +7122,22 @@ $("qaAskBtn").onclick = async () => {
       },
     });
     $("qaProgress").textContent = "";
-    $("qaAnswer").textContent = answer;
-    $("qaAnswer").classList.remove("hidden");
-    // Transparency, matching this app's existing "state the real math/
-    // scope, don't blend in silently" conventions (the ticker/bank-list
-    // "comprehensive but not exhaustive" caveats, Daily health check's
-    // real-numbers-only stance) - the user can see when older history
-    // actually contributed to the answer, not just trust it happened.
-    $("qaStatus").textContent = relevantHistory.length
+
+    // Tier 3: every figure must trace back to one this app calculated. A
+    // number that matches none of them cannot have come from the user's own
+    // data, so the answer is discarded rather than shown - the whole point
+    // of the accuracy rule, and the reason this declines instead of
+    // displaying something plausible.
+    const check = verifyAnswerFigures(answer, allowed);
+    if (!check.ok) {
+      $("qaStatus").textContent = "That answer worked out its own figures, which this app will not show without checking them - so it has been discarded. Try asking about one category or one month, which can be answered exactly.";
+      return;
+    }
+
+    showQaAnswer(answer, "model", relevantHistory.length
       ? `Also found ${relevantHistory.length} older transaction${relevantHistory.length === 1 ? "" : "s"} related to this question.`
-      : "";
+      : "");
+    await saveQaCache(question, answer, "model");
   } catch (err) {
     // A rejected answer (validateQaAnswer(), gemma.js) is not a connectivity
     // problem - the model answered fine and the answer was discarded on
@@ -8499,6 +8717,7 @@ $("exportReportsBtn").onclick = () => {
         byAccount: sumBy(allExpenses, "account", ym, acctName),
         byPaymentType: sumBy(labeled, "payment_type", ym),
         incomeVsExpense: incomeVsExpense(accountActivity.filter((a) => a.kind === "income"), allExpenses, lastMonths(6, monthKey())),
+        wikiFacts: wikiFacts.filter((f) => !f.dismissed_at),
       });
     },
     allExpenses.some((e) => String(e.occurred_at || "").startsWith(ym)),

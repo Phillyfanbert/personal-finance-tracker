@@ -205,6 +205,20 @@ export function buildQaPrompt(question, context) {
     "Be concise - a few sentences or a short list. Use $ for dollar amounts.",
     "Never use an em dash or en dash. Use a plain hyphen instead.",
     "",
+    // The hard accuracy rule this feature is built to. Every figure in the
+    // data was computed by the app; the model's job is to phrase them, not
+    // to do arithmetic. Enforced afterwards by verifyAnswerFigures() (see
+    // app/wiki.js) - an answer stating a figure that is not in the data is
+    // discarded rather than shown, so a model that ignores this produces no
+    // answer at all rather than a wrong one.
+    "NEVER calculate a new number. Do not add, subtract, average or total",
+    "anything yourself. Every dollar amount and every percentage you write",
+    "must appear verbatim in the data below - quote them, do not derive",
+    "them. Rounding a figure you were given is fine ('about $580' for",
+    "$580.12). If answering properly would need a number that is not in the",
+    "data, say plainly that you cannot answer that one exactly, and say what",
+    "you would need - do not estimate it.",
+    "",
     // Never legitimate here: buildQaContext never includes a stock, fund,
     // or ticker, so any recommendation or prediction language in an answer
     // can only be the model inventing something this app does not give

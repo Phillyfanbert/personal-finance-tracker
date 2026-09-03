@@ -121,7 +121,7 @@ export function investmentsSections({ totals = null, holdings = [], realized = [
 }
 
 /** Reports: the analysis of a month, not the raw rows (those are on Log). */
-export function reportsSections({ monthLabel = "", totals = [], byCategory = [], byAccount = [], byPaymentType = [], incomeVsExpense = [] }) {
+export function reportsSections({ monthLabel = "", totals = [], byCategory = [], byAccount = [], byPaymentType = [], incomeVsExpense = [], wikiFacts = [] }) {
   const pct = (v) => (v == null ? "" : `${Math.round(v * 1000) / 10}%`);
   return ([
     { title: `Summary - ${monthLabel}`, header: ["Measure", "Value"], rows: totals },
@@ -130,6 +130,11 @@ export function reportsSections({ monthLabel = "", totals = [], byCategory = [],
     { title: "Where your money went - by how you paid", header: ["Payment type", "Amount"], rows: byPaymentType.map((d) => [d.label, money(d.value)]) },
     { title: "Money in and out (last 6 months)", header: ["Month", "Money in", "Money out", "Left over", "Share kept"],
       rows: incomeVsExpense.map((r) => [r.month, money(r.income), money(r.expense), money(r.income - r.expense), pct(r.savingsRate)]) },
+    // A new card on a page means a new section in that page's export, in the
+    // same change - sinking funds shipped without one once and the Plan
+    // export silently covered less than the page it claimed to save.
+    { title: "What this app knows about you", header: ["About", "What it says", "As of"],
+      rows: wikiFacts.map((f) => [f.title, f.body, f.as_of ? String(f.as_of).slice(0, 7) : ""]) },
   ]);
 }
 

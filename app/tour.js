@@ -176,7 +176,13 @@ export const TOUR_STEPS = {
     {
       target: "qaCard",
       title: "Just ask a question",
-      body: "You can type a plain question like \"how much did I spend on food last month\" and get an answer from your own records. No special wording needed.",
+      body: "You can type a plain question like \"how much did I spend on food last month\" and get an answer from your own records. No special wording needed. Simple questions like that are counted straight from what you logged and come back instantly. Harder ones are written up for you, and every figure in them is still one this app worked out, never one the computer made up.",
+      placement: "top",
+    },
+    {
+      target: "wikiCard",
+      title: "What it has worked out about you",
+      body: "As you log things, the app notices patterns you would have to go looking for: what a category usually costs, a price that went up, a month that stands out. Every number here is counted by the app, so it is exact. Reword anything that reads oddly, or remove a fact you do not want, and it will stay removed.",
       placement: "top",
     },
     {

@@ -1,0 +1,56 @@
+-- DROP wiki_facts: the feature it existed for was removed ---------------------
+--
+-- Created by 63 and dropped here, which is unusual enough to be worth
+-- explaining rather than just doing. 63 is left exactly as applied, per this
+-- repo's rule that a migration is never edited after the fact - the history
+-- of "this was tried and then removed" is the useful record.
+--
+-- WHAT IT WAS FOR. A per-user wiki card on the Reports page showing durable,
+-- code-computed facts, with the rows persisted so a scheduled recompute could
+-- upsert them and the user could reword or dismiss one.
+--
+-- WHY IT IS GONE, in two steps:
+--
+--   1. The CARD was deleted. Asked plainly whether it was necessary, and it
+--      was not: four of its six fact types restated something already on
+--      screen. "Typical month" was the Reports stat tile's own figure over the
+--      same window with the same denominator rule. "X is regular" duplicated
+--      detectRecurringExpenses(), which already has a card on the Log page and
+--      does the job properly - grouping on merchant AND exact amount, matching
+--      the real gaps between charges against known billing intervals, checking
+--      the run is still current. The subscriptions and profile facts restated
+--      two other pages. What survived is the two things no chart shows - a
+--      month well clear of the median, and a merchant whose price actually
+--      moved - and those now render under the Monthly report.
+--
+--   2. The remaining facts are DERIVED FRESH at every use and never stored.
+--      app/wiki.js's deriveWikiFacts() is a few passes over data already in
+--      memory, and a figure shown next to "as of" has to actually be as of
+--      now. Persisting it could only ever make it staler.
+--
+-- That leaves nothing to store. Dropping the table also disposes of
+-- body_overridden and dismissed_at, two columns that existed solely to stop a
+-- STORED fact drifting from the data underneath it - a problem that does not
+-- exist once nothing is stored.
+--
+-- WHY NOT KEEP IT FOR RETRIEVAL. Considered and measured, since the obvious
+-- next thought is to embed these facts for semantic search the way
+-- expense_embeddings does for old transactions. Retrieval earns its place
+-- when a corpus is too large to send: allExpenses is capped at ~12 months
+-- client-side, so years of older transactions genuinely cannot fit in a
+-- prompt. Facts are not like that. Measured against a simulated three years
+-- and 540 expenses, the entire fact set is 31 items and roughly 774 tokens,
+-- so buildVerifiedContext() already passes every one of them to the model on
+-- every question. Indexing them would mean retrieving a subset of something
+-- already delivered in full.
+--
+-- NOTHING USER-AUTHORED IS LOST. Verified immediately before applying this:
+-- all 4 remaining rows were source='computed', none had body_overridden set,
+-- and none were dismissed - stale derived facts of types that no longer
+-- exist. Everything they held is regenerated in milliseconds from expenses,
+-- which are retained.
+--
+-- The other two things migration 63 added are untouched and both in active
+-- use: qa_cache, and the expenses.note column that holds the user's own
+-- explanation of a transaction.
+drop table if exists wiki_facts;

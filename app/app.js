@@ -31,7 +31,7 @@ import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
-import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures } from "./wiki.js";
+import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures, isAboutOwnMoney } from "./wiki.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
@@ -7101,10 +7101,23 @@ $("qaAskBtn").onclick = async () => {
     // behind is not exact, and this is a few passes over data already in
     // memory. The same facts feed tier 2's context below.
     const liveFacts = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() });
-    const computed = answerQuestion(question, { expenses: allExpenses, subscriptions, facts: liveFacts, today: new Date() });
+    const incomeRows = accountActivity.filter((a) => a.kind === "income");
+    const computed = answerQuestion(question, {
+      expenses: allExpenses, subscriptions, income: incomeRows, facts: liveFacts, today: new Date(),
+    });
     if (computed) {
       showQaAnswer(computed.answer, "computed");
       await saveQaCache(question, computed.answer, "computed");
+      return;
+    }
+
+    // Nothing reaches the model until the question is established as being
+    // about this person's own records. Tier 1 answering is itself proof of
+    // that, which is why this sits here and not at the top - re-checking a
+    // question already answered correctly could only produce a false
+    // refusal.
+    if (!isAboutOwnMoney(question, { expenses: allExpenses, accounts, subscriptions, today: new Date() })) {
+      $("qaStatus").textContent = "This only answers questions about your own money: what you spent, earned, owe or have saved. Try something like \"how much did I spend on groceries last month\".";
       return;
     }
 

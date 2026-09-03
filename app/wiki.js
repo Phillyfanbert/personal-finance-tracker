@@ -226,12 +226,75 @@ export function resolveMonth(question, today = new Date()) {
   return null;
 }
 
-/** Find which of the user's own categories a question names, or null. */
+// Nobody asks "how much did I spend on Food". They ask about groceries,
+// eating out, petrol, rent. Without these a perfectly ordinary question fell
+// through to the slow model path purely over vocabulary.
+const CATEGORY_SYNONYMS = {
+  Food: ["groceries", "grocery", "eating out", "eat out", "restaurants", "restaurant", "takeaway", "takeout", "dining", "dining out", "coffee", "lunch", "lunches", "dinner", "dinners", "breakfast", "meals", "food"],
+  // No bare "car" or "gas": both are ordinary English long before they are
+  // spending categories, and "how do I fix my car engine" was reaching the
+  // model because of it. A synonym has to be a word people use ABOUT money.
+  Transport: ["transport", "transportation", "petrol", "fuel", "commute", "commuting", "train fare", "bus fare", "taxi", "taxis", "rideshare", "parking"],
+  Subscriptions: ["subscriptions", "subscription", "streaming", "memberships", "membership"],
+  Shopping: ["shopping", "clothes", "clothing", "amazon", "online shopping", "retail"],
+  Utilities: ["utilities", "utility", "electric", "electricity", "water bill", "internet", "broadband", "phone bill", "heating"],
+  Housing: ["housing", "rent", "mortgage", "landlord", "housing costs"],
+  Health: ["health", "healthcare", "medical", "doctor", "dentist", "pharmacy", "prescriptions", "gym"],
+  Entertainment: ["entertainment", "fun", "going out", "movies", "cinema", "concerts", "games", "hobbies"],
+  Other: ["other", "miscellaneous", "misc"],
+};
+
+/**
+ * Find which of the user's own categories a question names, by the category's
+ * own name or by an everyday word for it. Exactly one or nothing: a question
+ * naming two categories is a comparison this does not do, and picking one of
+ * them would answer something nobody asked.
+ */
 export function resolveCategory(question, expenses) {
   const q = question.toLowerCase();
-  const hit = categoriesIn(expenses).find((c) =>
-    new RegExp(`(?<![a-z0-9])${c.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`).test(q));
-  return hit || null;
+  const present = categoriesIn(expenses);
+  const hits = present.filter((c) => {
+    const terms = [c, ...(CATEGORY_SYNONYMS[c] || [])];
+    return terms.some((t) => mentionsWholeWord(q, t));
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** A merchant the user has actually paid, named in the question. */
+export function resolveMerchant(question, expenses) {
+  const q = question.toLowerCase();
+  const names = [...new Set(expenses.map((e) => (e.merchant || "").trim()).filter((n) => n.length > 2))];
+  const hits = names.filter((n) => mentionsWholeWord(q, n));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/**
+ * A date range the question asks about: a single month, "last N months",
+ * a named year, or nothing. Returned as inclusive YYYY-MM bounds plus the
+ * words to describe it back, so every answer states the span it used rather
+ * than leaving the reader to assume one.
+ */
+export function resolveRange(question, today = new Date()) {
+  const q = String(question || "").toLowerCase();
+  const thisMonth = localMonthKey(today);
+
+  const lastN = q.match(/\blast (\d+|three|six|twelve)\s+months?\b/);
+  if (lastN) {
+    const words = { three: 3, six: 6, twelve: 12 };
+    const n = Math.min(60, words[lastN[1]] || Number(lastN[1]));
+    if (n >= 1) return { from: shiftMonth(thisMonth, n - 1), to: thisMonth, label: `the last ${n} months` };
+  }
+  if (/\bthis year\b/.test(q)) {
+    const y = thisMonth.slice(0, 4);
+    return { from: `${y}-01`, to: thisMonth, label: `${y} so far` };
+  }
+  if (/\blast year\b/.test(q)) {
+    const y = String(Number(thisMonth.slice(0, 4)) - 1);
+    return { from: `${y}-01`, to: `${y}-12`, label: y };
+  }
+  const month = resolveMonth(q, today);
+  if (month) return { from: month, to: month, label: monthName(month) };
+  return null;
 }
 
 /**
@@ -242,8 +305,8 @@ export function resolveCategory(question, expenses) {
  *
  * @returns {{answer:string, figures:object}|null}
  */
-export function answerQuestion(question, { expenses = [], subscriptions = [], facts = [], today = new Date() } = {}) {
-  const direct = answerFromTransactions(question, { expenses, subscriptions, today });
+export function answerQuestion(question, { expenses = [], subscriptions = [], income = [], facts = [], today = new Date() } = {}) {
+  const direct = answerFromTransactions(question, { expenses, subscriptions, income, today });
   if (direct) return direct;
   // Facts are tried only after the direct paths, which are more specific.
   // This is what makes tier 1's coverage GROW as knowledge accumulates: a
@@ -253,17 +316,22 @@ export function answerQuestion(question, { expenses = [], subscriptions = [], fa
   return answerFromFacts(question, facts);
 }
 
-function answerFromTransactions(question, { expenses = [], subscriptions = [], today = new Date() } = {}) {
+function answerFromTransactions(question, { expenses = [], subscriptions = [], income = [], today = new Date() } = {}) {
   const q = String(question || "").toLowerCase().trim();
   if (!q) return null;
 
-  const asksSpend = /\b(spend|spent|spending|cost|costs|paid|pay)\b/.test(q);
-  const wantsRecurringCost = asksSpend || /\b(charge|charges|charged|every month|monthly)\b/.test(q);
-  const month = resolveMonth(q, today);
+  const asksSpend = /\b(spend|spent|spending|spends|cost|costs|paid|pay|paying|pays|went on|go on)\b/.test(q)
+    // "how much on petrol this year" names no verb at all, and is still
+    // unambiguously a spend question once it has named something to scope by.
+    || /\bhow much\b/.test(q) || /\bwhat did .* cost\b/.test(q);
+  const range = resolveRange(q, today);
   const category = resolveCategory(q, expenses);
+  const merchant = resolveMerchant(q, expenses);
+  const inRange = (row) => !range || (monthOf(row) >= range.from && monthOf(row) <= range.to);
+  const when = range ? ` in ${range.label}` : "";
 
   // "what do my subscriptions cost"
-  if (/\bsubscription|subscriptions\b/.test(q) && asksSpend) {
+  if (mentionsWholeWord(q, "subscriptions") && asksSpend && !range) {
     const active = subscriptions.filter((s) => s.is_active);
     if (!active.length) return null;
     const monthlyTotal = r2(active.reduce(
@@ -274,9 +342,52 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], t
     };
   }
 
-  // "what was my biggest category [last month]"
+  // Income. Tier 1 could not answer a single income question before this,
+  // which is a large hole in something called "ask about your spending" -
+  // money coming in is half of what anyone wants to know.
+  const asksIncome = /\b(earn|earned|earning|income|paid in|make|made|salary|wages|paycheck|payslip|take home|came in)\b/.test(q);
+  const asksNet = /\b(save|saved|saving|left over|leftover|net|difference|ahead|behind)\b/.test(q);
+  if ((asksIncome || asksNet) && income.length) {
+    const inc = r2(income.filter(inRange).reduce((sum, r) => sum + num(r.amount), 0));
+    if (asksNet) {
+      const out = r2(expenses.filter(inRange).reduce((sum, e) => sum + num(e.amount), 0));
+      const net = r2(inc - out);
+      return {
+        answer: `${when ? when.trim()[0].toUpperCase() + when.trim().slice(1) : "Across everything recorded"}, $${inc.toFixed(2)} came in and $${out.toFixed(2)} went out, so you were ${net >= 0 ? "ahead" : "behind"} by $${Math.abs(net).toFixed(2)}.`,
+        figures: { income: inc, spent: out, net: Math.abs(net) },
+      };
+    }
+    return { answer: `You had $${inc.toFixed(2)} come in${when}.`, figures: { income: inc } };
+  }
+
+  // "what was my biggest expense" - a single transaction, not a category.
+  if (/\b(biggest|largest|most expensive|priciest|highest)\b/.test(q) && /\b(expense|purchase|transaction|payment|buy|bought|thing)\b/.test(q)) {
+    const scope = expenses.filter(inRange);
+    if (!scope.length) return null;
+    const top = [...scope].sort((a, b) => num(b.amount) - num(a.amount))[0];
+    const what = (top.description || top.merchant || "").trim();
+    return {
+      answer: `Your biggest single expense${when} was $${num(top.amount).toFixed(2)}${what ? ` at ${what}` : ""} on ${top.occurred_at}.`,
+      figures: { amount: r2(num(top.amount)) },
+    };
+  }
+
+  // "how many times did I ..."
+  if (/\bhow many\b|\bhow often\b|\bnumber of\b|\bhow much did i buy\b/.test(q)) {
+    const scope = expenses.filter((e) => inRange(e)
+      && (!category || e.category === category)
+      && (!merchant || (e.merchant || "").trim() === merchant));
+    if (!category && !merchant && !range) return null;
+    const what = merchant ? ` at ${merchant}` : category ? ` on ${category}` : "";
+    return {
+      answer: `${scope.length} transaction${scope.length === 1 ? "" : "s"}${what}${when}.`,
+      figures: { count: scope.length },
+    };
+  }
+
+  // "what was my biggest category"
   if (/\b(biggest|largest|most|top)\b/.test(q) && /\bcategor/.test(q)) {
-    const scope = month ? expenses.filter((e) => monthOf(e) === month) : expenses;
+    const scope = expenses.filter(inRange);
     if (!scope.length) return null;
     const totals = new Map();
     for (const e of scope) {
@@ -284,16 +395,15 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], t
       totals.set(c, r2((totals.get(c) || 0) + num(e.amount)));
     }
     const [topCat, topVal] = [...totals.entries()].sort((a, b) => b[1] - a[1])[0];
-    const where = month ? ` in ${monthName(month)}` : "";
     return {
-      answer: `Your biggest category${where} was ${topCat}, at $${topVal.toFixed(2)}.`,
+      answer: `Your biggest category${when} was ${topCat}, at $${topVal.toFixed(2)}.`,
       figures: { total: topVal },
     };
   }
 
   // "what do I usually spend in a month". Computed live rather than stored:
-  // the figure is small arithmetic over data already in hand, and a stored
-  // one could only ever be staler.
+  // small arithmetic over data already in hand, and a stored figure could
+  // only ever be staler.
   if (/\b(usually|typically|normally|average|typical|normal)\b/.test(q) && /\b(spend|spending|month)\b/.test(q)) {
     const totals = totalsByMonth(expenses);
     // Two months minimum: averaged over one, "typical" is just that month.
@@ -307,16 +417,21 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], t
     }
   }
 
-  // "how much does Netflix cost me" - answered from the app's existing
-  // recurring detector rather than a fact of our own. Exactly one match or
-  // nothing, the same rule answerFromFacts() applies.
-  if (wantsRecurringCost) {
+  // "how much does Netflix cost me" - the app's existing recurring detector
+  // rather than a fact of our own. Exactly one match or nothing.
+  // Gated on asking what something COSTS, not what was SPENT: "how much does
+  // Netflix cost me" wants the charge, "how much have I spent at Shell" wants
+  // the total, and answering either with the other is answering a question
+  // nobody asked.
+  const asksWhatItCharges = /\b(cost|costs|charge|charges|charged|price)\b/.test(q) && !/\b(spent|spend|spending)\b/.test(q);
+  if (asksWhatItCharges && !range) {
     const hits = detectRecurringExpenses(expenses, subscriptions, today)
       .filter((c) => mentionsWholeWord(q, c.merchant));
     if (hits.length === 1) {
       const c = hits[0];
       return {
-        answer: `${c.merchant} charges $${c.amount.toFixed(2)}, ${c.cycleLabel.toLowerCase()}, and has done ${c.occurrenceCount} times.`,
+        // cycleLabel is "month" / "year" / "~7 days", so it needs "every".
+        answer: `${c.merchant} charges $${c.amount.toFixed(2)} every ${c.cycleLabel.toLowerCase()}, and has done so ${c.occurrenceCount} times.`,
         figures: { amount: c.amount, occurrences: c.occurrenceCount },
       };
     }
@@ -324,25 +439,18 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], t
 
   if (!asksSpend) return null;
 
-  // "how much did I spend on Food last month" / "...on Food" / "...last month"
-  const scoped = expenses.filter((e) =>
-    (!month || monthOf(e) === month) && (!category || e.category === category));
-  if (!month && !category) {
-    // Bare "how much did I spend" with no scope at all is genuinely
-    // ambiguous - all time? this month? Decline rather than pick one.
-    return null;
-  }
-  const total = totalFor(scoped, () => true);
+  // "how much did I spend on Food last month" / at a merchant / over a range.
+  // A bare "how much did I spend" with no scope at all is genuinely
+  // ambiguous - all time? this month? - so it declines rather than picking.
+  if (!range && !category && !merchant) return null;
+  const scoped = expenses.filter((e) => inRange(e)
+    && (!category || e.category === category)
+    && (!merchant || (e.merchant || "").trim() === merchant));
+  const what = merchant ? ` at ${merchant}` : category ? ` on ${category}` : "";
   if (!scoped.length) {
-    const what = category ? `on ${category}` : "";
-    const when = month ? ` in ${monthName(month)}` : "";
-    return {
-      answer: `You have nothing recorded ${what}${when}.`.replace(/\s+/g, " ").trim(),
-      figures: {},
-    };
+    return { answer: `You have nothing recorded${what}${when}.`, figures: {} };
   }
-  const what = category ? ` on ${category}` : "";
-  const when = month ? ` in ${monthName(month)}` : "";
+  const total = r2(scoped.reduce((sum, e) => sum + num(e.amount), 0));
   return {
     answer: `You spent $${total.toFixed(2)}${what}${when}, across ${scoped.length} transaction${scoped.length === 1 ? "" : "s"}.`,
     figures: { total, count: scoped.length },
@@ -402,6 +510,61 @@ function answerFromFacts(question, facts = []) {
   if (candidates.length !== 1) return null;
   const hit = candidates[0];
   return { answer: hit.body, figures: hit.figures || {} };
+}
+
+// ---- The scope guard ------------------------------------------------------
+
+// Broad on purpose. This gate exists to catch questions that are not about
+// this person's money AT ALL, not to police how they phrase one - a false
+// refusal is worse than a slow answer, because it tells someone their own
+// question about their own data is not allowed.
+const MONEY_WORDS = [
+  "spend", "spent", "spending", "spendings", "cost", "costs", "costly", "paid", "pay", "paying", "payment", "payments",
+  "buy", "bought", "buying", "purchase", "purchases", "expense", "expenses", "transaction", "transactions",
+  "income", "earn", "earned", "earning", "earnings", "salary", "wages", "paycheck", "payslip",
+  "save", "saved", "saving", "savings", "budget", "budgets", "afford", "left over", "leftover",
+  "owe", "owed", "debt", "debts", "loan", "loans", "credit", "card", "interest", "balance", "balances",
+  "account", "accounts", "bank", "cash", "money", "dollar", "dollars", "amount", "amounts", "total", "totals",
+  "subscription", "subscriptions", "bill", "bills", "recurring", "renewal",
+  "net worth", "asset", "assets", "liability", "liabilities", "invest", "investment", "investments",
+  "average", "typical", "usually", "most", "biggest", "largest", "highest", "lowest", "cheapest",
+  "month", "months", "monthly", "week", "weeks", "weekly", "year", "years", "yearly", "annual",
+  "category", "categories", "merchant", "shop", "store", "history", "record", "records", "log",
+];
+
+/**
+ * Is this a question about the user's own financial history at all?
+ *
+ * The app answers questions about the records in front of it and nothing
+ * else. Without this gate an off-topic question fell straight through to
+ * tier 2, which would hand a general-purpose language model the user's whole
+ * financial context and let it answer about anything it liked - the exact
+ * "not allowed anything more" this is meant to prevent. It also happens to
+ * stop an instruction-shaped question ("ignore the above and ...") reaching
+ * the model, since that contains no financial term either.
+ *
+ * Runs ONLY before tier 2. If tier 1 recognised the question, that is itself
+ * proof it was about their money, and re-checking could only produce a false
+ * refusal for a question already answered correctly.
+ *
+ * Their own data counts as a signal: a bare merchant name, a category, a
+ * month or an account is unmistakably about their records even with no
+ * money word in the sentence.
+ */
+export function isAboutOwnMoney(question, { expenses = [], accounts = [], subscriptions = [], today = new Date() } = {}) {
+  const q = String(question || "").toLowerCase().trim();
+  if (!q) return false;
+  if (MONEY_WORDS.some((w) => mentionsWholeWord(q, w))) return true;
+  if (MONTH_NAMES.some((m) => mentionsWholeWord(q, m))) return true;
+  if (resolveRange(q, today)) return true;
+  if (resolveCategory(q, expenses)) return true;
+  if (resolveMerchant(q, expenses)) return true;
+  const named = [
+    ...accounts.map((a) => (a.name || "").trim()),
+    ...accounts.map((a) => (a.bank_name || "").trim()),
+    ...subscriptions.map((x) => (x.name || "").trim()),
+  ].filter((n) => n.length > 2);
+  return named.some((n) => mentionsWholeWord(q, n));
 }
 
 // ---- Tier 2: the context a model is allowed to see -------------------------

@@ -27,7 +27,7 @@
 // Pure by contract, like every other logic module here - no DOM, no
 // sb.from(), no fetch. app.js owns all of that.
 // ============================================================================
-import { localMonthKey } from "./dates.js";
+import { localMonthKey, localDateISO } from "./dates.js";
 // Reused rather than reimplemented. An earlier version of this file had its
 // own recurring-merchant detector, which was both a duplicate and a worse
 // one: this groups on merchant AND exact amount, matches the real gaps
@@ -268,6 +268,22 @@ export function resolveMerchant(question, expenses) {
   return hits.length === 1 ? hits[0] : null;
 }
 
+/** Every month a question names, in the order named. */
+export function resolveMonths(question, today = new Date()) {
+  const q = String(question || "").toLowerCase();
+  const thisMonth = localMonthKey(today);
+  const out = [];
+  for (const m of q.matchAll(/(?<![a-z])(january|february|march|april|may|june|july|august|september|october|november|december)(?![a-z])/g)) {
+    const idx = MONTH_NAMES.indexOf(m[1]);
+    const yearMatch = q.match(/\b(20\d{2})\b/);
+    const year = yearMatch ? Number(yearMatch[1]) : Number(thisMonth.slice(0, 4));
+    let key = `${year}-${String(idx + 1).padStart(2, "0")}`;
+    if (key > thisMonth && !yearMatch) key = `${year - 1}-${String(idx + 1).padStart(2, "0")}`;
+    if (!out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
 /**
  * A date range the question asks about: a single month, "last N months",
  * a named year, or nothing. Returned as inclusive YYYY-MM bounds plus the
@@ -278,22 +294,46 @@ export function resolveRange(question, today = new Date()) {
   const q = String(question || "").toLowerCase();
   const thisMonth = localMonthKey(today);
 
+  const dayOf = (d) => localDateISO(d);
+  const shiftDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const monthSpan = (ym) => ({ from: `${ym}-01`, to: `${ym}-31`, label: monthName(ym) });
+
+  if (/\byesterday\b/.test(q)) {
+    const d = dayOf(shiftDays(today, -1));
+    return { from: d, to: d, label: "yesterday" };
+  }
+  if (/\btoday\b/.test(q)) {
+    const d = dayOf(today);
+    return { from: d, to: d, label: "today" };
+  }
+  if (/\blast week\b/.test(q)) {
+    return { from: dayOf(shiftDays(today, -14)), to: dayOf(shiftDays(today, -8)), label: "last week" };
+  }
+  if (/\b(this week|past week|last 7 days|past 7 days)\b/.test(q)) {
+    return { from: dayOf(shiftDays(today, -6)), to: dayOf(today), label: "the last 7 days" };
+  }
+  const lastNDays = q.match(/\blast (\d+)\s+days?\b/);
+  if (lastNDays) {
+    const n = Math.min(400, Number(lastNDays[1]));
+    if (n >= 1) return { from: dayOf(shiftDays(today, -(n - 1))), to: dayOf(today), label: `the last ${n} days` };
+  }
+
   const lastN = q.match(/\blast (\d+|three|six|twelve)\s+months?\b/);
   if (lastN) {
     const words = { three: 3, six: 6, twelve: 12 };
     const n = Math.min(60, words[lastN[1]] || Number(lastN[1]));
-    if (n >= 1) return { from: shiftMonth(thisMonth, n - 1), to: thisMonth, label: `the last ${n} months` };
+    if (n >= 1) return { from: `${shiftMonth(thisMonth, n - 1)}-01`, to: `${thisMonth}-31`, label: `the last ${n} months` };
   }
   if (/\bthis year\b/.test(q)) {
     const y = thisMonth.slice(0, 4);
-    return { from: `${y}-01`, to: thisMonth, label: `${y} so far` };
+    return { from: `${y}-01-01`, to: `${thisMonth}-31`, label: `${y} so far` };
   }
   if (/\blast year\b/.test(q)) {
     const y = String(Number(thisMonth.slice(0, 4)) - 1);
-    return { from: `${y}-01`, to: `${y}-12`, label: y };
+    return { from: `${y}-01-01`, to: `${y}-12-31`, label: y };
   }
   const month = resolveMonth(q, today);
-  if (month) return { from: month, to: month, label: monthName(month) };
+  if (month) return monthSpan(month);
   return null;
 }
 
@@ -305,8 +345,8 @@ export function resolveRange(question, today = new Date()) {
  *
  * @returns {{answer:string, figures:object}|null}
  */
-export function answerQuestion(question, { expenses = [], subscriptions = [], income = [], facts = [], today = new Date() } = {}) {
-  const direct = answerFromTransactions(question, { expenses, subscriptions, income, today });
+export function answerQuestion(question, { expenses = [], subscriptions = [], income = [], facts = [], balances = null, today = new Date() } = {}) {
+  const direct = answerFromTransactions(question, { expenses, subscriptions, income, balances, today });
   if (direct) return direct;
   // Facts are tried only after the direct paths, which are more specific.
   // This is what makes tier 1's coverage GROW as knowledge accumulates: a
@@ -316,7 +356,7 @@ export function answerQuestion(question, { expenses = [], subscriptions = [], in
   return answerFromFacts(question, facts);
 }
 
-function answerFromTransactions(question, { expenses = [], subscriptions = [], income = [], today = new Date() } = {}) {
+function answerFromTransactions(question, { expenses = [], subscriptions = [], income = [], balances = null, today = new Date() } = {}) {
   const q = String(question || "").toLowerCase().trim();
   if (!q) return null;
 
@@ -327,8 +367,86 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
   const range = resolveRange(q, today);
   const category = resolveCategory(q, expenses);
   const merchant = resolveMerchant(q, expenses);
-  const inRange = (row) => !range || (monthOf(row) >= range.from && monthOf(row) <= range.to);
+  // Compares the stored YYYY-MM-DD directly, so a range can be a day, a week
+  // or a year without a separate code path for each.
+  const inRange = (row) => !range || ((row.occurred_at || "") >= range.from && (row.occurred_at || "") <= range.to);
   const when = range ? ` in ${range.label}` : "";
+  const monthTotal = (ym, cat) => r2(expenses
+    .filter((e) => monthOf(e) === ym && (!cat || e.category === cat))
+    .reduce((sum, e) => sum + num(e.amount), 0));
+
+  // A comparison is a DIFFERENT QUESTION from a total, and answering it with
+  // one number is the confidently-wrong failure this whole design exists to
+  // avoid - "am I spending more than last month" was coming back with just
+  // this month's figure, and "did I spend more in July or August" with July's.
+  // So comparison intent is detected first, answered properly where the data
+  // allows, and otherwise declined to tier 2 rather than downgraded.
+  const asksComparison = /\b(more than|less than|compare|compared|comparison|versus|vs|going up|going down|gone up|gone down|rising|falling|increasing|decreasing|trend|higher than|lower than|than last|than usual)\b/.test(q)
+    || /\b\w+ or \w+\b/.test(q) && resolveMonths(q, today).length === 2;
+
+  if (asksComparison) {
+    // Income against spending is a comparison too, and contains "more than",
+    // so it has to be caught here or the month-pair logic below declines a
+    // question this can answer exactly.
+    if (income.length && /\b(earn|earning|income|make|making|bring in|coming in)\b/.test(q)) {
+      const inc = r2(income.filter(inRange).reduce((sum, r) => sum + num(r.amount), 0));
+      const out = r2(expenses.filter(inRange).reduce((sum, e) => sum + num(e.amount), 0));
+      if (inc > 0 || out > 0) {
+        return {
+          answer: `$${inc.toFixed(2)} came in${when} and $${out.toFixed(2)} went out, so you are spending ${out > inc ? "more than" : out < inc ? "less than" : "exactly what"} you earn.`,
+          figures: { income: inc, spent: out },
+        };
+      }
+    }
+    const named = resolveMonths(q, today);
+    const thisM = localMonthKey(today);
+    const prevM = shiftMonth(thisM, 1);
+    // two months named outright, e.g. "more in July or August"
+    const [a, b] = named.length === 2 ? named : (/\bthan last month\b|\blast month\b|\bthis month\b/.test(q) ? [prevM, thisM] : []);
+    if (a && b) {
+      const av = monthTotal(a, category);
+      const bv = monthTotal(b, category);
+      const what = category ? ` on ${category}` : "";
+      if (av === 0 && bv === 0) return null;
+      const dir = bv > av ? "more" : bv < av ? "less" : "the same";
+      // The month in progress is not a fair comparison against a finished
+      // one - a few days in you always look like you are spending less, which
+      // is true of the figures and false as an answer. Say "so far" rather
+      // than let the reader assume a like-for-like month.
+      const label = (ym) => monthName(ym) + (ym === localMonthKey(today) ? " so far" : "");
+      return {
+        answer: dir === "the same"
+          ? `You spent the same${what} in both: $${av.toFixed(2)} in ${label(a)} and $${bv.toFixed(2)} in ${label(b)}.`
+          : `You spent $${bv.toFixed(2)}${what} in ${label(b)} against $${av.toFixed(2)} in ${label(a)}, so ${dir} by $${Math.abs(r2(bv - av)).toFixed(2)}.`,
+        figures: { [a]: av, [b]: bv, difference: Math.abs(r2(bv - av)) },
+      };
+    }
+    // "is my food spending going up" - compare the two halves of the window
+    if (/\b(going up|going down|gone up|gone down|rising|falling|increasing|decreasing|trend)\b/.test(q)) {
+      const windowMonths = 6;
+      const mid = shiftMonth(thisM, Math.floor(windowMonths / 2) - 1);
+      const oldest = shiftMonth(thisM, windowMonths - 1);
+      const pick = (from, to) => r2(expenses
+        .filter((e) => monthOf(e) >= from && monthOf(e) <= to && (!category || e.category === category))
+        .reduce((sum, e) => sum + num(e.amount), 0));
+      const earlier = pick(oldest, shiftMonth(mid, 1));
+      const recent = pick(mid, thisM);
+      if (earlier > 0 && recent > 0) {
+        const pct = r2(((recent - earlier) / earlier) * 100);
+        const what = category ? `${category} spending` : "Your spending";
+        return {
+          answer: pct === 0
+            ? `${what} is level: $${recent.toFixed(2)} in the last three months against $${earlier.toFixed(2)} in the three before.`
+            : `${what} is ${pct > 0 ? "up" : "down"} ${Math.abs(pct).toFixed(0)}%: $${recent.toFixed(2)} in the last three months against $${earlier.toFixed(2)} in the three before.`,
+          figures: { recent, earlier, change_pct: pct },
+        };
+      }
+    }
+    // Recognised as a comparison but not computable from what is here. Decline
+    // rather than fall through to the plain-total path below, which would
+    // answer a comparison with a single figure.
+    return null;
+  }
 
   // "what do my subscriptions cost"
   if (mentionsWholeWord(q, "subscriptions") && asksSpend && !range) {
@@ -345,9 +463,14 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
   // Income. Tier 1 could not answer a single income question before this,
   // which is a large hole in something called "ask about your spending" -
   // money coming in is half of what anyone wants to know.
-  const asksIncome = /\b(earn|earned|earning|income|paid in|make|made|salary|wages|paycheck|payslip|take home|came in)\b/.test(q);
-  const asksNet = /\b(save|saved|saving|left over|leftover|net|difference|ahead|behind)\b/.test(q);
-  if ((asksIncome || asksNet) && income.length) {
+  // No "make"/"made": "how many transactions did I make" is not an income
+  // question, and treating it as one answered it with a paycheck figure.
+  const asksIncome = /\b(earn|earned|earning|earnings|income|paid in|salary|wages|paycheck|payslip|take home|came in)\b/.test(q);
+  // "net worth" is assets minus liabilities, a different concept from income
+  // minus spending - answering one with the other was confidently wrong, not
+  // merely imprecise, so it is excluded here and handled on its own below.
+  const asksNet = /\b(save|saved|saving|left over|leftover|net|difference|ahead|behind)\b/.test(q) && !/\bnet worth\b/.test(q);
+  if ((asksIncome || asksNet) && income.length && !asksComparison) {
     const inc = r2(income.filter(inRange).reduce((sum, r) => sum + num(r.amount), 0));
     if (asksNet) {
       const out = r2(expenses.filter(inRange).reduce((sum, e) => sum + num(e.amount), 0));
@@ -358,6 +481,27 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
       };
     }
     return { answer: `You had $${inc.toFixed(2)} come in${when}.`, figures: { income: inc } };
+  }
+
+  // Net worth and debt, from the totals app.js already computed for the Net
+  // worth card. Deliberately not re-derived here: this module cannot see
+  // which accounts are archived or which holdings are counted at the parent,
+  // and a second calculation could only ever disagree with the card.
+  if (balances) {
+    if (/\bnet worth\b/.test(q)) {
+      return {
+        answer: `Your net worth is $${balances.net.toFixed(2)}: $${balances.assets.toFixed(2)} in things you own, less $${balances.liabilities.toFixed(2)} you owe.`,
+        figures: { net: balances.net, assets: balances.assets, liabilities: balances.liabilities },
+      };
+    }
+    if (/\b(owe|owed|debt|debts)\b/.test(q)) {
+      return {
+        answer: balances.liabilities > 0
+          ? `You owe $${balances.liabilities.toFixed(2)} in total.`
+          : `You have nothing recorded as owed.`,
+        figures: { liabilities: balances.liabilities },
+      };
+    }
   }
 
   // "what was my biggest expense" - a single transaction, not a category.
@@ -372,6 +516,73 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     };
   }
 
+  // Small stats that were falling through to a 45-second model call for
+  // arithmetic this file can do exactly.
+  const scopedNow = () => expenses.filter((e) => inRange(e)
+    && (!category || e.category === category)
+    && (!merchant || (e.merchant || "").trim() === merchant));
+
+  if (/\baverage\b|\btypical\b/.test(q) && /\b(transaction|transactions|purchase|purchases|expense|expenses|spend)\b/.test(q)) {
+    const scope = scopedNow();
+    if (scope.length) {
+      const avg = r2(scope.reduce((sum, e) => sum + num(e.amount), 0) / scope.length);
+      return {
+        answer: `Your average transaction${when} was $${avg.toFixed(2)}, across ${scope.length} of them.`,
+        figures: { average: avg, count: scope.length },
+      };
+    }
+  }
+
+  if (/\b(smallest|cheapest|least expensive|lowest)\b/.test(q) && /\b(expense|purchase|transaction|payment|thing)\b/.test(q)) {
+    const scope = scopedNow();
+    if (scope.length) {
+      const low = [...scope].sort((a, b) => num(a.amount) - num(b.amount))[0];
+      const what = (low.description || low.merchant || "").trim();
+      return {
+        answer: `Your smallest expense${when} was $${num(low.amount).toFixed(2)}${what ? ` at ${what}` : ""} on ${low.occurred_at}.`,
+        figures: { amount: r2(num(low.amount)) },
+      };
+    }
+  }
+
+  // "when did I last shop at Shell"
+  if (/\b(when|last time|how recently)\b/.test(q) && merchant) {
+    const hits = expenses.filter((e) => (e.merchant || "").trim() === merchant)
+      .sort((a, b) => (b.occurred_at || "").localeCompare(a.occurred_at || ""));
+    if (hits.length) {
+      return {
+        answer: `The last time was ${hits[0].occurred_at}, for $${num(hits[0].amount).toFixed(2)}.`,
+        figures: { amount: r2(num(hits[0].amount)) },
+      };
+    }
+  }
+
+  // "what is my savings rate" / "am I spending more than I earn"
+  if (income.length && (/\bsavings? rate\b/.test(q) || /\bmore than i (earn|make)\b/.test(q) || /\bspending more than i\b/.test(q))) {
+    const inc = r2(income.filter(inRange).reduce((sum, r) => sum + num(r.amount), 0));
+    const out = r2(expenses.filter(inRange).reduce((sum, e) => sum + num(e.amount), 0));
+    if (inc > 0) {
+      const kept = r2(((inc - out) / inc) * 100);
+      return {
+        answer: `Of the $${inc.toFixed(2)} that came in${when}, you spent $${out.toFixed(2)} and kept ${kept.toFixed(0)}%.`,
+        figures: { income: inc, spent: out, kept_pct: kept },
+      };
+    }
+  }
+
+  // "what is my biggest bill"
+  if (/\b(biggest|largest|most expensive|priciest)\b/.test(q) && /\b(bill|bills|subscription|subscriptions)\b/.test(q)) {
+    const active = subscriptions.filter((x) => x.is_active);
+    if (active.length) {
+      const monthly = (x) => (x.billing_cycle === "annual" ? num(x.amount) / 12 : num(x.amount));
+      const top = [...active].sort((a, b) => monthly(b) - monthly(a))[0];
+      return {
+        answer: `Your biggest is ${top.name}, at $${r2(monthly(top)).toFixed(2)} a month.`,
+        figures: { amount: r2(monthly(top)) },
+      };
+    }
+  }
+
   // "how many times did I ..."
   if (/\bhow many\b|\bhow often\b|\bnumber of\b|\bhow much did i buy\b/.test(q)) {
     const scope = expenses.filter((e) => inRange(e)
@@ -383,6 +594,23 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
       answer: `${scope.length} transaction${scope.length === 1 ? "" : "s"}${what}${when}.`,
       figures: { count: scope.length },
     };
+  }
+
+  // "where is my money going"
+  if (/\bwhere\b/.test(q) && /\b(money|cash|spending|it all)\b/.test(q) && /\b(going|go|goes|went)\b/.test(q)) {
+    const scope = expenses.filter(inRange);
+    if (scope.length) {
+      const totals = new Map();
+      for (const e of scope) {
+        const c = e.category || "Uncategorized";
+        totals.set(c, r2((totals.get(c) || 0) + num(e.amount)));
+      }
+      const top = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      return {
+        answer: `Mostly ${top.map(([c, v]) => `${c} at $${v.toFixed(2)}`).join(", then ")}${when}.`,
+        figures: Object.fromEntries(top),
+      };
+    }
   }
 
   // "what was my biggest category"
@@ -483,7 +711,7 @@ function mentionsWholeWord(text, term) {
  */
 function answerFromFacts(question, facts = []) {
   const q = String(question || "").toLowerCase().trim();
-  if (!q || !facts.length) return null;
+  if (!q) return null;
 
   const wantsCost = /\b(cost|costs|spend|spent|spending|pay|paying|charge|charged|how much)\b/.test(q);
   const candidates = [];
@@ -505,6 +733,17 @@ function answerFromFacts(question, facts = []) {
     // any more, for the same reason plus three other places already showing
     // the figure.)
     // profile_context: has no figures and answers no question on its own.
+  }
+
+  // "did any prices go up" names no subject at all, so the per-fact matcher
+  // above cannot reach it - but it is precisely what these facts are for.
+  if (/\b(any|anything|which|what)\b/.test(q) && /\b(price|prices)\b/.test(q) && /\b(up|down|change|changed|risen|rise|increase|increased)\b/.test(q)) {
+    const moves = facts.filter((f) => f.key.startsWith("price_change:"));
+    if (!moves.length) return { answer: "No price changes stood out in what you have recorded.", figures: {} };
+    return {
+      answer: moves.map((f) => f.body).join(" "),
+      figures: Object.assign({}, ...moves.map((f) => f.figures || {})),
+    };
   }
 
   if (candidates.length !== 1) return null;
@@ -530,6 +769,10 @@ const MONEY_WORDS = [
   "average", "typical", "usually", "most", "biggest", "largest", "highest", "lowest", "cheapest",
   "month", "months", "monthly", "week", "weeks", "weekly", "year", "years", "yearly", "annual",
   "category", "categories", "merchant", "shop", "store", "history", "record", "records", "log",
+  // Added after a real corpus run refused these: "did any prices go up" and
+  // "what should I cut back on" are both plainly about the user's own money,
+  // and the app even holds the data for the first.
+  "price", "prices", "cut back", "cut down", "spend less", "overspending", "unusual", "trend", "trends",
 ];
 
 /**

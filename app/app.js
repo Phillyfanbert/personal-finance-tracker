@@ -7102,8 +7102,14 @@ $("qaAskBtn").onclick = async () => {
     // memory. The same facts feed tier 2's context below.
     const liveFacts = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() });
     const incomeRows = accountActivity.filter((a) => a.kind === "income");
+    // The same figures the Net worth card shows, passed in rather than
+    // recomputed: this module cannot see archived accounts or parent-rolled
+    // holdings, so a second calculation could only disagree with the card.
+    const nw = computeNetWorth(topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) })), countableDebts());
     const computed = answerQuestion(question, {
-      expenses: allExpenses, subscriptions, income: incomeRows, facts: liveFacts, today: new Date(),
+      expenses: allExpenses, subscriptions, income: incomeRows, facts: liveFacts,
+      balances: { assets: nw.assetsTotal, liabilities: nw.liabilitiesTotal, net: nw.netWorth },
+      today: new Date(),
     });
     if (computed) {
       showQaAnswer(computed.answer, "computed");

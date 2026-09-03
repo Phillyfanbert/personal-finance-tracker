@@ -30,7 +30,7 @@ import {
 import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
-import { parseWithGemma, askGemma, warmUpGemma, embedText } from "./gemma.js";
+import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
@@ -6866,7 +6866,13 @@ $("qaAskBtn").onclick = async () => {
       ? `Also found ${relevantHistory.length} older transaction${relevantHistory.length === 1 ? "" : "s"} related to this question.`
       : "";
   } catch (err) {
-    $("qaStatus").textContent = "Couldn't get an answer - is Gemma reachable? (" + err.message + ")";
+    // A rejected answer (validateQaAnswer(), gemma.js) is not a connectivity
+    // problem - the model answered fine and the answer was discarded on
+    // purpose, so it gets its own message rather than "is Gemma reachable?",
+    // which would be actively misleading here.
+    $("qaStatus").textContent = err instanceof QaAdviceRejectedError
+      ? err.message
+      : "Couldn't get an answer - is Gemma reachable? (" + err.message + ")";
   } finally {
     $("qaAskBtn").disabled = false;
   }

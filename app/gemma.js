@@ -150,15 +150,87 @@ export function buildQaPrompt(question, context) {
     "enough to answer, say so plainly instead of guessing.",
     "Be concise - a few sentences or a short list. Use $ for dollar amounts.",
     "",
+    // Never legitimate here: buildQaContext never includes a stock, fund,
+    // or ticker, so any recommendation or prediction language in an answer
+    // can only be the model inventing something this app does not give
+    // anywhere. Left permissive on ordinary debt-vs-savings reasoning,
+    // which is a real, documented use case for this feature - see
+    // validateQaAnswer()'s own comment for the boundary this draws.
+    "The data below never includes a stock, fund, or ticker - only this",
+    "person's own expenses, subscriptions, income and profile. Never",
+    "recommend buying, selling, or investing in any security, and never",
+    "predict what any price, account balance, or net worth will be in the",
+    "future - you have no real basis for either, since nothing here is",
+    "market data and nothing here is a forecast. You may still compare",
+    "numbers already in the data (one debt's interest rate against another,",
+    "or spending against income) to help answer something like whether to",
+    "pay down debt or save - but stop at describing what the numbers show,",
+    "never turn that into a recommendation to take a specific action. If",
+    "asked for investment advice or a prediction, say plainly that this app",
+    "doesn't give that, rather than answering anyway.",
+    "",
     `Data: ${JSON.stringify(context)}`,
     "",
     `Question: ${question}`,
   ].join("\n");
 }
 
+// Thrown specifically when a Gemma answer is discarded for straying into
+// investment advice or a prediction - distinct from a connectivity/HTTP
+// error so the UI can show an accurate message rather than "is Gemma
+// reachable?" for an answer that arrived just fine and was simply rejected.
+export class QaAdviceRejectedError extends Error {}
+
+// Never legitimate in this feature's context: buildQaContext (insights.js)
+// hands Gemma only the user's own expenses/subscriptions/income/profile -
+// no market or ticker data at all - so any of these phrases can only be the
+// model inventing investment advice this app does not give anywhere (the
+// same boundary compareDebtStrategies() and the credit-utilization line
+// already hold, extended here to the one place a free-text model could
+// cross it). Deliberately narrower than tools/price-agent.js's recap list:
+// this feature is explicitly allowed to reason about the user's own
+// debt-vs-savings tradeoffs (a real, documented use case), so ordinary
+// phrasing like "you should pay down..." is not banned - only phrasing
+// that could only be about a security or a price/balance prediction is.
+export const QA_ADVICE_PHRASES = [
+  "should buy", "should sell", "should invest", "you should invest",
+  "buy the dip", "worth buying", "worth selling", "price target",
+  "buying opportunity", "opportunity to buy", "good time to buy",
+  "good time to sell", "undervalued", "overvalued", "safe bet",
+  "can't go wrong", "cannot go wrong", "no-brainer", "too cheap",
+  "looks cheap", "looks expensive", "guaranteed return", "guaranteed profit",
+  "invest in", "put your money into", "buy shares", "sell shares",
+  "buy stock", "sell stock",
+  "will rise to", "will fall to", "will be worth", "will double",
+  "will likely rise", "will likely fall", "poised to",
+];
+
+/**
+ * Rejects an answer that strays into investment advice or a price/balance
+ * prediction - something this feature has no basis to give, since its
+ * context never includes market or ticker data. Mirrors
+ * tools/price-agent.js's validateRecapSummary() shape ({answer} or
+ * {reason}) so the same pattern is checkable in both places, even though
+ * the two live in separate runtimes (a Node script and a browser module)
+ * with no shared import between them.
+ * @param {string} raw
+ * @returns {{answer:string}|{reason:string}}
+ */
+export function validateQaAnswer(raw) {
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return { reason: "empty" };
+  const lower = text.toLowerCase();
+  const violation = QA_ADVICE_PHRASES.find((phrase) => lower.includes(phrase));
+  if (violation) return { reason: violation };
+  return { answer: text };
+}
+
 /**
  * Ask Gemma a free-text question about the given context. Resolves to the
- * plain-text answer, or throws (caller shows a friendly error).
+ * plain-text answer, or throws - a connectivity/HTTP failure throws a plain
+ * Error (caller shows a friendly "is Gemma reachable?" message); an answer
+ * that fails validateQaAnswer() throws QaAdviceRejectedError instead, so
+ * the caller can tell the two apart and never display the rejected text.
  */
 export async function askGemma(question, context, opts = {}) {
   const { endpoint, model = "gemma", key, timeoutMs = 20000 } = opts;
@@ -178,7 +250,13 @@ export async function askGemma(question, context, opts = {}) {
     const data = await res.json();
     const text = typeof data.response === "string" ? data.response.trim() : "";
     if (!text) throw new Error("Gemma returned an empty answer");
-    return text;
+    const validated = validateQaAnswer(text);
+    if (!validated.answer) {
+      throw new QaAdviceRejectedError(
+        "That answer strayed into investment advice or a prediction, which this app doesn't give. Try asking about your own spending, accounts, or budgets instead."
+      );
+    }
+    return validated.answer;
   } finally {
     clearTimeout(timer);
   }

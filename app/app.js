@@ -6853,11 +6853,12 @@ $("qaAskBtn").onclick = async () => {
   }
   $("qaAskBtn").disabled = true;
   $("qaAnswer").classList.add("hidden");
-  // Sets an honest expectation up front rather than a bare "Thinking…" -
-  // the home model can take up to ~45s (askGemma's own timeout, matched to
-  // the real measured cold-load time) if it wasn't already warmed up by
-  // init() or loadReports() opening this page.
-  $("qaStatus").textContent = "Thinking… (can take up to ~45s on the home model if it's cold, usually just a few seconds otherwise)";
+  // Sets an honest expectation up front rather than a bare "Thinking…". This
+  // one really is slow and saying otherwise just makes it look broken: a full
+  // answer measured ~50s against the real endpoint, almost all of it the
+  // model writing at ~15 tokens/second, which is the home machine's honest
+  // ceiling for an 8B model rather than anything this app can tune away.
+  $("qaStatus").textContent = "Thinking… this usually takes about a minute - the answer is written on your own machine, and it writes at about the speed you read.";
   try {
     if (!allExpenses.length) await loadExpenses();
     const since = lastMonths(6)[0] + "-01"; // same boundary buildQaContext computes internally

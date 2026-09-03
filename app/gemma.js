@@ -21,6 +21,37 @@ const PAYMENTS = ["credit", "debit", "cash"];
 // second call shortly after the first skip the reload.
 const GEMMA_KEEP_ALIVE = "10m";
 
+// Hidden reasoning is OFF on every call below. gemma4:e4b advertises a
+// "thinking" capability (confirmed via /api/show) and uses it by default,
+// which makes this app's Q&A structurally unable to finish: measured live
+// 2026-09-03, one real question spent over TWO MINUTES emitting reasoning
+// tokens without ever reaching an answer, and capping output at 300 tokens
+// returned an empty string - 300 tokens of pure thinking, done_reason
+// "length". So this is not a tuning preference, it is what makes the feature
+// work at all. Safe to send unconditionally: verified live that a model with
+// no thinking capability (qwen2.5-coder:7b) accepts and ignores the flag
+// rather than rejecting the request.
+const GEMMA_THINK = false;
+
+// The model ships with temperature 1 / top_k 64 / top_p 0.95 (confirmed via
+// /api/show), which is wrong for both jobs this app asks of it - structured
+// extraction and arithmetic over the user's real money. docs/SESSION-NOTES.md
+// already records Gemma silently dividing an amount by three once, which is
+// exactly what sampling at temperature 1 produces on a task that has one
+// correct answer. Costs nothing: measured identical latency at temperature 0.
+const DETERMINISTIC = { temperature: 0 };
+
+// num_predict here is a runaway BACKSTOP, not a target. Deliberately generous
+// because this model cannot be prompted into brevity - measured live, caps of
+// 300/400/600 tokens all ended with done_reason "length", truncating the
+// answer mid-sentence, and three escalating "answer in 2-3 sentences, no
+// tables" instructions all produced the same table-driven ~600-token reply. A
+// truncated answer about someone's money is worse than a slow one, so the cap
+// only exists to stop a genuine runaway, and askGemma's timeout is sized to
+// match rather than to fight it.
+const EXTRACT_OPTIONS = { ...DETERMINISTIC, num_predict: 200 };
+const QA_OPTIONS = { ...DETERMINISTIC, num_predict: 800 };
+
 /** Build the strict-JSON extraction prompt sent to Gemma. */
 export function buildPrompt(text, today) {
   return [
@@ -79,15 +110,15 @@ function extractPayload(data) {
  * @param {{endpoint:string, model?:string, key?:string, timeoutMs?:number, today?:string}} opts
  */
 export async function parseWithGemma(text, opts = {}) {
-  // Measured live against the real tunnel+model 2026-09-02: a WARM request
-  // takes 2.9-3.6s, so the old 4000ms default was already failing on
-  // ordinary variance, not just a cold model - this is what made Quick Add
-  // show "Gemma unavailable" far more often than the endpoint was actually
-  // unreachable. Still deliberately short of the real cold-load time
-  // (measured ~31s, see warmUpGemma below) - Quick Add is an inline typing
-  // flow and blocking it for 30s on a cold model would be worse than
-  // falling back to the local keyword parser, which is the existing,
-  // correct behavior on any timeout here.
+  // Measured live end to end against the real tunnel+model 2026-09-03: this
+  // whole call is 4.4s wall (3.4s server, of which 2.2s is generating ~50
+  // tokens of JSON, plus ~1.5s of Cloudflare quick-tunnel round trip). The
+  // original 4000ms default sat just BELOW that, which is what made Quick Add
+  // report "Gemma unavailable" far more often than the endpoint was ever
+  // actually unreachable. 8000ms gives roughly 2x headroom over the measured
+  // figure while still failing fast enough that an inline typing flow never
+  // stalls - a timeout here silently keeps the local keyword parse, which is
+  // the correct and already-shipped fallback.
   const { endpoint, model = "gemma", key, timeoutMs = 8000 } = opts;
   const today = opts.today || localDateISO();
   if (!endpoint) throw new Error("Gemma endpoint not configured");
@@ -98,7 +129,7 @@ export async function parseWithGemma(text, opts = {}) {
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(key ? { "X-Gemma-Key": key } : {}) },
-      body: JSON.stringify({ model, prompt: buildPrompt(text, today), stream: false, format: "json", keep_alive: GEMMA_KEEP_ALIVE }),
+      body: JSON.stringify({ model, prompt: buildPrompt(text, today), stream: false, format: "json", think: GEMMA_THINK, keep_alive: GEMMA_KEEP_ALIVE, options: EXTRACT_OPTIONS }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
@@ -122,14 +153,22 @@ export async function parseWithGemma(text, opts = {}) {
  * cost instead, exactly like today - never surface an error to the user
  * for a warm-up they didn't ask for.
  *
- * Measured live against the real tunnel+model 2026-09-02: a genuinely cold
- * load took 30.9s, not the ~11-16s this comment previously stated - the
- * old 20000ms abort was shorter than that, so this warm-up was silently
- * giving up before the model had even finished loading on every cold run,
- * defeating its entire purpose. Raised well past the measured figure.
+ * Measured live 2026-09-03, decomposed with Ollama's own load_duration /
+ * eval_duration fields rather than a stopwatch: a genuinely COLD load is
+ * only 3.8s (6.4s wall including the tunnel). An earlier 30.9s reading was
+ * this function's own fault, not the machine's - "ping" with no output cap
+ * had the model write a 300-token essay about the ping utility, roughly 14s
+ * of generation nobody ever reads, on top of the load. num_predict:1 makes
+ * this what it always should have been: a pure load, one token, done.
  */
 export async function warmUpGemma(opts = {}) {
-  const { endpoint, model = "gemma", key, timeoutMs = 45000 } = opts;
+  // A cold load measured 6.4s once and 10.8s on a second run - real variance,
+  // since page-cache state and memory pressure on a 16GB machine both move
+  // it. 25000ms is comfortably past the worse reading, and costs nothing to
+  // over-provision: this call is fire-and-forget, so a longer ceiling never
+  // makes a user wait. It does NOT need to cover a real answer's generation,
+  // which is askGemma's problem - this one stops after a single token.
+  const { endpoint, model = "gemma", key, timeoutMs = 25000 } = opts;
   if (!endpoint) return;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -137,7 +176,7 @@ export async function warmUpGemma(opts = {}) {
     await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(key ? { "X-Gemma-Key": key } : {}) },
-      body: JSON.stringify({ model, prompt: "ping", stream: false, keep_alive: GEMMA_KEEP_ALIVE }),
+      body: JSON.stringify({ model, prompt: "ping", stream: false, think: GEMMA_THINK, keep_alive: GEMMA_KEEP_ALIVE, options: { num_predict: 1 } }),
       signal: controller.signal,
     });
   } catch {
@@ -248,11 +287,15 @@ export function validateQaAnswer(raw) {
  * the caller can tell the two apart and never display the rejected text.
  */
 export async function askGemma(question, context, opts = {}) {
-  // Matches warmUpGemma's own timeout and its comment on the real measured
-  // cold-load time (30.9s, 2026-09-02) - this used to be 20000ms, shorter
-  // than a genuine cold load, so a first-of-the-session question could
-  // abort before Gemma ever finished thinking rather than actually failing.
-  const { endpoint, model = "gemma", key, timeoutMs = 45000 } = opts;
+  // Sized to a real measured answer, not to a guess. With hidden reasoning
+  // off (GEMMA_THINK), a full Reports question over a 150-transaction context
+  // measured 49.6s wall: ~8s to read the context in, then ~610 tokens of
+  // answer at ~15 tokens/second. That rate is the M2's honest ceiling for an
+  // 8B model, so the wait is real and cannot be tuned away here - 90000ms
+  // covers even a QA_OPTIONS-length runaway (~63s) rather than aborting a
+  // request that was going to succeed. Every earlier value (20000, then
+  // 45000) was below the real figure, so this feature could only ever fail.
+  const { endpoint, model = "gemma", key, timeoutMs = 90000 } = opts;
   if (!endpoint) throw new Error("Gemma endpoint not configured");
   if (!question || !question.trim()) throw new Error("Ask a question first");
 
@@ -262,7 +305,7 @@ export async function askGemma(question, context, opts = {}) {
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(key ? { "X-Gemma-Key": key } : {}) },
-      body: JSON.stringify({ model, prompt: buildQaPrompt(question, context), stream: false, keep_alive: GEMMA_KEEP_ALIVE }),
+      body: JSON.stringify({ model, prompt: buildQaPrompt(question, context), stream: false, think: GEMMA_THINK, keep_alive: GEMMA_KEEP_ALIVE, options: QA_OPTIONS }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
@@ -299,9 +342,9 @@ export async function askGemma(question, context, opts = {}) {
 export async function embedText(text, opts = {}) {
   // A separate model from GEMMA_MODEL (nomic-embed-text vs. gemma4:e4b),
   // loaded independently by Ollama - warmUpGemma warming the generation
-  // model does nothing for this one. Given some margin over the generation
-  // model's own measured cold-load (30.9s) since an embedding model is
-  // usually smaller and faster to load, but not assumed instant either.
+  // model does nothing for this one. It is far smaller (0.27GB against
+  // 9.61GB, confirmed via /api/tags), so its own cold load is well inside
+  // this budget, but it is not assumed instant either.
   // Best-effort like every other call here: retrieveRelevantHistory()
   // (app.js) already degrades to no relevant history on any failure.
   const { endpoint, model = "gemma", key, timeoutMs = 20000 } = opts;

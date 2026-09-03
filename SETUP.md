@@ -2,7 +2,7 @@
 
 This gets the privacy-and-data core running: a Supabase project with the schema
 and Row-Level Security, plus the installable PWA with a working manual-entry
-form. Everything here is **$0 and no credit card**. Budget ~30–45 minutes.
+form. Everything here is **$0 and no credit card**. Budget ~30-45 minutes.
 
 ```
 personal-finance-agent/

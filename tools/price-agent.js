@@ -907,6 +907,7 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
     "  sell shares to the public). Group related stories into a theme instead",
     "  of listing headlines one by one.",
     "- Everyday words only.",
+    "- Never use an em dash or en dash. Use a plain hyphen instead.",
     "- Write like you are explaining the day to a friend who knows nothing",
     "  about investing. No finance-desk phrasing.",
     "- Say 'fell' or 'rose', never 'declined', 'advanced', 'posted losses',",
@@ -935,6 +936,18 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
   ].filter(Boolean).join("\n");
 }
 
+// Own copy of app/gemma.js's plainDashes() - a Node script and a browser
+// module share no imports here, the same reason MARKET_INDEXES is duplicated
+// in this file. Model output must never carry an em or en dash: the repo's
+// no-em-dash rule governs what we write, and this extends it to what a model
+// writes back, enforced at the boundary rather than trusting the prompt.
+function plainDashes(text) {
+  if (typeof text !== "string") return "";
+  return text
+    .replace(/(\d)\s*[\u2013\u2014\u2015]\s*(\d)/g, "$1-$2")
+    .replace(/\s*[\u2013\u2014\u2015]\s*/g, " - ");
+}
+
 // Returns { summary } on success or { reason } on rejection, so the caller
 // can record WHY rather than storing an indistinguishable null. The
 // rejection rules themselves are unchanged.
@@ -952,7 +965,7 @@ function validateRecapSummary(raw) {
     console.warn(`Discarding recap summary - contains advice/forecast language ("${violation}").`);
     return { reason: `rejected:${violation}` };
   }
-  return { summary };
+  return { summary: plainDashes(summary) };
 }
 
 // Best-effort by contract: any failure here (quota exhausted, timeout,
@@ -1848,7 +1861,7 @@ function validateExplanation(raw) {
   const confidence = Number.isFinite(Number(raw.confidence))
     ? Math.max(0, Math.min(1, Number(raw.confidence)))
     : 0.5;
-  return { explanation, confidence };
+  return { explanation: plainDashes(explanation), confidence };
 }
 
 // One attempt per symbol per call (see callers for which symbols actually
@@ -2051,6 +2064,7 @@ function buildNewsSentimentPrompt(headlines) {
     ...headlines.map((h) => `- ${h.title} (${h.source || "unknown source"})`),
     "",
     "sentiment_reason must be one sentence grounded in these headlines.",
+    "Never use an em dash or en dash. Use a plain hyphen instead.",
     "Rules:",
     "- These are a few companies' stories, NOT the market. Never say",
     "  anything about 'the market' or overall market sentiment - you are",

@@ -203,6 +203,7 @@ export function buildQaPrompt(question, context) {
     "regular recent-months transactions list. If the data doesn't contain",
     "enough to answer, say so plainly instead of guessing.",
     "Be concise - a few sentences or a short list. Use $ for dollar amounts.",
+    "Never use an em dash or en dash. Use a plain hyphen instead.",
     "",
     // Never legitimate here: buildQaContext never includes a stock, fund,
     // or ticker, so any recommendation or prediction language in an answer
@@ -234,6 +235,29 @@ export function buildQaPrompt(question, context) {
 // error so the UI can show an accurate message rather than "is Gemma
 // reachable?" for an answer that arrived just fine and was simply rejected.
 export class QaAdviceRejectedError extends Error {}
+
+/**
+ * Strip em and en dashes out of model output.
+ *
+ * This repo's long-standing no-em-dash rule governs what WE write - code,
+ * comments, docs, UI strings - and said nothing about what a model writes
+ * back, so generated text was the one place they kept appearing (a real
+ * monthly report shipped "discretionary spending - like groceries or dining
+ * out - to better pinpoint" with two of them). Enforced at the boundary and
+ * not only in the prompt, for the same reason validateQaAnswer() exists:
+ * telling a model not to do something is not the same as it obeying.
+ *
+ * A dash between two digits becomes a plain hyphen so a range still reads as
+ * a range ("10-20"); anywhere else it becomes a spaced hyphen, which is the
+ * form this project already uses in prose. The minus sign U+2212 is left
+ * alone deliberately - it is arithmetic, not punctuation.
+ */
+export function plainDashes(text) {
+  if (typeof text !== "string") return "";
+  return text
+    .replace(/(\d)\s*[\u2013\u2014\u2015]\s*(\d)/g, "$1-$2")
+    .replace(/\s*[\u2013\u2014\u2015]\s*/g, " - ");
+}
 
 // Never legitimate in this feature's context: buildQaContext (insights.js)
 // hands Gemma only the user's own expenses/subscriptions/income/profile -
@@ -386,7 +410,7 @@ export async function askGemma(question, context, opts = {}) {
         "That answer strayed into investment advice or a prediction, which this app doesn't give. Try asking about your own spending, accounts, or budgets instead."
       );
     }
-    return validated.answer;
+    return plainDashes(validated.answer);
   } finally {
     clearTimeout(idleTimer);
     clearTimeout(hardTimer);

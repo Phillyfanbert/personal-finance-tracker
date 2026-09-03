@@ -142,6 +142,19 @@ function summarize(expenses, period, prevPeriod) {
 }
 
 // ---- Gemma report generation ------------------------------------------
+
+// Own copy of app/gemma.js's plainDashes(): a Node script and a browser
+// module share no imports in this repo (same reason MARKET_INDEXES is
+// duplicated in price-agent.js). Model output must never carry an em or en
+// dash - the rule covers what a model writes back, not just what we write,
+// and a real report shipped two of them. Applied at the boundary because
+// telling a model not to use a character is not the same as it obeying.
+function plainDashes(text) {
+  if (typeof text !== "string") return "";
+  return text
+    .replace(/(\d)\s*[\u2013\u2014\u2015]\s*(\d)/g, "$1-$2")
+    .replace(/\s*[\u2013\u2014\u2015]\s*/g, " - ");
+}
 function buildReportPrompt(summary, subsMonthlyTotal) {
   return [
     "You are a personal finance assistant. Write a short monthly spending",
@@ -151,6 +164,11 @@ function buildReportPrompt(summary, subsMonthlyTotal) {
     "subscription costs. If something stands out (a spike, a cheap win),",
     "offer one brief, concrete suggestion - otherwise skip suggestions",
     "rather than inventing one. Be friendly and concise, no fluff.",
+    "Never use an em dash or en dash. Use a plain hyphen instead.",
+    "Do not describe a change as a spike, a surge or alarming when the",
+    "amounts involved are small, and remember a month with nothing recorded",
+    "means nothing was logged, which is not the same as nothing being spent -",
+    "never present that as a real jump in spending.",
     "",
     `Data: ${JSON.stringify({ ...summary, subscriptions_monthly_total: subsMonthlyTotal })}`,
   ].join("\n");
@@ -161,7 +179,7 @@ async function warmUpGemma() {
   const res = await fetchWithTimeout(GEMMA_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: GEMMA_MODEL, prompt: "ping", stream: false }),
+    body: JSON.stringify({ model: GEMMA_MODEL, prompt: "ping", stream: false, think: false, keep_alive: "10m", options: { num_predict: 1 } }),
   }, GEMMA_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Gemma warm-up HTTP ${res.status}`);
   await res.json();
@@ -176,13 +194,20 @@ async function generateReport(summary, subsMonthlyTotal) {
       model: GEMMA_MODEL,
       prompt: buildReportPrompt(summary, subsMonthlyTotal),
       stream: false,
+      // gemma4:e4b is a reasoning model and thinks by default, which can burn
+      // the whole timeout before it writes anything; temperature 0 because a
+      // report about real money has one correct set of figures. Both mirror
+      // app/gemma.js, measured live 2026-09-03.
+      think: false,
+      keep_alive: "10m",
+      options: { temperature: 0, num_predict: 400 },
     }),
   }, GEMMA_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Gemma HTTP ${res.status}`);
   const data = await res.json();
   const text = typeof data.response === "string" ? data.response.trim() : "";
   if (!text) throw new Error("Gemma returned an empty report");
-  return text;
+  return plainDashes(text);
 }
 
 // ---- Main ----------------------------------------------------------------

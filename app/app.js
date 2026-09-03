@@ -30,7 +30,7 @@ import {
 import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
-import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError } from "./gemma.js";
+import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
 import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
@@ -5038,7 +5038,7 @@ function renderInvestments() {
             ${h.dayChange != null ? `<div style="font-size:12px;color:${gainColor(h.dayChange)}">today ${fmt(h.dayChange)} (${signedPct(h.dayChangePct)})</div>` : ""}
           </div>
         </div>
-        ${h.explanation ? `<div class="muted" style="font-size:12px">${esc(h.explanation)}</div>` : ""}
+        ${h.explanation ? `<div class="muted" style="font-size:12px">${esc(plainDashes(h.explanation))}</div>` : ""}
         ${h.headlines && h.headlines.length ? `<div class="muted" style="font-size:12px"><a href="${esc(h.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(h.headlines[0].title)}</a>${h.headlines[0].source ? " · " + esc(h.headlines[0].source) : ""}</div>` : ""}
       </div>`;
   };
@@ -5584,7 +5584,7 @@ function renderMarketMovers() {
   // and which are written. esc()'d, being model output.
   const summaryEl = $("marketMoversSummary");
   summaryEl.innerHTML = marketMoverSummary
-    ? `<span class="muted" style="font-size:11px">AI-written summary of the moves below</span><br>${esc(marketMoverSummary)}`
+    ? `<span class="muted" style="font-size:11px">AI-written summary of the moves below</span><br>${esc(plainDashes(marketMoverSummary))}`
     : "";
   summaryEl.classList.toggle("hidden", !marketMoverSummary);
 
@@ -6021,7 +6021,7 @@ function renderDailyRecap() {
 
   const summaryEl = $("dailyRecapSummary");
   if (recap.summary) {
-    summaryEl.innerHTML = `<span class="muted" style="font-size:11px">AI-written from the day's real prices and headlines</span><br>${esc(recap.summary).replace(/\n+/g, "<br><br>")}`;
+    summaryEl.innerHTML = `<span class="muted" style="font-size:11px">AI-written from the day's real prices and headlines</span><br>${esc(plainDashes(recap.summary)).replace(/\n+/g, "<br><br>")}`;
   } else {
     // Zero-LLM fallback. The summary is genuinely optional and absent
     // whenever Gemini fails, which production has shown is common - and now
@@ -6119,7 +6119,7 @@ function renderMarketOverview() {
       <div style="display:flex;justify-content:space-between;gap:10px">
         <div>
           <div${etfTicker ? ` class="sym-link" data-price-symbol="${esc(etfTicker)}" title="View price history for ${esc(etfTicker)}"` : ""}>${esc(idx.label)}</div>
-          ${idx.explanation ? `<div class="meta">${esc(idx.explanation)}</div>` : ""}
+          ${idx.explanation ? `<div class="meta">${esc(plainDashes(idx.explanation))}</div>` : ""}
         </div>
         <span class="amt" style="text-align:right">
           ${idx.price != null ? fmtNum(idx.price) : `<span class="muted" style="font-size:12px">index level not available yet</span>`}
@@ -6138,7 +6138,7 @@ function renderMarketOverview() {
     <div class="exp" style="cursor:default">
       <div>
         <div class="sym-link" data-price-symbol="${esc(m.label)}" title="View price history for ${esc(m.label)}">${esc(m.label)}</div>
-        ${m.explanation ? `<div class="meta">${esc(m.explanation)}</div>` : ""}
+        ${m.explanation ? `<div class="meta">${esc(plainDashes(m.explanation))}</div>` : ""}
         ${m.headlines && m.headlines.length ? `<div class="meta"><a href="${esc(m.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headlines[0].title)}</a>${m.headlines[0].source ? " · " + esc(m.headlines[0].source) : ""}</div>` : ""}
       </div>
       <span class="amt" style="text-align:right">
@@ -6160,7 +6160,7 @@ function renderMarketOverview() {
       ? HEALTH_TONE_COLOR[SENTIMENT_TONE[digest.sentiment]]
       : "var(--border)";
     $("marketSentimentLabel").textContent = hasSentiment ? SENTIMENT_LABEL[digest.sentiment] : "Today's headlines";
-    $("marketSentimentReason").textContent = hasSentiment ? (digest.sentimentReason || "") : "";
+    $("marketSentimentReason").textContent = hasSentiment ? plainDashes(digest.sentimentReason || "") : "";
     $("marketNewsList").innerHTML = digest.headlines.map((h) => `
       <div class="exp" style="cursor:default">
         <a href="${esc(h.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
@@ -6807,8 +6807,36 @@ function renderCashFlowForecast() {
 async function loadInsights() {
   const { data } = await sb.from("spending_insights").select("*").order("created_at", { ascending: false }).limit(1);
   const row = (data || [])[0];
-  $("insightsBody").textContent = row ? row.report : "No monthly reports yet.";
+
+  // plainDashes at RENDER as well as at generation: a row written before the
+  // no-em-dash rule covered model output still displays clean, with no data
+  // migration over someone's stored reports.
+  $("insightsBody").textContent = row ? plainDashes(row.report) : "No monthly reports yet.";
   $("insightsBody").classList.toggle("muted", !row);
+  $("insightsByline").textContent = row ? "AI-written from the figures above" : "";
+  $("insightsPeriod").textContent = row && row.period ? monthLabel(row.period) : "";
+
+  // Counted here rather than read out of the report text. The paragraph is
+  // model-written and can be wrong; these cannot, so the exact numbers are
+  // always on screen next to the prose describing them.
+  const figuresEl = $("insightsFigures");
+  if (!row || !row.period) { figuresEl.innerHTML = ""; return; }
+  // startsWith(period) is the same month-filter idiom sumBy() and the rest of
+  // this file already use against a stored YYYY-MM-DD local date.
+  const inMonth = allExpenses.filter((e) => (e.occurred_at || "").startsWith(row.period));
+  const total = Math.round(inMonth.reduce((sum, e) => sum + Number(e.amount || 0), 0) * 100) / 100;
+  const top = sumBy(allExpenses, "category", row.period)[0] || null;
+  const tiles = [
+    { label: "Spent in " + monthLabel(row.period), value: fmt(total) },
+    { label: "Biggest category", value: top ? esc(top.label) : "None yet", sub: top ? fmt(top.value) : "" },
+    { label: "Subscriptions", value: fmt(totalMonthly(subscriptions)), sub: "a month" },
+  ];
+  figuresEl.innerHTML = tiles.map((t) => `
+    <div class="card">
+      <div class="muted" style="font-size:12px">${t.label}</div>
+      <div class="big">${t.value}</div>
+      ${t.sub ? `<div class="muted" style="font-size:12px">${t.sub}</div>` : ""}
+    </div>`).join("");
 }
 
 // ---- INTERACTIVE Q&A (Gemma, optional/best-effort like Phase 3) -----------
@@ -6986,7 +7014,7 @@ async function renderReports() {
   // this page deliberately keeps no colour or threshold framing on its money
   // stats - the same restraint the savings-rate line below already holds.
   $("rptAvgSpend").textContent = avgValue == null
-    ? "—"
+    ? "-"
     : hasIncome
       ? `${avgValue > 0 ? "+" : avgValue < 0 ? "-" : ""}${fmt(Math.abs(avgValue))}`
       : fmt(avgValue);
@@ -7021,7 +7049,7 @@ async function renderReports() {
   const selectedMonth = ive.find((r) => r.month === ym);
   $("savingsRateStat").textContent = selectedMonth && selectedMonth.savingsRate != null
     ? signedPct(Math.round(selectedMonth.savingsRate * 1000) / 10)
-    : "—";
+    : "-";
 }
 
 // Three views of one month's spending behind pills, rather than three

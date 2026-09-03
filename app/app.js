@@ -411,7 +411,6 @@ let editingIncome = null; // income row currently in the income form
 let userId = null;    // signed-in user's uuid
 let userEmail = null; // signed-in user's email, shown read-only in Profile
 let profile = null;   // the user's profiles row
-let wikiFacts = [];   // wiki_facts rows - durable, code-computed knowledge (migration 63)
 let entrySource = "manual"; // 'manual' | 'parsed' - set to 'parsed' when Gemma fills fields
 let gemmaTimer = null;      // debounce handle for background parsing
 
@@ -575,7 +574,7 @@ async function initInner() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadSinkingFunds(), loadInvestmentTargets(), loadWikiFacts()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadSinkingFunds(), loadInvestmentTargets()]);
   // Both assets and assetPriceFindings are guaranteed loaded by the
   // Promise.all above (no race) - this is what keeps Net Worth/the Assets
   // card/the net-worth trend chart in sync with live prices on every app
@@ -586,9 +585,6 @@ async function initInner() {
   await autoLogDueIncome();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
-  // After loadExpenses()/loadSubscriptions() above, since it derives from
-  // both. Once a day, same shape as the two snapshots either side of it.
-  await refreshWikiIfNeeded();
   // After loadAssets(), since this reads assets.price_symbol.
   await syncHoldingsIntoWatchlist();
   // The two findings loaders above already pulled a headline batch, so the
@@ -4704,11 +4700,9 @@ $("editSave").onclick = async () => {
   $("editSave").disabled = false;
   closeModal("editModal"); editing = null;
   await loadExpenses();
-  // Forced, not the once-a-day path: a note is written precisely so it shows
-  // up in the wiki, and waiting until tomorrow to reflect it would read as
-  // the field having done nothing.
-  await refreshWikiIfNeeded(true);
-  renderWiki();
+  // A note is written precisely so it shows up under the monthly report, and
+  // loadInsights() derives the standouts fresh, so this reflects it at once.
+  await loadInsights();
   toast((categoryChanged ? "Saved - I'll remember that" : "Saved ✓") + budgetWarningToastSuffix(newCategory));
 };
 
@@ -4743,7 +4737,6 @@ async function loadReports() {
   }
   renderReports();
   loadInsights();
-  renderWiki();
   populateHistoryAccountSelect();
   renderAccountHistory();
   await renderNetWorthTrend();
@@ -6974,151 +6967,43 @@ async function loadInsights() {
       <div class="big">${t.value}</div>
       ${t.sub ? `<div class="muted" style="font-size:12px">${t.sub}</div>` : ""}
     </div>`).join("");
-}
 
-// ---- THE WIKI (migration 63) ----------------------------------------------
-// Durable, code-computed knowledge about this user. Every figure here is
-// calculated in app/wiki.js and never by a model - see that file's header for
-// the measurement that made this a hard rule.
-
-async function loadWikiFacts() {
-  const { data, error } = await sb.from("wiki_facts").select("*").order("key");
-  if (error) { wikiFacts = []; return; }
-  wikiFacts = data || [];
+  renderStandouts();
 }
 
 /**
- * Recompute derived facts at most once a day, mirroring
- * snapshotNetWorthIfNeeded()'s shape. Runs client-side rather than on the
- * server machine deliberately: the arithmetic is over data already loaded
- * here, so it needs no service_role and, unlike the launchd agents, does not
- * go stale whenever the home MacBook is asleep.
+ * The two things app/wiki.js still derives, shown under the monthly report:
+ * a month well clear of the median (carrying the user's own note when they
+ * wrote one) and a merchant whose price actually moved. Both are counted in
+ * code, so unlike the paragraph above them they cannot be wrong.
  *
- * Honours the two flags that let "recomputed" and "editable" coexist:
- * `dismissed_at` means the user removed a fact and a refresh must never
- * resurrect it, and `body_overridden` means they rewrote the sentence, so the
- * figures underneath refresh while their wording stays.
+ * Hidden entirely when there is nothing, rather than saying "nothing stood
+ * out" - a quiet month is the normal case and does not need announcing, and
+ * an empty section under every report would be noise on most of them.
  */
-async function refreshWikiIfNeeded(force = false) {
-  const today = localDateISO();
-  if (!force && localStorage.getItem("wikiRefreshedOn") === today) return;
-
-  const derived = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() });
-  const existing = new Map(wikiFacts.map((f) => [f.key, f]));
-
-  const rows = [];
-  for (const fact of derived) {
-    const prior = existing.get(fact.key);
-    if (prior && prior.dismissed_at) continue; // removed on purpose - stays removed
-    rows.push({
-      key: fact.key,
-      source: "computed",
-      title: fact.title,
-      // A rewritten sentence is the user's; the numbers under it are ours.
-      body: prior && prior.body_overridden ? prior.body : fact.body,
-      body_overridden: prior ? prior.body_overridden : false,
-      figures: fact.figures,
-      as_of: fact.as_of ? fact.as_of + "-01" : null,
-      updated_at: new Date().toISOString(),
-    });
-  }
-  if (rows.length) {
-    const { error } = await sb.from("wiki_facts").upsert(rows, { onConflict: "user_id,key" });
-    if (error) return; // best-effort: a failed refresh must never block the page
-  }
-
-  // A derived fact whose underlying pattern no longer holds (a merchant that
-  // stopped recurring) would otherwise linger as a stale claim forever.
-  const derivedKeys = new Set(derived.map((f) => f.key));
-  const stale = wikiFacts.filter((f) => f.source === "computed" && !derivedKeys.has(f.key)).map((f) => f.id);
-  if (stale.length) await sb.from("wiki_facts").delete().in("id", stale);
-
-  localStorage.setItem("wikiRefreshedOn", today);
-  await loadWikiFacts();
+function renderStandouts() {
+  const el = $("insightsStandouts");
+  const facts = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() })
+    .filter((f) => f.key.startsWith("month_outlier:") || f.key.startsWith("price_change:"));
+  if (!facts.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `
+    <div class="muted" style="font-size:11px;margin-bottom:4px">What stood out, counted from your records</div>
+    ${facts.map((f) => `<div class="meta" style="white-space:normal;margin-bottom:4px">${esc(f.body)}</div>`).join("")}`;
 }
 
-/**
- * Render the wiki. Facts are shown with the date their numbers describe, so
- * one can never silently imply it is current when it is not, and a reworded
- * fact says so - otherwise a user's own sentence would be indistinguishable
- * from a computed one on a later read.
- */
-function renderWiki() {
-  const live = wikiFacts.filter((f) => !f.dismissed_at);
-  const el = $("wikiList");
-  if (!live.length) {
-    el.innerHTML = `<p class="muted" style="font-size:13px">Nothing here yet. This card only shows things you cannot see on a chart, so it needs a couple of months before it has anything to say: whether a category is drifting up or down, a price that changed, a month well above your usual, a payment that comes round every month. A note you add to a transaction will show up here too.</p>`;
-    return;
-  }
-  el.innerHTML = live.map((f) => `
-    <div class="exp" style="align-items:flex-start">
-      <div style="flex:1;min-width:0">
-        <div><strong>${esc(f.title)}</strong></div>
-        <div class="meta" style="white-space:normal">${esc(f.body)}</div>
-        <div class="meta" style="font-size:11px">${f.as_of ? "as of " + esc(monthLabel(String(f.as_of).slice(0, 7))) : ""}${f.body_overridden ? " - reworded by you" : ""}</div>
-      </div>
-      <button class="link-action" data-wiki-edit="${esc(f.id)}" aria-label="Reword ${esc(f.title)}">Reword</button>
-      <button class="x" data-wiki-remove="${esc(f.id)}" aria-label="Remove the fact ${esc(f.title)}">&#10005;</button>
-    </div>`).join("");
-}
-
-let editingWikiFact = null;
-
-// Delegated, because these rows are rebuilt on every render and per-row
-// handlers would need rebinding each time - same shape as wireInfoIcons().
-$("wikiList").addEventListener("click", async (ev) => {
-  const editBtn = ev.target.closest("[data-wiki-edit]");
-  if (editBtn) {
-    editingWikiFact = wikiFacts.find((f) => f.id === editBtn.dataset.wikiEdit) || null;
-    if (!editingWikiFact) return;
-    $("wikiEditBody").value = editingWikiFact.body || "";
-    openModal("wikiEditModal");
-    return;
-  }
-  const removeBtn = ev.target.closest("[data-wiki-remove]");
-  if (!removeBtn) return;
-  const fact = wikiFacts.find((f) => f.id === removeBtn.dataset.wikiRemove);
-  if (!fact) return;
-  if (!(await confirmModal("It will not come back the next time this refreshes.", { title: `Remove "${fact.title}"?` }))) return;
-  // Marked dismissed rather than deleted: refreshWikiIfNeeded() checks this
-  // flag, so a removed fact stays removed instead of being recreated on the
-  // next recompute, which would make the button look broken.
-  const { error } = await sb.from("wiki_facts").update({ dismissed_at: new Date().toISOString() }).eq("id", fact.id);
-  if (error) return toast(error.message);
-  await loadWikiFacts();
-  renderWiki();
-  toast("Removed");
-});
-
-$("wikiEditClose").onclick = () => closeModal("wikiEditModal");
-
-$("wikiEditSave").onclick = async () => {
-  if (!editingWikiFact) return;
-  const body = $("wikiEditBody").value.trim();
-  if (!body) { flagField("wikiEditBody", "Write something, or put the original wording back."); return; }
-  const { error } = await sb.from("wiki_facts")
-    .update({ body, body_overridden: true, updated_at: new Date().toISOString() })
-    .eq("id", editingWikiFact.id);
-  if (error) { flagField("wikiEditBody"); return toast(error.message); }
-  closeModal("wikiEditModal");
-  editingWikiFact = null;
-  await loadWikiFacts();
-  renderWiki();
-  toast("Saved");
-};
-
-$("wikiEditReset").onclick = async () => {
-  if (!editingWikiFact) return;
-  // Clearing the flag is enough: the next refresh recomputes the sentence
-  // from the figures, which is where the original wording comes from.
-  const { error } = await sb.from("wiki_facts").update({ body_overridden: false }).eq("id", editingWikiFact.id);
-  if (error) return toast(error.message);
-  closeModal("wikiEditModal");
-  editingWikiFact = null;
-  await refreshWikiIfNeeded(true);
-  renderWiki();
-  toast("Original wording restored");
-};
+// ---- WHAT STOOD OUT (app/wiki.js) ------------------------------------------
+// The wiki no longer has a card of its own. It had six fact types and four
+// of them restated something the app already showed - "typical month" was
+// the Reports stat tile's own figure over the same window and denominator
+// rule, and "X is regular" duplicated detectRecurringExpenses(), which does
+// it better and has its own card. What survived is the two things no chart
+// shows: a month well clear of the median, and a merchant whose price
+// actually moved. Those belong with the monthly report, which is already
+// where this app explains a month.
+//
+// Derived fresh on every render rather than stored, for the same reason tier
+// 1 derives fresh: a figure shown next to "as of" has to actually be as of
+// now, and this is a few passes over data already in memory.
 
 // ---- The answer cache (qa_cache, migration 63) -----------------------------
 // Exact repeats within a short window, by explicit choice over invalidating
@@ -7212,15 +7097,10 @@ $("qaAskBtn").onclick = async () => {
     // Tier 1: computed outright. Exact by construction and instant, because
     // no model runs at all. Returns null rather than guessing at a question
     // whose shape it does not recognise.
-    // Facts are derived FRESH here rather than read from the stored rows.
-    // The stored ones are refreshed once a day, so an expense logged this
-    // morning would not be in them yet - and an answer labelled "exact" that
-    // is a day behind is not exact. Deriving costs a few passes over data
-    // already in memory. Dismissed facts are still honoured: removing one
-    // means the user does not want to be told it, in an answer either.
-    const dismissedKeys = new Set(wikiFacts.filter((f) => f.dismissed_at).map((f) => f.key));
-    const liveFacts = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() })
-      .filter((f) => !dismissedKeys.has(f.key));
+    // Derived fresh, never stored. An answer labelled "exact" that is a day
+    // behind is not exact, and this is a few passes over data already in
+    // memory. The same facts feed tier 2's context below.
+    const liveFacts = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() });
     const computed = answerQuestion(question, { expenses: allExpenses, subscriptions, facts: liveFacts, today: new Date() });
     if (computed) {
       showQaAnswer(computed.answer, "computed");
@@ -7237,7 +7117,7 @@ $("qaAskBtn").onclick = async () => {
     const since = lastMonths(6)[0] + "-01";
     const relevantHistory = await retrieveRelevantHistory(question, since);
     const { context, allowed } = buildVerifiedContext({
-      expenses: allExpenses, subscriptions, facts: wikiFacts, today: new Date(),
+      expenses: allExpenses, subscriptions, facts: liveFacts, today: new Date(),
     });
     if (relevantHistory.length) context.relevant_history = relevantHistory;
 
@@ -8850,7 +8730,6 @@ $("exportReportsBtn").onclick = () => {
         byAccount: sumBy(allExpenses, "account", ym, acctName),
         byPaymentType: sumBy(labeled, "payment_type", ym),
         incomeVsExpense: incomeVsExpense(accountActivity.filter((a) => a.kind === "income"), allExpenses, lastMonths(6, monthKey())),
-        wikiFacts: wikiFacts.filter((f) => !f.dismissed_at),
       });
     },
     allExpenses.some((e) => String(e.occurred_at || "").startsWith(ym)),

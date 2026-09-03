@@ -180,12 +180,6 @@ export const TOUR_STEPS = {
       placement: "top",
     },
     {
-      target: "wikiCard",
-      title: "What it has worked out about you",
-      body: "As you log things, the app notices patterns you would have to go looking for: what a category usually costs, a price that went up, a month that stands out. Every number here is counted by the app, so it is exact. Reword anything that reads oddly, or remove a fact you do not want, and it will stay removed.",
-      placement: "top",
-    },
-    {
       target: "rptExpListCard",
       title: "That month's list",
       body: "Everything from the month you picked. Tap one to change it, or tick several to change them together. CSV and Print/PDF save a copy outside the app; both ask you to confirm first, since that puts your spending somewhere anyone with the device can read it.",

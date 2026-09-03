@@ -28,6 +28,12 @@
 // sb.from(), no fetch. app.js owns all of that.
 // ============================================================================
 import { localMonthKey } from "./dates.js";
+// Reused rather than reimplemented. An earlier version of this file had its
+// own recurring-merchant detector, which was both a duplicate and a worse
+// one: this groups on merchant AND exact amount, matches the real gaps
+// between charges against known billing intervals, checks the run is still
+// current, and excludes anything already declared as a subscription.
+import { detectRecurringExpenses } from "./subscriptions.js";
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const num = (v) => Number(v || 0);
@@ -96,25 +102,11 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
   const inWindow = expenses.filter((e) => monthOf(e) >= oldest && monthOf(e) <= thisMonth);
   const monthTotals = totalsByMonth(inWindow);
 
-  // Averaged over months that CONTAIN spending, never over the window length.
-  // Dividing by the window is the specific bug that killed the old
-  // savings-runway tile: one month of data out of six understated real
-  // spending sixfold before anything else compounded the error.
-  const monthsWithData = [...monthTotals.keys()].sort();
-  // Two months minimum. Averaged over ONE month this is just that month's
-  // total, which the Reports stat tile already shows, and calling a single
-  // month "typical" is not something the data supports.
-  if (monthsWithData.length >= 2) {
-    const total = r2([...monthTotals.values()].reduce((a, b) => a + b, 0));
-    const average = r2(total / monthsWithData.length);
-    facts.push({
-      key: "spend_average",
-      title: "Typical month",
-      body: `You spend about $${average.toFixed(2)} in a typical month, averaged across the ${monthsWithData.length} months that have spending recorded.`,
-      figures: { average, months_counted: monthsWithData.length, window_total: total },
-      as_of: asOf,
-    });
-  }
+  // No "typical month" fact. renderReports()'s own stat tile already computes
+  // that figure, over the same 6-month window and with the same
+  // divide-by-months-that-contain-something rule, so a fact would have been
+  // the identical number in a second place. answerTypicalMonth() below
+  // answers the question directly instead, which needs no stored fact.
 
   // Per-category average and direction. Only for categories with real spend.
   for (const cat of categoriesIn(inWindow)) {
@@ -168,8 +160,12 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
     }
   }
 
-  // A merchant charged in three or more distinct months is a pattern worth
-  // stating; anything less is a coincidence.
+  // No "is regular" fact. subscriptions.js's detectRecurringExpenses()
+  // already detects recurring merchants, has its own card on the Log page,
+  // and does it far more rigorously - grouping on merchant AND exact amount,
+  // matching the real gap between charges against known intervals, and
+  // checking the run is still current. This module only looks for a price
+  // MOVE, which that detector does not report and no chart shows.
   const byMerchant = new Map();
   for (const e of inWindow) {
     const name = (e.merchant || "").trim();
@@ -180,15 +176,6 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
   for (const [name, rows] of byMerchant) {
     const months = new Set(rows.map(monthOf));
     if (months.size < 3) continue;
-    const total = r2(rows.reduce((sum, e) => sum + num(e.amount), 0));
-    const perMonth = r2(total / months.size);
-    facts.push({
-      key: `recurring:${name}`,
-      title: `${name} is regular`,
-      body: `${name} appears in ${months.size} of the last ${monthsWithData.length} months with spending, about $${perMonth.toFixed(2)} a month.`,
-      figures: { months_seen: months.size, total, per_month: perMonth },
-      as_of: asOf,
-    });
 
     // A merchant whose amount genuinely moved, which is only visible across
     // time and is exactly what a single snapshot cannot tell you.
@@ -213,22 +200,8 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
   // nothing learned. buildVerifiedContext() still passes the total to the
   // model as a computed aggregate, so nothing downstream loses it.
 
-  // Stable context the user typed themselves. No figures, so it never enters
-  // the verification allow-list - it is not a number and cannot be misquoted
-  // as one.
-  if (profile && (profile.housing_status || profile.household_size || profile.financial_goals)) {
-    const bits = [];
-    if (profile.housing_status) bits.push(`housing: ${profile.housing_status}`);
-    if (profile.household_size) bits.push(`household of ${profile.household_size}`);
-    if (profile.financial_goals) bits.push(`goal: ${profile.financial_goals}`);
-    facts.push({
-      key: "profile_context",
-      title: "About you",
-      body: bits.join(", ") + ".",
-      figures: {},
-      as_of: asOf,
-    });
-  }
+  // No profile fact. It only restated the Profile page in another place,
+  // carried no figures, and so answered no question and verified nothing.
 
   return facts;
 }
@@ -285,6 +258,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], t
   if (!q) return null;
 
   const asksSpend = /\b(spend|spent|spending|cost|costs|paid|pay)\b/.test(q);
+  const wantsRecurringCost = asksSpend || /\b(charge|charges|charged|every month|monthly)\b/.test(q);
   const month = resolveMonth(q, today);
   const category = resolveCategory(q, expenses);
 
@@ -315,6 +289,37 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], t
       answer: `Your biggest category${where} was ${topCat}, at $${topVal.toFixed(2)}.`,
       figures: { total: topVal },
     };
+  }
+
+  // "what do I usually spend in a month". Computed live rather than stored:
+  // the figure is small arithmetic over data already in hand, and a stored
+  // one could only ever be staler.
+  if (/\b(usually|typically|normally|average|typical|normal)\b/.test(q) && /\b(spend|spending|month)\b/.test(q)) {
+    const totals = totalsByMonth(expenses);
+    // Two months minimum: averaged over one, "typical" is just that month.
+    if (totals.size >= 2) {
+      const sum = r2([...totals.values()].reduce((a, b) => a + b, 0));
+      const average = r2(sum / totals.size);
+      return {
+        answer: `You spend about $${average.toFixed(2)} in a typical month, averaged across the ${totals.size} months that have spending recorded.`,
+        figures: { average, months_counted: totals.size },
+      };
+    }
+  }
+
+  // "how much does Netflix cost me" - answered from the app's existing
+  // recurring detector rather than a fact of our own. Exactly one match or
+  // nothing, the same rule answerFromFacts() applies.
+  if (wantsRecurringCost) {
+    const hits = detectRecurringExpenses(expenses, subscriptions, today)
+      .filter((c) => mentionsWholeWord(q, c.merchant));
+    if (hits.length === 1) {
+      const c = hits[0];
+      return {
+        answer: `${c.merchant} charges $${c.amount.toFixed(2)}, ${c.cycleLabel.toLowerCase()}, and has done ${c.occurrenceCount} times.`,
+        figures: { amount: c.amount, occurrences: c.occurrenceCount },
+      };
+    }
   }
 
   if (!asksSpend) return null;
@@ -380,15 +385,11 @@ function answerFromFacts(question, facts = []) {
     const kind = sep === -1 ? f.key : f.key.slice(0, sep);
     const subject = sep === -1 ? "" : f.key.slice(sep + 1);
 
-    if (kind === "recurring") {
-      if (mentionsWholeWord(q, subject) && (wantsCost || /\b(regular|regularly|often|every month|monthly|subscription)\b/.test(q))) candidates.push(f);
-    } else if (kind === "price_change") {
+    if (kind === "price_change") {
       if (mentionsWholeWord(q, subject) && /\b(price|prices|increase|increased|went up|gone up|go up|cheaper|dearer|more expensive|changed|change)\b/.test(q)) candidates.push(f);
     } else if (kind === "month_outlier") {
       const monthWord = monthName(subject).split(" ")[0].toLowerCase();
       if (mentionsWholeWord(q, monthWord) && /\b(why|unusual|high|higher|stand out|stands out|spike|expensive|so much)\b/.test(q)) candidates.push(f);
-    } else if (kind === "spend_average") {
-      if (/\b(usually|typically|normally|average|typical|normal)\b/.test(q) && /\b(spend|spending|month)\b/.test(q)) candidates.push(f);
     }
     // category: deliberately skipped - the direct path above already answers
     // it from live transactions, and a second route to the same answer could

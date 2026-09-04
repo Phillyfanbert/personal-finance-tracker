@@ -10,10 +10,49 @@ export function monthKey(d = new Date()) {
   return localMonthKey(d);
 }
 
-/** Human label for a YYYY-MM key, e.g. "2026-07" -> "Jul 2026". */
+/**
+ * Human label for a YYYY-MM key, e.g. "2026-07" -> "July 2026".
+ *
+ * The FULL month name, everywhere, deliberately. This used to be the short
+ * form while the Q&A wrote "July 2026", so the same month was spelled two
+ * ways on one page. One format, one function, so they cannot drift again -
+ * wiki.js's monthName() now delegates here rather than keeping its own copy.
+ */
 export function monthLabel(ym) {
   const [y, m] = ym.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleString(undefined, { month: "short", year: "numeric" });
+  return new Date(y, m - 1, 1).toLocaleString(undefined, { month: "long", year: "numeric" });
+}
+
+/**
+ * The "typical month" figure, defined ONCE because two places show it: the
+ * Reports stat tile and the Q&A's answer to "what do I usually spend in a
+ * month". They disagreed - measured at $600 against $400 on the same data,
+ * because one averaged the last 6 months and the other averaged everything.
+ * Two answers to one question on one page is the failure this whole app
+ * works hardest to avoid, so there is now one calculation and two readers.
+ *
+ * Averages over months that actually CONTAIN something, never over the
+ * window length: dividing by the full window is the specific bug behind the
+ * old savings-runway tile, where one month of data out of three understated
+ * real spending threefold.
+ *
+ * Reports net rather than spending once any income is recorded, because
+ * "what is left over" is the better question when both sides are known - but
+ * with no income it would be a subtraction with an empty side, stating
+ * confidently and wrongly that money is being lost.
+ */
+export function averageMonth(expenses, incomeActivity, months) {
+  const rows = incomeVsExpense(incomeActivity, expenses, months);
+  const hasIncome = rows.some((r) => r.income > 0);
+  const active = rows.filter((r) => (hasIncome ? r.income > 0 || r.expense > 0 : r.expense > 0));
+  if (!active.length) return { hasIncome, monthsCounted: 0, spend: null, net: null };
+  const mean = (pick) => Math.round((active.reduce((s, r) => s + pick(r), 0) / active.length) * 100) / 100;
+  return {
+    hasIncome,
+    monthsCounted: active.length,
+    spend: mean((r) => r.expense),
+    net: hasIncome ? mean((r) => r.income - r.expense) : null,
+  };
 }
 
 /** The last `n` YYYY-MM keys ending at `endYm` (inclusive), oldest first. */

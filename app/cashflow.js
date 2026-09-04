@@ -12,7 +12,7 @@
 // number, never advice). Returns the same [{date, balance}] shape
 // buildBalanceHistory() does, so it drops straight into renderLineChart()
 // unchanged. Imports advanceRenewal/advanceIncomeDate directly rather than
-// taking them as parameters - matches insights.js's own established
+// taking them as parameters - the same established
 // pattern of cross-importing pure helpers from other logic modules.
 // ============================================================================
 import { advanceRenewal } from "./subscriptions.js";

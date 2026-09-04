@@ -2191,7 +2191,7 @@
       </div>
 
       <!-- Financial-context fields - not used for deal matching, folded
-           into the Gemma Q&A context instead (insights.js buildQaContext)
+           into the Gemma Q&A context instead (wiki.js buildVerifiedContext)
            so a question like "should I pay down debt or save?" has
            something real to reason about. -->
       <div class="muted" style="font-size:12px;margin:16px 0 4px;font-weight:700">Financial context</div>
@@ -2551,8 +2551,13 @@
         <div class="help-topic" id="helpTopic-ask-about-your-spending">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-ask-about-your-spending-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Ask about your spending</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-ask-about-your-spending-body">
-          <p>Type a question in plain English (e.g. "How much did I spend on food last month?") and get an answer generated from your own real data - optional, and only works if this household has a Gemma server configured; otherwise it tells you plainly that it isn't set up rather than guessing. It can also draw on your Profile's financial-context fields (housing, employment, goals) if you've filled those in, for a more useful answer to something like "should I pay down debt or save right now?" - it never gives investment advice, only reasons about the numbers you've actually entered.</p>
-          <p>Questions can also reach further back than the usual recent-months data: a background search looks through your older transactions for whatever specifically relates to your question (e.g. "what did I spend on my trip in 2019") and adds just those to what the AI sees, on top of - not instead of - the regular recent-months data. A line under the answer says how many older transactions were found when this happens. Like the rest of this feature, it's optional and silently does nothing extra if it isn't set up yet.</p>
+          <p>Ask in plain English - "how much did I spend on groceries last month", "how much did I earn in July", "what was my biggest purchase", "did I spend more in July or August". You do not need special wording, and you can use your own words for a category ("eating out", "petrol", "rent") rather than the name the app uses.</p>
+          <p><strong>Most questions are answered instantly by the app itself, with no AI involved at all.</strong> Those are labelled "Exact - counted from your own records". The figure is simply counted from what you logged, so it is exactly right, and it appears the moment you press Ask.</p>
+          <p>A harder or more open-ended question is written up by the AI assistant on your household's own machine, which takes about a minute and is labelled "AI-written from figures this app calculated". Even then <strong>the AI is never allowed to do the arithmetic</strong>: it is handed figures the app worked out, and every amount and percentage in its reply is checked back against them. If it states a number the app did not calculate, the answer is thrown away rather than shown to you. That is why an answer occasionally comes back saying it cannot answer exactly - it would rather decline than show you a figure it cannot stand behind.</p>
+          <p>It also answers only questions about <strong>your own money</strong>. Anything else gets a short note saying so, and nothing about your records is sent anywhere.</p>
+          <p>Questions can reach further back than the months held on your device: a background search looks through your older transactions for whatever relates to your question (e.g. "what did I spend on my trip in 2019") and adds just those. A line under the answer says how many older transactions were found when that happens.</p>
+          <p>If you have filled in the financial-context part of your Profile (housing, employment, household size, goals), the AI-written answers can take it into account for something like "should I pay down debt or save?". It reasons about the numbers you have entered and never recommends buying or selling an investment.</p>
+          <p>If the AI assistant is not set up, the instant answers all still work; only the longer written ones are unavailable, and it says so plainly rather than guessing.</p>
           </div>
         </div>
 

@@ -219,7 +219,7 @@ export function buildQaPrompt(question, context) {
     "data, say plainly that you cannot answer that one exactly, and say what",
     "you would need - do not estimate it.",
     "",
-    // Never legitimate here: buildQaContext never includes a stock, fund,
+    // Never legitimate here: the Q&A context never includes a stock, fund,
     // or ticker, so any recommendation or prediction language in an answer
     // can only be the model inventing something this app does not give
     // anywhere. Left permissive on ordinary debt-vs-savings reasoning,
@@ -283,7 +283,7 @@ export function plainDashes(text) {
     .replace(/\s+,/g, ",");
 }
 
-// Never legitimate in this feature's context: buildQaContext (insights.js)
+// Never legitimate in this feature's context: buildVerifiedContext (wiki.js)
 // hands Gemma only the user's own expenses/subscriptions/income/profile -
 // no market or ticker data at all - so any of these phrases can only be the
 // model inventing investment advice this app does not give anywhere (the
@@ -448,7 +448,7 @@ export async function askGemma(question, context, opts = {}) {
 // the two functions above expect. Used by app.js to embed the user's
 // question before a vector search against expense_embeddings
 // (supabase/45_expense_embeddings.sql) - see that migration's header for
-// why retrieval augments buildQaContext's existing recent-window data
+// why retrieval augments the Q&A context's existing recent-window data
 // rather than replacing it.
 
 /**

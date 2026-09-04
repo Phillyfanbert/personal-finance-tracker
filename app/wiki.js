@@ -28,6 +28,7 @@
 // sb.from(), no fetch. app.js owns all of that.
 // ============================================================================
 import { localMonthKey, localDateISO } from "./dates.js";
+import { monthLabel } from "./charts.js";
 // Reused rather than reimplemented. An earlier version of this file had its
 // own recurring-merchant detector, which was both a duplicate and a worse
 // one: this groups on merchant AND exact amount, matches the real gaps
@@ -44,12 +45,15 @@ const MONTH_NAMES = [
   "july", "august", "september", "october", "november", "december",
 ];
 
-/** "2026-08" -> "August 2026". Kept local so this module stays self-contained. */
+/**
+ * "2026-08" -> "August 2026". Delegates to charts.js rather than keeping a
+ * second implementation: the two used to disagree ("Aug 2026" on the Reports
+ * cards against "August 2026" in an answer), which is one month spelled two
+ * ways on a single page.
+ */
 export function monthName(ym) {
-  const [y, m] = String(ym || "").split("-");
-  const idx = Number(m) - 1;
-  if (!y || !MONTH_NAMES[idx]) return String(ym || "");
-  return MONTH_NAMES[idx][0].toUpperCase() + MONTH_NAMES[idx].slice(1) + " " + y;
+  const str = String(ym || "");
+  return /^\d{4}-\d{2}$/.test(str) ? monthLabel(str) : str;
 }
 
 /** Step a "YYYY-MM" key back n months. */
@@ -345,8 +349,8 @@ export function resolveRange(question, today = new Date()) {
  *
  * @returns {{answer:string, figures:object}|null}
  */
-export function answerQuestion(question, { expenses = [], subscriptions = [], income = [], facts = [], balances = null, today = new Date() } = {}) {
-  const direct = answerFromTransactions(question, { expenses, subscriptions, income, balances, today });
+export function answerQuestion(question, { expenses = [], subscriptions = [], income = [], facts = [], balances = null, typical = null, today = new Date() } = {}) {
+  const direct = answerFromTransactions(question, { expenses, subscriptions, income, balances, typical, today });
   if (direct) return direct;
   // Facts are tried only after the direct paths, which are more specific.
   // This is what makes tier 1's coverage GROW as knowledge accumulates: a
@@ -356,7 +360,7 @@ export function answerQuestion(question, { expenses = [], subscriptions = [], in
   return answerFromFacts(question, facts);
 }
 
-function answerFromTransactions(question, { expenses = [], subscriptions = [], income = [], balances = null, today = new Date() } = {}) {
+function answerFromTransactions(question, { expenses = [], subscriptions = [], income = [], balances = null, typical = null, today = new Date() } = {}) {
   const q = String(question || "").toLowerCase().trim();
   if (!q) return null;
 
@@ -629,20 +633,24 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     };
   }
 
-  // "what do I usually spend in a month". Computed live rather than stored:
-  // small arithmetic over data already in hand, and a stored figure could
-  // only ever be staler.
+  // "what do I usually spend in a month" - quotes the Reports tile's own
+  // figure, passed in by the caller from the one shared averageMonth() call.
+  // These were two separate calculations and gave two different answers to
+  // the same question on the same page ($600 against $400 on identical
+  // data), so this deliberately cannot compute its own.
   if (/\b(usually|typically|normally|average|typical|normal)\b/.test(q) && /\b(spend|spending|month)\b/.test(q)) {
-    const totals = totalsByMonth(expenses);
     // Two months minimum: averaged over one, "typical" is just that month.
-    if (totals.size >= 2) {
-      const sum = r2([...totals.values()].reduce((a, b) => a + b, 0));
-      const average = r2(sum / totals.size);
+    if (typical && typical.monthsCounted >= 2 && typical.spend != null) {
+      const kept = typical.hasIncome && typical.net != null
+        ? ` You keep about $${typical.net.toFixed(2)} of what comes in.`
+        : "";
       return {
-        answer: `You spend about $${average.toFixed(2)} in a typical month, averaged across the ${totals.size} months that have spending recorded.`,
-        figures: { average, months_counted: totals.size },
+        answer: `You spend about $${typical.spend.toFixed(2)} in a typical month, averaged across the ${typical.monthsCounted} months that have spending recorded.${kept}`,
+        figures: Object.assign({ average: typical.spend, months_counted: typical.monthsCounted },
+          typical.net != null ? { net: typical.net } : {}),
       };
     }
+    return null;
   }
 
   // "how much does Netflix cost me" - the app's existing recurring detector
@@ -814,9 +822,10 @@ export function isAboutOwnMoney(question, { expenses = [], accounts = [], subscr
 
 /**
  * Build what tier 2 hands the model, and the allow-list its prose is checked
- * against. Deliberately a different shape from insights.js's buildQaContext():
- * that one exists to give the model as much raw material as possible, and
- * this one exists to give it as little arithmetic to do as possible.
+ * against. Deliberately shaped to give the model as LITTLE arithmetic to do
+ * as possible - the opposite of the context builder it replaced, which
+ * handed over as much raw material as it could and was deleted once
+ * nothing called it.
  *
  * Transactions ARE included, because detail questions ("what did I buy at
  * Chipotle") need them - but every individual amount goes into `allowed` too,
@@ -826,7 +835,18 @@ export function isAboutOwnMoney(question, { expenses = [], accounts = [], subscr
  *
  * @returns {{context:object, allowed:number[]}}
  */
-export function buildVerifiedContext({ expenses = [], subscriptions = [], facts = [], today = new Date(), windowMonths = 6, maxTransactions = 150 } = {}) {
+// Financial-CONTEXT fields only, never the deal-eligibility ones (military,
+// employer, school), which answer a different question and live in
+// discounts.js. It carries no figures, so it adds nothing to the
+// verification allow-list and cannot be misquoted as a number.
+function profileContext(profile) {
+  if (!profile) return null;
+  const { employment_status, housing_status, household_size, dependents, financial_goals } = profile;
+  if (!employment_status && !housing_status && !household_size && !dependents && !financial_goals) return null;
+  return { employment_status, housing_status, household_size, dependents, financial_goals };
+}
+
+export function buildVerifiedContext({ expenses = [], subscriptions = [], facts = [], profile = null, today = new Date(), windowMonths = 6, maxTransactions = 150 } = {}) {
   const thisMonth = localMonthKey(today);
   const oldest = shiftMonth(thisMonth, windowMonths - 1);
   const inWindow = expenses.filter((e) => monthOf(e) >= oldest && monthOf(e) <= thisMonth);
@@ -863,6 +883,11 @@ export function buildVerifiedContext({ expenses = [], subscriptions = [], facts 
     window_total,
     subscriptions_monthly_total,
     known_facts: live.map((f) => ({ about: f.title, says: f.body })),
+    // Restored 2026-09-03. Dropped by accident when this replaced
+    // the previous context builder, which silently removed the debt-vs-savings
+    // reasoning this feature is documented as supporting while the help still
+    // promised it. Not a figure, so it never enters the allow-list.
+    profile: profileContext(profile),
     transactions,
     transactions_truncated: inWindow.length > maxTransactions,
   };

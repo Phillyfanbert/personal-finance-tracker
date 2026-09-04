@@ -365,7 +365,7 @@ Subscriptions/Bills list itself is classified.
 |---|---|---|
 | Bill type/category (utility, insurance, streaming, membership, etc. - sections 2-14) | Nothing on `subscriptions` | No way to filter or total the Subscriptions/Bills list by type; every row looks the same regardless of whether it's Netflix or homeowners insurance |
 | Quarterly / semi-annual billing cadence (common for insurance, section 4) | `billing_cycle = 'other'` | `'other'` has no defined interval - `advanceRenewal()` explicitly leaves a `'other'`-cycle row's `next_renewal` unchanged rather than guessing, per its own doc comment, so a quarterly bill gets no auto-projected next date at all today |
-| Essential vs. discretionary flag | Nothing | No way for Reports/Q&A (`insights.js`) to reason about "what's cuttable" versus "what's fixed," a distinction real budgeting guidance treats as the primary axis for this whole category |
+| Essential vs. discretionary flag | Nothing | No way for Reports/Q&A (`wiki.js`) to reason about "what's cuttable" versus "what's fixed," a distinction real budgeting guidance treats as the primary axis for this whole category |
 | Contract lock-in / cancel-by date | Nothing | No way to warn about a gym or insurance policy's minimum term or cancellation-fee window |
 | Shared / split-cost plans | Nothing | `amount` is assumed to be the tracked user's full cost; no concept of "I pay a fraction of a family plan" |
 | BNPL / tuition-plan-style finite installment schedules (section 15) | `is_active` + manual deactivation once paid off | No concept of "N payments remaining," so a self-terminating plan looks identical in the schema to an indefinite subscription until the user manually notices it ended and flips `is_active` off |
@@ -399,7 +399,7 @@ prioritization list.
 **Likely worthwhile but more involved:**
 
 3. **An essential/discretionary flag**, mainly valuable once paired with
-   the Reports Q&A feature (`insights.js`) being able to reason about
+   the Reports Q&A feature (`wiki.js`) being able to reason about
    "what's fixed vs. what could be cut" - low value in isolation, higher
    value as an input to a feature that doesn't exist yet.
 4. **Shared/split-cost plans**, if it turns out either of this app's two

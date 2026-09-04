@@ -6,7 +6,7 @@
 // ============================================================================
 import { categorize, quickParse, CATEGORIES } from "./categorize.js";
 import {
-  monthKey, monthLabel, lastMonths, sumBy, monthlyTotals, incomeVsExpense,
+  monthKey, monthLabel, lastMonths, sumBy, incomeVsExpense, averageMonth,
   renderBreakdownBar, renderTrendBar, renderLineChart,
 } from "./charts.js";
 import { buildBalanceHistory } from "./accountHistory.js";
@@ -14,7 +14,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, FULL_YEAR_DAYS } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
@@ -32,7 +32,6 @@ import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
 import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures, isAboutOwnMoney } from "./wiki.js";
-import { buildQaContext } from "./insights.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 import { TOUR_STEPS, visibleSteps, clampStep } from "./tour.js";
@@ -4720,6 +4719,17 @@ $("editDelete").onclick = async () => {
 };
 
 // ---- REPORTS ---------------------------------------------------------------
+
+// The window behind "a typical month". Named rather than a bare 6 so the two
+// places that read this figure - the Reports tile and the Q&A - cannot drift
+// apart the way they already did once.
+const TYPICAL_MONTH_WINDOW = 6;
+const typicalMonth = () => averageMonth(
+  allExpenses,
+  accountActivity.filter((a) => a.kind === "income"),
+  lastMonths(TYPICAL_MONTH_WINDOW, monthKey())
+);
+
 async function loadReports() {
   // Second attempt at the same warm-up init() already fired on app load -
   // harmless if the model is already warm (a quick real call, not another
@@ -7031,11 +7041,11 @@ async function saveQaCache(question, answer, answerKind) {
 
 // ---- INTERACTIVE Q&A (Gemma, optional/best-effort like Phase 3) -----------
 
-// RAG retrieval, additive to buildQaContext's recent-window data (see
+// RAG retrieval, additive to buildVerifiedContext's recent-window data (see
 // supabase/45_expense_embeddings.sql's header for the full rationale).
 // Embeds the question, vector-searches expense_embeddings for whatever's
 // semantically relevant, and only ever looks at transactions strictly
-// older than `sinceDate` (buildQaContext's own recent-window boundary) so
+// older than `sinceDate` (the same recent-window boundary that context uses) so
 // nothing gets double-counted between the two sources. Best-effort by
 // design, matching every other Gemma call in this app: a retrieval
 // failure (embeddings not indexed yet, home machine unreachable, RPC
@@ -7109,6 +7119,7 @@ $("qaAskBtn").onclick = async () => {
     const computed = answerQuestion(question, {
       expenses: allExpenses, subscriptions, income: incomeRows, facts: liveFacts,
       balances: { assets: nw.assetsTotal, liabilities: nw.liabilitiesTotal, net: nw.netWorth },
+      typical: typicalMonth(),
       today: new Date(),
     });
     if (computed) {
@@ -7136,7 +7147,7 @@ $("qaAskBtn").onclick = async () => {
     const since = lastMonths(6)[0] + "-01";
     const relevantHistory = await retrieveRelevantHistory(question, since);
     const { context, allowed } = buildVerifiedContext({
-      expenses: allExpenses, subscriptions, facts: liveFacts, today: new Date(),
+      expenses: allExpenses, subscriptions, facts: liveFacts, profile, today: new Date(),
     });
     if (relevantHistory.length) context.relevant_history = relevantHistory;
 
@@ -7243,21 +7254,12 @@ async function renderReports() {
   // understated magnitude is survivable; a wrong DIRECTION is not. The label
   // changes with the number, so which of the two is on screen is never
   // ambiguous.
-  const AVG_SPEND_WINDOW_MONTHS = 6;
-  const avgMonths = lastMonths(AVG_SPEND_WINDOW_MONTHS, monthKey());
-  const avgIncomeActivity = accountActivity.filter((a) => a.kind === "income");
-  const avgRows = incomeVsExpense(avgIncomeActivity, allExpenses, avgMonths);
-  const hasIncome = avgRows.some((r) => r.income > 0);
-
-  // **Divides by months that actually contain something, not by the window
-  // length.** Dividing by the full window was the specific bug behind the
-  // old runway tile: one month of data out of three understated real
-  // spending threefold before the ratio even multiplied the error.
-  const activeRows = avgRows.filter((r) => (hasIncome ? r.income > 0 || r.expense > 0 : r.expense > 0));
-  const mean = (pick) => activeRows.reduce((s, r) => s + pick(r), 0) / activeRows.length;
-  const avgValue = activeRows.length
-    ? (hasIncome ? mean((r) => r.income - r.expense) : mean((r) => r.expense))
-    : null;
+  // averageMonth() is shared with the Q&A, which answers "what do I usually
+  // spend in a month" from this exact function - see charts.js for why that
+  // had to stop being two separate calculations.
+  const avg = typicalMonth();
+  const hasIncome = avg.hasIncome;
+  const avgValue = avg.monthsCounted ? (hasIncome ? avg.net : avg.spend) : null;
 
   $("rptAvgSpendLabel").textContent = hasIncome ? "Left over in a typical month" : "Spent in a typical month";
   // A sign, not a colour. Direction is the whole point of the net figure, but

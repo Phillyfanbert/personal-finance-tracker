@@ -20,7 +20,7 @@
 // current here to close that gap too, not because normal offline use depends
 // on it. If it drifts again, that narrow case regresses; ordinary offline use
 // after a successful first run does not.
-const CACHE = "expense-shell-v10";
+const CACHE = "expense-shell-v11";
 const SHELL = [
   "./index.html", "./config.js", "./manifest.json",
   "./icons/icon-192.png", "./icons/icon-512.png",
@@ -58,6 +58,14 @@ self.addEventListener("fetch", (e) => {
   // Never intercept Supabase / cross-origin calls - always hit the network.
   if (url.origin !== self.location.origin) return;
   if (e.request.method !== "GET") return;
+  // Never intercept worker.js's own API routes. This file's header has always
+  // said we do not cache API responses, but the handler below cached every
+  // same-origin GET, and /api/price and /api/quotes are same-origin GETs - so
+  // authenticated, per-user quote data was being written into the shared
+  // shell cache, and a stale 401 or 502 could be replayed on any network
+  // blip, which looks exactly like a broken feature. There is nothing to
+  // serve offline here anyway: a live price is worthless without the network.
+  if (url.pathname.startsWith("/api/")) return;
 
   // App shell: network-first. Always try to fetch the freshest copy of the
   // file; only serve the cached copy if the network request fails (i.e. the
@@ -68,8 +76,12 @@ self.addEventListener("fetch", (e) => {
   e.respondWith(
     fetch(e.request)
       .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        // Only cache a real success. Caching a 404 or a 500 served mid-deploy
+        // would pin that error as the offline copy of a file that is fine.
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        }
         return res;
       })
       .catch(() => caches.match(e.request))

@@ -36,6 +36,29 @@ import { monthLabel } from "./charts.js";
 // current, and excludes anything already declared as a subscription.
 import { detectRecurringExpenses } from "./subscriptions.js";
 
+// Two windows that both happen to be six months and are NOT the same thing.
+// Named rather than left as bare 6s so the next person can see at a glance
+// whether two of them are the same six or merely look alike - the Reports
+// tile and the Q&A already drifted apart once over exactly that, and gave
+// two different answers to one question.
+
+// How far back to look before saying something is going up or down. Six
+// months splits into two three-month halves, which is the shortest span
+// where "the last stretch against the one before" means anything.
+export const TREND_WINDOW_MONTHS = 6;
+
+// How much history the model is shown. A different question from the one
+// above: this is about how much can usefully fit in a prompt, not about how
+// long a trend needs to be visible. **app.js's RAG boundary must use this
+// same constant** - the vector search deliberately looks only at
+// transactions OLDER than this window, so if the two ever diverge the Q&A
+// either double-counts a month or misses one entirely.
+export const CONTEXT_WINDOW_MONTHS = 6;
+
+// The cap on transactions sent with that context. Same class of unnamed
+// number as the windows above.
+const CONTEXT_MAX_TRANSACTIONS = 150;
+
 const r2 = (n) => Math.round(n * 100) / 100;
 const num = (v) => Number(v || 0);
 const monthOf = (row) => (row.occurred_at || "").slice(0, 7);
@@ -98,7 +121,7 @@ function categoriesIn(expenses) {
  * Derive the durable, cross-time facts for one user.
  * @returns {{key:string,title:string,body:string,figures:object,as_of:string}[]}
  */
-export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = null, today = new Date(), windowMonths = 6 } = {}) {
+export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = null, today = new Date(), windowMonths = TREND_WINDOW_MONTHS } = {}) {
   const facts = [];
   const asOf = localMonthKey(today);
   const thisMonth = asOf;
@@ -427,7 +450,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     }
     // "is my food spending going up" - compare the two halves of the window
     if (/\b(going up|going down|gone up|gone down|rising|falling|increasing|decreasing|trend)\b/.test(q)) {
-      const windowMonths = 6;
+      const windowMonths = TREND_WINDOW_MONTHS;
       const mid = shiftMonth(thisM, Math.floor(windowMonths / 2) - 1);
       const oldest = shiftMonth(thisM, windowMonths - 1);
       const pick = (from, to) => r2(expenses
@@ -846,7 +869,7 @@ function profileContext(profile) {
   return { employment_status, housing_status, household_size, dependents, financial_goals };
 }
 
-export function buildVerifiedContext({ expenses = [], subscriptions = [], facts = [], profile = null, today = new Date(), windowMonths = 6, maxTransactions = 150 } = {}) {
+export function buildVerifiedContext({ expenses = [], subscriptions = [], facts = [], profile = null, today = new Date(), windowMonths = CONTEXT_WINDOW_MONTHS, maxTransactions = CONTEXT_MAX_TRANSACTIONS } = {}) {
   const thisMonth = localMonthKey(today);
   const oldest = shiftMonth(thisMonth, windowMonths - 1);
   const inWindow = expenses.filter((e) => monthOf(e) >= oldest && monthOf(e) <= thisMonth);

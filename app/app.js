@@ -31,7 +31,7 @@ import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
-import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures, isAboutOwnMoney } from "./wiki.js";
+import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures, isAboutOwnMoney, CONTEXT_WINDOW_MONTHS } from "./wiki.js";
 import { computeNetWorth } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 import { TOUR_STEPS, visibleSteps, clampStep } from "./tour.js";
@@ -4724,6 +4724,13 @@ $("editDelete").onclick = async () => {
 // places that read this figure - the Reports tile and the Q&A - cannot drift
 // apart the way they already did once.
 const TYPICAL_MONTH_WINDOW = 6;
+
+// How many months of bars the "Money in and out" chart shows. A third six
+// that is not either of the others: this one is about how much fits legibly
+// on a chart, and could reasonably change without touching what "typical"
+// means or what the model is shown. Read by the card and by its export, so
+// the picture and the saved file cannot disagree.
+const MONEY_IN_OUT_MONTHS = 6;
 const typicalMonth = () => averageMonth(
   allExpenses,
   accountActivity.filter((a) => a.kind === "income"),
@@ -7144,7 +7151,12 @@ $("qaAskBtn").onclick = async () => {
       $("qaStatus").textContent = "That one needs the AI assistant, which is not set up. Try asking about a category or a month, which this app can answer exactly on its own.";
       return;
     }
-    const since = lastMonths(6)[0] + "-01";
+    // CONTEXT_WINDOW_MONTHS, not a bare 6: the vector search looks only at
+    // transactions OLDER than the window buildVerifiedContext sends below,
+    // so these two are the same boundary read from opposite sides. As two
+    // independent 6s, one being tuned would silently make the Q&A either
+    // double-count a month or skip one.
+    const since = lastMonths(CONTEXT_WINDOW_MONTHS)[0] + "-01";
     const relevantHistory = await retrieveRelevantHistory(question, since);
     const { context, allowed } = buildVerifiedContext({
       expenses: allExpenses, subscriptions, facts: liveFacts, profile, today: new Date(),
@@ -7291,7 +7303,7 @@ async function renderReports() {
   renderBreakdownBar($("catChart"), byCat);
   renderBreakdownBar($("acctChart"), byAcct);
   renderBreakdownBar($("payChart"), byPayment);
-  const trailing = lastMonths(6, ym);
+  const trailing = lastMonths(MONEY_IN_OUT_MONTHS, ym);
 
   const incomeActivity = accountActivity.filter((a) => a.kind === "income");
   const ive = incomeVsExpense(incomeActivity, allExpenses, trailing);
@@ -8750,7 +8762,7 @@ $("exportReportsBtn").onclick = () => {
         byCategory: byCat,
         byAccount: sumBy(allExpenses, "account", ym, acctName),
         byPaymentType: sumBy(labeled, "payment_type", ym),
-        incomeVsExpense: incomeVsExpense(accountActivity.filter((a) => a.kind === "income"), allExpenses, lastMonths(6, monthKey())),
+        incomeVsExpense: incomeVsExpense(accountActivity.filter((a) => a.kind === "income"), allExpenses, lastMonths(MONEY_IN_OUT_MONTHS, monthKey())),
       });
     },
     allExpenses.some((e) => String(e.occurred_at || "").startsWith(ym)),

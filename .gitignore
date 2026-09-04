@@ -6,8 +6,8 @@ tools/.env.deal-agent
 .claude/
 
 # Internal working notes. Kept on disk and mirrored to a separate private
-# repo, never published from this one. CLAUDE.md in particular must stay
-# in the working directory or Claude Code cannot load the project rules.
+# repo, never published from this one. The first entry has to stay in the
+# working directory for local tooling to pick up the project rules.
 CLAUDE.md
 docs/SESSION-NOTES.md
 docs/ROADMAP.md

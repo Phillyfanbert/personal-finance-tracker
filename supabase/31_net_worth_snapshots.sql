@@ -1,4 +1,4 @@
--- Net worth trend chart (docs/ROADMAP.md Reports & Net Worth #1). Unlike
+-- Net worth trend chart (the project notes, Reports & Net Worth #1). Unlike
 -- per-account balance history (accountHistory.js), net worth can't be
 -- reconstructed purely from expenses/account_activity - a STANDALONE
 -- asset/liability (investment, property, vehicle, retirement types,

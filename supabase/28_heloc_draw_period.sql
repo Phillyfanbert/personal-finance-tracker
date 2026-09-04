@@ -1,4 +1,4 @@
--- HELOC draw-vs-repayment-period modeling (docs/ROADMAP.md Liabilities #3).
+-- HELOC draw-vs-repayment-period modeling (the project notes, Liabilities #3).
 -- Only meaningful for type = 'heloc', no CHECK enforcing that (same
 -- looseness every other type-specific optional field in this app already
 -- has - maturity_date, purchase_price, etc.).

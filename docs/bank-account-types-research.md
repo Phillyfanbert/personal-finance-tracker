@@ -24,7 +24,7 @@ is federally insured, how liquid it is, and whether it behaves as a single
 lump sum or an amortizing/revolving balance.
 
 The app's current data model already draws a hard line between three
-concepts, documented in `CLAUDE.md`:
+concepts, documented in the project notes:
 
 | Table | Question it answers | Counted in net worth? |
 |---|---|---|
@@ -571,7 +571,7 @@ exist in parallel to their personal equivalents, generally with higher
 fees, higher transaction limits, and different insurance treatment for
 sole proprietorships versus incorporated entities. This app is scoped to
 personal finance for a small number of individual users (see
-`CLAUDE.md`), so business accounts are noted here for completeness but
+the project notes), so business accounts are noted here for completeness but
 are explicitly out of scope for the account-type modeling this research
 is meant to support.
 
@@ -764,7 +764,7 @@ closer to how a schema actually needs to represent them.
 | Insured / not insured | FDIC, NCUA, SIPC, or none (a digital wallet balance not passed through to a partner bank, or an investment held directly). |
 | Tax treatment | Ordinary taxable, tax-deferred (traditional 401(k)/IRA), tax-free growth (Roth, HSA, 529), or use-it-or-lose-it (FSA). |
 | Requires a linked external product to make sense | A HELOC or mortgage escrow only makes sense relative to a specific home; a 529 or custodial account is tied to a specific beneficiary. |
-| Value source | A dollar balance the user (or the bank) sets directly, versus a market-priced value that has to be fetched or estimated (brokerage, retirement, and technically a vehicle via depreciation, per `docs/asset-depreciation-proposal.md`). |
+| Value source | A dollar balance the user (or the bank) sets directly, versus a market-priced value that has to be fetched or estimated (brokerage, retirement, and technically a vehicle via depreciation). |
 | Cost profile | Whether the product is cheap/free to hold (checking, savings, most credit cards paid in full) versus structurally expensive (payday loans, title loans, most carried credit card balances), which matters if this app ever wants to flag or warn about a liability rather than just track its balance neutrally. |
 
 ## 9b. How money is counted in each account type
@@ -778,7 +778,7 @@ that has to be right for a balance or a net-worth figure to mean anything.
 Every account type in this app moves its balance through exactly one of
 these mechanisms. Which one applies is decided by whether the account has
 a `linked_asset_id` or a `linked_liability_id`, never by comparing its type
-against a string (see `CLAUDE.md`'s data model section).
+against a string (see the project notes' data model section).
 
 | Mechanism | What moves the number | Types |
 |---|---|---|
@@ -877,7 +877,7 @@ two are separate form fields that never both apply).
 | UTMA/UGMA (5.11) | Legally the child's money, irrevocably. Counting it in the parent's net worth overstates what the parent actually controls. |
 | FSA | Use-it-or-lose-it. A year-end balance may be about to vanish, unlike every other asset here. |
 | CD | Locked until maturity, so its value is real but not spendable, which is why it is excluded from payment pickers. |
-| Imported CSV expenses | Never re-applied to a balance. They are history that already happened, so the account's current balance already reflects them (`CLAUDE.md`, `app/csvImport.js`). |
+| Imported CSV expenses | Never re-applied to a balance. They are history that already happened, so the account's current balance already reflects them (the project notes, `app/csvImport.js`). |
 
 ### 9b.6 Per-type investment logic: tax treatment, tickers, contribution limits
 
@@ -1253,7 +1253,7 @@ recorded as its own explicit set in `app.js`:
   hidden from the pickers so nothing new is created against them.
 
 Two types from this document remain deliberately unimplemented: **business
-accounts** (out of scope per `CLAUDE.md`'s personal-finance framing) and
+accounts** (out of scope per the project notes' personal-finance framing) and
 **escrow accounts** (6.16 - a sub-ledger belonging to a mortgage servicer,
 not something an individual opens or pays from).
 
@@ -1286,7 +1286,7 @@ list of things deliberately left alone:
 |---|---|
 | Multi-currency amounts | `multi_currency` exists as an account *type*, but the schema still has no real currency concept beyond a hardcoded `'USD'` default on `expenses.currency`. Handling this properly means rethinking every stored amount, not adding a type. |
 | Escrow accounts | A sub-ledger held by a mortgage servicer, not an account an individual opens or pays from (6.16). |
-| Business accounts | Out of scope per `CLAUDE.md`'s personal-finance framing. |
+| Business accounts | Out of scope per the project notes' personal-finance framing. |
 | Deferred-interest deadlines | Medical/store card retroactive interest (3.9) is documented but not tracked - the app has no visibility of the promotional deadline. |
 | Overdraft lines as true negative balances | `overdraft_line` exists as a liability-linked type, but no account is ever allowed to go negative; that guard (`assetDeltaError`) is intentional and unchanged. |
 | Beneficiary tracking | 529, Coverdell, ABLE and UTMA accounts all have a beneficiary in real life; none is recorded, since nothing in the app would currently use it. |
@@ -1365,7 +1365,7 @@ shipping.
    be entered manually (consistent with every other asset today), or is
    this the point where a live pricing integration becomes worth the
    added complexity? Lean toward manual first, matching how vehicle
-   depreciation was scoped in `docs/asset-depreciation-proposal.md`
+   depreciation was scoped
    (formula/manual before automation).
 4. Is there any actual near-term need for HELOC or overdraft-line
    modeling, or is `liabilities.type = 'other'` good enough indefinitely

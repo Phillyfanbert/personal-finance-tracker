@@ -1,5 +1,5 @@
--- F6 Phase E: review/promote workflow (docs/ROADMAP.md Profile & Discount
--- Discovery #4, docs/F6-live-deals-proposal.md section 9). Both tables
+-- F6 Phase E: review/promote workflow (the project notes, Profile & Discount
+-- Discovery #4, the project notes, section 9). Both tables
 -- were deliberately read-only from the client until now (see
 -- 02_rls.sql/04_deal_findings.sql's own comments: "writable by nobody via
 -- the API", "no insert/update/delete policy -> the anon/PWA client can

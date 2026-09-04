@@ -479,6 +479,6 @@ This document is reference material: what the frameworks are, where each
 came from, and what independent research says about them. Turning that into
 an actual feature, including a dashboard design, category and rollover
 decisions grounded in this app's real schema, and draft "getting started"
-copy for a first-time user, is written up separately in
-[`docs/budgeting-feature-design.md`](./budgeting-feature-design.md). Read
-that document before building or changing anything in the Budgets card.
+copy for a first-time user, is written up separately in this project's
+internal design notes. Read those before building or changing anything in
+the Budgets card.

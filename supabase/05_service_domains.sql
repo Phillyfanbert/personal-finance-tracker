@@ -1,6 +1,6 @@
 -- ============================================================================
 -- F6 stretch - official-domain allowlist for the live deal-search agent
--- (docs/F6-live-deals-proposal.md §8, "Option C" design decision).
+-- (the project notes §8, "Option C" design decision).
 --
 -- Pure operational config for the home-machine agent - the PWA never reads
 -- this table. RLS is enabled with NO policies at all (default deny), so even

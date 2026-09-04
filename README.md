@@ -324,8 +324,8 @@ Every outbound call this project makes, and what it costs. Re-verified
 anywhere, not that usage stays under the caps.** With no payment method
 attached, exceeding a free tier makes requests *fail* - it cannot produce a
 bill. That is why the rule is "no card anywhere" rather than the softer
-"nothing that actually bills us": see `docs/F6-live-deals-proposal.md` for
-the Brave Search API, which in February 2026 converted the card it had
+"nothing that actually bills us": consider the Brave Search API, which in
+February 2026 converted the card it had
 promised would "only be used to confirm your identity and will not be
 charged" into an active billing instrument with no published spending cap.
 A promise not to charge a stored card is a reversible policy, not a

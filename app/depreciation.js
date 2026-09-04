@@ -1,5 +1,5 @@
 // ============================================================================
-// Vehicle depreciation (docs/asset-depreciation-proposal.md, Option A).
+// Vehicle depreciation (the project notes, Option A).
 // Pure, unit-testable - same style as networth.js/subscriptions.js.
 // ============================================================================
 

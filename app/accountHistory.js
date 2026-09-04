@@ -1,5 +1,5 @@
 // ============================================================================
-// Per-account balance history (docs/ROADMAP.md Accounts #1).
+// Per-account balance history (the project notes, Accounts #1).
 // Pure, unit-testable. No new table/migration: every balance change an
 // account has ever had is already fully reconstructable from `expenses` +
 // `account_activity`, since this app's whole asset/liability-delta model

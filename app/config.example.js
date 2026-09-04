@@ -36,13 +36,13 @@ window.APP_CONFIG = {
   // this app's own source.
   GEMMA_AUTH_KEY: "",
 
-  // F6 stretch - live deal discovery (docs/F6-live-deals-proposal.md).
+  // F6 stretch - live deal discovery (the project notes).
   // Off by default: the deal_findings table stays dormant until you stand up
   // the home-machine search agent (Phase B/C of the proposal). Flip to true
   // once you're ready to surface machine-found (unverified) deals in the UI.
   DEAL_FINDINGS_ENABLED: false,
 
-  // Live asset prices (docs/ROADMAP.md Assets #4) - same dormant-until-
+  // Live asset prices (the project notes, Assets #4) - same dormant-until-
   // configured shape as DEAL_FINDINGS_ENABLED above, built on the same
   // SearXNG+Gemma pipeline (tools/price-agent.js) instead of a paid price
   // API. Flip to true once that agent is actually running somewhere.

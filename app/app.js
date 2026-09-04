@@ -398,8 +398,8 @@ let allExpenses = []; // cache for reports (last HISTORY_CACHE_MONTHS months)
 let subscriptions = []; // cache of the user's subscriptions
 let incomeSources = []; // cache of the user's recurring income sources
 let catalog = [];     // shared subscription_catalog reference data
-let dealFindings = []; // shared, machine-found deals (F6 stretch, docs/F6-live-deals-proposal.md)
-let assetPriceFindings = []; // shared, machine-found asset prices (docs/ROADMAP.md Assets #4)
+let dealFindings = []; // shared, machine-found deals (F6 stretch, the project notes)
+let assetPriceFindings = []; // shared, machine-found asset prices (the project notes, Assets #4)
 let marketIndexFindings = []; // shared, machine-found market index levels (Investments tab's Market overview)
 let marketNewsFindings = []; // shared, machine-found daily market news digest + sentiment (market_news_findings)
 let dailyRecaps = []; // stored zero-LLM daily market recaps (daily_recaps, 55_daily_recaps.sql)
@@ -410,7 +410,7 @@ let holdingSales = []; // realized gain/loss from actual sales (holding_sales, 5
 let marketMovers = []; // market-wide biggest movers, Alpha Vantage (market_movers, 58)
 let marketMoverSummary = null; // the optional beginner-friendly paragraph for them
 let agentRunStatus = {}; // { "deal-agent": {...}, "price-agent": {...} } - last-run freshness/health (agent_run_status)
-let budgets = []; // per-category monthly limits (docs/ROADMAP.md Reports & Net Worth #2)
+let budgets = []; // per-category monthly limits (the project notes, Reports & Net Worth #2)
 let budgetWarnings = []; // this month's budgetStatus() rows at/over WARN_THRESHOLD_PCT
 let sinkingFunds = []; // saving-up-for goals (sinking_funds) - Plan page
 let investmentTargets = []; // per-bucket allocation targets (Investments tab)
@@ -629,7 +629,7 @@ async function loadCatalog() {
 }
 
 // F6 stretch - dormant until DEAL_FINDINGS_ENABLED is flipped on (config.js) and
-// the home-machine search agent starts writing rows (docs/F6-live-deals-proposal.md).
+// the home-machine search agent starts writing rows (the project notes).
 async function loadDealFindings() {
   if (!DEAL_FINDINGS_ENABLED) { dealFindings = []; return; }
   const { data } = await sb.from("deal_findings").select("*").gt("expires_at", new Date().toISOString());
@@ -847,7 +847,7 @@ async function fetchLatestHeadlines(table, cols) {
 }
 
 // Dormant until PRICE_FINDINGS_ENABLED is flipped on (config.js) and
-// tools/price-agent.js starts writing rows (docs/ROADMAP.md Assets #4).
+// tools/price-agent.js starts writing rows (the project notes, Assets #4).
 // Loads in parallel with loadAssets() (init()'s Promise.all), so this also
 // re-renders on its own completion - whichever of the two finishes second
 // is the one that ends up with a correct render, same pattern
@@ -3058,7 +3058,7 @@ $("adjustSetBtn").onclick = async () => {
 // A date the user sees and acts on manually, not something that auto-
 // converts or auto-reminds beyond the notice in loadAssets() below -
 // consistent with this app's general preference for explicit user action
-// over automatic mutation of financial data (see CD in ROADMAP.md).
+// over automatic mutation of financial data (see CD in the project notes).
 $("adjustMaturitySaveBtn").onclick = async () => {
   if (!adjustingAssetId) return;
   const maturity_date = $("adjustMaturityDate").value || null;
@@ -3686,7 +3686,7 @@ function renderNetWorth() {
   $("liabilitiesMonthly").textContent = fmt(creditTotal);
 }
 
-// Net worth trend (docs/ROADMAP.md Reports & Net Worth #1) - no cron/
+// Net worth trend (the project notes, Reports & Net Worth #1) - no cron/
 // server trigger exists for a static PWA, so a snapshot only ever
 // happens because the app was actually opened that day; a day it wasn't
 // opened just has no row, an honest gap rather than a fabricated
@@ -4789,7 +4789,7 @@ async function renderNetWorthTrend() {
   renderLineChart($("netWorthTrendChart"), labels, rows.map((r) => Number(r.net_worth)));
 }
 
-// ---- BUDGETS (docs/ROADMAP.md Reports & Net Worth #2) ---------------------
+// ---- BUDGETS (the project notes, Reports & Net Worth #2) ---------------------
 async function loadBudgets() {
   const { data } = await sb.from("budgets").select("*").order("category");
   budgets = data || [];
@@ -4909,7 +4909,7 @@ function renderSafeToSpend(statuses) {
 // ---- SINKING FUNDS (Plan page) ----------------------------------------------
 // Saving toward a known irregular cost. Deliberately never moves real money -
 // see supabase/59_sinking_funds.sql's header for why, and
-// docs/budgeting-feature-design.md section 3 for the design.
+// the project notes, section 3 for the design.
 async function loadSinkingFunds() {
   const { data } = await sb.from("sinking_funds").select("*").order("target_date", { nullsFirst: false });
   sinkingFunds = data || [];
@@ -7350,7 +7350,7 @@ document.querySelectorAll("[data-breakdown]").forEach((el) => {
 });
 setBreakdownView(localStorage.getItem("reportsBreakdown") || "cat");
 
-// ---- MONTH REPORT EXPORT (docs/ROADMAP.md Reports & Net Worth #3) --------
+// ---- MONTH REPORT EXPORT (the project notes, Reports & Net Worth #3) --------
 // Recomputes ym/monthRows fresh rather than reading renderReports()'s
 // locals - cheap (already-loaded allExpenses, no new query) and avoids
 // threading extra state through just for these two buttons.
@@ -7597,7 +7597,7 @@ async function autoLogDueIncome() {
   }
 }
 
-// ---- RECURRING-EXPENSE DETECTION (README appendix open decision, ROADMAP.md
+// ---- RECURRING-EXPENSE DETECTION (README appendix open decision, the project notes
 // Log/Quick Add #1) --------------------------------------------------------
 // Depends on both allExpenses and subscriptions, which load in parallel in
 // init() (Promise.all) - called from the end of both loadExpenses() and
@@ -7632,7 +7632,7 @@ function renderRecurringCandidates() {
 
 // ---- DISCOUNT DISCOVERY (README §3.7 / F6) ---------------------------------
 // One question per plan_type eligibilityUpsells() can nudge toward
-// (docs/ROADMAP.md Profile & Discount Discovery #2).
+// (the project notes, Profile & Discount Discovery #2).
 const UPSELL_PLAN_LABEL = {
   military: "Are you in the military?",
   first_responder: "Are you a first responder?",
@@ -7677,7 +7677,7 @@ function renderDeals() {
   // row per matched plan type, same "tap to open profile" pattern as the
   // student upsell above. Currently always empty in practice, since no
   // real catalog rows exist yet for these plan types (seeding real
-  // researched prices was explicitly deferred - see ROADMAP.md); the
+  // researched prices was explicitly deferred - see the project notes); the
   // mechanism is complete and will start surfacing rows the moment real
   // catalog data exists.
   const byPlanType = new Map();
@@ -7796,7 +7796,7 @@ function renderDealFindings() {
   });
 }
 
-// F6 Phase E (docs/F6-live-deals-proposal.md §9) - promoting copies a
+// F6 Phase E (the project notes §9) - promoting copies a
 // finding's fields into subscription_catalog (a plain insert, not
 // atomic with the status update below; low risk for this app's small,
 // trusted ~4-5-user model, same as the rest of this app's multi-step writes) and
@@ -8607,7 +8607,7 @@ $("profileSave").onclick = async () => {
   toast("Profile saved");
 };
 
-// docs/ROADMAP.md Cross-cutting #2 - a plain JSON dump of every table this
+// the project notes, Cross-cutting #2 - a plain JSON dump of every table this
 // user's own data actually lives in, RLS-scoped automatically since this
 // runs as the signed-in user (not service_role). Deliberately excludes
 // the shared reference tables (subscription_catalog, deal_findings,

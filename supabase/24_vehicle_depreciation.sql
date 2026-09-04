@@ -1,4 +1,4 @@
--- Vehicle depreciation (docs/asset-depreciation-proposal.md, Option A -
+-- Vehicle depreciation (the project notes, Option A -
 -- a formula, not a search agent). All nullable - an asset with no
 -- purchase info just keeps behaving as it does today (a static,
 -- manually-set value). Net worth uses the live-computed estimate when

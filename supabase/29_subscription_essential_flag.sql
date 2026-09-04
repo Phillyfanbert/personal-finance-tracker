@@ -1,4 +1,4 @@
--- Essential vs. discretionary flag (docs/ROADMAP.md Subscriptions/Bills
+-- Essential vs. discretionary flag (the project notes, Subscriptions/Bills
 -- #1, proposed in docs/subscription-bill-types-research.md §18) - just
 -- the flag itself. The "what could I cut" report it's meant to power
 -- doesn't exist yet and isn't part of this change; low value in

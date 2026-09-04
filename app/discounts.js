@@ -129,12 +129,12 @@ export function studentUpsell(subscriptions, catalog, profile) {
 }
 
 // Generalizes studentUpsell() above for the profile-expansion eligibility
-// fields (docs/ROADMAP.md Profile & Discount Discovery #2) - military,
+// fields (the project notes, Profile & Discount Discovery #2) - military,
 // first_responder/healthcare, senior. Reuses isEligible() rather than
 // re-deriving each profile-field check, so this and findDeals/isEligible
 // can never silently disagree about what "eligible" means for a given
 // plan_type. Currently has no catalog data to match against (seeding real
-// researched prices was explicitly deferred - see ROADMAP.md), so this
+// researched prices was explicitly deferred - see the project notes), so this
 // returns [] in practice today; the mechanism is complete and tested, it's
 // just waiting on data, same shape studentUpsell() itself was in before
 // any student catalog rows existed.

@@ -1,5 +1,5 @@
 // ============================================================================
-// Per-category budgets (docs/ROADMAP.md Reports & Net Worth #2). Pure,
+// Per-category budgets (the project notes, Reports & Net Worth #2). Pure,
 // unit-testable - same style as networth.js/depreciation.js.
 // ============================================================================
 
@@ -117,7 +117,7 @@ export function safeToSpend(statuses, subscriptions, fundsMonthly = 0, today = n
 }
 
 /**
- * Progress toward a dated savings goal, per docs/budgeting-feature-design.md
+ * Progress toward a dated savings goal, per the project notes
  * section 3: a sinking fund is money set aside for a known, irregular cost
  * (car registration, an annual insurance premium), not a monthly spending
  * ceiling. Deliberately its own concept rather than a rollover flag on a

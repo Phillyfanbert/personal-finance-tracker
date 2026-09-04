@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================================
-// F6 stretch - live deal-search agent (docs/F6-live-deals-proposal.md).
+// F6 stretch - live deal-search agent (the project notes).
 // Runs on the SERVER MACHINE ONLY, needs the Supabase SERVICE_ROLE key -
 // keep that out of the repo (env var only).
 //
@@ -39,7 +39,7 @@
 //
 // What it does, per active-subscription service:
 //   1. Look up the service's allowlisted domain(s) in service_domains. No
-//      entry -> skip and log (see docs/F6-live-deals-proposal.md's Option C
+//      entry -> skip and log (see the project notes's Option C
 //      decision - we never guess a domain).
 //   2. For each of a few angles (pricing, student, promo, annual, family),
 //      search Tavily for real, current web results.
@@ -86,7 +86,7 @@
 //
 // Scheduling (Phase D, not yet wired up): run this weekly, not
 // continuously - see the "always running" discussion in
-// docs/F6-live-deals-proposal.md §8. Prices don't change fast enough to
+// the project notes §8. Prices don't change fast enough to
 // justify more.
 // ============================================================================
 

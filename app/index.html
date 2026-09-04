@@ -619,7 +619,7 @@
       </div>
 
       <!-- Recurring-expense detection (README appendix open decision,
-           docs/ROADMAP.md Log/Quick Add #1) - hidden unless at least one
+           the project notes, Log/Quick Add #1) - hidden unless at least one
            candidate is found, unlike dealsCard below which always shows an
            empty-state message; this is a discovery nudge, not a summary
            that should always occupy space. -->
@@ -702,7 +702,7 @@
           <div><label for="sAccount">Account</label><select id="sAccount"></select></div>
         </div>
         <label><input type="checkbox" id="sActive" style="width:auto;margin-right:8px" checked />Active</label>
-        <!-- Just the flag - no "what could I cut" view reads it yet (docs/ROADMAP.md). -->
+        <!-- Just the flag - no "what could I cut" view reads it yet (the project notes). -->
         <label><input type="checkbox" id="sEssential" style="width:auto;margin-right:8px" />Essential (bill you need, not a discretionary subscription)</label>
         <label for="sNotes">Notes</label>
         <input id="sNotes" placeholder="e.g. shared family plan" />
@@ -917,7 +917,7 @@
           </div>
 
           <!-- Optional for any asset type - only used by the live asset
-               price finder (PRICE_FINDINGS_ENABLED, docs/ROADMAP.md Assets
+               price finder (PRICE_FINDINGS_ENABLED, the project notes, Assets
                #4). Quantity is required before a live price can be applied,
                since price alone isn't a total value - see app.js. -->
           <div class="row" style="margin-top:8px">
@@ -1309,7 +1309,7 @@
         </div>
       </div>
       <!-- The headline number for this page, added 2026-08-28 after research
-           on real budgeting apps (docs/budgeting-feature-design.md section
+           on real budgeting apps (the project notes section
            2.1): "how much can I still spend right now without breaking
            anything I've already committed to." Deliberately narrower than
            YNAB's "age of money" or "safe to spend", since this app is not
@@ -1338,7 +1338,7 @@
       </div>
 
       <!-- Sinking funds: saving toward a known irregular cost, added
-           2026-08-28 per docs/budgeting-feature-design.md section 3. A
+           2026-08-28 per the project notes, section 3. A
            separate concept from a budget on purpose - a budget is a monthly
            ceiling, this is progress toward one dated goal. It never moves
            real money (see supabase/59_sinking_funds.sql for why). -->
@@ -2234,7 +2234,7 @@
       <!-- Every table this profile row's own data lives in - not the
            shared reference tables (subscription_catalog, deal_findings,
            asset_price_findings, service_domains), which aren't this
-           user's data to begin with (docs/ROADMAP.md Cross-cutting #2). -->
+           user's data to begin with (the project notes, Cross-cutting #2). -->
       <button class="secondary" id="downloadDataBtn">Download a copy of my data</button>
         <div class="stack-2"></div>
         <button class="secondary" id="downloadExpensesCsvBtn">Download all my spending as a spreadsheet</button>

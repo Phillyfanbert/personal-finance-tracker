@@ -1,4 +1,4 @@
--- Quarterly / semiannual billing cycles (docs/ROADMAP.md Subscriptions/
+-- Quarterly / semiannual billing cycles (the project notes, Subscriptions/
 -- Bills #2) - insurance premiums commonly don't fit monthly/annual/other,
 -- per docs/subscription-bill-types-research.md section 16's own research
 -- on real-world billing cadences.

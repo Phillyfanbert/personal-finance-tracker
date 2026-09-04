@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================================
-// Live asset price agent (docs/ROADMAP.md Assets #4). Same architecture as
+// Live asset price agent (the project notes, Assets #4). Same architecture as
 // tools/deal-agent.js (F6), reused rather than duplicated conceptually -
 // runs on the SERVER MACHINE ONLY, needs the Supabase SERVICE_ROLE key -
 // keep that out of the repo (env var only).
@@ -113,7 +113,7 @@
 //      real, current web results.
 //   2. Filter those results down to ones on TRUSTED_PRICE_DOMAINS BEFORE
 //      Gemini ever sees them - the same "never trust an unverified source"
-//      posture docs/F6-live-deals-proposal.md's Option C established,
+//      posture the project notes's Option C established,
 //      applied as a pre-filter here (Tavily returns real result URLs
 //      directly, unlike a grounding tool's internal search).
 //   3. ONE Gemini call, covering every index that found at least one
@@ -2388,7 +2388,7 @@ async function processAllIndexes() {
   return findings;
 }
 
-// ---- Market indexes (docs/ROADMAP.md's Investments tab, Daily overview) --
+// ---- Market indexes (the project notes' Investments tab, Daily overview) --
 // Fixed - unlike the per-user watchlist above, a market index isn't
 // something anyone "holds," so this always runs every time regardless of
 // what any user's assets.price_symbol contains. Mirror this list in

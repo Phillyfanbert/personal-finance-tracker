@@ -1,4 +1,4 @@
--- Per-category budgets (docs/ROADMAP.md Reports & Net Worth #2). A single
+-- Per-category budgets (the project notes, Reports & Net Worth #2). A single
 -- ongoing monthly limit per category, not a per-month-varying budget -
 -- the simpler "I want to spend no more than $X/month on Food" model,
 -- applied every month until changed, matching how most simple budgeting

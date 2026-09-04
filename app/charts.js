@@ -216,7 +216,7 @@ export function renderBreakdownBar(canvas, data) {
 }
 
 /**
- * Line chart for a day-by-day balance series (docs/ROADMAP.md Accounts #1).
+ * Line chart for a day-by-day balance series (the project notes, Accounts #1).
  * `canvas.id` is the registry key, same as renderBreakdownBar - lets this
  * coexist with the bar charts without clobbering them on redraw.
  */

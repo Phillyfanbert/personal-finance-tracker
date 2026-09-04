@@ -11,7 +11,7 @@ connects back to what actually exists in `supabase/01_schema.sql` and
 
 ## 1. Purpose and scope
 
-Per `CLAUDE.md`, the Subscriptions/Bills feature tracks recurring cash
+Per the project notes, the Subscriptions/Bills feature tracks recurring cash
 outflows - not a balance owed. That is a hard boundary already drawn
 elsewhere in this app's data model:
 
@@ -420,7 +420,7 @@ prioritization list.
    `subscriptions` rows, or is leaving them `null`/`Other` until the user
    re-categorizes acceptable - consistent with how this app has
    generally preferred explicit user action over inferred backfills for
-   live financial data (see `CLAUDE.md`'s account-type audit and
+   live financial data (see the project notes' account-type audit and
    `account_activity` sign-fix precedent)?
 2. Should `category` reuse the exact same value set as
    `expenses.category`, or is a Subscriptions/Bills-specific set (as
@@ -430,7 +430,7 @@ prioritization list.
    concrete Reports/Q&A feature that consumes it, or should it wait
    until that need is concrete - mirroring the "groundwork with no live
    effect yet" caution already noted for the profile-expansion
-   eligibility fields in `docs/SESSION-NOTES.md`?
+   eligibility fields in the project notes?
 4. Do either of this app's two actual users currently hold a BNPL plan,
    a tuition payment plan, or a shared/split-cost family subscription in
    practice? If not, sections 15 and the shared-plan gap in §17.2 stay

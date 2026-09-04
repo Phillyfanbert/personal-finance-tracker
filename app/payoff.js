@@ -1,5 +1,5 @@
 // ============================================================================
-// Liability payoff projection (docs/ROADMAP.md Liabilities #2). Pure,
+// Liability payoff projection (the project notes, Liabilities #2). Pure,
 // unit-testable - same style as depreciation.js/networth.js. Uses the
 // interest_rate/minimum_payment fields liabilities have always stored but
 // never actually used in any calculation until now.

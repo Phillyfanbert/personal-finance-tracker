@@ -7,7 +7,7 @@
 -- season. Those are different shapes of data, which is why this is its own
 -- table rather than a flag on `budgets`. Full reasoning, including the
 -- comparison against how EveryDollar, YNAB, Goodbudget, Copilot and Monarch
--- each implement this, is in docs/budgeting-feature-design.md section 3.
+-- each implement this, is in the project notes, section 3.
 --
 -- **This table never moves real money, and that is deliberate.** Contributing
 -- to a fund raises `saved` and nothing else: no asset is debited, no

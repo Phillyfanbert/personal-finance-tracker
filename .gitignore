@@ -3,7 +3,6 @@
 node_modules/
 app/config.js
 tools/.env.deal-agent
-tools/searxng/searxng-config/
 .claude/
 
 # Internal working notes. Kept on disk and mirrored to a separate private
@@ -11,3 +10,7 @@ tools/searxng/searxng-config/
 # in the working directory or Claude Code cannot load the project rules.
 CLAUDE.md
 docs/SESSION-NOTES.md
+docs/ROADMAP.md
+docs/F6-live-deals-proposal.md
+docs/asset-depreciation-proposal.md
+docs/budgeting-feature-design.md

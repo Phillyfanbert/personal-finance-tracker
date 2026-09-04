@@ -1,4 +1,4 @@
--- CD maturity date (docs/ROADMAP.md Accounts #3, gap flagged in
+-- CD maturity date (the project notes, Accounts #3, gap flagged in
 -- docs/bank-account-types-research.md 10.2/12). Lives on `assets`, not
 -- `accounts` - a CD's maturity is a property of the financial instrument
 -- itself, and assets is the table that tracks it long-term (the same

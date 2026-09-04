@@ -1,5 +1,5 @@
 -- ============================================================================
--- F6 stretch - live deal discovery (docs/F6-live-deals-proposal.md §6).
+-- F6 stretch - live deal discovery (the project notes §6).
 -- Run this after 01-03. Optional: the app works fine with this table empty
 -- or unapplied until the home-machine search agent exists (Phase B/C).
 --

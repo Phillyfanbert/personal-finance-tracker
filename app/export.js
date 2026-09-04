@@ -1,5 +1,5 @@
 // ============================================================================
-// CSV export for a month's report (docs/ROADMAP.md Reports & Net Worth #3).
+// CSV export for a month's report (the project notes, Reports & Net Worth #3).
 // Pure, unit-testable - same style as networth.js/budgets.js. PDF export
 // (window.print() against an isolated print view, not a library) lives in
 // app.js instead, since it's inherently DOM/window work, not pure logic.

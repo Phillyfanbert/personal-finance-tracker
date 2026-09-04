@@ -724,7 +724,11 @@
       <div id="logSubMoney" class="hidden">
       <!-- Net worth overview -->
       <div class="card" id="netWorthCard">
-        <div class="muted" style="font-size:12px">Net worth</div>
+        <!-- A real heading, not a muted div. This is a standalone card, not
+             one of the .totals stat tiles, so it belongs in the view's
+             heading outline - a screen-reader user was skipping straight
+             past the net worth figure. -->
+        <h2 style="font-size:12px;font-weight:400;color:var(--muted)">Net worth</h2>
         <div class="big" id="netWorthTotal" style="font-size:30px">$0</div>
       </div>
 

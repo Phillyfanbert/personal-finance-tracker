@@ -1,0 +1,24 @@
+-- 65 DID NOT WORK. This is the fix, and why -------------------------------
+--
+-- 65 ran `revoke execute ... from anon, authenticated` and changed nothing:
+-- the linter still reported both roles as able to execute. Checking the ACL
+-- rather than trusting the revoke showed why:
+--
+--   handle_new_user proacl = {=X/postgres,postgres=X/postgres}
+--
+-- The leading `=X` is a grant to **PUBLIC**. Postgres grants EXECUTE on every
+-- new function to PUBLIC by default, and anon/authenticated were getting the
+-- privilege that way, not through a grant of their own - so revoking from
+-- them individually removed a grant that was never there.
+--
+-- 65 is left exactly as applied, per the rule that a migration is never
+-- edited after the fact. The wrong turn is worth keeping: "revoke from the
+-- role you want to block" is the obvious move and it is insufficient for
+-- functions, which is easy to get wrong twice.
+--
+-- Still hygiene rather than a live vulnerability: handle_new_user() returns
+-- `trigger` and reads `new`, so calling it outside a trigger raises an error
+-- rather than doing anything. Revoking does not affect the trigger itself,
+-- which fires as the table owner and does not consult these grants, so
+-- profile auto-creation on sign-up is untouched.
+revoke execute on function public.handle_new_user() from public;

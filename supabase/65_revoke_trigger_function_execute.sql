@@ -1,0 +1,24 @@
+-- HYGIENE: trigger functions should not be callable as RPCs -----------------
+--
+-- Supabase's own database linter flags `public.handle_new_user()` as a
+-- SECURITY DEFINER function that `anon` and `authenticated` may EXECUTE via
+-- `/rest/v1/rpc/handle_new_user`.
+--
+-- **This is hygiene, not a live vulnerability, and the distinction is worth
+-- recording so nobody panics or over-corrects.** `handle_new_user()` returns
+-- `trigger` and reads `new.id` / `new.raw_user_meta_data`, which only exist
+-- inside a trigger invocation - calling it directly raises an error rather
+-- than doing anything. The grant is still wrong in principle: a function
+-- nothing is meant to call should not be callable, and leaving it granted
+-- keeps a warning permanently lit, which trains people to ignore warnings.
+--
+-- Revoking EXECUTE does NOT affect the trigger. `on_auth_user_created` fires
+-- as the table owner and does not consult these grants, so profile
+-- auto-creation on sign-up is untouched.
+--
+-- The linter flags `public.rls_auto_enable()` for the same reason and it is
+-- deliberately NOT touched here: that one is Supabase's own platform-managed
+-- event trigger (it auto-enables RLS on any new public table), it returns
+-- `event_trigger` so it is even less callable than a row trigger, and
+-- altering a platform object risks breaking something this repo does not own.
+revoke execute on function public.handle_new_user() from anon, authenticated;

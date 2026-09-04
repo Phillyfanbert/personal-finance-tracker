@@ -1,0 +1,20 @@
+-- Make the signup trigger's grant EXPLICIT rather than incidental ----------
+--
+-- 66 revoked EXECUTE on handle_new_user() from PUBLIC, which is correct: a
+-- trigger function should not be callable as an RPC. But PUBLIC is also how
+-- every role other than the owner was getting that privilege, including
+-- `supabase_auth_admin` - the role Supabase Auth uses to insert into
+-- auth.users, which is what fires `on_auth_user_created` and creates the
+-- profiles row for a new account.
+--
+-- PostgreSQL checks EXECUTE on a trigger function when the trigger is
+-- CREATED, not each time it fires, so in principle 66 alone is safe. This
+-- migration exists because "in principle" is not the standard to hold a live
+-- signup path to, and it could not be tested directly without creating a
+-- real account in a production project with real users.
+--
+-- An explicit grant to the one role that genuinely needs it is also simply
+-- better than the incidental PUBLIC grant it replaces: the privilege is now
+-- documented and intentional rather than a Postgres default nobody chose.
+-- anon and authenticated remain revoked, which is the point of 66.
+grant execute on function public.handle_new_user() to supabase_auth_admin;

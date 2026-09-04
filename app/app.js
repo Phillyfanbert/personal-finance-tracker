@@ -380,7 +380,21 @@ function learnKeyword(row) {
 
 let userRules = {};   // keyword -> category
 let accounts = [];
-let allExpenses = []; // cache for reports (last ~12 months)
+// How much history is pulled onto the device. Named for the same reason the
+// six-month windows are: it is load-bearing rather than arbitrary. The Q&A's
+// vector search over expense_embeddings exists BECAUSE this cache is capped,
+// so this number is the boundary beyond which older transactions are
+// reachable only by that search. Expenses and account activity must use the
+// SAME window - the two are compared against each other constantly (income
+// vs expense), and different spans would go quietly wrong at the edges.
+const HISTORY_CACHE_MONTHS = 12;
+
+// How many months the Reports month picker offers. Must stay within
+// HISTORY_CACHE_MONTHS: offering a month the cache never loaded would show an
+// empty report for a month that really has spending.
+const MONTH_PICKER_MONTHS = 12;
+
+let allExpenses = []; // cache for reports (last HISTORY_CACHE_MONTHS months)
 let subscriptions = []; // cache of the user's subscriptions
 let incomeSources = []; // cache of the user's recurring income sources
 let catalog = [];     // shared subscription_catalog reference data
@@ -2855,7 +2869,8 @@ const ACTIVITY_LABEL = {
 const NON_UNDOABLE_ACTIVITY_KINDS = new Set(["account_created"]);
 
 async function loadAccountActivity() {
-  const since = lastMonths(12)[0] + "-01";
+  // Same window as loadExpenses, deliberately - see HISTORY_CACHE_MONTHS.
+  const since = lastMonths(HISTORY_CACHE_MONTHS)[0] + "-01";
   const { data } = await sb.from("account_activity").select("*")
     .gte("occurred_at", since)
     .order("occurred_at", { ascending: false }).order("created_at", { ascending: false });
@@ -4570,8 +4585,8 @@ function renderLoadError(containerId, error, retry) {
 }
 
 async function loadExpenses() {
-  // Pull ~12 months so Reports can aggregate without a second round-trip.
-  const since = lastMonths(12)[0] + "-01";
+  // Pulled in one go so Reports can aggregate without a second round-trip.
+  const since = lastMonths(HISTORY_CACHE_MONTHS)[0] + "-01";
   const { data, error } = await sb.from("expenses")
     .select("*").gte("occurred_at", since)
     .order("occurred_at", { ascending: false }).order("created_at", { ascending: false });
@@ -4744,8 +4759,8 @@ async function loadReports() {
   // after sign-in that a keep-alive-less cold model went back to sleep.
   if (GEMMA_ENDPOINT) warmUpGemma({ endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY });
   if (!allExpenses.length) await loadExpenses();
-  // Build month selector from the last 12 months.
-  const months = lastMonths(12).reverse(); // newest first for the dropdown
+  // Build the month selector. Bounded by what the cache actually holds.
+  const months = lastMonths(Math.min(MONTH_PICKER_MONTHS, HISTORY_CACHE_MONTHS)).reverse();
   const sel = $("monthSel");
   if (sel.options.length !== months.length) {
     sel.innerHTML = months.map((m) => `<option value="${m}">${monthLabel(m)}</option>`).join("");

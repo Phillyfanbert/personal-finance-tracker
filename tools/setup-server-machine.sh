@@ -4,7 +4,7 @@
 # whichever machine is colocated with Ollama), from the tools/ directory.
 # Idempotent: safe to re-run after a partial failure or to pick up a change.
 #
-# Sets up everything docs/SESSION-NOTES.md's "Loose ends" list has been
+# Sets up everything the project notes' "Loose ends" list has been
 # calling the same blocker for both F6 deal discovery and live asset
 # pricing:
 #   1. tools/.env.deal-agent (prompts for the Supabase service_role key -
@@ -71,6 +71,12 @@ TOOLS_DIR="$(pwd)"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 UID_GUI="gui/$(id -u)"
 
+# Minted per install, never committed. A hardcoded default would be one
+# shared secret across every clone of this repo, and would trip GitHub
+# secret scanning once the repo is public. Pass GEMMA_PROXY_SECRET in to
+# reuse the existing one; re-running without it mints a NEW secret, which
+# must then be set as the Cloudflare GEMMA_AUTH_KEY build variable or the
+# app can no longer reach the proxy.
 GEMMA_PROXY_SECRET="${GEMMA_PROXY_SECRET:-$(openssl rand -hex 32)}"
 DEAL_AGENT_HOUR="${DEAL_AGENT_HOUR:-3}"
 DEAL_AGENT_MIN="${DEAL_AGENT_MIN:-0}"

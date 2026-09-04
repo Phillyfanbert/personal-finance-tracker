@@ -16,7 +16,7 @@
 // client-side, in app/discounts.js's isEligible(), using data that never
 // leaves the browser. Only a service's brand name and text found on that
 // service's own public pricing page ever reach this pipeline - genuinely
-// public data, same boundary price-agent.js documents. See CLAUDE.md's
+// public data, same boundary price-agent.js documents. See the project notes'
 // data model section for the durable version of this line - which scripts
 // may use a cloud LLM and which must never (app/gemma.js's real
 // expense/Q&A paths must not).
@@ -24,7 +24,7 @@
 // Two providers, not one, and this is a deliberate reversal of an earlier
 // version of this script that used Gemini's own Google Search grounding
 // tool for both search and extraction in a single call. That was dropped
-// after live testing (see docs/SESSION-NOTES.md) found grounding requires
+// after live testing (see the project notes) found grounding requires
 // a billing account linked to the Google Cloud project to get ANY quota at
 // all - even the portion Google's own docs describe as a free monthly
 // allowance - which conflicts with this project's hard $0/no-card

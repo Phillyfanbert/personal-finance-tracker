@@ -3,7 +3,7 @@
 // Pure, unit-testable. No new table/migration: every balance change an
 // account has ever had is already fully reconstructable from `expenses` +
 // `account_activity`, since this app's whole asset/liability-delta model
-// (CLAUDE.md) already requires every mutation to be a real, dated row - so
+// (see the project notes) already requires every mutation to be a real, dated row - so
 // walking backward from the current balance recovers the exact history
 // rather than needing a separate snapshot table to duplicate it.
 // ============================================================================
@@ -14,7 +14,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
 /**
  * Reconstructs a day-by-day balance series for one account, working
  * backward from its current balance. Covers every path a balance can move
- * through today (see CLAUDE.md's account_activity section):
+ * through today (see the project notes' account_activity section):
  *  - `expenses` against this account (asset: -amount, liability: +amount)
  *  - `asset_adjust` activity on this account (already a signed delta)
  *  - `liability_payment` activity where this account funded the payment

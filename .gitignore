@@ -5,3 +5,9 @@ app/config.js
 tools/.env.deal-agent
 tools/searxng/searxng-config/
 .claude/
+
+# Internal working notes. Kept on disk and mirrored to a separate private
+# repo, never published from this one. CLAUDE.md in particular must stay
+# in the working directory or Claude Code cannot load the project rules.
+CLAUDE.md
+docs/SESSION-NOTES.md

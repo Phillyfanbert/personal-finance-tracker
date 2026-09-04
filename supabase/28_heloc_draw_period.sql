@@ -9,5 +9,5 @@
 -- payments against the linked account - this column, and interest_rate/
 -- minimum_payment which already existed, are read-only inputs to a
 -- projection, never a path to directly set what's owed. That hard rule
--- (CLAUDE.md's data model section) doesn't bend for this feature.
+-- (the project notes' data model section) doesn't bend for this feature.
 alter table liabilities add column if not exists draw_period_end date;

@@ -9,7 +9,7 @@
 // alongside it. This script only ever handles public market data (a
 // ticker symbol's price, a market index level) - never a specific user's
 // personal financial data - so it doesn't need to stay on the home-hosted
-// model the way app/gemma.js's real expense/Q&A paths must. See CLAUDE.md's
+// model the way app/gemma.js's real expense/Q&A paths must. See the project notes'
 // data model section for the durable version of this privacy boundary -
 // which scripts may use a cloud service and which must never.
 //
@@ -70,7 +70,7 @@
 // Two providers, not one, and this is a deliberate reversal of an earlier
 // version of this script that used Gemini's own Google Search grounding
 // tool for both search and extraction in a single call. That was dropped
-// after live testing (see docs/SESSION-NOTES.md) found grounding requires
+// after live testing (see the project notes) found grounding requires
 // a billing account linked to the Google Cloud project to get ANY quota at
 // all - even the portion Google's own docs describe as a free monthly
 // allowance - which conflicts with this project's hard $0/no-card

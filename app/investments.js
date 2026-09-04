@@ -216,7 +216,7 @@ const CONTRIBUTION_APPROACHING_PCT = 90;
  * per-holding price data from investmentHoldings) into a short list of
  * status lines for the "Daily health check" card at the top of the tab.
  * Deliberately a compilation of real, already-computed facts - never a
- * fabricated composite score. Same boundary CLAUDE.md already draws for
+ * fabricated composite score. Same boundary the project notes already draw for
  * the Liabilities card's credit-utilization line: real math shown back to
  * the user, not an invented number presented as authoritative.
  *

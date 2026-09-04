@@ -4,7 +4,7 @@
 -- time forever. Needed correctly now for the Assets card's staleness
 -- nudge (docs/ROADMAP.md Assets #2), which measures "how long since this
 -- value was last touched" - a DB trigger, not app-code, so it holds
--- regardless of which client makes the change, same reasoning CLAUDE.md's
+-- regardless of which client makes the change, same reasoning the project notes'
 -- SQL style section already gives for the account/asset/liability
 -- delete-cascade triggers.
 create or replace function touch_updated_at()

@@ -361,3 +361,20 @@ weekly runs are scheduled on different days.
 - **Where the keyword pass runs:** in the PWA (simplest) vs a Supabase Edge Function (shareable across devices).
 - **Subscription auto-detection:** derive from recurring expenses, or enter manually for v1.
 - **Push notifications:** enable for monthly reports, or keep the app pull-only to start.
+
+---
+
+## License
+
+Source-available, not open source. See [LICENSE.md](LICENSE.md) for the
+full terms. In short:
+
+- **You may** view the source, fork it, and run your own copy for
+  personal, noncommercial use. Configuring it to run (your own Supabase
+  keys, the SQL migrations, environment variables) is expressly
+  permitted, since it cannot run otherwise.
+- **You may not** publish modified versions, sell it, or use it
+  commercially.
+
+This is a personal finance tracker, not a licensed financial service. It
+gives no advice, and nothing it displays should be relied upon as advice.

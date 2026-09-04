@@ -35,7 +35,7 @@ const GEMMA_THINK = false;
 
 // The model ships with temperature 1 / top_k 64 / top_p 0.95 (confirmed via
 // /api/show), which is wrong for both jobs this app asks of it - structured
-// extraction and arithmetic over the user's real money. docs/SESSION-NOTES.md
+// extraction and arithmetic over the user's real money. the project notes
 // already records Gemma silently dividing an amount by three once, which is
 // exactly what sampling at temperature 1 produces on a task that has one
 // correct answer. Costs nothing: measured identical latency at temperature 0.

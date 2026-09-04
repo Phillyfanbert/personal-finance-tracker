@@ -3,7 +3,7 @@
 // actually be shown right now.
 //
 // Data + pure logic only, no DOM and no sb.from(...) - same separation every
-// other logic module here keeps (see CLAUDE.md's JS style section). app.js
+// other logic module here keeps (see the project notes' JS style section). app.js
 // owns the spotlight positioning, the card rendering and the persistence;
 // this file owns what the tour SAYS and which steps survive filtering.
 //

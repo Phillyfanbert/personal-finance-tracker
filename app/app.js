@@ -202,7 +202,7 @@ function toast(msg, severity = "info") {
     toastTimer = setTimeout(() => t.classList.remove("show"), ms);
   }, 60);
 }
-// Generic red-border flag for a denied action (CLAUDE.md's "every denial
+// Generic red-border flag for a denied action (the project notes' "every denial
 // flags its field" rule) - call right before a `return toast(...)` that
 // rejects a save/action over one or more specific fields. Self-clearing:
 // the border comes off the moment the user next touches that exact field
@@ -3366,7 +3366,7 @@ function renderDebtStrategy() {
   // direct at one debt over another, which is the DEFAULT state of this card -
   // so the common first impression was the same figures repeated with nothing
   // saying why. Detected at runtime rather than assumed from the inputs:
-  // CLAUDE.md records that "identical at $0 extra" holds for two debts but is
+  // The project notes record that "identical at $0 extra" holds for two debts but is
   // not guaranteed for three or more, so this must never be hardcoded.
   const same = !avalanche.neverPaysOff && !snowball.neverPaysOff
     && avalanche.months === snowball.months
@@ -3392,7 +3392,7 @@ $("debtStrategyExtra").addEventListener("input", renderDebtStrategy);
 
 // Interest rate / minimum payment / due date / draw period end - never
 // balance, which stays strictly driven by real expenses/payments against
-// the liability regardless of type (CLAUDE.md's data model section).
+// the liability regardless of type (the project notes' data model section).
 // Works for both a standalone liability and an account-linked one (a
 // credit card or HELOC never goes through debtForm above at all, so this
 // was previously the only way to set these fields for those).
@@ -4177,7 +4177,7 @@ $("csvImportConfirm").onclick = async () => {
   // **Deliberately does NOT call applyAssetDelta**, for the identical reason
   // the expense side above does not: these already happened, and the
   // account's real balance already includes them. Crediting them again would
-  // count the money twice. See CLAUDE.md's note on the import path.
+  // count the money twice. See the project notes' note on the import path.
   const incomeRows = toImport.filter((r) => r.normalized.kind === "income").map((r) => ({
     kind: "income",
     description: r.normalized.description || "Imported income",
@@ -5208,7 +5208,7 @@ function renderInvestments() {
     const children = investmentAssets.filter((a) => a.parent_asset_id === p.id);
     // Log contribution only makes sense for a parent with no holdings under
     // it - it bumps the parent's own .value directly, but a with-holdings
-    // parent's value is ONLY ever the sum of its holdings (CLAUDE.md: "no
+    // parent's value is ONLY ever the sum of its holdings (the project notes: "no
     // separate uninvested-cash concept"). syncParentAssetValue() would
     // silently overwrite a logged contribution back to sum(holdings) the
     // next time it runs for that parent - real "new money in" for a
@@ -6425,7 +6425,7 @@ function holdingParentAssets() {
 // Required fields on the holding form: an explicit account, a ticker, share
 // count, and price per share - the same "starts blank, red border while
 // empty" treatment as REQUIRED_QUICK_ADD_FIELDS, reused rather than
-// reinvented (CLAUDE.md's rule for this pattern). holdingCostBasis holds a
+// reinvented (the project notes' rule for this pattern). holdingCostBasis holds a
 // PER-SHARE price now (see saveHoldingBtn for the conversion to the
 // TOTAL actually stored in assets.purchase_price) - same id, changed
 // meaning, so this list and the highlighting wiring below needed no change.
@@ -6894,7 +6894,7 @@ $("investRiskLabel").onchange = async () => {
 };
 
 // Whichever side of accounts.linked_asset_id/linked_liability_id is set is
-// where the live balance actually lives (see CLAUDE.md's data model) - an
+// where the live balance actually lives (see the project notes' data model) - an
 // account row itself never stores a dollar value.
 function accountCurrentBalance(account) {
   if (account.linked_asset_id) return Number(assets.find((a) => a.id === account.linked_asset_id)?.value ?? 0);
@@ -8072,7 +8072,7 @@ function updateIncomeFieldHighlighting() {
 // which is a real thing to want ("I earn this, but do not touch my
 // balances"). But autoLogDueIncome() skips any source missing either one, so
 // leaving them blank silently disables the one thing this form promises -
-// the exact silent-no-op class of bug CLAUDE.md already records two of.
+// the exact silent-no-op class of bug the project notes already record two of.
 // Stating the consequence keeps the legitimate state available without
 // letting it fail quietly.
 function updateIncomeAutoLogNote() {

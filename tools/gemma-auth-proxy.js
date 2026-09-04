@@ -2,7 +2,7 @@
 // ============================================================================
 // Auth-gated reverse proxy in front of Ollama. Ollama has no built-in request
 // auth, and the Cloudflare Tunnel exposing it is a "quick tunnel" (no owned
-// domain, so no Cloudflare Access policy is possible either - see CLAUDE.md's
+// domain, so no Cloudflare Access policy is possible either - see the project notes'
 // $0 constraint) - without this, anyone who finds the tunnel URL (it's baked
 // into this app's own public app/config.js, or discoverable by scanning
 // *.trycloudflare.com) could send arbitrary requests to the home GPU for free.
@@ -19,7 +19,7 @@
 // who finds the bare tunnel URL" (zero auth at all) to "anyone who reads this
 // app's own public source" - it does not hide the key from someone who
 // deliberately inspects the app's own code, the same "safe to expose, not a
-// secret" honesty caveat CLAUDE.md already states for the Supabase anon key.
+// secret" honesty caveat the project notes already state for the Supabase anon key.
 //
 // Run:   GEMMA_PROXY_SECRET=<random> node tools/gemma-auth-proxy.js
 // ============================================================================

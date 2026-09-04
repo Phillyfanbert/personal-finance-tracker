@@ -3,7 +3,7 @@
 -- account type in docs/bank-account-types-research.md, not just Checking/
 -- Savings/Credit/Cash. Deliberately excludes two categories the doc itself
 -- flagged as not personal payment-method accounts: business accounts (out
--- of scope per CLAUDE.md's personal-finance framing) and escrow accounts
+-- of scope per the project notes' personal-finance framing) and escrow accounts
 -- (a sub-ledger belonging to a mortgage servicer, not something an
 -- individual opens or selects as a payment method).
 --

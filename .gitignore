@@ -14,3 +14,9 @@ docs/ROADMAP.md
 docs/F6-live-deals-proposal.md
 docs/asset-depreciation-proposal.md
 docs/budgeting-feature-design.md
+
+# Notes-sync tooling. Gitignored because it names the private repo, which
+# publishing would defeat the point of. Hooks live in .git/hooks and are
+# never tracked.
+sync-notes.sh
+.notes-sync.conf

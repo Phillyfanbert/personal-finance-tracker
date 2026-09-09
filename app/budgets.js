@@ -171,7 +171,15 @@ export function sinkingFundStatus(funds, today = new Date()) {
       // Past its date with money still owed. Worth flagging separately from
       // "complete" so the UI can say the deadline passed rather than only
       // showing a large monthlyNeeded with no explanation.
-      overdue: !!f.target_date && monthsLeft === 0 && remaining > 0,
+      //
+      // Compared against the real DATE, not against monthsLeft. monthsLeft
+      // counts whole calendar months, so it is 0 for a target anywhere in the
+      // current month - which meant a fund due on the 30th read as overdue
+      // from the 1st, stating a deadline had passed three weeks before it
+      // had. "All of it is needed this month" and "the date has gone" are
+      // different things; monthsLeft === 0 says the first, this says the
+      // second.
+      overdue: !!f.target_date && String(f.target_date) < localDateISO(today) && remaining > 0,
     };
   });
 }

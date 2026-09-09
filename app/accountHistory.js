@@ -75,5 +75,17 @@ export function buildBalanceHistory(account, currentBalance, expenses, accountAc
     points.push({ date, balance: r2(running) });
     running -= deltasByDate.get(date);
   }
+  // One final point for the balance BEFORE the earliest event, dated the day
+  // before it. Without this the series starts at the value AFTER that event,
+  // so an account with a single movement in the window drew a flat line: a
+  // $200 transfer out showed as $800 then $800, which reads as nothing having
+  // happened on the very day it did. `running` has had every delta unwound by
+  // now, so it is exactly the opening balance.
+  const earliest = datesDescending[datesDescending.length - 1];
+  if (earliest) {
+    const dayBefore = new Date(earliest + "T00:00:00");
+    dayBefore.setDate(dayBefore.getDate() - 1);
+    points.push({ date: localDateISO(dayBefore), balance: r2(running) });
+  }
   return points.reverse();
 }

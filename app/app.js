@@ -2439,7 +2439,14 @@ function updateAssetDepPreview() {
   const price = parseFloat($("assetPurchasePrice").value);
   const date = $("assetPurchaseDate").value;
   const ratePct = parseFloat($("assetDepRate").value);
-  if (!Number.isFinite(price) || !date || !Number.isFinite(ratePct)) {
+  // Same 0-100 bound the save handler enforces. Without it the preview
+  // happily rendered a rate the app will then refuse: typing -50 showed
+  // "estimated current value $45,020" for a $30,000 car, because a negative
+  // rate compounds upward. Showing a number the save will reject is worse
+  // than showing nothing, and an APPRECIATING car is exactly the wrong thing
+  // to put in front of someone entering their own net worth.
+  if (!Number.isFinite(price) || !date || !Number.isFinite(ratePct)
+      || ratePct < 0 || ratePct > 100) {
     $("assetDepPreview").textContent = "";
     return;
   }
@@ -2874,11 +2881,9 @@ function creditLimitError(deltas) {
     netByLiability.set(debt.id, entry);
   }
   for (const { debt, net } of netByLiability.values()) {
-    // Only types that genuinely have a preset spending limit. A charge card
-    // is deliberately absent from CREDIT_LIMIT_LIABILITY_TYPES because by
-    // definition it has no preset limit, and BNPL because a pay-in-4 plan
-    // is a fixed installment, not a revolving line - blocking either would
-    // model something that doesn't exist in real life.
+    // Only types that genuinely have a ceiling a cardholder can hit. See
+    // CREDIT_LIMIT_LIABILITY_TYPES for which, and why charge cards and BNPL
+    // are in that set rather than exempt from it.
     if (!CREDIT_LIMIT_LIABILITY_TYPES.has(debt.type)) continue;
     const limit = Number(debt.credit_limit);
     // No limit recorded means no limit is KNOWN, not that it's zero.
@@ -5070,8 +5075,10 @@ function renderSinkingFunds() {
         // only thing carrying it.
         let when = "No date set, so no monthly amount worked out";
         if (s.complete) when = "Fully saved";
-        else if (s.overdue) when = `Needed by ${s.targetDate}, so all ${fmt(s.remaining)} is due now`;
-        else if (s.monthlyNeeded != null) {
+        else if (s.overdue) when = `Was needed by ${s.targetDate}, and ${fmt(s.remaining)} is still short`;
+        else if (s.monthsLeft === 0 && s.remaining > 0) {
+          when = `All ${fmt(s.remaining)} of this is needed by ${s.targetDate}, this month`;
+        } else if (s.monthlyNeeded != null) {
           when = `${fmt(s.monthlyNeeded)} a month to be ready by ${s.targetDate} (${s.monthsLeft} ${s.monthsLeft === 1 ? "month" : "months"} left)`;
         }
         // Actions sit on their own line under the bar rather than crowding the
@@ -5415,7 +5422,13 @@ function renderInvestments() {
   // guideline the Liabilities card's credit-utilization line deliberately
   // leaves uncolored, so a color here is stating a fact, not nudging advice.
   const contributions = accountActivity.filter((a) => a.kind === "contribution");
-  const limitUsage = contributionLimitUsage(assets, contributions, CONTRIBUTION_LIMIT_GROUPS);
+  // allInvestmentAssets(), not the raw `assets` array: this card is a listing,
+  // and archiving acts like deleting for every listing. Passing everything
+  // meant an archived 401(k) still put its whole limit group on this card,
+  // stating a retirement account the rest of the app treats as gone. Dropping
+  // it from the type map drops its contributions with it, so unarchiving
+  // restores the group and its figures exactly.
+  const limitUsage = contributionLimitUsage(allInvestmentAssets(), contributions, CONTRIBUTION_LIMIT_GROUPS);
   $("contributionLimitsCard").style.display = limitUsage.length ? "" : "none";
   $("emptyLimits").classList.toggle("hidden", limitUsage.length > 0);
   $("contributionLimitsList").innerHTML = limitUsage.map((u) => {
@@ -7050,8 +7063,12 @@ function accountCurrentBalance(account) {
 function populateHistoryAccountSelect() {
   const sel = $("historyAccountSelect");
   const prev = sel.value;
-  sel.innerHTML = accounts.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
-  sel.value = accounts.some((a) => a.id === prev) ? prev : (accounts[0]?.id ?? "");
+  // Archiving acts like deleting for every LISTING, and a picker is a
+  // listing. This one was missing the filter every other picker has, so an
+  // account that is supposed to act deleted still offered its own chart.
+  const visible = accounts.filter((a) => !a.archived_at);
+  sel.innerHTML = visible.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  sel.value = visible.some((a) => a.id === prev) ? prev : (visible[0]?.id ?? "");
 }
 $("historyAccountSelect").onchange = renderAccountHistory;
 
@@ -7062,13 +7079,26 @@ $("historyAccountSelect").onchange = renderAccountHistory;
 // calendar day depending on the browser's local timezone.
 function renderAccountHistory() {
   const account = accounts.find((a) => a.id === $("historyAccountSelect").value);
-  if (!account) return;
+  const note = $("historyNote");
+  // Same reasoning as renderCashFlowForecast below: a blank chart with no
+  // words looks identical to a broken one. Returning early here left the
+  // PREVIOUS account's line on screen under the new account's name.
+  if (!account) {
+    renderLineChart($("historyChart"), [], []);
+    note.textContent = "Add an account on the Log page and its balance history will show here.";
+    return;
+  }
   const points = buildBalanceHistory(account, accountCurrentBalance(account), allExpenses, accountActivity);
   const labels = points.map((p) => {
     const [y, m, d] = p.date.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   });
   renderLineChart($("historyChart"), labels, points.map((p) => p.balance));
+  // One point means the balance has never moved, which a line chart draws as
+  // an empty box. Say so rather than leaving the reader to guess.
+  note.textContent = points.length < 2
+    ? "Nothing has moved through this account yet, so there is no history to draw."
+    : "";
 }
 
 // Same account-picker shape as populateHistoryAccountSelect above, kept
@@ -7077,8 +7107,15 @@ function renderAccountHistory() {
 function populateForecastAccountSelect() {
   const sel = $("forecastAccountSelect");
   const prev = sel.value;
-  sel.innerHTML = accounts.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
-  sel.value = accounts.some((a) => a.id === prev) ? prev : (accounts[0]?.id ?? "");
+  // Archiving acts like deleting for every LISTING, and a picker is a
+  // listing. This one was missing the filter every other picker has, so an
+  // archived account still offered a chart - and for the forecast that is
+  // worse than cosmetic: autoLogDueSubscriptions() skips an archived
+  // account, so its bills sit permanently overdue and would project charges
+  // that are never going to be logged.
+  const visible = accounts.filter((a) => !a.archived_at);
+  sel.innerHTML = visible.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  sel.value = visible.some((a) => a.id === prev) ? prev : (visible[0]?.id ?? "");
 }
 $("forecastAccountSelect").onchange = renderCashFlowForecast;
 
@@ -7721,13 +7758,28 @@ async function autoLogDueIncome() {
       continue;
     }
 
+    // Same whitelist autoLogDueSubscriptions() applies to billing_cycle, and
+    // for the same reason: a cadence advanceIncomeDate() has no interval for
+    // returns the date unchanged, so the catch-up loop below would log the
+    // same deposit 36 times, write nothing back (next_expected never moved),
+    // and do it again on the very next app load. Income needs the check in
+    // BOTH places, unlike subscriptions: semimonthly is a real cadence that
+    // still cannot advance when either pay day is missing.
+    if (!["weekly", "biweekly", "semimonthly", "monthly", "annual"].includes(src.cadence)) continue;
+    if (src.cadence === "semimonthly" && (!src.semimonthly_day_1 || !src.semimonthly_day_2)) continue;
+
     let expected = src.next_expected;
     let cycles = 0;
     while (expected <= today && cycles < 36) {
+      // Step the date BEFORE logging, so a cadence that cannot advance skips
+      // the deposit entirely rather than logging one that next_expected will
+      // not move past - which would re-log the same deposit on every load.
+      const next = advanceIncomeDate(expected, src.cadence, src.semimonthly_day_1, src.semimonthly_day_2);
+      if (next === expected) break;
       await applyAssetDelta(src.account_id, null, amount, +1);
       await logActivity("income", src.source, amount, expected, src.account_id);
       loggedCount++;
-      expected = advanceIncomeDate(expected, src.cadence, src.semimonthly_day_1, src.semimonthly_day_2);
+      expected = next;
       cycles++;
     }
     if (expected !== src.next_expected) {

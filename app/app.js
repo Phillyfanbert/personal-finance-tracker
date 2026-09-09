@@ -17,7 +17,7 @@ import { budgetStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal }
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import {
-  guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate,
+  guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate, detectNumberConvention,
 } from "./csvImport.js";
 import {
   buildExpensesCsv, buildSectionedCsv, sectionsToJson, sectionsToSheets,
@@ -3911,6 +3911,11 @@ let csvDataRows = []; // raw string[][], header row excluded
 let csvMapping = { dateCol: null, amountCol: null, descCol: null, categoryCol: null };
 let csvPreviewRows = []; // { normalized, duplicate }[] - only successfully-normalized rows
 let csvSkippedCount = 0; // rows that failed to normalize (bad date/amount)
+// Decided once per file from the whole amount column, not per value: "1.234"
+// is 1.234 in the US and 1234 in Europe, and only the rest of the column can
+// say which. Null means the column carried no evidence, and every parse then
+// keeps the US reading it has always had.
+let csvConvention = null;
 let csvLastImportedIds = []; // this session's last import - Undo target
 // Income from the same import lands in account_activity, not expenses, so
 // Undo has to track both id sets to take the whole import back out.
@@ -4008,7 +4013,16 @@ function proceedWithRows(rows) {
   $("csvDebitCreditCols").classList.toggle("hidden", !hasPair);
   $("csvAmountCol").classList.toggle("hidden", hasPair);
   $("csvFlipSignLabel").classList.toggle("hidden", hasPair);
-  $("csvFlipSign").checked = !hasPair && guessSignConvention(csvDataRows, csvMapping);
+  // Establish the file's number convention before anything parses an amount,
+  // so the sign guess and every previewed row read the column the same way.
+  csvConvention = detectNumberConvention(
+    csvDataRows.flatMap((r) => [
+      csvMapping.amountCol != null ? r[csvMapping.amountCol] : null,
+      csvMapping.debitCol != null ? r[csvMapping.debitCol] : null,
+      csvMapping.creditCol != null ? r[csvMapping.creditCol] : null,
+    ])
+  );
+  $("csvFlipSign").checked = !hasPair && guessSignConvention(csvDataRows, csvMapping, csvConvention);
   // Default to whichever reading the file itself supports: a pair or a
   // signed column can carry both directions, so start on "both".
   $("csvRowKind").value = "auto";
@@ -4107,7 +4121,7 @@ $("csvStep2Next").onclick = () => {
   csvPreviewRows = [];
   csvSkippedCount = 0;
   for (const raw of csvDataRows) {
-    const normalized = normalizeRow(raw, csvMapping, { flipSign, rowKind });
+    const normalized = normalizeRow(raw, csvMapping, { flipSign, rowKind, convention: csvConvention });
     if (!normalized) { csvSkippedCount++; continue; }
     // Only expenses can duplicate an existing expense; an income row is
     // checked against nothing, so it never starts unticked for that reason.

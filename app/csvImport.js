@@ -48,7 +48,48 @@ function isValidYmd(y, m, d) {
  * number, so a garbage cell skips the row rather than importing $0.
  * @returns {number|null}
  */
-export function parseAmount(str) {
+// A lone separator followed by exactly three digits is the one shape neither
+// convention can claim on its own: "1.234" is 1.234 in the US and 1234 in
+// Europe, and "1,234" is the reverse. No amount of looking at that ONE value
+// resolves it. A whole column does, which is why the convention is decided
+// per FILE and passed in - a single "1.234,56" or "1,234.56" anywhere in the
+// column proves which side the file is on, because a value carrying BOTH
+// separators is unambiguous (the later one is the decimal).
+const AMBIGUOUS_RE = /^\d+[.,]\d{3}$/;
+
+function conventionOf(body) {
+  const lastComma = body.lastIndexOf(",");
+  const lastDot = body.lastIndexOf(".");
+  if (lastComma > -1 && lastDot > -1) return lastComma > lastDot ? "eu" : "us";
+  if (AMBIGUOUS_RE.test(body)) return null;
+  if (lastComma > -1 && /,\d{1,2}$/.test(body)) return "eu";
+  if (lastDot > -1 && /\.\d{1,2}$/.test(body)) return "us";
+  return null;
+}
+
+/**
+ * Decide whether a column of raw amount strings is written US or European
+ * style. Only values that state it unambiguously get a vote; the ambiguous
+ * three-digit shape abstains rather than guessing, which is the whole point.
+ * Returns null when the column carries no evidence either way, and callers
+ * then keep the US default - the same behaviour as before this existed, so a
+ * file that imports correctly today still does.
+ */
+export function detectNumberConvention(values) {
+  let eu = 0;
+  let us = 0;
+  for (const v of values) {
+    const body = String(v ?? "").trim().replace(/[()$\s-]/g, "").replace(/[A-Za-z]{3}$/, "");
+    if (!body) continue;
+    const c = conventionOf(body);
+    if (c === "eu") eu++;
+    else if (c === "us") us++;
+  }
+  if (eu === us) return null;
+  return eu > us ? "eu" : "us";
+}
+
+export function parseAmount(str, convention = null) {
   const s = (str || "").trim();
   if (!s) return null;
   const negParens = /^\(.*\)$/.test(s);
@@ -71,11 +112,19 @@ export function parseAmount(str) {
   // lone comma followed by exactly two digits. Blindly stripping commas the
   // US way turned "1.234,56" into 1.23456 and "1234,56" into 123456 - a
   // silent 1000x error on a real bank export, with no warning anywhere.
-  const commaIsDecimal =
-    (lastComma > -1 && lastDot > -1 && lastComma > lastDot) ||
-    (lastComma > -1 && lastDot === -1 && /,\d{1,2}$/.test(body));
+  // An ambiguous value defers to the file's own convention when one was
+  // established; with none, it keeps the US reading it has always had.
+  const commaIsDecimal = AMBIGUOUS_RE.test(body)
+    ? convention === "eu" && lastComma > -1
+    : (lastComma > -1 && lastDot > -1 && lastComma > lastDot) ||
+      (lastComma > -1 && lastDot === -1 && /,\d{1,2}$/.test(body));
+  // "1.234" in a European file is 1234, so the period is a thousands
+  // separator there and has to go the same way a comma does in a US file.
+  const dotIsThousands = AMBIGUOUS_RE.test(body) && convention === "eu" && lastDot > -1;
   if (commaIsDecimal) {
     body = body.replace(/\./g, "").replace(",", ".");
+  } else if (dotIsThousands) {
+    body = body.replace(/\./g, "");
   } else {
     body = body.replace(/,/g, "");
   }
@@ -172,11 +221,11 @@ export function guessColumnMapping(headers) {
  * @param {string[][]} rows raw rows (not yet normalized)
  * @param {{amountCol:number|null}} mapping
  */
-export function guessSignConvention(rows, mapping) {
+export function guessSignConvention(rows, mapping, convention = null) {
   if (mapping.amountCol == null) return false;
   let negatives = 0, total = 0;
   for (const row of rows) {
-    const n = parseAmount(row[mapping.amountCol]);
+    const n = parseAmount(row[mapping.amountCol], convention);
     if (n == null) continue;
     total++;
     if (n < 0) negatives++;
@@ -195,7 +244,7 @@ export function guessSignConvention(rows, mapping) {
  * @returns {{occurred_at:string, amount:number, description:string|null,
  *   category:string|null, kind:"expense"|"income"}|null}
  */
-export function normalizeRow(rawRow, mapping, { flipSign = false, rowKind = "expense" } = {}) {
+export function normalizeRow(rawRow, mapping, { flipSign = false, rowKind = "expense", convention = null } = {}) {
   if (mapping.dateCol == null) return null;
   const occurred_at = parseFlexibleDate(rawRow[mapping.dateCol]);
   if (occurred_at == null) return null;
@@ -205,15 +254,15 @@ export function normalizeRow(rawRow, mapping, { flipSign = false, rowKind = "exp
   // a single amount column carries the direction in its sign.
   let signed = null;
   if (mapping.debitCol != null || mapping.creditCol != null) {
-    const out = mapping.debitCol != null ? parseAmount(rawRow[mapping.debitCol]) : null;
-    const inn = mapping.creditCol != null ? parseAmount(rawRow[mapping.creditCol]) : null;
+    const out = mapping.debitCol != null ? parseAmount(rawRow[mapping.debitCol], convention) : null;
+    const inn = mapping.creditCol != null ? parseAmount(rawRow[mapping.creditCol], convention) : null;
     // A row normally fills exactly one of the two; the other is blank or 0.
     if (out != null && Math.abs(out) > 0) signed = Math.abs(out);
     else if (inn != null && Math.abs(inn) > 0) signed = -Math.abs(inn);
     else return null;
   } else {
     if (mapping.amountCol == null) return null;
-    const raw = parseAmount(rawRow[mapping.amountCol]);
+    const raw = parseAmount(rawRow[mapping.amountCol], convention);
     if (raw == null) return null;
     signed = flipSign ? -raw : raw;
   }

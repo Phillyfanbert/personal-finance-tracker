@@ -1758,8 +1758,11 @@ function populateAcctTypeSelect() {
 // not per category, the same rule BANK_VALIDATED_TYPES and
 // NON_SPENDABLE_ACCOUNT_TYPES follow: bnpl sits in the same Credit accounts
 // group, but Klarna and Affirm issue no card, so asking which card would be
-// asking for something that does not exist.
-const CARD_PRODUCT_ACCOUNT_TYPES = new Set(["credit", "charge_card", "store_card"]);
+// asking for something that does not exist. A SECURED card is included: it is
+// a real card product with a real name (Discover it Secured, Capital One
+// Platinum Secured), and the security deposit changes how it was approved,
+// not what it is to use.
+const CARD_PRODUCT_ACCOUNT_TYPES = new Set(["credit", "charge_card", "secured_credit_card", "store_card"]);
 
 function setAcctType(type) {
   $("acctType").value = type;

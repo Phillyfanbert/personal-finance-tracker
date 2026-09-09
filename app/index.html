@@ -785,6 +785,21 @@
                CATEGORIES in app.js. -->
           <input id="acctBank" placeholder="Start typing a bank..." list="bankSuggestions" autocomplete="off" />
           <datalist id="bankSuggestions"></datalist>
+          <!-- Which CARD this is, shown only for the three types where a card
+               product is a real thing (credit / charge card / store card).
+               Decided per type, not per category: Buy Now, Pay Later sits in
+               the same Credit accounts group but Klarna and Affirm are not
+               card products, so the field would be asking for something that
+               does not exist. Same <datalist> shape as the Bank field
+               directly above rather than a third autocomplete pattern.
+               Optional on purpose - the list is comprehensive for major US
+               issuers and not exhaustive, so an unlisted card still saves. -->
+          <div id="acctCardRow" class="hidden">
+            <label for="acctCard">Card (optional)</label>
+            <input id="acctCard" placeholder="Start typing a card..." list="cardSuggestions" autocomplete="off" />
+            <datalist id="cardSuggestions"></datalist>
+            <p class="muted" style="font-size:11px;margin:2px 0 0">Which card this is, so two cards from the same bank are tellable apart. Leave blank if you would rather not say.</p>
+          </div>
           <div id="acctAssetLink">
             <p class="muted" style="font-size:12px;margin:8px 0 0">A new $0 balance is created automatically for this account - edit it below once saved.</p>
           </div>

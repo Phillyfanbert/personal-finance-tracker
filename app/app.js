@@ -16,6 +16,7 @@ import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
+import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate, detectNumberConvention,
 } from "./csvImport.js";
@@ -360,7 +361,15 @@ $("confirmModalOk").onclick = () => closeConfirmModal(true);
 // different banks, so anywhere an account is displayed by itself (not
 // already grouped under its bank, like the Accounts card circles are)
 // needs both. Cash has no bank_name, so it's unaffected.
-const acctLabel = (a) => (a ? (a.bank_name ? `${a.bank_name} ${a.name}` : a.name) : "");
+// A card product REPLACES "<bank> <type>" rather than appending to it: the
+// product name already carries its issuer ("Chase Sapphire Preferred"), so
+// appending would read "Chase Chase Sapphire Preferred". This is the whole
+// point of storing it - two Chase cards both rendered as "Chase Credit"
+// before, in every picker and every history row.
+// Display only. selectAccountFromText()'s matching reads a.bank_name
+// directly, so free-text account matching is untouched by this.
+const acctLabel = (a) =>
+  (a ? (a.card_product || (a.bank_name ? `${a.bank_name} ${a.name}` : a.name)) : "");
 const acctName = (id) => acctLabel(accounts.find((a) => a.id === id));
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 // A stable keyword to learn from (first meaningful token of merchant/
@@ -1745,6 +1754,13 @@ function populateAcctTypeSelect() {
   }).join("");
 }
 
+// A card product is a real thing for exactly these three. Decided per TYPE,
+// not per category, the same rule BANK_VALIDATED_TYPES and
+// NON_SPENDABLE_ACCOUNT_TYPES follow: bnpl sits in the same Credit accounts
+// group, but Klarna and Affirm issue no card, so asking which card would be
+// asking for something that does not exist.
+const CARD_PRODUCT_ACCOUNT_TYPES = new Set(["credit", "charge_card", "store_card"]);
+
 function setAcctType(type) {
   $("acctType").value = type;
   const cfg = ACCOUNT_TYPES[type];
@@ -1756,6 +1772,17 @@ function setAcctType(type) {
   $("acctBank").placeholder = BANK_VALIDATED_TYPES.has(type)
     ? "Start typing a bank..."
     : "Institution name (e.g. Fidelity, Affirm, Coinbase)";
+  const wantsCard = CARD_PRODUCT_ACCOUNT_TYPES.has(type);
+  $("acctCardRow").classList.toggle("hidden", !wantsCard);
+  // 115 static entries, seeded once - the browser filters a datalist itself,
+  // so unlike bankSuggestions (~3,570 names, ranked per keystroke) this needs
+  // no per-input rebuild.
+  if (wantsCard && !$("cardSuggestions").children.length) {
+    $("cardSuggestions").innerHTML = CREDIT_CARDS
+      .map((c) => `<option value="${esc(c.name)}">${esc(c.issuer)}</option>`)
+      .join("");
+  }
+  if (!wantsCard) $("acctCard").value = "";
   renderAccountTypeRequirement(type);
 }
 
@@ -1882,6 +1909,17 @@ $("saveAcctBtn").onclick = async () => {
 
   // Age/income eligibility. Deliberately a confirmation rather than a
   // refusal - see ACCOUNT_AGE_RULES for why this app must never block here.
+  // Soft gate, exactly like isKnownBank above: no public registry of card
+  // products exists, so a miss means "not in our list", never "not real".
+  const card_product = CARD_PRODUCT_ACCOUNT_TYPES.has(type) ? $("acctCard").value.trim() : "";
+  if (card_product && !isKnownCard(card_product)) {
+    const ok = await confirmModal(
+      `"${card_product}" isn't in our list of known cards. The list covers the major US issuers but isn't exhaustive, so if this is a real card we're just missing, you can add it as typed.`,
+      { title: "Card not recognized", confirmLabel: "Add as typed" }
+    );
+    if (!ok) { flagField("acctCard"); return; }
+  }
+
   const eligibility = accountEligibilityWarning(type, profile, incomeSources);
   if (eligibility) {
     const ok = await confirmModal(eligibility, {
@@ -1911,7 +1949,7 @@ $("saveAcctBtn").onclick = async () => {
   }
 
   const { data: newAccount, error } = await sb.from("accounts")
-    .insert({ name, bank_name, type, linked_asset_id, linked_liability_id })
+    .insert({ name, bank_name, type, linked_asset_id, linked_liability_id, card_product: card_product || null })
     .select().single();
   if (error) { flagField("acctBank"); return toast(error.message); }
   // Opening an account is the one history entry that moves no money - it's
@@ -1921,7 +1959,7 @@ $("saveAcctBtn").onclick = async () => {
   await logActivity(
     "account_created", `Opened ${bank_name} ${name}`, 0, undefined, newAccount.id
   );
-  $("acctBank").value = ""; $("acctForm").classList.add("hidden");
+  $("acctBank").value = ""; $("acctCard").value = ""; $("acctForm").classList.add("hidden");
   // loadAccounts first - loadDebts reads `accounts` to know which
   // liabilities are now account-linked (hides their delete button).
   await loadAccounts(); await loadAssets(); await loadDebts();

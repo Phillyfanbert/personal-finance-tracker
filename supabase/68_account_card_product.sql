@@ -1,0 +1,26 @@
+-- Which CARD an account is, not just which bank issued it -----------------
+--
+-- accounts.bank_name already says the institution ("Chase"), but two Chase
+-- cards were indistinguishable: both render as "Credit" because accounts.name
+-- is derived from the type. This holds the product name, so "Chase Sapphire
+-- Preferred" and "Chase Freedom Unlimited" are tellable apart.
+--
+-- Nullable on purpose, and blank is a real answer rather than an unfinished
+-- one. app/creditCards.js is comprehensive for major US issuers and NOT
+-- exhaustive - there is no public registry of card products the way FDIC
+-- covers banks and SEC covers tickers - so an unlisted card must still save.
+-- Same confirm-to-override shape isKnownBank() and isKnownTicker() use.
+--
+-- Deliberately NOT scoped in the database to particular account types. The
+-- client offers the field only for credit / charge_card / store_card, decided
+-- per type rather than per category, the same rule BANK_VALIDATED_TYPES and
+-- NON_SPENDABLE_ACCOUNT_TYPES follow. bnpl is excluded because Klarna and
+-- Affirm are not card products at all. A check constraint here would have to
+-- be migrated every time that judgment changes, and the judgment lives in the
+-- client's own type table where the rest of it already does.
+--
+-- NAME ONLY. No annual fee, no rewards rate, no APR - see creditCards.js's
+-- header for both reasons: those fields go stale in a way a name does not,
+-- and storing rewards makes "you would have earned more elsewhere" the
+-- obvious next feature, which is recommending a financial product.
+alter table accounts add column if not exists card_product text;

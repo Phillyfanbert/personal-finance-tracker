@@ -2253,6 +2253,55 @@
       <button class="secondary" id="downloadDataBtn">Download a copy of my data</button>
         <div class="stack-2"></div>
         <button class="secondary" id="downloadExpensesCsvBtn">Download all my spending as a spreadsheet</button>
+        <div class="stack-2"></div>
+        <!-- Lives in Profile rather than as a fifth nav tab: it is account-level
+             information, and the app is four tabs on purpose. -->
+        <button class="secondary" id="openPrivacyBtn">Your data and privacy</button>
+    </div>
+  </div>
+
+  <!-- ============ PRIVACY MODAL ============ -->
+  <!-- Every claim in here was checked against the running app rather than
+       written from intent, because a privacy statement that is merely
+       well-meaning is worse than none. The specific checks: all 31 tables
+       report rowsecurity = true; the client contacts only Supabase, the
+       three jsdelivr libraries below and the home Gemma tunnel; there is no
+       analytics, tracking or telemetry code and nothing sets a cookie;
+       localStorage holds exactly three UI preferences plus the sign-in
+       session. Re-run those checks before changing any sentence here. -->
+  <div id="privacyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
+    <div class="sheet">
+      <div class="topbar">
+        <h2 id="privacyTitle" style="font-size:16px;margin:0">Your data and privacy</h2>
+        <button class="secondary" id="privacyClose" style="width:auto">Close</button>
+      </div>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">Where your information is kept</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Everything you enter is stored in this app's own database, run by Supabase. The app itself is served by Cloudflare. Nothing is stored on the phone or computer you use beyond the small items listed further down.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">Who can see it</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 6px">Other people using this app cannot see your money. The database checks who is asking on every single request and returns only your own rows, so this holds even if the app itself has a bug.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 10px"><strong>The person who set this app up can.</strong> Running it requires a key that reads the whole database, and they hold it. That is normal for a household app, but you should know it rather than assume otherwise: treat what you record here as visible to them.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">What never leaves</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Your transactions, balances, account names and notes are never sent to an outside company. When you ask the app a question about your spending, the answer is written by a model running on a computer in this household, not by a cloud service.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">What does get sent out</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 6px">Three things leave, and none of them include who you are or what you spend:</p>
+      <ul class="muted" style="font-size:13px;margin:0 0 10px;padding-left:18px">
+        <li>Stock and fund symbols you track, sent to a price service to fetch the current price.</li>
+        <li>The names of subscription services you record, used to search public pricing pages for a cheaper plan. The service name only, never your account or what you pay.</li>
+        <li>Your browser loads three shared code libraries from a public code network (jsDelivr) when the page opens, which is how it sees your IP address. That is the same for any site using a public library.</li>
+      </ul>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">What is stored on your device</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Your sign-in, so you stay signed in, and three small preferences: which tab you were last on, which Investments tab you had open, and which spending breakdown you last chose. There are no cookies and no advertising or tracking code of any kind.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">Getting a copy, or deleting it</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">The two buttons above this one download everything you have recorded, as a file saved to your own device. To have your information deleted, ask the person who set this app up.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">The code is public, your data is not</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 4px">How this app works is published openly so anyone can check these claims. What you record is not part of that and is never published.</p>
     </div>
   </div>
 

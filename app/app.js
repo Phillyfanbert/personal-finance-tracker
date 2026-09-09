@@ -8280,6 +8280,8 @@ $("profileBtn").onclick = () => {
   openModal("profileModal");
 };
 $("profileClose").onclick = () => closeModal("profileModal");
+$("openPrivacyBtn").onclick = () => openModal("privacyModal");
+$("privacyClose").onclick = () => closeModal("privacyModal");
 
 // ---- HELP MODAL --------------------------------------------------------
 // One shared modal (index.html) for all 4 pages' documentation - openHelp

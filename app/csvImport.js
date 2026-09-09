@@ -295,7 +295,13 @@ export function isLikelyDuplicate(row, existingExpenses) {
   const desc = (row.description || "").toLowerCase().trim();
   return existingExpenses.some((e) =>
     e.occurred_at === row.occurred_at &&
-    Math.abs(Number(e.amount) - row.amount) < 0.01 &&
+    // Compared as whole CENTS, not as a float tolerance. The previous test
+    // was Math.abs(a - b) < 0.01, and floating point makes that quietly
+    // wrong at exactly the boundary it was written for: 50.01 - 50.00 is
+    // 0.009999999999990905, which passes, so two charges a cent apart were
+    // called duplicates. Amounts here are already money to two places, so
+    // rounding to an integer is exact rather than a tolerance at all.
+    Math.round(Number(e.amount) * 100) === Math.round(row.amount * 100) &&
     (e.description || e.merchant || "").toLowerCase().trim() === desc
   );
 }

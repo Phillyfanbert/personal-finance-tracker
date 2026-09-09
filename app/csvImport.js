@@ -230,7 +230,47 @@ const matchIdx = (lower, keywords, used) => {
  * @param {string[]} headers
  * @returns {{dateCol:number|null, amountCol:number|null, descCol:number|null, categoryCol:number|null, debitCol:number|null, creditCol:number|null}}
  */
-export function guessColumnMapping(headers) {
+/**
+ * Does this row look like DATA rather than a header? Used to catch a file
+ * that has no header row at all - Wells Fargo exports this way, and treating
+ * its first line as a header silently ate a real transaction while leaving
+ * every column unmapped.
+ */
+export function looksLikeDataRow(row) {
+  if (!Array.isArray(row) || !row.length) return false;
+  return row.some((c) => parseFlexibleDate(c) !== null)
+      && row.some((c) => parseAmount(c) !== null);
+}
+
+// Which column holds what, judged from the VALUES when the names did not
+// say. A headerless file has no names to match, and a file with names in a
+// language this list does not cover is the same problem - the data is the
+// one thing every file has.
+function inferFromContent(rows, used) {
+  const cols = Math.max(0, ...rows.map((r) => r.length));
+  const sample = rows.slice(0, 30);
+  const score = (i, fn) => sample.filter((r) => fn(r[i])).length / (sample.length || 1);
+  const best = (fn, min) => {
+    let bestIdx = -1, bestScore = min;
+    for (let i = 0; i < cols; i++) {
+      if (used.has(i)) continue;
+      const sc = score(i, fn);
+      if (sc > bestScore) { bestScore = sc; bestIdx = i; }
+    }
+    return bestIdx;
+  };
+  // Thresholds are deliberately high: guessing a column wrong is worse than
+  // leaving it for the user to pick, because the mapping step already exists
+  // and a wrong guess silently imports the wrong field.
+  return {
+    date: best((c) => parseFlexibleDate(c) !== null, 0.8),
+    amount: best((c) => parseAmount(c) !== null, 0.8),
+    desc: best((c) => typeof c === "string" && c.trim().length > 2
+      && parseAmount(c) === null && parseFlexibleDate(c) === null, 0.6),
+  };
+}
+
+export function guessColumnMapping(headers, rows = []) {
   const lower = headers.map((h) => (h || "").toLowerCase().trim());
   const used = new Set();
   const mapping = {
@@ -259,6 +299,22 @@ export function guessColumnMapping(headers) {
   const amount = matchIdx(lower, FIELD_KEYWORDS.amountCol, used);
   if (amount !== -1) { mapping.amountCol = amount; used.add(amount); }
   else if (debit !== -1) { mapping.amountCol = debit; used.add(debit); }
+
+  // Fall back to the values only for what the names did not resolve, so a
+  // file with good headers is never second-guessed by a content sniff.
+  if (rows.length && (mapping.dateCol == null || mapping.amountCol == null)) {
+    const guess = inferFromContent(rows, used);
+    if (mapping.dateCol == null && guess.date !== -1) {
+      mapping.dateCol = guess.date; used.add(guess.date);
+    }
+    if (mapping.amountCol == null && mapping.debitCol == null && guess.amount !== -1
+        && guess.amount !== mapping.dateCol) {
+      mapping.amountCol = guess.amount; used.add(guess.amount);
+    }
+    if (mapping.descCol == null && guess.desc !== -1 && !used.has(guess.desc)) {
+      mapping.descCol = guess.desc; used.add(guess.desc);
+    }
+  }
   return mapping;
 }
 

@@ -19,6 +19,7 @@ import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } fro
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate, detectNumberConvention,
+  looksLikeDataRow,
 } from "./csvImport.js";
 import {
   buildExpensesCsv, buildSectionedCsv, sectionsToJson, sectionsToSheets,
@@ -4076,9 +4077,18 @@ function proceedWithRows(rows) {
     $("csvFileInput").value = "";
     return;
   }
-  csvHeaders = rows[0];
-  csvDataRows = rows.slice(1);
-  csvMapping = guessColumnMapping(csvHeaders);
+  // A file with NO header row - Wells Fargo exports this way - would
+  // otherwise have its first real transaction consumed as a header and
+  // silently dropped, on top of leaving every column unmapped. Detected
+  // rather than asked about: if row 0 itself carries a readable date AND a
+  // readable amount, it is data, not names.
+  const headerless = looksLikeDataRow(rows[0]);
+  csvHeaders = headerless ? rows[0].map((_, i) => `Column ${i + 1}`) : rows[0];
+  csvDataRows = headerless ? rows : rows.slice(1);
+  // Data rows are passed in so the mapping can fall back to the VALUES for
+  // anything the column names did not resolve, which is the only thing a
+  // headerless file has to go on.
+  csvMapping = guessColumnMapping(csvHeaders, csvDataRows);
   $("csvMapDate").innerHTML = csvColumnOptions(csvMapping.dateCol);
   $("csvMapAmount").innerHTML = csvColumnOptions(csvMapping.amountCol);
   $("csvMapDebit").innerHTML = csvColumnOptions(csvMapping.debitCol);

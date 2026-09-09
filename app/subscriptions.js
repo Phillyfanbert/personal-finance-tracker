@@ -1,5 +1,5 @@
 // ============================================================================
-// Subscriptions logic (README §3.7, Phase 2 / F5).
+// Subscriptions and recurring-bill logic.
 // Pure, unit-testable helpers. UI wiring lives in app.js.
 // ============================================================================
 

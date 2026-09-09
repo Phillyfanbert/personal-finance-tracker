@@ -1,6 +1,6 @@
 // Minimal service worker - enables "Add to Home Screen" install on iOS/Android.
-// Caches the app shell only. The server (Supabase) stays the source of truth
-// per README §2.4; we do NOT cache API responses.
+// Caches the app shell only. The server (Supabase) stays the source of
+// truth; we do NOT cache API responses.
 //
 // SHELL only pre-warms the cache during install, before the first navigation
 // even completes - it is NOT what keeps the app usable offline day to day.
@@ -20,7 +20,7 @@
 // current here to close that gap too, not because normal offline use depends
 // on it. If it drifts again, that narrow case regresses; ordinary offline use
 // after a successful first run does not.
-const CACHE = "expense-shell-v22";
+const CACHE = "expense-shell-v23";
 const SHELL = [
   "./index.html", "./config.js", "./manifest.json",
   "./icons/icon-192.png", "./icons/icon-512.png",

@@ -1,5 +1,5 @@
 // ============================================================================
-// Reports & charts (README §3.8, Phase 1).
+// Reports and chart data preparation.
 // Pure aggregation helpers (unit-testable) + Chart.js renderers.
 // Chart.js is loaded from CDN in index.html as global `Chart`.
 // ============================================================================

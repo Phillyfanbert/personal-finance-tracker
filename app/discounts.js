@@ -1,7 +1,7 @@
 // ============================================================================
-// Discount discovery (README §3.7 / F6, v1 scope).
-// Matches the user's ACTIVE subscriptions + profile against the curated
-// subscription_catalog and surfaces cheaper, eligible plans.
+// Discount discovery. Matches the user's ACTIVE subscriptions + profile
+// against the curated subscription_catalog and surfaces cheaper, eligible
+// plans.
 // Pure & unit-testable; UI wiring lives in app.js.
 // ============================================================================
 import { monthlyAmount } from "./subscriptions.js";
@@ -183,7 +183,7 @@ export function findDeals(subscriptions, catalog, profile) {
 
 /**
  * If the user is NOT marked as a student, find student-only plans they'd unlock
- * by setting that status - a gentle upsell (README §1.2 profile → F6).
+ * by setting that status - a gentle upsell from their own profile.
  * @returns list of { service, studentMonthly, currentMonthly, potentialYearly }
  */
 export function studentUpsell(subscriptions, catalog, profile) {

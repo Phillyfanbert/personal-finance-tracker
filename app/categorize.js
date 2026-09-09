@@ -1,5 +1,5 @@
 // ============================================================================
-// Deterministic keyword categorization (README §3.5, layer 1).
+// Deterministic keyword categorization - layer 1, always on, no model needed.
 // Always-on, free, offline-tolerant. Gemma enrichment (Phase 3) layers on top.
 //
 // Order: user-specific rules (from category_rules table) win over the built-in
@@ -151,7 +151,7 @@ export function categorize(text, userRules = {}) {
 }
 
 /**
- * Very small free-text pre-parser used before Gemma exists (README §3.6 fallback).
+ * Very small free-text pre-parser, and the fallback whenever Gemma is unavailable.
  * Extracts a leading/embedded dollar amount and a payment-type hint.
  * Everything unparsed stays in raw_input for the user to confirm.
  * e.g. "$14 lunch chipotle debit" -> {amount:14, payment_type:'debit', rest:'lunch chipotle'}

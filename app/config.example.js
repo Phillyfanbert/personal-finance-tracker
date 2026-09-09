@@ -10,7 +10,7 @@ window.APP_CONFIG = {
   SUPABASE_URL: "https://YOUR-PROJECT-REF.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_YOUR_KEY_HERE",
 
-  // Phase 3 - Gemma natural-language parsing (OPTIONAL, README §3.6).
+  // Gemma natural-language parsing (OPTIONAL - the app works fully without it).
   // Leave GEMMA_ENDPOINT empty to keep the app on keyword parsing only.
   // For local testing: run tools/mock-gemma-server.js and use
   //   "http://localhost:11434/api/generate"

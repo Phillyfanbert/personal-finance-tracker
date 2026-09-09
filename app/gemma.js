@@ -1,5 +1,5 @@
 // ============================================================================
-// Gemma natural-language parsing client (README §3.6, Phase 3).
+// Gemma client: natural-language expense parsing and the Reports Q&A.
 // Best-effort enrichment: the app stays fully usable with keyword parsing when
 // the home machine (Ollama + Cloudflare Tunnel) is asleep or unreachable.
 //

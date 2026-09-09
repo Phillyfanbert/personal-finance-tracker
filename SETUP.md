@@ -17,7 +17,7 @@ personal-finance-agent/
 └── app/
     ├── index.html        ← the PWA UI
     ├── app.js             ← Supabase queries + UI logic
-    ├── categorize.js     ← keyword auto-categorization (README §3.5)
+    ├── categorize.js     ← keyword auto-categorization (see "What it does" in the README)
     ├── config.example.js ← committed template - copy this to config.js (step 4)
     ├── config.js         ← ⚠️ gitignored; put your real Supabase URL + key here (step 4)
     ├── manifest.json     ← PWA install metadata
@@ -100,14 +100,14 @@ it from git.
 
 ⚠️ Use the **publishable** key only. Never put a **secret** key
 (`sb_secret_...`, or the legacy `service_role`) in the app - it bypasses RLS
-entirely (README §3.3).
+entirely (see "Privacy" in the README).
 
 ## 5. Configure auth (magic links, free)
 
 Dashboard → **Authentication → Providers → Email**: make sure **Email** is
 enabled. Magic links work out of the box on the free tier.
 
-- **Do NOT** enable Phone/SMS auth - sending texts costs money (README §3.4).
+- **Do NOT** enable Phone/SMS auth - sending texts costs money (see "What it costs to run" in the README).
 - Dashboard → **Authentication → URL Configuration**: add your app's URL(s) to
   **Redirect URLs** so the magic link returns to the app. For local testing add
   `http://localhost:8000`; after deploy (step 7) add your Cloudflare Pages URL.
@@ -144,11 +144,11 @@ add an account and an expense.
 
 Open the `pages.dev` URL in **Safari** → **Share** → **Add to Home Screen**.
 It launches full-screen like a native app. (iOS has no auto-install prompt, so
-this manual step is expected - README §2.4.)
+this manual step is expected.)
 
 ## 9. Keep it from pausing (Cloudflare Worker cron)
 
-Supabase free projects **pause after 7 days of inactivity** (README §3.9) - where
+Supabase free projects **pause after 7 days of inactivity** (see "What it costs to run" in the README) - where
 "activity" means any API request hitting the project, not whether you logged an
 expense. A paused project stops responding until you manually **Restore** it from
 the dashboard (no data is lost - pausing ≠ deletion). To avoid that, run a tiny
@@ -214,7 +214,7 @@ project never shows "Paused."
 - [ ] Two-account isolation test passes (users can't see each other's data).
 - [ ] You can add and delete an expense from your phone's home screen.
 
-## Phase 1 is included (README §3.1)
+## Phase 1 is included
 
 The app now also has: **tap-to-edit** expenses, a **category-correction
 learning loop** (correcting a category upserts a `keyword → category` rule so
@@ -234,7 +234,7 @@ category, by account, and a 6-month trend, with a month picker.
 > alter table subscriptions  alter column user_id set default auth.uid();
 > ```
 
-## Phase 2 is included (README §3.7 / F5)
+## Phase 2 is included: subscriptions
 
 There's now a **Subscriptions** tab: add/edit/delete subscriptions (name,
 amount, billing cycle, next renewal, account, active flag, notes), a monthly-
@@ -243,7 +243,7 @@ a tappable **dashboard tile** on the Log screen showing monthly subscription
 spend and the next renewal. Annual plans are normalized to a monthly equivalent
 for totals. Logic lives in `app/subscriptions.js` (unit-tested).
 
-## Profiles UI is included (README §1.2)
+## Profiles UI is included
 
 The **👤 Profile** button (Log header) opens an editor for your display name,
 status (working / student / other), and - when you're a student - school and
@@ -251,7 +251,7 @@ graduation year, plus free-text notes. This data is private (RLS-scoped to you)
 and feeds the Phase 4 discount matcher. The `profiles` row is auto-created on
 sign-up by the DB trigger; the editor upserts changes to it.
 
-## Phase 4 is included (README §3.7 / F6, v1 scope)
+## Phase 4 is included: finding cheaper subscriptions
 
 The Subscriptions tab now shows a **💰 Savings found** card. For each active
 subscription it matches the seeded `subscription_catalog` for the same service,
@@ -266,7 +266,7 @@ the profile re-runs the match live. Logic lives in `app/discounts.js`
 > Keep `subscription_catalog` prices current (see the note atop `03_seed.sql`);
 > the quality of these suggestions is only as good as that reference data.
 
-## Phase 3 is included (README §3.6) - Gemma natural-language parsing
+## Phase 3 is included: Gemma natural-language parsing
 
 The quick-add box now does **two-layer parsing**: an instant keyword pass fills
 the fields immediately, and - if a Gemma endpoint is configured - a debounced
@@ -294,7 +294,7 @@ the "✨ parsed by Gemma" badge. (Note: browsers block plain-HTTP calls from an
 HTTPS page - use the mock only against a locally-served `http://localhost` app,
 or a real HTTPS tunnel in production.)
 
-### Real setup on your home machine (README §3.6)
+### Real setup on your home machine
 
 1. Install Ollama and pull the model: `ollama pull gemma`.
 2. Allow browser calls (CORS): run Ollama with `OLLAMA_ORIGINS=*` (or your app's
@@ -308,7 +308,7 @@ or a real HTTPS tunnel in production.)
 The client posts `{ model, prompt, stream:false, format:"json" }` and reads
 Ollama's `{ response: "<json>" }`, so it works against a stock Ollama server.
 
-## What's next (README §3.1)
+## What's next
 
 - **F6 stretch (later)** - a live web-search agent for real-time deals, once the
   curated-catalog version has proven useful. The only remaining roadmap item.

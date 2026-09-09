@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ============================================================================
 // Mock Gemma endpoint - stands in for Ollama while the home machine isn't set
-// up (README §3.6). Dependency-free. Mimics Ollama's /api/generate:
+// up. Dependency-free. Mimics Ollama's /api/generate:
 // accepts { model, prompt, format:"json" } and returns { response:"<json>" }.
 //
 // Run:   node tools/mock-gemma-server.js         (listens on :11434)

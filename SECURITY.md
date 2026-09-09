@@ -1,6 +1,6 @@
 # Security & Credential Handling
 
-This is a personal, $0-budget project (README §1.4), so there's no dedicated
+This is a personal, $0-budget project, so there's no dedicated
 security team - this doc is the substitute: one place that states what's safe
 to commit, what isn't, and what tooling enforces the difference.
 
@@ -25,7 +25,7 @@ to commit, what isn't, and what tooling enforces the difference.
   entirely. It must never appear in any file in this repo, committed or not,
   since anything in `app/` is served straight to the browser with no build
   step to strip it out.
-- The **Gmail SMTP app password** used for magic-link email (README §3.4).
+- The **Gmail SMTP app password** used for magic-link email.
   Lives only in the Supabase dashboard (Authentication → SMTP settings) -
   never in a file here.
 - Any **Cloudflare API token**, if one is ever created for scripted deploys.

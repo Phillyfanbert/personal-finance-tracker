@@ -1,7 +1,7 @@
 // ============================================================================
 // Expense Tracker - Phase 1 app logic (plain ES modules, no build step).
-// Adds: editable expenses, category-correction learning loop (README §3.5),
-// richer account management, and monthly charts (README §3.8).
+// Adds: editable expenses, the category-correction learning loop,
+// richer account management, and monthly charts.
 // RLS scopes every query to the signed-in user.
 // ============================================================================
 import { categorize, quickParse, CATEGORIES } from "./categorize.js";
@@ -3876,7 +3876,7 @@ $("quick").addEventListener("input", (e) => {
   const raw = e.target.value;
   if (!raw.trim()) { $("confirm").classList.add("hidden"); $("parseStatus").textContent = ""; return; }
   $("confirm").classList.remove("hidden");
-  // Layer 1: instant keyword parse (always on, README §3.5).
+  // Layer 1: instant keyword parse, always on and needing no model.
   const p = quickParse(raw);
   $("fAmount").value = p.amount ?? "";
   selectAccountFromText(raw, p.payment_type);
@@ -3885,7 +3885,7 @@ $("quick").addEventListener("input", (e) => {
   if (guessed) $("fCategory").value = guessed;
   entrySource = "manual";
   updateRequiredFieldHighlighting();
-  // Layer 2: best-effort Gemma enrichment, debounced (README §3.6).
+  // Layer 2: best-effort Gemma enrichment, debounced.
   scheduleGemma(raw);
 });
 $("cancelBtn").onclick = () => { $("quick").value = ""; $("confirm").classList.add("hidden"); $("parseStatus").textContent = ""; };
@@ -4845,7 +4845,7 @@ $("editSave").onclick = async () => {
   await applyLiabilityDelta(patch.account_id, patch.payment_type, amount, +1);
   await loadAssets(); await loadDebts();
 
-  // Learning loop (README §3.5): on a category correction, remember keyword->category.
+  // Learning loop: on a category correction, remember keyword->category.
   if (categoryChanged && $("eLearn").checked) {
     const kw = learnKeyword(patch);
     if (kw) {
@@ -7566,7 +7566,7 @@ td,th{padding:6px 8px;border-bottom:1px solid #ddd;text-align:left;font-size:13p
   win.print();
 };
 
-// ---- SUBSCRIPTIONS (README §3.7 / F5) --------------------------------------
+// ---- SUBSCRIPTIONS ---------------------------------------------------------
 // Suggestions only, not a fixed enum - sCategory (index.html) is a free-text
 // input with a <datalist>, the same "pick a suggestion or type your own"
 // pattern acctBank already uses for bank_name. Category values in the DB are
@@ -7775,7 +7775,7 @@ function renderRecurringCandidates() {
   });
 }
 
-// ---- DISCOUNT DISCOVERY (README §3.7 / F6) ---------------------------------
+// ---- DISCOUNT DISCOVERY ----------------------------------------------------
 // One question per plan_type eligibilityUpsells() can nudge toward
 // (the project notes, Profile & Discount Discovery #2).
 const UPSELL_PLAN_LABEL = {
@@ -8299,7 +8299,7 @@ $("deleteIncomeBtn").onclick = async () => {
   toast("Income source deleted");
 };
 
-// ---- PROFILE (README §1.2, feeds Phase 4 discount matching) ----------------
+// ---- PROFILE (feeds discount matching) -------------------------------------
 // Graduation year and school only mean anything for a current student, so the
 // pair is revealed by status rather than always asked. Graduation year is the
 // one that does real work: qualificationsFor() drops "student" once it has

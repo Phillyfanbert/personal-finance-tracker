@@ -682,10 +682,26 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
   // Netflix cost me" wants the charge, "how much have I spent at Shell" wants
   // the total, and answering either with the other is answering a question
   // nobody asked.
-  const asksWhatItCharges = /\b(cost|costs|charge|charges|charged|price)\b/.test(q) && !/\b(spent|spend|spending)\b/.test(q);
+  // "pay for" is included because it is how people actually ask this - "how
+  // much do I pay for Netflix" is the same question as "what does Netflix
+  // cost me". Bare "pay" is deliberately NOT enough: "how much did I pay at
+  // Shell" is asking for a total, and the preposition is the whole
+  // difference between the two.
+  const asksWhatItCharges = (/\b(cost|costs|charge|charges|charged|price)\b/.test(q)
+      || /\bpay(s|ing)? for\b/.test(q))
+    && !/\b(spent|spend|spending)\b/.test(q);
   if (asksWhatItCharges && !range) {
     const hits = detectRecurringExpenses(expenses, subscriptions, today)
       .filter((c) => mentionsWholeWord(q, c.merchant));
+    // Asked what a NAMED merchant costs, with no repeating charge found for
+    // it: decline rather than fall through to the merchant total below.
+    // Measured before adding this - "how much does Netflix cost me" over
+    // irregular charges answered "You spent $38.97 at Netflix", which reads
+    // as Netflix costing $38.97. Answering the wrong question precisely is
+    // the failure this whole path exists to avoid. Only merchant-named
+    // questions decline: "how much does food cost me" has no recurring
+    // charge to find and is answered perfectly well by the category total.
+    if (hits.length !== 1 && resolveMerchant(q, expenses)) return null;
     if (hits.length === 1) {
       const c = hits[0];
       return {

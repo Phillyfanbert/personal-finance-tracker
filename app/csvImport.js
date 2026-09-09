@@ -24,9 +24,49 @@ export function parseFlexibleDate(str) {
     return isValidYmd(y, m, d) ? `${y}-${m}-${d}` : null;
   }
 
-  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (slash) {
-    let [, m, d, y] = slash;
+  // Year-first with slashes or dots: unambiguous, since a 4-digit year can
+  // only be the year. Handled before the day/month forms below for that
+  // reason.
+  const isoish = s.match(/^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/);
+  if (isoish) {
+    const [, y, m, d] = isoish;
+    return isValidYmd(y, m.padStart(2, "0"), d.padStart(2, "0"))
+      ? `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}` : null;
+  }
+
+  // Compact YYYYMMDD, which some bank exports use for a sortable column.
+  // Anchored to exactly 8 digits so it cannot swallow an amount or an id.
+  const compact = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) {
+    const [, y, m, d] = compact;
+    return isValidYmd(y, m, d) ? `${y}-${m}-${d}` : null;
+  }
+
+  // Month NAME forms, in either order. A name removes the day/month
+  // ambiguity entirely, which is why both orders are safe to accept here
+  // while a numeric "09/03" still has to pick a convention.
+  const named = s.match(/^(?:(\d{1,2})[\s-]+([A-Za-z]{3,})|([A-Za-z]{3,})[\s-]+(\d{1,2}))[,\s]+(\d{4})$/);
+  if (named) {
+    const day = named[1] || named[4];
+    const monthName = (named[2] || named[3]).slice(0, 3).toLowerCase();
+    const y = named[5];
+    const idx = ["jan", "feb", "mar", "apr", "may", "jun",
+                 "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthName);
+    if (idx >= 0) {
+      const m = String(idx + 1).padStart(2, "0");
+      const d = day.padStart(2, "0");
+      return isValidYmd(y, m, d) ? `${y}-${m}-${d}` : null;
+    }
+    return null;
+  }
+
+  // Day/month/year with either separator. A slash and a dash carry the same
+  // meaning in every export that uses them, so they share one branch and one
+  // US-order convention rather than the dash form being rejected outright,
+  // which is what silently skipped every row of an otherwise fine file.
+  const numeric = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (numeric) {
+    let [, m, d, y] = numeric;
     // 2-digit year pivot: this app is for recent expense history, not
     // decades-old records, so treat every 2-digit year as 20YY.
     if (y.length === 2) y = "20" + y;
@@ -37,9 +77,19 @@ export function parseFlexibleDate(str) {
 
   return null;
 }
+// Checks the day against the REAL length of that month, not a flat 1-31.
+// The range-only version accepted 30 February and 29 February in a non-leap
+// year, so a typo or a malformed export created an expense dated to a day
+// that does not exist. Constructing the date and reading it back is the
+// cheapest way to be right about leap years without a rule of our own:
+// if any component comes back different, the date was not real.
 function isValidYmd(y, m, d) {
-  const mi = Number(m), di = Number(d);
-  return mi >= 1 && mi <= 12 && di >= 1 && di <= 31;
+  const yi = Number(y), mi = Number(m), di = Number(d);
+  if (!Number.isInteger(yi) || !Number.isInteger(mi) || !Number.isInteger(di)) return false;
+  if (mi < 1 || mi > 12 || di < 1 || di > 31) return false;
+  // UTC, so this cannot shift a day in a timezone west of Greenwich.
+  const dt = new Date(Date.UTC(yi, mi - 1, di));
+  return dt.getUTCFullYear() === yi && dt.getUTCMonth() === mi - 1 && dt.getUTCDate() === di;
 }
 
 /**

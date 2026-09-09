@@ -491,6 +491,61 @@ export function latestNewsDigest(findings) {
  * wrong "closed" would be a false claim, a missing one is just silence.
  * @param {Date} now
  */
+// US market holidays, COMPUTED rather than listed. Every one of the ten is a
+// fixed rule that has not changed in decades - the nth weekday of a month, a
+// fixed date, or Good Friday - so there is no annual list to update and no
+// chance of this quietly going stale the way a hardcoded table of dates
+// would. CONTRIBUTION_LIMIT_GROUPS is in this repo precisely because a
+// hardcoded set of yearly figures ran a whole tax year out of date.
+//
+// Weekend observation follows the NYSE rule: a holiday falling on Saturday
+// is observed the Friday before, one falling on Sunday the Monday after.
+const nthWeekday = (y, m, weekday, n) => {
+  const first = new Date(Date.UTC(y, m, 1));
+  const offset = (weekday - first.getUTCDay() + 7) % 7;
+  return new Date(Date.UTC(y, m, 1 + offset + (n - 1) * 7));
+};
+const lastWeekday = (y, m, weekday) => {
+  const last = new Date(Date.UTC(y, m + 1, 0));
+  return new Date(Date.UTC(y, m + 1, 0 - ((last.getUTCDay() - weekday + 7) % 7)));
+};
+// Anonymous Gregorian computus. Good Friday is the Friday before Easter.
+const easter = (y) => {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(y, month - 1, day));
+};
+// Saturday -> the Friday before, Sunday -> the Monday after.
+const observed = (d) => {
+  const wd = d.getUTCDay();
+  if (wd === 6) return new Date(d.getTime() - 86400000);
+  if (wd === 0) return new Date(d.getTime() + 86400000);
+  return d;
+};
+const ymd = (d) => d.toISOString().slice(0, 10);
+
+export function marketHolidays(year) {
+  const gf = easter(year);
+  return new Set([
+    observed(new Date(Date.UTC(year, 0, 1))),          // New Year's Day
+    nthWeekday(year, 0, 1, 3),                          // MLK, 3rd Monday Jan
+    nthWeekday(year, 1, 1, 3),                          // Presidents, 3rd Monday Feb
+    new Date(gf.getTime() - 2 * 86400000),              // Good Friday
+    lastWeekday(year, 4, 1),                            // Memorial, last Monday May
+    observed(new Date(Date.UTC(year, 5, 19))),          // Juneteenth
+    observed(new Date(Date.UTC(year, 6, 4))),           // Independence Day
+    nthWeekday(year, 8, 1, 1),                          // Labor, 1st Monday Sep
+    nthWeekday(year, 10, 4, 4),                         // Thanksgiving, 4th Thursday Nov
+    observed(new Date(Date.UTC(year, 11, 25))),         // Christmas
+  ].map(ymd));
+}
+
 export function marketStatus(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -503,8 +558,16 @@ export function marketStatus(now = new Date()) {
   const weekday = get("weekday");
   const minutesEt = Number(get("hour")) * 60 + Number(get("minute"));
   const isWeekday = weekday !== "Sat" && weekday !== "Sun";
+  // The ET calendar date, not the local or UTC one - a holiday has to be
+  // judged in the market's own timezone or the answer is wrong for anyone
+  // west of it in the evening.
+  const etDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now);
+  const holiday = marketHolidays(Number(etDate.slice(0, 4))).has(etDate);
   return {
-    open: isWeekday && minutesEt >= 9 * 60 + 30 && minutesEt < 16 * 60,
+    open: isWeekday && !holiday && minutesEt >= 9 * 60 + 30 && minutesEt < 16 * 60,
+    holiday,
     weekday,
     minutesEt,
   };

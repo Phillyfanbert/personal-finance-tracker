@@ -55,6 +55,15 @@ export function parseAmount(str) {
   // Strip currency/space/parens but NOT the separators yet - which of "," and
   // "." is the decimal point has to be decided first.
   let body = s.replace(/[()$\s]/g, "").replace(/[A-Za-z]{3}$/, "");
+  // A trailing minus is how some bank exports mark a debit ("45.00-"). Stripped
+  // BEFORE the separator convention is decided, and that order is load-bearing:
+  // the lone-comma test below is anchored to the end of the string, so with the
+  // minus still attached "50,00-" failed it, the comma was read as a thousands
+  // separator, and a 50.00 debit imported as 5000 - a silent 100x error on a
+  // real European export. "1.234,56-" happened to survive because it matches
+  // the other branch, which is why this went unnoticed.
+  const trailingMinus = /-$/.test(body);
+  if (trailingMinus) body = body.slice(0, -1);
   const lastComma = body.lastIndexOf(",");
   const lastDot = body.lastIndexOf(".");
   // European convention: the comma is the decimal separator, e.g. "1.234,56"
@@ -70,9 +79,6 @@ export function parseAmount(str) {
   } else {
     body = body.replace(/,/g, "");
   }
-  // A trailing minus is how some bank exports mark a debit ("45.00-").
-  const trailingMinus = /-$/.test(body);
-  if (trailingMinus) body = body.slice(0, -1);
   if (!body) return null;
   const n = Number(body);
   if (!Number.isFinite(n)) return null;

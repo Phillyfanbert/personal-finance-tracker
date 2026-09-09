@@ -380,11 +380,36 @@ const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 // picked up from raw typed text ("at walmart, bought milk" -> "walmart,")
 // would never match anything again, since \b's behavior right at a
 // punctuation edge is unreliable, not a silent no-op.
+// Words that are how the transaction was PROCESSED, never what was bought.
+// Bank descriptors lead with these constantly, and taking the first long
+// token meant correcting one row taught a rule that fired on every unrelated
+// transaction through the same processor: "TST* CHIPOTLE" taught "tst",
+// which is Toast and would then claim every restaurant; "POS DEBIT WHOLEFDS"
+// taught "pos"; "PAYPAL *STEAMGAMES" taught "paypal". Measured against 13
+// real descriptors, 7 taught one of these. Learning that makes future
+// categorisation worse is worse than not learning at all.
+const DESCRIPTOR_NOISE = new Set([
+  // processors and networks
+  "sq", "tst", "paypal", "pp", "ppd", "ach", "eft", "dda", "visa", "mastercard",
+  "mc", "amex", "disc", "discover", "interac", "sumup", "toast", "stripe",
+  // transaction types
+  "pos", "debit", "credit", "purchase", "payment", "pmt", "checkcard", "ckcd",
+  "chkcard", "withdrawal", "deposit", "transfer", "xfer", "recurring", "online",
+  "web", "mobile", "card", "chk", "ext", "des", "id", "indn", "co",
+]);
+
 function learnKeyword(row) {
   const src = (row.merchant || row.description || "").toLowerCase().trim();
   const tok = src.split(/\s+/)
     .map((w) => w.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
-    .filter((w) => w.length >= 3)[0];
+    // Strip a leading www. so a URL descriptor teaches the domain, not the
+    // whole address.
+    .map((w) => w.replace(/^www\./, ""))
+    .filter((w) => w.length >= 3
+      // All-digit tokens are store and reference numbers - "CHECKCARD 0309
+      // TRADER JOE S" must reach "trader", not stop at the date fragment.
+      && /[a-z]/.test(w)
+      && !DESCRIPTOR_NOISE.has(w))[0];
   return tok || null;
 }
 

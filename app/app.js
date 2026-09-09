@@ -1282,6 +1282,42 @@ const ACCOUNT_TYPES = {
 // pickers only (populateAcctTypeSelect / populateAssetTypeSelect); every
 // other code path treats them normally.
 const LEGACY_ACCOUNT_TYPES = new Set(["ira", "retirement_employer"]);
+
+// Types hidden from the pickers because almost nobody adding an account
+// needs them, NOT because a finer type replaced them - which is why this is
+// a separate set from LEGACY_ACCOUNT_TYPES above rather than more entries in
+// it. Same mechanism, genuinely different reason, and this repo names a
+// thing after the question it answers.
+//
+// The cost being cut is real: 55 selectable types meant someone adding a
+// checking account scrolled past a Coverdell ESA and a title loan to find
+// it. Every entry here stays fully valid in ACCOUNT_TYPES, so an account
+// already stored against one keeps rendering its real label, keeps its
+// grace-period and credit-limit behaviour, and keeps working everywhere -
+// only the "add an account" dropdown stops offering it.
+//
+// Reversible in one line if someone in this household turns out to have one.
+// Verified before hiding any of these that no live account uses them.
+const UNCOMMON_ACCOUNT_TYPES = new Set([
+  // Credit: a real ceiling and grace period apply to all of these, they are
+  // just products almost nobody adding an account is holding.
+  "secured_credit_card", "personal_line_of_credit", "overdraft_line",
+  "medical_credit_card",
+  // Loans. home_equity_loan overlaps heloc closely enough that offering both
+  // is a decision without a real difference for most people.
+  "home_equity_loan", "payday_loan", "title_loan", "credit_builder_loan",
+  "retirement_plan_loan",
+  // Retirement and investment. The 401(k)/IRA pairs, brokerage and 529 cover
+  // what a household actually holds; the rest need a specific employer or a
+  // specific life event.
+  "plan_403b", "plan_457b", "sep_ira", "simple_ira", "espp", "pension",
+  "custodial_utma", "tsp", "solo_401k", "rollover_inherited_ira", "annuity",
+  // Specialty. HSA, FSA, a digital wallet and crypto are ordinary; the rest
+  // are genuinely specialist.
+  "hra", "dependent_care_fsa", "coverdell_esa", "able_account",
+  "prepaid_card", "payroll_card", "second_chance_checking", "treasury_direct",
+  "multi_currency", "life_insurance_cash_value", "trust_account",
+]);
 const ACCOUNT_CATEGORIES = ["Deposit accounts", "Credit accounts", "Loans", "Retirement & investment", "Specialty"];
 // Per-type, not per-category - "is this realistically an FDIC/NCUA bank or
 // credit union" doesn't follow category lines cleanly. Every Deposit
@@ -1735,7 +1771,7 @@ function isKnownTicker(symbol, parentType) {
   return list.includes(typed);
 }
 
-// With ~40 types across 5 categories, a 3-button toggle (the original
+// With 24 selectable types across 5 categories, a 3-button toggle (the original
 // design, chosen specifically so a selection couldn't be glanced past - a
 // dropdown's silent default once shipped a real "Credit-named account
 // saved as Checking" bug) doesn't fit on screen. A <select> is unavoidable
@@ -1747,7 +1783,8 @@ function populateAcctTypeSelect() {
   const sel = $("acctType");
   sel.innerHTML = ACCOUNT_CATEGORIES.map((cat) => {
     const opts = Object.entries(ACCOUNT_TYPES)
-      .filter(([type, cfg]) => cfg.category === cat && !LEGACY_ACCOUNT_TYPES.has(type))
+      .filter(([type, cfg]) => cfg.category === cat && !LEGACY_ACCOUNT_TYPES.has(type)
+        && !UNCOMMON_ACCOUNT_TYPES.has(type))
       .map(([type, cfg]) => `<option value="${type}">${cfg.label}</option>`)
       .join("");
     return `<optgroup label="${cat}">${opts}</optgroup>`;
@@ -2324,7 +2361,8 @@ function populateAssetTypeSelect() {
   for (const cat of STANDALONE_ONLY_ASSET_CATEGORIES) {
     const opts = Object.entries(ACCOUNT_TYPES)
       .filter(([type, cfg]) => cfg.category === cat && cfg.kind === "asset" &&
-        !ACCOUNT_ONLY_SPECIALTY_TYPES.has(type) && !LEGACY_ACCOUNT_TYPES.has(type))
+        !ACCOUNT_ONLY_SPECIALTY_TYPES.has(type) && !LEGACY_ACCOUNT_TYPES.has(type)
+        && !UNCOMMON_ACCOUNT_TYPES.has(type))
       .map(([type, cfg]) => `<option value="${cfg.linkType}">${cfg.label}</option>`)
       .join("");
     sel.insertAdjacentHTML("beforeend", `<optgroup label="${cat}">${opts}</optgroup>`);

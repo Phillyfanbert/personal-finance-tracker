@@ -7,8 +7,10 @@ See "Mapping to this app's data model" (section 10) for how the research
 connects back to what actually exists in `supabase/*.sql` and `app/app.js`
 today.*
 
-*Most of what this document catalogs is now implemented (55 selectable
-account types as of 2026-08-12). Section **9b** is the part to read when
+*Most of what this document catalogs is now implemented (57 account types
+defined as of 2026-09-09, of which 24 are offered in the pickers - the rest
+stay valid for accounts already stored against them, they are just not
+offered for new ones). Section **9b** is the part to read when
 the question is "what does the app actually do with this number" rather
 than "what is this product" - it covers how a balance moves, how net worth
 counts it, when credit interest is genuinely charged, and how per-ticker

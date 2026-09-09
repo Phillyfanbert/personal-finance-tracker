@@ -1565,7 +1565,12 @@ async function writeRunStatus(crashError) {
     `(tavily ${outcomes.tavilyFail}, gemini ${outcomes.geminiFail}, finnhub ${outcomes.finnhubFail}); ` +
     `no trusted-domain result ${outcomes.noTrustedResult}; ` +
     `no stored headline for the company ${outcomes.noStoredHeadlines}; ` +
-    `extraction found nothing usable ${outcomes.emptyExtraction}.`
+    `extraction found nothing usable ${outcomes.emptyExtraction}; ` +
+    // Printed on EVERY run, healthy ones included, for the same reason the
+    // counters above are: an outcome nobody prints is an outcome nobody
+    // knows happened, which is how this agent once reported "ok" while
+    // storing nothing at all.
+    `mutual funds skipped as unpriceable ${outcomes.unpriceable}.`
   );
   try {
     await sbUpsert("agent_run_status", {
@@ -1709,6 +1714,7 @@ const outcomes = {
   noTrustedResult: 0,   // search worked, nothing on an allowlisted domain
   emptyExtraction: 0,   // Gemini answered, but found no usable value
   noStoredHeadlines: 0, // no stored headline names the company, so no explanation
+  unpriceable: 0,       // mutual fund symbol, skipped before spending a call
 };
 
 async function searchAndExtract(query, domains, instructionsPrompt) {
@@ -2186,7 +2192,35 @@ function validateFinnhubNews(raw) {
 // attached yet. absDayChangePercent (from Finnhub's own `dp` field,
 // already part of the same quote response - no extra call) is what the
 // ranking is based on; it's never written to the DB, only used to sort.
+// Finnhub's /quote covers exchange-traded instruments. A mutual fund has an
+// end-of-day NAV instead and is not served at all - measured live, and the
+// failure is loud rather than quiet: adding VFIAX and FXAIX to the watchlist
+// took the agent from "ok, 27 attempts, 0 failures" to "degraded, 29
+// attempts, 2 failures", reporting them as "rate limits or timeouts" when
+// they were neither. Left alone, one mutual fund holding degrades every run
+// forever, and a permanently amber status is one nobody reads.
+//
+// Detected by SHAPE, not by a list. Nasdaq issues five-character symbols
+// ending in X to mutual funds, so this needs no copy of MUTUAL_FUND_TICKERS
+// kept in sync across the Node/browser boundary (the same split that keeps
+// MARKET_INDEXES hand-synced in two places). Checked against the real lists:
+// it matches 62 of 63 entries there and NONE of the 284 stocks, ETFs and
+// crypto symbols. The single non-match, FDVV, turned out to be an ETF
+// miscategorised as a fund - its own name says "Fidelity High Dividend ETF" -
+// so the shape rule was right and the list was wrong. A list-based guard
+// would have skipped a symbol that prices perfectly well.
+const MUTUAL_FUND_SYMBOL = /^[A-Z]{4}X$/;
+
 async function fetchFinnhubFinding(symbol, fetchNews) {
+  if (MUTUAL_FUND_SYMBOL.test((symbol || "").trim().toUpperCase())) {
+    // Deliberately BEFORE queryAttempts++: no call is spent, so counting an
+    // attempt would overstate what the agent did. Counted as an outcome the
+    // same way noTrustedResult and emptyExtraction are - a real thing that
+    // happened and produced no row, which is not the same as a failure.
+    outcomes.unpriceable++;
+    console.log(`[${symbol}] mutual fund - Finnhub serves no quote for these, skipping`);
+    return null;
+  }
   queryAttempts++;
   let raw;
   try {

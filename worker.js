@@ -62,7 +62,22 @@ async function cachedQuote(symbol, env) {
 
 // null means "couldn't ask" (upstream error); { price: null } means
 // "asked, and this symbol isn't real."
+// Finnhub's /quote serves exchange-traded instruments only; a mutual fund
+// has an end-of-day NAV and is not covered. Measured live: the symbols come
+// back as an HTTP error, not a c:0 quote, so without this the route spends a
+// call and returns a 502 that reads as "something is broken" rather than
+// "this kind of symbol has no live price". Same five-character-ending-in-X
+// shape rule tools/price-agent.js uses - Nasdaq's own convention for mutual
+// funds, checked against the app's real ticker lists where it matches 62 of
+// 62 funds and none of the 284 stocks, ETFs or crypto symbols.
+//
+// Returns the { price: null } shape rather than an error on purpose: that is
+// already "asked, and there is no price for this", which is exactly true
+// here, and the Holdings form already degrades to manual entry on it.
+const MUTUAL_FUND_SYMBOL = /^[A-Z]{4}X$/;
+
 async function fetchQuote(symbol, env) {
+  if (MUTUAL_FUND_SYMBOL.test(symbol)) return { price: null };
   const res = await fetch(
     `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${env.FINNHUB_API_KEY}`
   );

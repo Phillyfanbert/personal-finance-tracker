@@ -71,11 +71,13 @@ export const ETF_TICKERS = [
   "VONG", "VONV", "VOO", "VOX", "VPU", "VSS", "VT", "VTI", "VTV", "VTWO",
   "VUG", "VWO", "VXUS", "VYM", "XLB", "XLC", "XLE", "XLF", "XLI", "XLK",
   "XLP", "XLRE", "XLU", "XLV", "XLY",
+
+  "FDVV",
 ];
 
 export const MUTUAL_FUND_TICKERS = [
   "AEPGX", "AGTHX", "AIVSX", "AMCPX", "ANCFX", "AWSHX", "CWGIX", "DODBX", "DODFX", "DODGX",
-  "FBALX", "FBGRX", "FCNTX", "FDEWX", "FDGRX", "FDVV", "FFFHX", "FLPSX", "FMAGX", "FPURX",
+  "FBALX", "FBGRX", "FCNTX", "FDEWX", "FDGRX",  "FFFHX", "FLPSX", "FMAGX", "FPURX",
   "FSKAX", "FSMAX", "FSSNX", "FTIHX", "FXAIX", "FXNAX", "FZILX", "FZROX", "OAKMX", "PARNX",
   "PRGFX", "PRWCX", "SWAGX", "SWISX", "SWLGX", "SWMCX", "SWPPX", "SWSSX", "SWTSX", "TRBCX",
   "VBTLX", "VDIGX", "VEXAX", "VFFVX", "VFIAX", "VFIFX", "VFORX", "VGENX", "VGHCX", "VGSLX",

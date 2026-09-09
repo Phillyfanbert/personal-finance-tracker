@@ -15,6 +15,19 @@
 const DEFAULT_RULES = {
   // Food
   chipotle: "Food", mcdonald: "Food", starbucks: "Food", coffee: "Food",
+  // The possessive-s forms are SEPARATE keywords, not a matcher change.
+  // Whole-word matching means "mcdonald" cannot match "MCDONALDS", which is
+  // exactly how every bank and card statement writes it - so the keyword was
+  // in this list from the start and had never once fired on a real import.
+  // Same for Wendy's. Loosening the matcher to tolerate a trailing s would
+  // fix these two and quietly weaken all 215 other keywords, so the plural
+  // is spelled out instead.
+  mcdonalds: "Food", wendys: "Food",
+  // Bank descriptors, which are not how anyone types a merchant name but are
+  // exactly what lands in an imported file. Verified against real statement
+  // formats: Amazon posts as "AMZN Mktp US*...", Whole Foods as "WHOLEFDS",
+  // and utilities as "PG&E WEB ONLINE PMT".
+  amzn: "Shopping", wholefds: "Food", "pg&e": "Utilities", pge: "Utilities",
   lunch: "Food", dinner: "Food", breakfast: "Food", brunch: "Food",
   grubhub: "Food", doordash: "Food", ubereats: "Food", postmates: "Food",
   restaurant: "Food", groceries: "Food", grocery: "Food", wholefoods: "Food",

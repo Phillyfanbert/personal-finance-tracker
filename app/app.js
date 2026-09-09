@@ -4205,10 +4205,21 @@ $("csvStep2Next").onclick = () => {
     // Only expenses can duplicate an existing expense; an income row is
     // checked against nothing, so it never starts unticked for that reason.
     const duplicate = normalized.kind === "expense" && isLikelyDuplicate(normalized, allExpenses);
-    csvPreviewRows.push({ normalized, duplicate });
+    // Resolve the category HERE, not at commit. The confirm step used to
+    // auto-categorize silently, so someone importing 200 bank rows - which
+    // usually carry no category column at all - reviewed a list with no
+    // categories on it, confirmed, and only then found out what was guessed.
+    // Deciding it now means the preview shows the real outcome and the
+    // summary can say how many will land uncategorized, which is the one
+    // thing worth knowing before importing rather than after.
+    const resolvedCategory = normalized.kind === "expense"
+      ? (normalized.category || categorize(normalized.description || "", userRules) || null)
+      : null;
+    csvPreviewRows.push({ normalized, duplicate, resolvedCategory });
   }
 
   const dupCount = csvPreviewRows.filter((r) => r.duplicate).length;
+  const uncategorized = csvPreviewRows.filter((r) => r.normalized.kind === "expense" && !r.resolvedCategory).length;
   const incomeCount = csvPreviewRows.filter((r) => r.normalized.kind === "income").length;
   const spendCount = csvPreviewRows.length - incomeCount;
   const parts = [];
@@ -4217,7 +4228,11 @@ $("csvStep2Next").onclick = () => {
   $("csvPreviewSummary").textContent =
     (parts.length ? `Found ${parts.join(" and ")}.` : "Nothing usable found in this file.") +
     (dupCount ? ` ${dupCount} look${dupCount === 1 ? "s" : ""} like something you already have.` : "") +
-    (csvSkippedCount ? ` ${csvSkippedCount} row${csvSkippedCount === 1 ? " was" : "s were"} skipped - no readable date or amount, or pointing the other way.` : "");
+    (csvSkippedCount ? ` ${csvSkippedCount} row${csvSkippedCount === 1 ? " was" : "s were"} skipped - no readable date or amount, or pointing the other way.` : "") +
+    // Stated up front because the fix is cheap BEFORE importing (tick fewer
+    // rows, or add a keyword first) and tedious after: finding the
+    // uncategorized ones among hundreds of new rows is its own chore.
+    (uncategorized ? ` ${uncategorized} ${uncategorized === 1 ? "has" : "have"} no category yet - you can set ${uncategorized === 1 ? "it" : "them"} in bulk from Recent History after importing.` : "");
 
   $("csvPreviewList").innerHTML = csvPreviewRows.length
     ? csvPreviewRows.map((r, i) => `
@@ -4226,7 +4241,7 @@ $("csvStep2Next").onclick = () => {
           <input type="checkbox" class="csv-row-select" data-csv-idx="${i}" ${r.duplicate ? "" : "checked"} style="width:auto;flex-shrink:0" />
           <div style="min-width:0">
             <div>${esc(r.normalized.description || "(no description)")}${r.duplicate ? ` <span class="muted" style="font-size:11px">you may already have this</span>` : ""}</div>
-            <div class="meta">${r.normalized.occurred_at}${r.normalized.kind === "income" ? " · money in" : ""}${r.normalized.category ? " · " + esc(r.normalized.category) : ""}</div>
+            <div class="meta">${r.normalized.occurred_at}${r.normalized.kind === "income" ? " · money in" : ""}${r.normalized.kind === "expense" ? (r.resolvedCategory ? " · " + esc(r.resolvedCategory) : ` · <span style="color:var(--warn)">no category</span>`) : ""}</div>
           </div>
         </div>
         <span class="amt" style="color:${r.normalized.kind === "income" ? "var(--ok)" : "var(--text)"}">${r.normalized.kind === "income" ? "+" : ""}${fmt(r.normalized.amount)}</span>
@@ -4257,7 +4272,9 @@ $("csvImportConfirm").onclick = async () => {
     amount: r.normalized.amount,
     description: r.normalized.description,
     merchant: null,
-    category: r.normalized.category || categorize(r.normalized.description || "", userRules) || null,
+    // The value the preview already showed, never recomputed - two
+    // calculations of one thing is how a preview and its result drift apart.
+    category: r.resolvedCategory,
     payment_type: paymentType,
     account_id: accountId,
     occurred_at: r.normalized.occurred_at,

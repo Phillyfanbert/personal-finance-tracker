@@ -8248,6 +8248,16 @@ $("deleteIncomeBtn").onclick = async () => {
 };
 
 // ---- PROFILE (README §1.2, feeds Phase 4 discount matching) ----------------
+// Graduation year and school only mean anything for a current student, so the
+// pair is revealed by status rather than always asked. Graduation year is the
+// one that does real work: qualificationsFor() drops "student" once it has
+// passed, which is what stops a stale profile being shown student pricing
+// that verification would reject.
+function toggleStudentFields() {
+  $("pStudentFields").classList.toggle("hidden", $("pStatus").value !== "student");
+}
+$("pStatus").onchange = toggleStudentFields;
+
 async function loadProfile() {
   // A profile row is auto-created on sign-up by the DB trigger; fetch it.
   const { data } = await sb.from("profiles").select("*").eq("id", userId).maybeSingle();
@@ -8263,6 +8273,11 @@ $("profileBtn").onclick = () => {
   $("pMilitary").checked = !!profile?.is_military;
   $("pFirstResponder").checked = !!profile?.is_first_responder_healthcare;
   $("pBirthYear").value = profile?.birth_year ?? "";
+  $("pOccupation").value = profile?.occupation ?? "";
+  $("pEmployer").value = profile?.employer ?? "";
+  $("pGradYear").value = profile?.graduation_year ?? "";
+  $("pSchool").value = profile?.school ?? "";
+  toggleStudentFields();
   $("pHousing").value = profile?.housing_status ?? "";
   $("pEmployment").value = profile?.employment_status ?? "";
   $("pHouseholdSize").value = profile?.household_size ?? "";
@@ -8673,6 +8688,10 @@ $("profileSave").onclick = async () => {
     is_military: $("pMilitary").checked,
     is_first_responder_healthcare: $("pFirstResponder").checked,
     birth_year: toNullableInt($("pBirthYear").value),
+    occupation: $("pOccupation").value.trim() || null,
+    employer: $("pEmployer").value.trim() || null,
+    graduation_year: toNullableInt($("pGradYear").value),
+    school: $("pSchool").value.trim() || null,
     housing_status: $("pHousing").value || null,
     employment_status: $("pEmployment").value || null,
     household_size: toNullableInt($("pHouseholdSize").value),

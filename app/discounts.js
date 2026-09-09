@@ -23,26 +23,112 @@ function age(profile) {
   return profile?.birth_year ? new Date().getFullYear() - profile.birth_year : null;
 }
 
+// Occupation and employer are free text the user typed, so these match WHOLE
+// WORDS with the same lookaround idiom categorize.js uses, not substrings.
+// "nurse" must not fire on "nursery", and "art" must never fire inside
+// "smart". Every term is a word someone would actually write about their own
+// job, which is the same bar CATEGORY_SYNONYMS holds.
+const EDUCATOR_WORDS = /(?<![a-z])(teacher|teaching|professor|lecturer|educator|instructor|faculty|principal|headteacher|tutor)(?![a-z])/i;
+const HEALTHCARE_WORDS = /(?<![a-z])(nurse|nursing|doctor|physician|surgeon|paramedic|pharmacist|dentist|therapist|clinician|midwife|radiographer)(?![a-z])/i;
+const RESPONDER_WORDS = /(?<![a-z])(firefighter|paramedic|police|officer|emt|dispatcher|constable)(?![a-z])/i;
+// Employer is a weaker signal than occupation and is used ONLY where the
+// institution type is unambiguous. A university employs cleaners and IT staff
+// as well as lecturers, so this qualifies someone as academic-adjacent for
+// offers that are open to school STAFF (which education pricing usually is),
+// never as proof they teach.
+const ACADEMIC_EMPLOYER = /(?<![a-z])(university|college|school|academy|institute|polytechnic)(?![a-z])/i;
+const HEALTHCARE_EMPLOYER = /(?<![a-z])(hospital|clinic|health|medical|nhs|infirmary)(?![a-z])/i;
+
+const has = (re, v) => typeof v === "string" && re.test(v);
+
+/**
+ * Everything this profile can plausibly claim, as a Set of plan_type keys.
+ *
+ * Split out from isEligible() so the reasons are inspectable rather than
+ * buried in a switch: the UI can say WHICH fact qualified someone, and a
+ * fixture can assert each route independently.
+ *
+ * These are claims to CHECK, not proof. Every real offer verifies
+ * separately (SheerID and the like), so the honest framing is "worth
+ * checking", which is what the Bills card says. Being generous here costs a
+ * wasted click; being stingy hides a discount someone could actually get.
+ */
+export function qualificationsFor(profile) {
+  const q = new Set();
+  if (!profile) return q;
+
+  // A student status with a graduation year already past is NOT a student.
+  // Before this, status:"student" matched forever - someone who graduated
+  // years ago and never edited their profile kept being shown student plans
+  // that verification would reject. This is the main reason graduation_year
+  // is collected at all.
+  if (profile.status === "student") {
+    const grad = Number(profile.graduation_year);
+    if (!Number.isFinite(grad) || grad >= new Date().getFullYear()) q.add("student");
+  }
+
+  if (has(EDUCATOR_WORDS, profile.occupation) || has(ACADEMIC_EMPLOYER, profile.employer)) {
+    q.add("educator");
+  }
+  if (profile.is_first_responder_healthcare
+      || has(HEALTHCARE_WORDS, profile.occupation)
+      || has(HEALTHCARE_EMPLOYER, profile.employer)) {
+    q.add("healthcare");
+  }
+  if (profile.is_first_responder_healthcare || has(RESPONDER_WORDS, profile.occupation)) {
+    q.add("first_responder");
+  }
+  if (profile.is_military) q.add("military");
+
+  const a = age(profile);
+  if (a !== null && a >= SENIOR_AGE) q.add("senior");
+  return q;
+}
+
+// Education pricing is routinely open to teachers as well as students, and
+// the seeded catalog says so in its own words: Adobe CC's student entry reads
+// "students & teachers, yr 1". Rather than invent a plan_type the catalog
+// does not use, an educator is accepted for a student-priced entry whose
+// OWN eligibility text names teachers. Reading the real field beats guessing.
+const ENTRY_INCLUDES_TEACHERS = /(?<![a-z])(teacher|educator|faculty|staff)s?(?![a-z])/i;
+
 /** Is the user eligible for a catalog plan given their profile? */
 export function isEligible(entry, profile) {
-  const status = profile?.status;
   switch (entry.plan_type) {
-    case "student":
-      return status === "student";      // needs verified student status
-    case "military":
-      return !!profile?.is_military;
-    case "first_responder":
-    case "healthcare":
-      return !!profile?.is_first_responder_healthcare;
-    case "senior": {
-      const a = age(profile);
-      return a !== null && a >= SENIOR_AGE;
-    }
     case "individual":
     case "annual":
     case "family":
-    default:
       return true;                       // available to anyone (family = household caveat)
+    default: {
+      const q = qualificationsFor(profile);
+      if (q.has(entry.plan_type)) return true;
+      if (entry.plan_type === "student" && q.has("educator")
+          && has(ENTRY_INCLUDES_TEACHERS, entry.eligibility)) return true;
+      return false;
+    }
+  }
+}
+
+/**
+ * Plain-English reason a profile qualifies for an entry, or null. Feeds the
+ * Bills card so a surfaced deal says why it was surfaced instead of just
+ * appearing - the same never-make-the-reader-guess rule the AI-written
+ * byline holds elsewhere.
+ */
+export function eligibilityReason(entry, profile) {
+  if (!isEligible(entry, profile)) return null;
+  const q = qualificationsFor(profile);
+  switch (entry.plan_type) {
+    case "student":
+      if (q.has("student")) return "you're recorded as a student";
+      if (q.has("educator")) return "this plan covers teachers too";
+      return null;
+    case "educator": return "your occupation or employer looks academic";
+    case "healthcare": return "you're recorded as working in healthcare";
+    case "first_responder": return "you're recorded as a first responder";
+    case "military": return "you're recorded as military or a veteran";
+    case "senior": return "based on your birth year";
+    default: return null;
   }
 }
 

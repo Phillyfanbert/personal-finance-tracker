@@ -2191,19 +2191,34 @@
         <option value="student">Student</option>
         <option value="other">Other</option>
       </select>
-      <!-- Deal-eligibility fields - every one of these is genuinely read by
-           discounts.js, alongside `status === 'student'`, so a real
-           military/first-responder/senior catalog entry (subscription_
+      <!-- Deal-eligibility fields. Every one is genuinely read by
+           discounts.js's qualificationsFor(), so a real military/
+           first-responder/senior/educator catalog entry (subscription_
            catalog.plan_type has no fixed enum - it's hand-seeded reference
            data) matches automatically once one exists.
-           Employer, occupation, school and graduation year used to sit here
-           too and were removed 2026-09-09: nothing read any of them. They
-           were asked for, four people answered, and the value went nowhere. -->
+           These were briefly removed on 2026-09-09 because nothing read
+           them, then implemented properly instead: graduation year expires a
+           stale student status, and occupation/employer unlock educator and
+           healthcare pricing. School is the one that drives no matching, and
+           its label says so rather than implying it does. -->
       <div class="muted" style="font-size:12px;margin:16px 0 4px;font-weight:700">Deal eligibility</div>
+      <p class="muted" style="font-size:11px;margin:0 0 8px">Each of these can unlock a cheaper plan on the Bills tab. Everything stays on your own account, and a deal always says which detail qualified you.</p>
       <label style="margin-top:6px"><input type="checkbox" id="pMilitary" style="width:auto;margin-right:8px" />Military or veteran</label>
       <label style="margin-top:6px"><input type="checkbox" id="pFirstResponder" style="width:auto;margin-right:8px" />First responder or healthcare worker</label>
       <label for="pBirthYear">Birth year</label>
       <input id="pBirthYear" type="number" inputmode="numeric" placeholder="1995" />
+      <div class="row">
+        <div><label for="pOccupation">Occupation</label><input id="pOccupation" placeholder="e.g. Teacher, Nurse" /></div>
+        <div><label for="pEmployer">Employer</label><input id="pEmployer" placeholder="e.g. Lincoln High School" /></div>
+      </div>
+      <p class="muted" style="font-size:11px;margin:2px 0 0">Teaching and healthcare jobs qualify for pricing plenty of services offer but do not advertise. A school, university or hospital as your employer counts too.</p>
+      <div id="pStudentFields" class="hidden">
+        <div class="row">
+          <div><label for="pGradYear">Graduation year</label><input id="pGradYear" type="number" inputmode="numeric" placeholder="2027" /></div>
+          <div><label for="pSchool">School</label><input id="pSchool" placeholder="e.g. NYU" /></div>
+        </div>
+        <p class="muted" style="font-size:11px;margin:2px 0 0">Graduation year stops student deals being suggested after you have finished. School is only kept for when a service asks you to verify; it does not affect which deals show.</p>
+      </div>
       <!-- Financial-context fields - not used for deal matching, folded
            into the Gemma Q&A context instead (wiki.js buildVerifiedContext)
            so a question like "should I pay down debt or save?" has

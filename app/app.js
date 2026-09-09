@@ -8254,34 +8254,28 @@ async function loadProfile() {
   profile = data || null;
 }
 
-function toggleStudentFields() {
-  $("pStudentFields").classList.toggle("hidden", $("pStatus").value !== "student");
-}
-$("pStatus").onchange = toggleStudentFields;
+
 
 $("profileBtn").onclick = () => {
   $("pEmail").value = userEmail ?? "";
   $("pName").value = profile?.display_name ?? "";
   $("pStatus").value = profile?.status ?? "other";
-  $("pSchool").value = profile?.school ?? "";
-  $("pGradYear").value = profile?.graduation_year ?? "";
   $("pMilitary").checked = !!profile?.is_military;
   $("pFirstResponder").checked = !!profile?.is_first_responder_healthcare;
   $("pBirthYear").value = profile?.birth_year ?? "";
-  $("pEmployer").value = profile?.employer ?? "";
-  $("pOccupation").value = profile?.occupation ?? "";
   $("pHousing").value = profile?.housing_status ?? "";
   $("pEmployment").value = profile?.employment_status ?? "";
   $("pHouseholdSize").value = profile?.household_size ?? "";
   $("pDependents").value = profile?.dependents ?? "";
   $("pGoals").value = profile?.financial_goals ?? "";
   $("pNotes").value = profile?.notes ?? "";
-  toggleStudentFields();
   openModal("profileModal");
 };
 $("profileClose").onclick = () => closeModal("profileModal");
 $("openPrivacyBtn").onclick = () => openModal("privacyModal");
 $("privacyClose").onclick = () => closeModal("privacyModal");
+$("openTermsBtn").onclick = () => openModal("termsModal");
+$("termsClose").onclick = () => closeModal("termsModal");
 
 // ---- HELP MODAL --------------------------------------------------------
 // One shared modal (index.html) for all 4 pages' documentation - openHelp
@@ -8672,19 +8666,13 @@ function toNullableInt(value) {
 }
 
 $("profileSave").onclick = async () => {
-  const isStudent = $("pStatus").value === "student";
-  const gradRaw = parseInt($("pGradYear").value, 10);
   const row = {
     id: userId,
     display_name: $("pName").value.trim() || null,
     status: $("pStatus").value,
-    school: isStudent ? ($("pSchool").value.trim() || null) : null,
-    graduation_year: isStudent && Number.isFinite(gradRaw) ? gradRaw : null,
     is_military: $("pMilitary").checked,
     is_first_responder_healthcare: $("pFirstResponder").checked,
     birth_year: toNullableInt($("pBirthYear").value),
-    employer: $("pEmployer").value.trim() || null,
-    occupation: $("pOccupation").value.trim() || null,
     housing_status: $("pHousing").value || null,
     employment_status: $("pEmployment").value || null,
     household_size: toNullableInt($("pHouseholdSize").value),

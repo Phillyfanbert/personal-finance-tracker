@@ -4,6 +4,12 @@
   "compatibility_date": "2026-08-04",
   "assets": {
     "directory": "./app",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // Unknown paths served app/404.html instead of an empty-bodied 404.
+    // Deliberately NOT "single-page-application": this app does no path
+    // routing at all (views toggle with .hidden and persist in localStorage),
+    // so serving index.html for any wrong URL would quietly show the
+    // dashboard instead of saying the address was wrong.
+    "not_found_handling": "404-page"
   }
 }

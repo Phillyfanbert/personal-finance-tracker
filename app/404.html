@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="robots" content="noindex" />
+  <title>Page not found - Personal Finance Tracker</title>
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <!-- Deliberately self-contained: no app.js, no Supabase, no CDN libraries.
+       A 404 is often the one page served when something is already wrong, so
+       it should not depend on anything that could itself be the thing that
+       broke. Colours are copied from index.html's tokens rather than shared,
+       for the same reason. -->
+  <style>
+    :root { --bg:#0f172a; --panel:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --accent-2:#38bdf8; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+           background:var(--bg); color:var(--text); padding:24px;
+           font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+    main { max-width:420px; text-align:center; }
+    h1 { font-size:20px; margin:0 0 10px; }
+    p { color:var(--muted); font-size:14px; line-height:1.6; margin:0 0 20px; }
+    a { display:inline-block; background:var(--accent-2); color:#002233; text-decoration:none;
+        font-weight:600; font-size:15px; padding:12px 20px; border-radius:10px; min-height:44px;
+        line-height:20px; }
+    a:focus-visible { outline:3px solid var(--text); outline-offset:2px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>That page isn't here</h1>
+    <p>The address you followed doesn't match anything in this app. It may have been mistyped, or it may be a link that no longer goes anywhere.</p>
+    <a href="/">Go to your dashboard</a>
+  </main>
+</body>
+</html>

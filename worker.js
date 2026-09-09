@@ -14,11 +14,53 @@ const SUPABASE_ANON_KEY = "sb_publishable_5-glVkeUx8LsOOe12x3OPQ_F8x-sa8w";
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // Measured live before adding this: http:// returned 200 with real
+    // content, no redirect and no HSTS. The Supabase calls are hardcoded to
+    // https so the data itself was never in the clear, but the PAGE over
+    // http is injectable in transit, and an injected page can read the
+    // sign-in token straight out of localStorage. For an app holding
+    // balances that is worth closing.
+    //
+    // cf-visitor carries the scheme the BROWSER used, which is what matters:
+    // Cloudflare can terminate TLS and hand the Worker an https-looking URL
+    // even when the original request was plaintext, so checking url.protocol
+    // alone would silently never fire.
+    const visitorScheme = (() => {
+      try { return JSON.parse(request.headers.get("cf-visitor") || "{}").scheme; }
+      catch { return null; }
+    })();
+    if (url.protocol === "http:" || visitorScheme === "http") {
+      url.protocol = "https:";
+      return Response.redirect(url.toString(), 301);
+    }
+
     if (url.pathname === "/api/price") return handlePriceRequest(url, request, env);
     if (url.pathname === "/api/quotes") return handleQuotesRequest(url, request, env);
-    return env.ASSETS.fetch(request);
+    return withSecurityHeaders(await env.ASSETS.fetch(request));
   },
 };
+
+// Applied to the served page, not to the JSON routes: those are same-origin
+// fetches the app makes of itself, never navigated to or framed.
+//
+// HSTS has no preload directive on purpose. Preload is a one-way submission
+// to a browser-vendor list that is slow and awkward to reverse, and this
+// hostname is a workers.dev subdomain rather than a domain that is owned -
+// committing it permanently is not ours to do. max-age alone gets the real
+// benefit for anyone who has visited once.
+//
+// DENY rather than SAMEORIGIN for framing: nothing in this app embeds itself,
+// so the stricter value costs nothing and closes clickjacking on a UI whose
+// buttons move real money.
+function withSecurityHeaders(res) {
+  const headers = new Headers(res.headers);
+  headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
 
 const SYMBOL_RE = /^[A-Z.\-]{1,10}$/;
 

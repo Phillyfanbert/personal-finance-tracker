@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
+  <!-- Describes the app to a browser or a link preview. Deliberately says
+       nothing about the household using it: the app is behind sign-in, so a
+       description is read by whoever finds the URL, not by a user. -->
+  <meta name="description" content="A private personal finance tracker for expenses, accounts, net worth and investments. Sign-in required." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Expenses" />
@@ -2187,28 +2191,19 @@
         <option value="student">Student</option>
         <option value="other">Other</option>
       </select>
-      <div id="pStudentFields" class="hidden">
-        <div class="row">
-          <div><label for="pSchool">School</label><input id="pSchool" placeholder="e.g. NYU" /></div>
-          <div><label for="pGradYear">Graduation year</label><input id="pGradYear" type="number" inputmode="numeric" placeholder="2027" /></div>
-        </div>
-      </div>
-
-      <!-- Deal-eligibility fields - feed discounts.js's isEligible(), the
-           same way `status === 'student'` already does, so a real
+      <!-- Deal-eligibility fields - every one of these is genuinely read by
+           discounts.js, alongside `status === 'student'`, so a real
            military/first-responder/senior catalog entry (subscription_
            catalog.plan_type has no fixed enum - it's hand-seeded reference
-           data) matches automatically once one exists. -->
+           data) matches automatically once one exists.
+           Employer, occupation, school and graduation year used to sit here
+           too and were removed 2026-09-09: nothing read any of them. They
+           were asked for, four people answered, and the value went nowhere. -->
       <div class="muted" style="font-size:12px;margin:16px 0 4px;font-weight:700">Deal eligibility</div>
       <label style="margin-top:6px"><input type="checkbox" id="pMilitary" style="width:auto;margin-right:8px" />Military or veteran</label>
       <label style="margin-top:6px"><input type="checkbox" id="pFirstResponder" style="width:auto;margin-right:8px" />First responder or healthcare worker</label>
       <label for="pBirthYear">Birth year</label>
       <input id="pBirthYear" type="number" inputmode="numeric" placeholder="1995" />
-      <div class="row">
-        <div><label for="pEmployer">Employer</label><input id="pEmployer" placeholder="e.g. Google" /></div>
-        <div><label for="pOccupation">Occupation</label><input id="pOccupation" placeholder="e.g. Teacher" /></div>
-      </div>
-
       <!-- Financial-context fields - not used for deal matching, folded
            into the Gemma Q&A context instead (wiki.js buildVerifiedContext)
            so a question like "should I pay down debt or save?" has
@@ -2257,6 +2252,8 @@
         <!-- Lives in Profile rather than as a fifth nav tab: it is account-level
              information, and the app is four tabs on purpose. -->
         <button class="secondary" id="openPrivacyBtn">Your data and privacy</button>
+        <div class="stack-2"></div>
+        <button class="secondary" id="openTermsBtn">Terms of use</button>
     </div>
   </div>
 
@@ -2302,6 +2299,45 @@
 
       <h3 style="font-size:14px;margin:14px 0 4px">The code is public, your data is not</h3>
       <p class="muted" style="font-size:13px;margin:0 0 4px">How this app works is published openly so anyone can check these claims. What you record is not part of that and is never published.</p>
+    </div>
+  </div>
+
+  <!-- ============ TERMS MODAL ============ -->
+  <!-- Written for the people who USE this app, which is a different document
+       from LICENSE.md - that one governs the source code and who may run or
+       redistribute it. This one is about what the app does and does not
+       promise to the person typing their spending into it.
+       Every limitation named here is one that genuinely applies: the home
+       machine really does go offline, the market data really is delayed, and
+       the summaries really are model-written. Nothing is claimed that the app
+       does not do. -->
+  <div id="termsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="termsTitle">
+    <div class="sheet">
+      <div class="topbar">
+        <h2 id="termsTitle" style="font-size:16px;margin:0">Terms of use</h2>
+        <button class="secondary" id="termsClose" style="width:auto">Close</button>
+      </div>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">What this app is</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">A private record of money you enter yourself, shared by a small household. It is not a bank and it never moves, holds or transfers real money. Changing a balance here changes a note about your money, not the money.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">It only knows what you tell it</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Every total, chart and answer is worked out from what has been recorded. If something was not entered, it is not counted, and figures will read low without saying so. Checking the numbers against your real statements is on you.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">Not financial advice</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Nothing here is advice from a licensed professional. The app shows you your own numbers and general, widely published information. It will not tell you what to buy or sell, and it does not know your full circumstances. For decisions that matter, talk to someone qualified.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">Prices and written summaries</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Share prices come from an outside service and can be delayed, missing or wrong, and some kinds of investment have no live price at all. Written recaps and answers are produced by a computer from figures the app calculated, and are labelled where they appear. Treat both as a helpful guide, not as a record of fact.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">Availability, and keeping your own copy</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">This runs on free services and, for some features, on a computer in this household. When that machine is off or the internet is down, parts of the app stop working and prices stop updating. There is no guarantee it will be available, and no promise that data cannot be lost. Use the download buttons in Profile now and then so you have your own copy.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">Using it</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Accounts are for members of this household, given out by the person who runs it, and can be withdrawn by them. Record your own money, not anyone else's, and do not try to reach another person's records.</p>
+
+      <h3 style="font-size:14px;margin:14px 0 4px">Changes</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 4px">These terms can change as the app does. There is no notification when they do, so re-read them if it matters to you. How your information is handled is covered separately, under "Your data and privacy".</p>
     </div>
   </div>
 

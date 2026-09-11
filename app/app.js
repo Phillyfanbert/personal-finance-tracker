@@ -234,26 +234,47 @@ function wireTogglePills({ attr, storageKey, options, fallback, apply }) {
       el.setAttribute("aria-pressed", on ? "true" : "false");
     }
   };
-  const select = async (raw) => {
+  // Deliberately NOT an async function. An async select returns a promise for
+  // every group, and wireBusyButtons tracks any promise a handler returns - so
+  // the breakdown pills, whose apply is a classList.toggle on three divs, grew
+  // a spinner and a disabled state for work with nothing to wait for
+  // (measured). Only a genuinely thenable apply produces a promise here.
+  //
+  // `seq` settles overlapping clicks. Persisting after an await meant two fast
+  // clicks wrote in COMPLETION order, not click order: Year then Month, with a
+  // slow year fetch, persisted "year" while the pill read "month". Only the
+  // newest click may write or roll back.
+  let seq = 0;
+  const select = (raw) => {
     const key = resolve(raw);
     const previous = current;
+    const mine = ++seq;
     current = key;
     paint(key);
-    try {
-      await apply(key);
-    } catch (err) {
-      current = previous; // what is stored, painted and rendered must agree
-      paint(previous);
+    const commit = () => { if (mine === seq) prefSet(storageKey, key); };
+    const rollback = (err) => {
+      // A stale click failing must not drag a newer, successful choice back.
+      if (mine === seq) { current = previous; paint(previous); }
       throw err;
+    };
+    let result;
+    try {
+      result = apply(key);
+    } catch (err) {
+      rollback(err);
     }
-    prefSet(storageKey, key);
+    if (result && typeof result.then === "function") return result.then(commit, rollback);
+    commit();
+    return null; // sync apply: no promise, so no busy tracking
   };
   for (const el of pills()) {
-    // Caught here rather than left to reject: `apply` can reach the network
-    // (the Reports scope refills its picker from a query), and a pill that
-    // silently did nothing is the failure this app keeps having to fix.
-    el.onclick = () => select(el.getAttribute(attr))
-      .catch((err) => toast(err?.message || "Could not switch that", "error"));
+    // A rejection is caught here rather than left to reject: `apply` can reach
+    // the network (the Reports scope refills its picker from a query), and a
+    // pill that silently did nothing is the failure this app keeps having.
+    el.onclick = () => {
+      const pending = select(el.getAttribute(attr));
+      return pending && pending.catch((err) => toast(err?.message || "Could not switch that", "error"));
+    };
   }
   paint(current); // restore the remembered pill; the caller decides when to apply
   return { select, current: () => current };
@@ -5104,21 +5125,32 @@ async function fetchAllPages(buildQuery) {
     const { data, error } = await buildQuery().range(from, from + ROW_PAGE_SIZE - 1);
     if (error) throw error;
     out.push(...(data || []));
-    if (!data || data.length < ROW_PAGE_SIZE) break;
+    if (!data || data.length < ROW_PAGE_SIZE) return out;
   }
-  return out;
+  // Every page came back full, so there is more than the cap allows. Returning
+  // what we have would understate every figure with no signal at all - the
+  // exact silent truncation this function exists to prevent, just moved to a
+  // higher threshold. Fail loudly; every caller already reports the error.
+  throw new Error("That period has more transactions than can be loaded at once. Try one month at a time.");
 }
 
 async function rowsForYear(year) {
   if (yearRowsCache.has(year)) return yearRowsCache.get(year);
   const from = `${year}-01-01`, to = `${year}-12-31`;
   const [expenses, income] = await Promise.all([
+    // Each .range() is a SEPARATE query, and Postgres does not promise a stable
+    // order for rows tied on the sort key - so paging on a date alone can hand
+    // back the same row twice or skip it entirely at a page boundary. `id`
+    // breaks every tie, which is what makes the paging above sound.
     fetchAllPages(() => sb.from("expenses").select("*")
       .gte("occurred_at", from).lte("occurred_at", to)
-      .order("occurred_at", { ascending: false }).order("created_at", { ascending: false })),
+      .order("occurred_at", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })),
     fetchAllPages(() => sb.from("account_activity").select("*").eq("kind", "income")
       .gte("occurred_at", from).lte("occurred_at", to)
-      .order("occurred_at", { ascending: false })),
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: false })),
   ]);
   // A failed fetch throws out of fetchAllPages and is never cached, so the next
   // render retries rather than showing an empty year forever.
@@ -5160,13 +5192,22 @@ let reportYearsCache = null;
 async function reportYears() {
   if (reportYearsCache) return reportYearsCache;
   const thisYear = new Date().getFullYear();
-  const { data, error } = await sb.from("expenses").select("occurred_at")
-    .order("occurred_at", { ascending: true }).limit(1);
-  // Swallowing this cached "only the current year exists" for the rest of the
-  // session, so one network blip hid every past year with nothing said. Let it
-  // throw: the caller rolls the toggle back and reports it.
-  if (error) throw error;
-  const earliest = data?.[0]?.occurred_at;
+  // BOTH tables, because the year view shows money in as well as money out.
+  // Asking expenses alone made a year with income and no logged spending
+  // unreachable, even though its "Money in and out" and savings rate would
+  // have been real.
+  const [exp, inc] = await Promise.all([
+    sb.from("expenses").select("occurred_at").order("occurred_at", { ascending: true }).limit(1),
+    sb.from("account_activity").select("occurred_at").eq("kind", "income")
+      .order("occurred_at", { ascending: true }).limit(1),
+  ]);
+  // An earlier version destructured only `data` and cached whatever came back.
+  // One network blip then hid every past year for the rest of the session with
+  // nothing said, so the error has to propagate: the caller rolls the toggle
+  // back and reports it, and nothing is cached.
+  if (exp.error || inc.error) throw exp.error || inc.error;
+  const earliest = [exp.data?.[0]?.occurred_at, inc.data?.[0]?.occurred_at]
+    .filter(Boolean).sort()[0];
   const firstYear = earliest ? Number(String(earliest).slice(0, 4)) : thisYear;
   const years = [];
   for (let y = thisYear; y >= Math.min(firstYear, thisYear); y--) years.push(String(y));
@@ -7699,17 +7740,6 @@ $("qaAskBtn").onclick = async () => {
   }
 };
 
-// Wipes every figure and chart on the Reports page. Used only when the period
-// could not be loaded: a stale number under a fresh period label is worse than
-// no number, because it reads as a real answer to a question nobody asked.
-function blankReportFigures() {
-  for (const id of ["rptTotal", "rptSubs", "rptAvgSpend", "savingsRateStat"]) $(id).textContent = "-";
-  for (const id of ["rptSubsNote", "rptAvgSpendNote", "rptExpListNote"]) $(id).textContent = "";
-  $("rptEmpty").classList.add("hidden");
-  for (const id of ["catChart", "acctChart", "payChart"]) renderBreakdownBar($(id), []);
-  renderTrendBar($("incomeExpenseChart"), [], []);
-}
-
 async function renderReports() {
   const period = reportPeriod();
   const ym = period.key; // a date PREFIX: "2026-09" for a month, "2026" for a year
@@ -7730,20 +7760,23 @@ async function renderReports() {
     ? `Money in and out through ${period.label}`
     : "Money in and out";
 
-  let rows;
+  // A year fetch can fail where a month never could, because a month is already
+  // in memory. Rather than returning early - which left the previous period's
+  // numbers under the new period's label, measured as "Spent in 2026: $412.55"
+  // with September's total underneath - the failure renders through the NORMAL
+  // path with no rows. Every figure is then cleared by the same code that
+  // populates it, so a figure added here later cannot be forgotten by a
+  // separate blank-everything helper.
+  let rows, loadError = null;
   try {
     rows = await reportRows(period);
   } catch (error) {
-    // A year fetch can fail where a month never could, because a month is
-    // already in memory. Every figure on this page belongs to the period that
-    // failed, and the labels above already name it, so leaving the previous
-    // period's numbers up states something false - measured as "Spent in 2026:
-    // $412.55" with September's total underneath. Blank them all, then show
-    // the real error.
-    blankReportFigures();
-    renderLoadError("rptExpList", error, renderReports);
-    return;
+    rows = { expenses: [], income: [] };
+    loadError = error;
   }
+  // The one thing empty rows get wrong: a total of zero would ASSERT nothing
+  // was spent. A period we could not load has no figure, so say so.
+  const fig = (v) => (loadError ? "-" : fmt(v));
   const periodExpenses = rows.expenses;
   const byCat = sumBy(periodExpenses, "category", ym);
   const byAcct = sumBy(periodExpenses, "account", ym, acctName);
@@ -7758,8 +7791,8 @@ async function renderReports() {
 
   // Names the actual month rather than "Selected month", so the number is
   // self-describing even when scrolled away from the picker.
-  $("rptTotal").textContent = fmt(total);
-  $("rptSubs").textContent = fmt(subs);
+  $("rptTotal").textContent = fig(total);
+  $("rptSubs").textContent = fig(subs);
   // This tile counts expenses CATEGORISED as Subscriptions in the chosen
   // month, which is a different number from what the Subscriptions page
   // shows (the cost of the subscriptions themselves). They diverge whenever
@@ -7767,7 +7800,10 @@ async function renderReports() {
   // sitting next to a "$5.99/month" on another page just looks broken. Only
   // said when there is actually a discrepancy worth explaining.
   const subsMonthlyCost = totalMonthly(subscriptions);
-  $("rptSubsNote").textContent = subs === 0 && subsMonthlyCost > 0
+  // Not while a load failed: with no rows `subs` is 0 for a reason that has
+  // nothing to do with what was logged, and "none logged as spending yet"
+  // would state a fact about a period we could not read.
+  $("rptSubsNote").textContent = !loadError && subs === 0 && subsMonthlyCost > 0
     ? "none logged as spending yet"
     : "";
 
@@ -7825,7 +7861,9 @@ async function renderReports() {
     : (avg.monthsCounted === 1 ? "based on 1 month so far" : `averaged over ${avg.monthsCounted} months`)
       + (hasIncome ? " (money in minus money out)" : "");
 
-  const empty = total === 0;
+  // Never while a load failed: "No expenses in 2026 yet" would state as fact
+  // the very thing the failure means we do not know.
+  const empty = total === 0 && !loadError;
   $("rptEmpty").classList.toggle("hidden", !empty);
 
   const periodRows = periodExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
@@ -7838,6 +7876,7 @@ async function renderReports() {
   $("rptExpListNote").textContent = periodRows.length > shown.length
     ? `Showing the ${shown.length} most recent of ${periodRows.length}. CSV below saves all of them.`
     : "";
+  if (loadError) renderLoadError("rptExpList", loadError, renderReports);
 
   // All three still render every time. They are cheap (already-loaded
   // expenses, no query) and Chart.js needs a laid-out canvas to size
@@ -7883,7 +7922,7 @@ const breakdownPills = wireTogglePills({
 breakdownPills.select(breakdownPills.current()); // show the remembered view
 
 // ---- MONTH REPORT EXPORT (the project notes, Reports & Net Worth #3) --------
-// Recomputes ym/monthRows fresh rather than reading renderReports()'s
+// Recomputes the period and its rows fresh rather than reading renderReports()'s
 // locals - cheap (already-loaded allExpenses, no new query) and avoids
 // threading extra state through just for these two buttons.
 // Confirms first, same bar as downloadDataBtn below and for the same
@@ -7932,10 +7971,10 @@ $("exportPdfBtn").onclick = async () => {
   if (!rows) return;
   const expenses = rows.expenses;
   const ym = period.key;
-  const monthRows = expenses.filter((r) => (r.occurred_at || "").startsWith(ym));
-  if (!monthRows.length) return toast(`Nothing logged in ${period.label} to print`);
+  const periodRows = expenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  if (!periodRows.length) return toast(`Nothing logged in ${period.label} to print`);
   const ok = await confirmModal(
-    `This opens a printable report of ${period.label} in a new tab, listing every one of your ${monthRows.length} transaction${monthRows.length === 1 ? "" : "s"} from that ${period.noun}. From there you can print it or save it as a PDF.`,
+    `This opens a printable report of ${period.label} in a new tab, listing every one of your ${periodRows.length} transaction${periodRows.length === 1 ? "" : "s"} from that ${period.noun}. From there you can print it or save it as a PDF.`,
     { title: "Open a printable report?", confirmLabel: "Open report" }
   );
   if (!ok) return;
@@ -7948,7 +7987,7 @@ $("exportPdfBtn").onclick = async () => {
   // category containing markup would execute in the print window. Category
   // is not safe just because the picker offers a fixed list - csvImport.js
   // writes whatever the file's category column contained, unvalidated.
-  const rowsHtml = monthRows.map((r) =>
+  const rowsHtml = periodRows.map((r) =>
     `<tr><td>${esc(r.occurred_at)}</td><td>${esc(r.description || r.merchant || "")}</td><td>${esc(r.category || "")}</td><td style="text-align:right">${fmt(r.amount)}</td></tr>`
   ).join("");
   const catHtml = byCat.map((c) => `<tr><td>${esc(c.label)}</td><td style="text-align:right">${fmt(c.value)}</td></tr>`).join("");

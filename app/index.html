@@ -77,10 +77,16 @@
     /* Above .modal (70) - a toast fired while a modal is open (e.g. "not
        enough in this asset" from the Pay form) must render on top of its
        dark overlay, not invisibly behind it. */
+    /* pointer-events must follow the opacity. A hidden toast is still a
+       fixed, full-width-ish box sitting over the bottom of the page at
+       z-index 80, so without this it silently swallows taps there while
+       being invisible - and now that a toast can hold an Undo button, it
+       would be an invisible button that un-archives an account. */
     .toast { position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%);
       background: var(--panel-2); border: 1px solid var(--border); padding: 12px 18px;
-      border-radius: 10px; opacity: 0; transition: opacity .2s; z-index: 80; max-width: 90%; }
-    .toast.show { opacity: 1; }
+      border-radius: 10px; opacity: 0; pointer-events: none; transition: opacity .2s;
+      z-index: 80; max-width: 90%; display: flex; align-items: center; gap: 0; }
+    .toast.show { opacity: 1; pointer-events: auto; }
     .exp { display: flex; justify-content: space-between; align-items: center;
       padding: 12px 0; border-bottom: 1px solid var(--border); gap: 10px; cursor: pointer; }
     .exp:last-child { border-bottom: none; }
@@ -1164,7 +1170,18 @@
           <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportReportsBtn" title="Export this month's analysis as a spreadsheet" aria-label="Export this month's analysis as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
-        <select id="monthSel" aria-label="Month to show" style="width:auto"></select>
+        <!-- A toggle rather than years mixed into the dropdown alongside
+             months: one list holding "August 2026" and "2026" asks the reader
+             to notice which kind of thing each option is, and the list grows
+             by a year every year. Two decisions, each with an obvious answer,
+             beat one list with two kinds of entry in it. -->
+        <div class="row" style="width:auto;gap:6px;align-items:center">
+          <div class="row" id="reportScopeTabs" style="width:auto;gap:6px" role="group" aria-label="Show a month or a whole year">
+            <button class="subtab-pill" data-scope="month">Month</button>
+            <button class="subtab-pill" data-scope="year">Year</button>
+          </div>
+          <select id="monthSel" aria-label="Which month or year to show" style="width:auto"></select>
+        </div>
       </div>
 
       <div class="totals" id="reportTotals">
@@ -1229,13 +1246,14 @@
            every chart below it far down the page - see renderReports (app.js). -->
       <div class="card" id="rptExpListCard">
         <div class="topbar" style="margin-bottom:4px">
-          <h2>Monthly Expense Log</h2>
+          <h2 id="rptExpListTitle">Expense log</h2>
           <div class="row" style="width:auto;gap:6px">
             <button class="secondary" id="exportCsvBtn" style="width:auto;padding:5px 10px;font-size:12px">CSV</button>
             <button class="secondary" id="exportPdfBtn" style="width:auto;padding:5px 10px;font-size:12px">Print / PDF</button>
           </div>
         </div>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
+        <p class="muted" id="rptExpListNote" style="font-size:12px;margin:4px 0 0"></p>
         <div id="rptExpList" class="scroll-list" style="margin-top:8px"></div>
       </div>
 
@@ -1270,7 +1288,7 @@
            income comparison, so it was strictly less informative. -->
       <div class="card" id="trendCard">
         <div class="card-head">
-          <h2>Money in and out</h2>
+          <h2 id="trendCardTitle">Money in and out</h2>
           <span class="info-icon" tabindex="0" role="button" data-info="incExpExplainer" title="What came in against what went out, for each of the last six months. Green is money in, blue is money out.">i</span>
         </div>
         <p class="muted explainer hidden" id="incExpExplainer">What came in against what went out, for each of the last six months. Green is money in, blue is money out.</p>
@@ -1278,7 +1296,7 @@
         <!-- Deliberately no color/threshold framing - a plain number, same
              restraint as the Liabilities
              card's credit-utilization line. -->
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Of what you earned this month, you kept: <strong id="savingsRateStat">-</strong></p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0"><span id="savingsRateLabel">Of what you earned this month, you kept:</span> <strong id="savingsRateStat">-</strong></p>
       </div>
 
       <!-- Reconstructed from expenses + account_activity (see
@@ -1309,7 +1327,7 @@
         <p class="muted" id="netWorthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
       </div>
 
-      <div id="rptEmpty" class="card hidden"><p class="muted" style="margin:0">No expenses in this month yet.</p></div>
+      <div id="rptEmpty" class="card hidden"><p class="muted" style="margin:0" id="rptEmptyText">No expenses in this month yet.</p></div>
     </div>
 
     <!-- ============ APP: PLAN VIEW ============ -->
@@ -2450,7 +2468,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-accounts-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Accounts</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-accounts-body">
           <p>Payment methods only - which card, bank, or wallet you paid with. Accounts are <strong>not</strong> counted in net worth by themselves; every account automatically gets its own linked Asset (a debit/deposit-style account) or Liability (a credit-style account) behind the scenes, and that linked balance is what actually counts. "+ Add" walks you through picking a type (this decides the account's name, like Checking or Credit Card) and typing the bank or institution name - for a real bank/credit union this is checked against a large built-in list as you type, and if it's genuinely not on the list you're offered an "add it anyway" option rather than being blocked outright.</p>
-          <p>Tap any account circle to adjust its balance directly: type the new total, or use +/- if you only know the change. A credit-type account instead shows Pay/adjust-owed controls from the Liabilities card below, plus a credit-utilization line and (once you've filled in its statement-cycle details there) a paid-in-full / carrying-a-balance / missed-minimum status. Archiving an account (the small "Archive" link under a circle) removes it from every list and total while keeping its full history intact and fully reversible from "View archived" - unlike the ✕ delete, which is permanent and unassigns its past expenses.</p>
+          <p>Tap any account circle to adjust its balance directly: type the new total, or use +/- if you only know the change. A credit-type account instead shows Pay/adjust-owed controls from the Liabilities card below, plus a credit-utilization line and (once you've filled in its statement-cycle details there) a paid-in-full / carrying-a-balance / missed-minimum status. Archiving an account (the small "Archive" link under a circle) removes it from every list and total while keeping its full history intact. It asks first, because the account and its balance drop out of your net worth straight away, and it offers an Undo right afterwards; either way it stays fully reversible from "View archived" - unlike the ✕ delete, which is permanent and unassigns its past expenses.</p>
           <p><strong>Overdrafts.</strong> By default a balance cannot go below zero: spending more than an account holds is refused. Real current accounts do go negative though, so if yours has an overdraft you can say how big it is, in the same panel where you adjust the balance. After that the account is allowed to go that far below zero and shows as <em>Overdrawn</em> in red, exactly as your real statement would. Going past the overdraft is still refused, the way a bank declines.</p>
           <p>Setting an allowance does not create money or add anything to your balance - it only changes how far down the balance is allowed to go. Nothing charges you an overdraft fee automatically either; if your bank charges one, record it yourself like any other expense. Being overdrawn lowers your net worth, because it is money you owe. Only accounts that really have overdrafts offer this: you will not see it on cash, a certificate of deposit, a prepaid card or an investment account, because none of those can go below zero in real life.</p>
           <p>Each account type shows its real-world <strong>opening requirement</strong> under the type picker - most need you to be 18, but plenty don't, and a few work differently than people expect. An IRA has no minimum age at all (it needs earned income instead, so a teenager with a job can hold one); a custodial UTMA/UGMA works the other way around, where the <em>beneficiary</em> has to be a minor; and 401(k)-style minimums are set by the employer's plan rather than by law. If your profile's birth year suggests you'd be under the usual age, the app asks you to confirm rather than refusing - it records accounts you already have, so a custodial account, a joint account, or one opened years ago all need to go in. With no birth year saved, it never asks at all.</p>
@@ -2642,7 +2660,7 @@
             <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="93" fill="var(--text)" font-size="14">Monthly report</text>
             <rect x="10" y="118" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="147" fill="var(--text)" font-size="14">Monthly Expense Log</text>
+            <text x="40" y="147" fill="var(--text)" font-size="14">Expense log</text>
             <rect x="10" y="172" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="201" fill="var(--text)" font-size="14">Where your money went</text>
             <rect x="10" y="226" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -2653,12 +2671,13 @@
             <text x="40" y="363" fill="var(--text)" font-size="14">Net worth trend</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. The month selector (top right) sets what most of this page shows, along with the first two of the three totals beneath it. The third total, and the last three cards, always cover your whole history instead - see below for which.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. The Month / Year buttons and the dropdown beside them (top right) set what most of this page shows, along with the first two of the three totals beneath it. The third total, and the last three cards, always cover your whole history instead - see below for which.</p>
 
         <div class="help-topic" id="helpTopic-month-selector-and-totals">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-month-selector-and-totals-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Month selector and totals</button></h3>
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-month-selector-and-totals-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Month or year, and the totals</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-month-selector-and-totals-body">
-          <p>Most of this page shows whichever month you pick at the top right. The bottom three cards are the exception, because they cover your whole history rather than one month.</p>
+          <p>Most of this page shows whichever stretch of time you pick at the top right. Choose Month to look at one month, or Year to see a whole year at once - the dropdown then lists years instead of months, and every figure and chart covers the year. The bottom three cards are the exception, because they always cover your whole history rather than the period you picked.</p>
+          <p>Switching keeps you roughly where you were: going from a month to Year shows that month's year, and going back shows a month inside the year you were reading. Only years you actually have spending in are offered.</p>
           <p>The three totals, each labelled with what it is: what you spent in the month you picked, how much of that was subscriptions, and a third that changes depending on what you have recorded.</p>
           <p><strong>"Of that, subscriptions"</strong> counts only spending you have written down and filed under Subscriptions in that month. It is not the same as the total on the Log page's Bills tab, which is what those plans cost you per month whether or not a charge has been logged. If you have subscriptions set up but none of their charges recorded yet, this reads $0.00 and says so underneath, rather than looking like the two pages disagree.</p>
           <p>Before you have added any income, that third one reads <strong>Spent in a typical month</strong> - roughly what a normal month costs you. Once the app knows about any money coming in, it switches to <strong>Left over in a typical month</strong>: what you were paid, minus what you spent. A plus means you ended the month ahead, a minus means you spent more than came in. The label always changes with it, so it is never unclear which one you are looking at.</p>
@@ -2691,9 +2710,9 @@
         </div>
 
         <div class="help-topic" id="helpTopic-monthly-expense-log">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-monthly-expense-log-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Monthly Expense Log</button></h3>
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-monthly-expense-log-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Expense log</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-monthly-expense-log-body">
-          <p>Every plain expense in the selected month (not account activity like balance corrections - this list is about spending specifically). Tap one to edit or recategorize it, same as Recent History on the Log page. CSV exports the visible rows to a spreadsheet file; Print / PDF opens a clean, separate printable page you can save as a PDF from your browser's own print dialog. Both ask you to confirm first: either one puts a readable copy of that month's spending somewhere outside the app, which matters on a shared or borrowed device.</p>
+          <p>Every plain expense in the period you picked, whether that is a month or a whole year (not account activity like balance corrections - this list is about spending specifically). Tap one to edit or recategorize it, same as Recent History on the Log page. CSV exports the visible rows to a spreadsheet file; Print / PDF opens a clean, separate printable page you can save as a PDF from your browser's own print dialog. Both ask you to confirm first: either one puts a readable copy of your spending somewhere outside the app, which matters on a shared or borrowed device.</p>
           </div>
         </div>
 
@@ -2732,7 +2751,7 @@
         <div class="help-topic" id="helpTopic-export-reports">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-reports-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-reports-body">
-          <p>Saves the analysis rather than the raw list: the month's totals, the same spending split three ways (by what you bought, which account paid, and how you paid), and money in against money out for the last six months with how much you kept. For the underlying transactions instead, use CSV on the Monthly Expense Log below.</p>
+          <p>Saves the analysis rather than the raw list: the totals for whichever month or year you picked, the same spending split three ways (by what you bought, which account paid, and how you paid), and money in against money out across that period with how much you kept. For the underlying transactions instead, use CSV on the expense log below.</p>
           <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
           </div>
         </div>

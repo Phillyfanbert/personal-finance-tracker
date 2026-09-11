@@ -80,7 +80,22 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 // 2. The duration was a flat 2200ms for everything. WCAG 2.2.1 expects a
 //    message to be readable, and a 79-character sentence on the same timer as
 //    "Added" is not. It now scales with length, within bounds.
+// ---- Per-device preferences -------------------------------------------------
+// localStorage THROWS, it does not return null, when a browser is set to block
+// site data (and historically in Safari private mode). Several of these reads
+// and writes run at module evaluation time, so an unguarded one does not lose a
+// remembered tab - it aborts app.js and the whole app renders nothing. Every
+// preference goes through these two, so the failure mode is "forgets your last
+// tab" instead of "blank screen". Never call localStorage directly.
+function prefGet(key, fallback = null) {
+  try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+function prefSet(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* storage blocked; preference is session-only */ }
+}
+
 let toastTimer = null;
+let toastShowTimer = null;
 // ---- "Something is happening" -----------------------------------------------
 // One mechanism for the whole app, so a user can always tell a working app
 // from a stuck one. Two surfaces with one meaning: a spinner inside the
@@ -190,18 +205,105 @@ function wireBusyButtons() {
   }
 }
 
-function toast(msg, severity = "info") {
+// ---- Toggle-pill groups -----------------------------------------------------
+// One mechanism for a row of .subtab-pill toggle buttons: paint the active pill
+// (class AND aria-pressed), run the caller's effect, then remember the choice.
+// Markup-driven like wireInfoIcons, so a new pill is markup only.
+//
+// Two details are load-bearing rather than incidental:
+//
+// The CURRENT value lives here, not in localStorage. A reader like
+// reportScope() must see the new value while `apply` is still running -
+// populateReportPeriodSelect() asks which scope is active in order to decide
+// whether to list months or years, so reading it back from storage would hand
+// it the OLD scope and fill the picker with the wrong kind of option.
+//
+// Persisting happens LAST, and a throwing `apply` rolls the value back. The
+// Reports scope effect refills the picker over a network call; persisting
+// first meant a failure left "year" stored while the picker still held months,
+// and reportPeriod() then silently substituted the current year - reporting a
+// period the user never chose.
+function wireTogglePills({ attr, storageKey, options, fallback, apply }) {
+  const resolve = (v) => (options.includes(v) ? v : fallback);
+  const pills = () => document.querySelectorAll(`[${attr}]`);
+  let current = resolve(prefGet(storageKey, fallback));
+  const paint = (key) => {
+    for (const el of pills()) {
+      const on = el.getAttribute(attr) === key;
+      el.classList.toggle("active", on);
+      el.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  };
+  const select = async (raw) => {
+    const key = resolve(raw);
+    const previous = current;
+    current = key;
+    paint(key);
+    try {
+      await apply(key);
+    } catch (err) {
+      current = previous; // what is stored, painted and rendered must agree
+      paint(previous);
+      throw err;
+    }
+    prefSet(storageKey, key);
+  };
+  for (const el of pills()) {
+    // Caught here rather than left to reject: `apply` can reach the network
+    // (the Reports scope refills its picker from a query), and a pill that
+    // silently did nothing is the failure this app keeps having to fix.
+    el.onclick = () => select(el.getAttribute(attr))
+      .catch((err) => toast(err?.message || "Could not switch that", "error"));
+  }
+  paint(current); // restore the remembered pill; the caller decides when to apply
+  return { select, current: () => current };
+}
+
+function hideToast() { $("toast").classList.remove("show"); }
+
+// `action` ({ label, onAction }) puts a real button in the toast, for an
+// action that only makes sense in the moment it is offered - undoing an
+// archive right where it happened rather than going to find it again.
+//
+// A timed control is a real accessibility concern (WCAG 2.2.1), so an action
+// offered here must ALWAYS have a permanent home as well: Undo Archive is
+// also the Unarchive button in the archived-accounts modal, which is where
+// this leads if the toast is missed. Do not put an action here that exists
+// nowhere else.
+//
+// Built with textContent + append rather than innerHTML: the message can
+// carry a user-typed account name, and there is no markup in it to warrant
+// an escaping step that could be forgotten later.
+function toast(msg, severity = "info", action = null) {
   const t = $("toast");
   const isError = severity === "error";
   t.setAttribute("role", isError ? "alert" : "status");
   t.setAttribute("aria-live", isError ? "assertive" : "polite");
   clearTimeout(toastTimer);
-  t.textContent = "";
-  setTimeout(() => {
+  clearTimeout(toastShowTimer);
+  t.textContent = ""; // also drops any previous toast's action button
+  toastShowTimer = setTimeout(() => {
     t.textContent = msg;
+    if (action) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "secondary btn-xs";
+      btn.style.marginLeft = "12px";
+      btn.textContent = action.label;
+      btn.onclick = async () => {
+        hideToast();
+        // Awaited and caught: the action is the whole point of the button, and
+        // an undo that quietly failed would look exactly like one that worked.
+        try { await action.onAction(); }
+        catch (err) { toast(err?.message || "That did not work", "error"); }
+      };
+      t.append(btn);
+    }
     t.classList.add("show");
-    const ms = Math.min(8000, Math.max(2200, 1200 + String(msg).length * 55));
-    toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+    // An action needs long enough to read the sentence AND reach the button,
+    // so it gets a flat generous window rather than the length-scaled one.
+    const ms = action ? 12000 : Math.min(8000, Math.max(2200, 1200 + String(msg).length * 55));
+    toastTimer = setTimeout(hideToast, ms);
   }, 60);
 }
 // Generic red-border flag for a denied action (the project notes' "every denial
@@ -340,10 +442,18 @@ for (const el of document.querySelectorAll(".modal")) {
 }
 
 let confirmModalResolve = null;
-function confirmModal(message, { title = "Are you sure?", confirmLabel = "Delete" } = {}) {
+function confirmModal(message, { title = "Are you sure?", confirmLabel = "Delete", danger = true } = {}) {
   $("confirmModalTitle").textContent = title;
   $("confirmModalMsg").textContent = message;
-  $("confirmModalOk").textContent = confirmLabel;
+  const okBtn = $("confirmModalOk");
+  okBtn.textContent = confirmLabel;
+  // Red is this app's delete colour, and it was hardcoded in the markup, so
+  // every confirm wore it - including reversible ones. An Archive button in
+  // delete-red contradicts its own message, which says nothing is deleted.
+  // `danger` defaults to true so every existing caller looks exactly as it
+  // did; a reversible action opts out.
+  okBtn.style.color = danger ? "var(--err)" : "";
+  okBtn.style.borderColor = danger ? "var(--err)" : "";
   openModal("confirmModal");
   return new Promise((resolve) => { confirmModalResolve = resolve; });
 }
@@ -509,7 +619,7 @@ sb.auth.getSession().then(({ data }) => renderAuth(data.session));
 // simply falls through the includes() check below and lands on "log",
 // which is where its content now lives anyway.
 const VIEWS = ["log", "plan", "reports", "invest"];
-const lastView = () => (VIEWS.includes(localStorage.getItem("lastView")) ? localStorage.getItem("lastView") : "log");
+const lastView = () => (VIEWS.includes(prefGet("lastView")) ? prefGet("lastView") : "log");
 
 function renderAuth(session) {
   const authed = !!session;
@@ -571,7 +681,7 @@ $("backFromPlan").onclick = () => showView("log");
 $("backFromReports").onclick = () => showView("log");
 $("backFromInvest").onclick = () => showView("log");
 function showView(v) {
-  localStorage.setItem("lastView", v);
+  prefSet("lastView", v);
   $("logView").classList.toggle("hidden", v !== "log");
   $("planView").classList.toggle("hidden", v !== "plan");
   $("reportsView").classList.toggle("hidden", v !== "reports");
@@ -2157,12 +2267,30 @@ function renderAccountsList() {
   document.querySelectorAll("[data-archive-acct]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
+      const acctId = el.dataset.archiveAcct;
+      const acct = accounts.find((a) => a.id === acctId);
+      const label = acct ? acctLabel(acct) : "this account";
+      // Archiving is reversible, so this is not the delete flow's "are you
+      // sure" - it is here because the CONSEQUENCE is invisible and immediate.
+      // The account and its balance drop out of net worth and every listing
+      // the moment it happens, and its bills stop being logged, which reads
+      // like money disappeared if you did not mean to press it. Say what
+      // actually changes, then offer the way back.
+      const ok = await confirmModal(
+        "It stops counting toward your net worth, disappears from your lists, and its bills stop being logged automatically. " +
+        "Nothing is deleted: the balance and history are kept, and you can bring it back at any time.",
+        { title: `Archive ${label}?`, confirmLabel: "Archive", danger: false }
+      );
+      if (!ok) return;
       const { error } = await sb.from("accounts")
         .update({ archived_at: new Date().toISOString() })
-        .eq("id", el.dataset.archiveAcct);
-      if (error) return toast(error.message);
+        .eq("id", acctId);
+      if (error) return toast(error.message, "error");
       await loadAccounts();
-      toast("Account archived");
+      // The same Unarchive the archived-accounts modal offers, put where the
+      // action just happened. That modal is still the permanent route, which
+      // is what makes a timed button acceptable here at all.
+      toast(`Archived ${label}`, "info", { label: "Undo", onAction: () => unarchiveAccount(acctId) });
     };
   });
   // delete handlers - expenses keep their history (account_id -> null on delete, per schema)
@@ -2177,6 +2305,19 @@ function renderAccountsList() {
   document.querySelectorAll("[data-adjust-liability]").forEach((el) => {
     el.onclick = () => openDebtBalanceForm(el.dataset.adjustLiability, "paying");
   });
+}
+
+// Shared by the archived-accounts modal's Unarchive button and the Undo on
+// the toast shown right after archiving - one path, so the two can never
+// disagree about what bringing an account back does. Clearing archived_at is
+// the whole operation: archiving never touched the linked asset/liability or
+// any expense row (22_account_archive.sql), so the exact balance and history
+// come back with it.
+async function unarchiveAccount(acctId) {
+  const { error } = await sb.from("accounts").update({ archived_at: null }).eq("id", acctId);
+  if (error) return toast(error.message, "error");
+  await loadAccounts();
+  toast("Account unarchived");
 }
 
 // Shared by the main Accounts card's "✕" and the Archived-accounts modal's
@@ -2256,12 +2397,7 @@ function renderArchivedAccounts() {
       </div>`;
     }).join("");
   document.querySelectorAll("[data-unarchive-acct]").forEach((el) => {
-    el.onclick = async () => {
-      const { error } = await sb.from("accounts").update({ archived_at: null }).eq("id", el.dataset.unarchiveAcct);
-      if (error) return toast(error.message);
-      await loadAccounts();
-      toast("Account unarchived");
-    };
+    el.onclick = () => unarchiveAccount(el.dataset.unarchiveAcct);
   });
   // deleteAccount() already refreshes and re-renders this list (via
   // loadAccounts -> renderAccountsList -> renderArchivedAccounts), and
@@ -4742,6 +4878,11 @@ async function loadExpenses() {
     .order("occurred_at", { ascending: false }).order("created_at", { ascending: false });
   if (error) { renderLoadError("expList", error, loadExpenses); return; }
   allExpenses = data || [];
+  // Any expense write reloads this, so it is the one place that reliably knows
+  // the data moved. A year view reads its own query, which would otherwise
+  // keep showing a total that no longer includes what was just logged.
+  clearYearRowsCache();
+  reportYearsCache = null;
   // Drop any selected id a reload no longer has (deleted/undone/out of the
   // 12-month window) so the bulk-action count never overcounts stale ids.
   const liveIds = new Set(allExpenses.map((r) => r.id));
@@ -4902,6 +5043,166 @@ const typicalMonth = () => averageMonth(
   lastMonths(TYPICAL_MONTH_WINDOW, monthKey())
 );
 
+// ---- REPORTS PERIOD (month or whole year) ----------------------------------
+// Every figure on this page is filtered by a DATE PREFIX (sumBy and the list
+// filters all use startsWith), so a year is simply a shorter prefix: "2026"
+// instead of "2026-09". That is what makes a year view cost almost nothing -
+// no second aggregation path, no parallel set of functions that could drift
+// from the month ones the way two copies of a calculation always eventually do.
+//
+// The scope lives in a toggle rather than as extra entries in the dropdown.
+// Mixing "August 2026" and "2026" in one list makes the reader check which
+// kind each option is before choosing, and the list grows every year.
+// How many transactions the Reports list draws at once. Not a data limit: the
+// totals, charts and every export still cover the whole period, this only
+// bounds the DOM a year view builds on each render.
+const REPORT_LIST_MAX = 400;
+const REPORT_SCOPES = ["month", "year"];
+const reportScopePills = wireTogglePills({
+  attr: "data-scope",
+  storageKey: "reportsScope",
+  options: REPORT_SCOPES,
+  fallback: "month",
+  apply: async () => { await populateReportPeriodSelect(); await renderReports(); },
+});
+function reportScope() { return reportScopePills.current(); }
+
+// One definition of "which period is on screen", read by renderReports and by
+// all three export buttons, so a file can never be scoped differently from the
+// page it was exported from.
+function reportPeriod() {
+  const scope = reportScope();
+  const value = $("monthSel").value;
+  if (scope === "year") {
+    const year = /^\d{4}$/.test(value) ? value : String(new Date().getFullYear());
+    return { scope, key: year, label: year, noun: "year" };
+  }
+  const ym = /^\d{4}-\d{2}$/.test(value) ? value : monthKey();
+  return { scope, key: ym, label: monthLabel(ym), noun: "month" };
+}
+
+// A year's rows come from their own query, NOT from allExpenses. That cache is
+// capped at HISTORY_CACHE_MONTHS, so aggregating last year out of it would
+// silently report a part-year as the whole year - a confidently wrong total,
+// which is the one failure this app works hardest to avoid. Cached per year so
+// toggling back and forth is free, and cleared by loadExpenses() so a newly
+// logged expense cannot leave a stale year on screen.
+const yearRowsCache = new Map();
+function clearYearRowsCache() { yearRowsCache.clear(); }
+
+// PostgREST caps a response at the project's max-rows setting, and it does so
+// SILENTLY - a truncated year would understate the total, every breakdown, the
+// CSV and the printed report, which is exactly the confidently-wrong figure
+// rowsForYear exists to prevent. So ask for explicit pages and stop only when
+// a short one comes back, rather than trusting one unbounded select.
+const ROW_PAGE_SIZE = 1000;
+const MAX_ROW_PAGES = 50; // 50,000 rows in one year is not a real personal budget
+async function fetchAllPages(buildQuery) {
+  const out = [];
+  for (let page = 0; page < MAX_ROW_PAGES; page++) {
+    const from = page * ROW_PAGE_SIZE;
+    const { data, error } = await buildQuery().range(from, from + ROW_PAGE_SIZE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < ROW_PAGE_SIZE) break;
+  }
+  return out;
+}
+
+async function rowsForYear(year) {
+  if (yearRowsCache.has(year)) return yearRowsCache.get(year);
+  const from = `${year}-01-01`, to = `${year}-12-31`;
+  const [expenses, income] = await Promise.all([
+    fetchAllPages(() => sb.from("expenses").select("*")
+      .gte("occurred_at", from).lte("occurred_at", to)
+      .order("occurred_at", { ascending: false }).order("created_at", { ascending: false })),
+    fetchAllPages(() => sb.from("account_activity").select("*").eq("kind", "income")
+      .gte("occurred_at", from).lte("occurred_at", to)
+      .order("occurred_at", { ascending: false })),
+  ]);
+  // A failed fetch throws out of fetchAllPages and is never cached, so the next
+  // render retries rather than showing an empty year forever.
+  const rows = { expenses, income };
+  yearRowsCache.set(year, rows);
+  return rows;
+}
+
+// The rows every card on this page aggregates over. Month mode keeps reading
+// the already-loaded caches exactly as before; only year mode fetches.
+async function reportRows(period) {
+  if (period.scope !== "year") {
+    return { expenses: allExpenses, income: accountActivity.filter((a) => a.kind === "income") };
+  }
+  return await rowsForYear(period.key);
+}
+
+// The months to draw in "Money in and out". A month view keeps its trailing
+// six; a year view shows that year's own months, trimmed at the current month
+// so the CURRENT year does not render empty bars for months that have not
+// happened yet - a flat December would read as "spent nothing", not "not yet".
+function reportTrendMonths(period) {
+  if (period.scope !== "year") return lastMonths(MONEY_IN_OUT_MONTHS, period.key);
+  const thisMonth = monthKey();
+  const months = [];
+  for (let m = 1; m <= 12; m++) {
+    const ym = `${period.key}-${String(m).padStart(2, "0")}`;
+    if (ym > thisMonth) break;
+    months.push(ym);
+  }
+  return months;
+}
+
+// The years worth offering, from the earliest expense on record rather than a
+// fixed count - a year with nothing in it is not a real choice, and the
+// 12-month expense cache cannot answer "which years exist" by itself.
+// One cheap query (a single row), run once per Reports load.
+let reportYearsCache = null;
+async function reportYears() {
+  if (reportYearsCache) return reportYearsCache;
+  const thisYear = new Date().getFullYear();
+  const { data, error } = await sb.from("expenses").select("occurred_at")
+    .order("occurred_at", { ascending: true }).limit(1);
+  // Swallowing this cached "only the current year exists" for the rest of the
+  // session, so one network blip hid every past year with nothing said. Let it
+  // throw: the caller rolls the toggle back and reports it.
+  if (error) throw error;
+  const earliest = data?.[0]?.occurred_at;
+  const firstYear = earliest ? Number(String(earliest).slice(0, 4)) : thisYear;
+  const years = [];
+  for (let y = thisYear; y >= Math.min(firstYear, thisYear); y--) years.push(String(y));
+  reportYearsCache = years;
+  return years;
+}
+
+// Refills the picker for the active scope, keeping the reader on the same
+// stretch of time across a toggle where that is possible: switching to Year
+// lands on the year of the month you were reading, and switching back lands on
+// a month inside the year you were reading rather than jumping to today.
+async function populateReportPeriodSelect() {
+  const sel = $("monthSel");
+  const previous = sel.value;
+  if (reportScope() === "year") {
+    const years = await reportYears();
+    sel.innerHTML = years.map((y) => `<option value="${y}">${y}</option>`).join("");
+    const carried = /^\d{4}/.test(previous) ? previous.slice(0, 4) : "";
+    sel.value = years.includes(carried) ? carried : years[0];
+  } else {
+    const months = lastMonths(Math.min(MONTH_PICKER_MONTHS, HISTORY_CACHE_MONTHS)).reverse();
+    sel.innerHTML = months.map((m) => `<option value="${m}">${monthLabel(m)}</option>`).join("");
+    // Keep the month that was already selected. loadReports() runs on every
+    // visit to Reports and this rebuilds the list every time, so without this
+    // the picker silently snapped back to the current month whenever you left
+    // the page and came back - a behaviour the old rebuild-only-if-the-length-
+    // changed guard used to provide.
+    const keepMonth = months.includes(previous) ? previous : "";
+    const carriedYear = /^\d{4}$/.test(previous) ? previous : "";
+    // Coming back from a past year, land on the latest month of that year the
+    // picker actually holds rather than on a blank value.
+    const inYear = carriedYear ? months.filter((m) => m.startsWith(carriedYear)) : [];
+    sel.value = keepMonth || (inYear.length ? inYear[0] : monthKey());
+  }
+}
+
 async function loadReports() {
   // Second attempt at the same warm-up init() already fired on app load -
   // harmless if the model is already warm (a quick real call, not another
@@ -4909,14 +5210,8 @@ async function loadReports() {
   // after sign-in that a keep-alive-less cold model went back to sleep.
   if (GEMMA_ENDPOINT) warmUpGemma({ endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY });
   if (!allExpenses.length) await loadExpenses();
-  // Build the month selector. Bounded by what the cache actually holds.
-  const months = lastMonths(Math.min(MONTH_PICKER_MONTHS, HISTORY_CACHE_MONTHS)).reverse();
-  const sel = $("monthSel");
-  if (sel.options.length !== months.length) {
-    sel.innerHTML = months.map((m) => `<option value="${m}">${monthLabel(m)}</option>`).join("");
-    sel.value = monthKey();
-    sel.onchange = renderReports;
-  }
+  await populateReportPeriodSelect();
+  $("monthSel").onchange = renderReports;
   renderReports();
   loadInsights();
   populateHistoryAccountSelect();
@@ -5790,7 +6085,7 @@ function preserveScrollAcross(anchor, apply) {
 let investTab = "market";
 function setInvestTab(tab) {
   investTab = tab === "portfolio" ? "portfolio" : "market";
-  localStorage.setItem("investTab", investTab);
+  prefSet("investTab", investTab);
   $("investTabMarket").classList.toggle("hidden", investTab !== "market");
   $("investTabPortfolio").classList.toggle("hidden", investTab !== "portfolio");
   for (const [id, name] of [["investTabMarketBtn", "market"], ["investTabPortfolioBtn", "portfolio"]]) {
@@ -5804,7 +6099,7 @@ function setInvestTab(tab) {
 // scrollY 0, where there is nothing to preserve.
 $("investTabMarketBtn").onclick = () => preserveScrollAcross($("investTabBar"), () => setInvestTab("market"));
 $("investTabPortfolioBtn").onclick = () => preserveScrollAcross($("investTabBar"), () => setInvestTab("portfolio"));
-setInvestTab(localStorage.getItem("investTab") || "market");
+setInvestTab(prefGet("investTab") || "market");
 
 // Sub-tabs within each top-level tab, so a market/portfolio panel is one
 // focused card at a time instead of a long stacked scroll. Same toggle-with-
@@ -5832,7 +6127,7 @@ function setSubTab(barId, storageKey, subId) {
     const panel = document.getElementById(btn.dataset.subtab);
     if (panel) panel.classList.toggle("hidden", !isActive);
   });
-  localStorage.setItem(storageKey, subId);
+  prefSet(storageKey, subId);
 }
 
 function wireSubTabs(barId, storageKey, defaultSubId) {
@@ -5870,7 +6165,7 @@ function wireSubTabs(barId, storageKey, defaultSubId) {
   });
   // Fall back to the default if a stale localStorage value no longer
   // matches a real sub-tab (e.g. after a future change to the tab list).
-  const stored = localStorage.getItem(storageKey);
+  const stored = prefGet(storageKey);
   const valid = stored && bar.querySelector(`[data-subtab="${stored}"]`);
   setSubTab(barId, storageKey, valid ? stored : defaultSubId);
 }
@@ -7404,22 +7699,65 @@ $("qaAskBtn").onclick = async () => {
   }
 };
 
+// Wipes every figure and chart on the Reports page. Used only when the period
+// could not be loaded: a stale number under a fresh period label is worse than
+// no number, because it reads as a real answer to a question nobody asked.
+function blankReportFigures() {
+  for (const id of ["rptTotal", "rptSubs", "rptAvgSpend", "savingsRateStat"]) $(id).textContent = "-";
+  for (const id of ["rptSubsNote", "rptAvgSpendNote", "rptExpListNote"]) $(id).textContent = "";
+  $("rptEmpty").classList.add("hidden");
+  for (const id of ["catChart", "acctChart", "payChart"]) renderBreakdownBar($(id), []);
+  renderTrendBar($("incomeExpenseChart"), [], []);
+}
+
 async function renderReports() {
-  const ym = $("monthSel").value || monthKey();
-  const byCat = sumBy(allExpenses, "category", ym);
-  const byAcct = sumBy(allExpenses, "account", ym, acctName);
+  const period = reportPeriod();
+  const ym = period.key; // a date PREFIX: "2026-09" for a month, "2026" for a year
+
+  // Every label that depends only on WHICH PERIOD is selected is written
+  // before the rows are fetched, deliberately. A year is a real query that can
+  // fail, and on failure the page would otherwise keep the previous period's
+  // wording - a header reading "Spent this month" above a picker showing 2026.
+  // Labels first means a failed load is visibly a failed load of the thing you
+  // actually asked for, rather than looking like stale or wrong numbers.
+  $("rptTotalLabel").textContent = `Spent in ${period.label}`;
+  $("rptExpListTitle").textContent = `Expenses in ${period.label}`;
+  $("rptEmptyText").textContent = `No expenses in ${period.label} yet.`;
+  $("savingsRateLabel").textContent = period.scope === "year"
+    ? `Of what you earned in ${period.label}, you kept:`
+    : "Of what you earned this month, you kept:";
+  $("trendCardTitle").textContent = period.scope === "year"
+    ? `Money in and out through ${period.label}`
+    : "Money in and out";
+
+  let rows;
+  try {
+    rows = await reportRows(period);
+  } catch (error) {
+    // A year fetch can fail where a month never could, because a month is
+    // already in memory. Every figure on this page belongs to the period that
+    // failed, and the labels above already name it, so leaving the previous
+    // period's numbers up states something false - measured as "Spent in 2026:
+    // $412.55" with September's total underneath. Blank them all, then show
+    // the real error.
+    blankReportFigures();
+    renderLoadError("rptExpList", error, renderReports);
+    return;
+  }
+  const periodExpenses = rows.expenses;
+  const byCat = sumBy(periodExpenses, "category", ym);
+  const byAcct = sumBy(periodExpenses, "account", ym, acctName);
   // sumBy reads e.payment_type raw - fine for the original debit/credit/cash
   // values, but a snake_case type like "retirement_employer" would show up
   // unformatted in the chart. Pre-labels a throwaway copy rather than
   // teaching the generic chart helper about account types.
-  const labeledByPayment = allExpenses.map((e) => ({ ...e, payment_type: accountTypeLabel(e.payment_type) }));
+  const labeledByPayment = periodExpenses.map((e) => ({ ...e, payment_type: accountTypeLabel(e.payment_type) }));
   const byPayment = sumBy(labeledByPayment, "payment_type", ym);
   const total = byCat.reduce((s, d) => s + d.value, 0);
   const subs = byCat.filter((d) => d.label === "Subscriptions").reduce((s, d) => s + d.value, 0);
 
   // Names the actual month rather than "Selected month", so the number is
   // self-describing even when scrolled away from the picker.
-  $("rptTotalLabel").textContent = `Spent in ${monthLabel(ym)}`;
   $("rptTotal").textContent = fmt(total);
   $("rptSubs").textContent = fmt(subs);
   // This tile counts expenses CATEGORISED as Subscriptions in the chosen
@@ -7484,14 +7822,22 @@ async function renderReports() {
   // priceRangeStats() follows for a range shorter than a year.
   $("rptAvgSpendNote").textContent = avgValue == null
     ? "nothing logged yet"
-    : (activeRows.length === 1 ? "based on 1 month so far" : `averaged over ${activeRows.length} months`)
+    : (avg.monthsCounted === 1 ? "based on 1 month so far" : `averaged over ${avg.monthsCounted} months`)
       + (hasIncome ? " (money in minus money out)" : "");
 
   const empty = total === 0;
   $("rptEmpty").classList.toggle("hidden", !empty);
 
-  const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
-  renderExpenseList("rptExpList", monthRows, "No expenses this month.");
+  const periodRows = periodExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  // A month never exceeded ~100 rows, so this list was always built whole. A
+  // year can hold thousands, and every scope toggle and picker change rebuilds
+  // it synchronously. Cap what is DRAWN and say so; the exports below still
+  // read the full `periodRows`, so nothing is actually lost.
+  const shown = periodRows.slice(0, REPORT_LIST_MAX);
+  renderExpenseList("rptExpList", shown, `No expenses in ${period.label}.`);
+  $("rptExpListNote").textContent = periodRows.length > shown.length
+    ? `Showing the ${shown.length} most recent of ${periodRows.length}. CSV below saves all of them.`
+    : "";
 
   // All three still render every time. They are cheap (already-loaded
   // expenses, no query) and Chart.js needs a laid-out canvas to size
@@ -7500,16 +7846,22 @@ async function renderReports() {
   renderBreakdownBar($("catChart"), byCat);
   renderBreakdownBar($("acctChart"), byAcct);
   renderBreakdownBar($("payChart"), byPayment);
-  const trailing = lastMonths(MONEY_IN_OUT_MONTHS, ym);
-
-  const incomeActivity = accountActivity.filter((a) => a.kind === "income");
-  const ive = incomeVsExpense(incomeActivity, allExpenses, trailing);
+  const trailing = reportTrendMonths(period);
+  const ive = incomeVsExpense(rows.income, periodExpenses, trailing);
   renderTrendBar($("incomeExpenseChart"), trailing, ive.map((r) => r.expense), {
     label: "Income", data: ive.map((r) => r.income), color: "#34d399",
   });
-  const selectedMonth = ive.find((r) => r.month === ym);
-  $("savingsRateStat").textContent = selectedMonth && selectedMonth.savingsRate != null
-    ? signedPct(Math.round(selectedMonth.savingsRate * 1000) / 10)
+
+  // The savings rate is for the PERIOD, so a year rate is the year's income
+  // against the year's spending - not one month's rate left over from before
+  // the toggle was switched, which is what reading `ive` by month key would
+  // have given. Computed here rather than picked out of the chart's rows for
+  // exactly that reason.
+  const periodIncome = rows.income
+    .filter((a) => (a.occurred_at || "").startsWith(ym))
+    .reduce((sum, a) => sum + Number(a.amount || 0), 0);
+  $("savingsRateStat").textContent = periodIncome > 0
+    ? signedPct(Math.round(((periodIncome - total) / periodIncome) * 1000) / 10)
     : "-";
 }
 
@@ -7517,20 +7869,18 @@ async function renderReports() {
 // separate cards stacked down the page. Persisted per device like the
 // Investments sub-tabs, with a stale-value fallback to the default.
 const BREAKDOWN_VIEWS = { cat: "breakdownBoxCat", acct: "breakdownBoxAcct", pay: "breakdownBoxPay" };
-function setBreakdownView(view) {
-  const key = BREAKDOWN_VIEWS[view] ? view : "cat";
-  for (const [name, boxId] of Object.entries(BREAKDOWN_VIEWS)) {
-    $(boxId).classList.toggle("hidden", name !== key);
-  }
-  document.querySelectorAll("[data-breakdown]").forEach((el) => {
-    el.classList.toggle("active", el.dataset.breakdown === key);
-  });
-  localStorage.setItem("reportsBreakdown", key);
-}
-document.querySelectorAll("[data-breakdown]").forEach((el) => {
-  el.onclick = () => setBreakdownView(el.dataset.breakdown);
+const breakdownPills = wireTogglePills({
+  attr: "data-breakdown",
+  storageKey: "reportsBreakdown",
+  options: Object.keys(BREAKDOWN_VIEWS),
+  fallback: "cat",
+  apply: (key) => {
+    for (const [name, boxId] of Object.entries(BREAKDOWN_VIEWS)) {
+      $(boxId).classList.toggle("hidden", name !== key);
+    }
+  },
 });
-setBreakdownView(localStorage.getItem("reportsBreakdown") || "cat");
+breakdownPills.select(breakdownPills.current()); // show the remembered view
 
 // ---- MONTH REPORT EXPORT (the project notes, Reports & Net Worth #3) --------
 // Recomputes ym/monthRows fresh rather than reading renderReports()'s
@@ -7540,18 +7890,34 @@ setBreakdownView(localStorage.getItem("reportsBreakdown") || "cat");
 // reason: this writes a readable file of real spending to the device's
 // downloads folder, which is a real consequence on a shared or borrowed
 // computer. A file export is not undoable once it has left the app.
+// Every export needs the selected period's rows, and in year mode that is a
+// real query that can fail. Without this each handler rejected straight out of
+// its click listener: no toast, no dialog, nothing, and trackBusy's `finally`
+// re-enabled the button so it read as dead. Returns null once it has told the
+// user, so callers just bail.
+async function exportRowsOrExplain(period) {
+  try {
+    return await reportRows(period);
+  } catch (error) {
+    toast(error?.message || `Could not load ${period.label}`, "error");
+    return null;
+  }
+}
+
 $("exportCsvBtn").onclick = async () => {
-  const ym = $("monthSel").value || monthKey();
-  const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
-  if (!monthRows.length) return toast(`Nothing logged in ${monthLabel(ym)} to save`);
+  const period = reportPeriod();
+  const rows = await exportRowsOrExplain(period);
+  if (!rows) return;
+  const periodRows = rows.expenses.filter((r) => (r.occurred_at || "").startsWith(period.key));
+  if (!periodRows.length) return toast(`Nothing logged in ${period.label} to save`);
   const ok = await confirmModal(
-    `This saves ${monthRows.length} transaction${monthRows.length === 1 ? "" : "s"} from ${monthLabel(ym)} to your device as a spreadsheet file. It lists what you bought and how much, and anyone who can open the file can read it.`,
-    { title: "Save this month to a file?", confirmLabel: "Save file" }
+    `This saves ${periodRows.length} transaction${periodRows.length === 1 ? "" : "s"} from ${period.label} to your device as a spreadsheet file. It lists what you bought and how much, and anyone who can open the file can read it.`,
+    { title: `Save this ${period.noun} to a file?`, confirmLabel: "Save file" }
   );
   if (!ok) return;
-  const csv = buildExpensesCsv(monthRows, acctName);
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `expenses-${ym}.csv`);
-  toast(`Saved ${monthRows.length} transaction${monthRows.length === 1 ? "" : "s"} from ${monthLabel(ym)}`);
+  const csv = buildExpensesCsv(periodRows, acctName);
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `expenses-${period.key}.csv`);
+  toast(`Saved ${periodRows.length} transaction${periodRows.length === 1 ? "" : "s"} from ${period.label}`);
 };
 
 // window.print() against an isolated new-tab document, not a CDN PDF
@@ -7561,15 +7927,19 @@ $("exportCsvBtn").onclick = async () => {
 // user picks "Save as PDF" as the print destination themselves; nothing
 // here writes a PDF directly.
 $("exportPdfBtn").onclick = async () => {
-  const ym = $("monthSel").value || monthKey();
-  const monthRows = allExpenses.filter((r) => (r.occurred_at || "").startsWith(ym));
-  if (!monthRows.length) return toast(`Nothing logged in ${monthLabel(ym)} to print`);
+  const period = reportPeriod();
+  const rows = await exportRowsOrExplain(period);
+  if (!rows) return;
+  const expenses = rows.expenses;
+  const ym = period.key;
+  const monthRows = expenses.filter((r) => (r.occurred_at || "").startsWith(ym));
+  if (!monthRows.length) return toast(`Nothing logged in ${period.label} to print`);
   const ok = await confirmModal(
-    `This opens a printable report of ${monthLabel(ym)} in a new tab, listing every one of your ${monthRows.length} transaction${monthRows.length === 1 ? "" : "s"} that month. From there you can print it or save it as a PDF.`,
+    `This opens a printable report of ${period.label} in a new tab, listing every one of your ${monthRows.length} transaction${monthRows.length === 1 ? "" : "s"} from that ${period.noun}. From there you can print it or save it as a PDF.`,
     { title: "Open a printable report?", confirmLabel: "Open report" }
   );
   if (!ok) return;
-  const byCat = sumBy(allExpenses, "category", ym);
+  const byCat = sumBy(expenses, "category", ym);
   const total = byCat.reduce((s, d) => s + d.value, 0);
   const win = window.open("", "_blank");
   if (!win) { toast("Allow pop-ups to print/export a PDF"); return; }
@@ -7582,7 +7952,7 @@ $("exportPdfBtn").onclick = async () => {
     `<tr><td>${esc(r.occurred_at)}</td><td>${esc(r.description || r.merchant || "")}</td><td>${esc(r.category || "")}</td><td style="text-align:right">${fmt(r.amount)}</td></tr>`
   ).join("");
   const catHtml = byCat.map((c) => `<tr><td>${esc(c.label)}</td><td style="text-align:right">${fmt(c.value)}</td></tr>`).join("");
-  win.document.write(`<!doctype html><html><head><title>${monthLabel(ym)} report</title>
+  win.document.write(`<!doctype html><html><head><title>${period.label} report</title>
 <meta charset="utf-8">
 <style>
 body{font-family:-apple-system,Helvetica,Arial,sans-serif;padding:24px;color:#111}
@@ -7591,7 +7961,7 @@ table{width:100%;border-collapse:collapse}
 td,th{padding:6px 8px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}
 .total{font-size:15px;font-weight:700;margin:8px 0 0}
 </style></head><body>
-<h1>${monthLabel(ym)}</h1>
+<h1>${period.label}</h1>
 <div class="total">Total: ${fmt(total)}</div>
 <h2>By category</h2>
 <table>${catHtml}</table>
@@ -8551,8 +8921,8 @@ function openHelp(page) {
 // profiles table: this is UI state, not account data, and seeing the tour
 // once on a phone and once on a desktop is reasonable rather than a bug.
 const tourSeenKey = (view) => `tourDone:${view}`;
-const tourSeen = (view) => localStorage.getItem(tourSeenKey(view)) === "1";
-const markTourSeen = (view) => localStorage.setItem(tourSeenKey(view), "1");
+const tourSeen = (view) => prefGet(tourSeenKey(view)) === "1";
+const markTourSeen = (view) => prefSet(tourSeenKey(view), "1");
 
 let tourView = null;
 let tourSteps = [];
@@ -8967,26 +9337,33 @@ $("exportInvestBtn").onclick = () => exportPage(
   allInvestmentAssets().length || holdingSales.length || investmentTargets.length,
   { page: "Investments" });
 
-$("exportReportsBtn").onclick = () => {
-  const ym = $("monthSel").value || monthKey();
+$("exportReportsBtn").onclick = async () => {
+  const period = reportPeriod();
+  const ym = period.key;
+  const rows = await exportRowsOrExplain(period);
+  if (!rows) return;
+  const { expenses, income } = rows;
   return exportPage(
-    `your spending analysis for ${monthLabel(ym)}`,
+    `your spending analysis for ${period.label}`,
     `report-${ym}`,
     () => {
-      const byCat = sumBy(allExpenses, "category", ym);
-      const labeled = allExpenses.map((e) => ({ ...e, payment_type: accountTypeLabel(e.payment_type) }));
+      const byCat = sumBy(expenses, "category", ym);
+      const labeled = expenses.map((e) => ({ ...e, payment_type: accountTypeLabel(e.payment_type) }));
       const total = byCat.reduce((s, d) => s + d.value, 0);
       const subs = byCat.filter((d) => d.label === "Subscriptions").reduce((s, d) => s + d.value, 0);
       return reportsSections({
-        monthLabel: monthLabel(ym),
-        totals: [["Spent in " + monthLabel(ym), total.toFixed(2)], ["Of that, subscriptions", subs.toFixed(2)]],
+        monthLabel: period.label,
+        totals: [["Spent in " + period.label, total.toFixed(2)], ["Of that, subscriptions", subs.toFixed(2)]],
         byCategory: byCat,
-        byAccount: sumBy(allExpenses, "account", ym, acctName),
+        byAccount: sumBy(expenses, "account", ym, acctName),
         byPaymentType: sumBy(labeled, "payment_type", ym),
-        incomeVsExpense: incomeVsExpense(accountActivity.filter((a) => a.kind === "income"), allExpenses, lastMonths(MONEY_IN_OUT_MONTHS, monthKey())),
+        // The same months the card on screen draws, so the picture and the
+        // saved file cannot disagree - the reason MONEY_IN_OUT_MONTHS was
+        // named in the first place.
+        incomeVsExpense: incomeVsExpense(income, expenses, reportTrendMonths(period)),
       });
     },
-    allExpenses.some((e) => String(e.occurred_at || "").startsWith(ym)),
+    expenses.some((e) => String(e.occurred_at || "").startsWith(ym)),
     { page: "Reports", month: ym });
 };
 

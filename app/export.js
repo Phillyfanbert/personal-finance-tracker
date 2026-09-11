@@ -128,7 +128,14 @@ export function reportsSections({ monthLabel = "", totals = [], byCategory = [],
     { title: "Where your money went - by category", header: ["Category", "Amount"], rows: byCategory.map((d) => [d.label, money(d.value)]) },
     { title: "Where your money went - by account", header: ["Account", "Amount"], rows: byAccount.map((d) => [d.label, money(d.value)]) },
     { title: "Where your money went - by how you paid", header: ["Payment type", "Amount"], rows: byPaymentType.map((d) => [d.label, money(d.value)]) },
-    { title: "Money in and out (last 6 months)", header: ["Month", "Money in", "Money out", "Left over", "Share kept"],
+    // Titled from the months actually present rather than a hardcoded "last 6
+    // months": the Reports page can now be scoped to a whole year, where this
+    // section carries that year's months instead, and a fixed title would
+    // describe the file wrongly.
+    { title: incomeVsExpense.length
+        ? `Money in and out (${incomeVsExpense[0].month} to ${incomeVsExpense[incomeVsExpense.length - 1].month})`
+        : "Money in and out",
+      header: ["Month", "Money in", "Money out", "Left over", "Share kept"],
       rows: incomeVsExpense.map((r) => [r.month, money(r.income), money(r.expense), money(r.income - r.expense), pct(r.savingsRate)]) },
   ]);
 }

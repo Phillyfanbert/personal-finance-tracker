@@ -63,8 +63,18 @@ export function qualificationsFor(profile) {
   // that verification would reject. This is the main reason graduation_year
   // is collected at all.
   if (profile.status === "student") {
-    const grad = Number(profile.graduation_year);
-    if (!Number.isFinite(grad) || grad >= new Date().getFullYear()) q.add("student");
+    // An UNANSWERED graduation year must leave student status alone - the same
+    // omit-rather-than-assert rule birth_year follows. `Number(null)` is 0, not
+    // NaN, so reading the column straight made a blank year look like a
+    // graduation in year zero and silently expired the status. Supabase returns
+    // null for an unset column and the form yields "", so both reached this as
+    // 0 while a genuinely absent field (undefined -> NaN) kept the status: the
+    // same profile answered two different ways depending on how it was loaded.
+    const raw = profile.graduation_year;
+    const stated = raw === null || raw === undefined || String(raw).trim() === ""
+      ? null
+      : Number(raw);
+    if (stated === null || !Number.isFinite(stated) || stated >= new Date().getFullYear()) q.add("student");
   }
 
   if (has(EDUCATOR_WORDS, profile.occupation) || has(ACADEMIC_EMPLOYER, profile.employer)) {

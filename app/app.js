@@ -2341,33 +2341,133 @@ async function unarchiveAccount(acctId) {
   toast("Account unarchived");
 }
 
-// Shared by the main Accounts card's "✕" and the Archived-accounts modal's
-// Delete button below - same cascading DB-trigger delete (12_delete_
-// liability_with_account.sql / 13_delete_asset_with_account.sql), same
-// confirmation, same refresh. Unlike archiving, this is permanent: a linked
-// liability or asset is deleted along with the account, and its past
-// expenses are unassigned (account_id -> null on delete, per schema), not
-// preserved the way an archived account's history stays intact. Returns
-// whether the delete actually happened, so a caller that needs to react
-// (none currently do beyond the shared refresh here) can tell a cancel
-// apart from a failure.
-async function deleteAccount(acctId) {
-  const acct = accounts.find((a) => a.id === acctId);
-  const msg = acct?.linked_liability_id
-    ? "Its linked liability and tracked balance are deleted too, and existing expenses become unassigned. This can't be undone."
-    : acct?.linked_asset_id
-    ? "Its linked asset and balance are deleted too, and existing expenses become unassigned. This can't be undone."
-    : "Existing expenses become unassigned. This can't be undone.";
-  const label = acct ? (acct.bank_name || acct.name) : "this account";
-  if (!(await confirmModal(msg, { title: `Delete ${label}?` }))) return false;
+// ---- Delete with undo, for a LEAF row -------------------------------------
+// A leaf row is one nothing points at. Confirmed against the live schema that
+// no foreign key anywhere references subscriptions, income or sinking_funds,
+// which is what makes putting the row back a COMPLETE restore rather than an
+// approximation - so these get a real undo, where an account instead needs its
+// destruction delayed (see deleteAccount below for why).
+//
+// The original row is re-inserted verbatim, id included, so nothing downstream
+// can tell that it ever left. Do not reach for this for a row with children or
+// inbound references: re-creating those is the half-restore this app must not
+// do to real financial data.
+async function deleteLeafRowWithUndo({ table, row, label, restoredMsg, after }) {
+  const { error } = await sb.from(table).delete().eq("id", row.id);
+  if (error) { toast(error.message, "error"); return false; }
+  await after();
+  toast(`Deleted ${label}`, "info", {
+    label: "Undo",
+    onAction: async () => {
+      const { error: err } = await sb.from(table).insert(row);
+      if (err) { toast(err.message, "error"); return; }
+      await after();
+      toast(restoredMsg);
+    },
+  });
+  return true;
+}
+
+// ---- Deferred delete, so Delete can offer the same Undo as Archive ---------
+// A deleted account CANNOT be restored afterwards, which is why the undo is
+// built by delaying the destruction rather than by trying to rebuild it. The
+// row removal nulls the account link in six columns across five tables
+// (expenses, account_activity's three, holding_sales, income, subscriptions),
+// the DB triggers take the linked asset or liability with it, and
+// assets.parent_asset_id is ON DELETE CASCADE - so a brokerage account takes
+// every holding under it too. Re-creating that would mean new ids across seven
+// tables with no client-side transaction available, and a failure halfway
+// leaves a half-restored portfolio. Waiting cannot corrupt anything.
+//
+// ARCHIVING is what makes the account act deleted in the meantime: every
+// listing and total in this app already filters an archived account, so the
+// moment it is archived it is gone from net worth, the cards, the pickers, the
+// Investments tab and autoLogDueSubscriptions, with no new filtering to write.
+// The only extra rule is that the archived-accounts modal hides one too, since
+// something the user just deleted must not reappear under "View archived".
+//
+// If the tab closes inside the window the timer never fires and the account
+// stays ARCHIVED rather than deleted. That is the safe direction to fail:
+// nothing is lost and it is sitting in View archived where Delete can be
+// pressed again, instead of a half-finished removal nobody can see.
+const DELETE_UNDO_MS = 15000; // longer than the toast's own 12s action window,
+                              // so the Undo button is gone before it stops working
+const pendingAccountDeletes = new Map(); // acctId -> { timer, wasArchived }
+const isPendingDelete = (id) => pendingAccountDeletes.has(id);
+
+async function commitAccountDelete(acctId) {
+  const pending = pendingAccountDeletes.get(acctId);
+  if (!pending) return;
+  pendingAccountDeletes.delete(acctId);
   const { error } = await sb.from("accounts").delete().eq("id", acctId);
-  if (error) { toast(error.message); return false; }
+  // Nothing is lost on a failure: the row is still archived, so it simply
+  // reappears under View archived where Delete can be pressed again.
+  if (error) toast(error.message, "error");
   // loadAssets/loadDebts refresh so a deleted linked asset or liability
   // disappears from its own card too, not just the account from its own;
   // loadAccounts refreshes both the main circle list and the archived
   // modal (renderAccountsList calls renderArchivedAccounts).
   await loadAccounts(); await loadExpenses(); await loadAssets(); await loadDebts();
-  toast("Account deleted");
+}
+
+async function undoAccountDelete(acctId) {
+  const pending = pendingAccountDeletes.get(acctId);
+  if (!pending) { toast("That delete has already gone through", "error"); return; }
+  clearTimeout(pending.timer);
+  pendingAccountDeletes.delete(acctId);
+  // An account that was ALREADY archived before Delete was pressed goes back to
+  // archived, not to the main list - undo returns things to where they were.
+  if (!pending.wasArchived) {
+    const { error } = await sb.from("accounts").update({ archived_at: null }).eq("id", acctId);
+    if (error) { toast(error.message, "error"); return; }
+  }
+  await loadAccounts();
+  toast("Account restored");
+}
+
+// Shared by the main Accounts card's "✕" and the Archived-accounts modal's
+// Delete button below - same cascading DB-trigger delete (12_delete_
+// liability_with_account.sql / 13_delete_asset_with_account.sql), same
+// confirmation, same refresh. Unlike archiving, this is permanent ONCE THE
+// UNDO WINDOW CLOSES: a linked liability or asset is deleted along with the
+// account, its holdings go with the asset, and its past expenses are
+// unassigned (account_id -> null on delete, per schema), not preserved the way
+// an archived account's history stays intact. Returns whether the delete was
+// STARTED, so a caller can tell a cancel apart from a failure - the row itself
+// is still there until commitAccountDelete() runs.
+async function deleteAccount(acctId) {
+  const acct = accounts.find((a) => a.id === acctId);
+  // Holdings are CASCADE-deleted along with the parent asset, and the old
+  // message never said so - deleting a brokerage account silently destroyed
+  // every position under it. Count them and name the number.
+  const holdingCount = acct?.linked_asset_id
+    ? assets.filter((a) => a.parent_asset_id === acct.linked_asset_id).length
+    : 0;
+  const holdingNote = holdingCount
+    ? ` Its ${holdingCount} holding${holdingCount === 1 ? "" : "s"} go with it.`
+    : "";
+  const msg = (acct?.linked_liability_id
+    ? "Its linked liability and tracked balance are deleted too, and existing expenses become unassigned."
+    : acct?.linked_asset_id
+    ? "Its linked asset and balance are deleted too, and existing expenses become unassigned."
+    : "Existing expenses become unassigned.")
+    + holdingNote
+    + " You get a few seconds to undo, then it is permanent.";
+  const label = acct ? acctLabel(acct) : "this account";
+  if (!(await confirmModal(msg, { title: `Delete ${label}?` }))) return false;
+
+  const wasArchived = !!acct?.archived_at;
+  if (!wasArchived) {
+    const { error } = await sb.from("accounts")
+      .update({ archived_at: new Date().toISOString() }).eq("id", acctId);
+    if (error) { toast(error.message, "error"); return false; }
+  }
+  pendingAccountDeletes.set(acctId, {
+    wasArchived,
+    timer: setTimeout(() => commitAccountDelete(acctId), DELETE_UNDO_MS),
+  });
+  await loadAccounts();
+  toast(`Deleted ${label}`, "info", { label: "Undo", onAction: () => undoAccountDelete(acctId) });
   return true;
 }
 
@@ -2389,7 +2489,10 @@ async function deleteAccount(acctId) {
 // screen is exactly where you'd want to see what unarchiving would bring
 // back.
 function renderArchivedAccounts() {
-  const archived = accounts.filter((a) => a.archived_at);
+  // A pending delete IS archived (that is what makes it act deleted), so this
+  // one listing needs the extra filter - something just deleted must not
+  // reappear here as if it had only been archived.
+  const archived = accounts.filter((a) => a.archived_at && !isPendingDelete(a.id));
   const toggle = $("archivedAcctToggle");
   toggle.classList.toggle("hidden", archived.length === 0);
   toggle.textContent = `View archived (${archived.length})`;
@@ -3610,11 +3713,11 @@ function renderDebtStrategy() {
     // Two genuinely different empty states. Telling someone with no debts at
     // all to "fill in an interest rate" names a field they have nothing to
     // put it on, and the old copy said "under Liabilities above" - Liabilities
-    // moved to the Log page's Money tab in the 2026-08-26 restructure, so
+    // moved to the Log page's Accounts tab in the 2026-08-26 restructure, so
     // "above" sent the reader scrolling this page for a card that is not on it.
     el.innerHTML = debts.length
-      ? `<p class="muted">To compare, at least one thing you owe needs its interest rate and its smallest allowed monthly payment filled in. Add those on the Log page, under Liabilities on the Money tab.</p>`
-      : `<p class="muted">Nothing to compare yet. This fills in once you have added something you owe, on the Log page under Liabilities on the Money tab.</p>`;
+      ? `<p class="muted">To compare, at least one thing you owe needs its interest rate and its smallest allowed monthly payment filled in. Add those on the Log page, under Liabilities on the Accounts tab.</p>`
+      : `<p class="muted">Nothing to compare yet. This fills in once you have added something you owe, on the Log page under Liabilities on the Accounts tab.</p>`;
     // No comparison means the "not included" note below would just repeat
     // what the line above already says, in more technical words. It is only
     // useful ALONGSIDE a real comparison, to explain what is missing from it.
@@ -5006,10 +5109,20 @@ $("editSave").onclick = async () => {
 
   // Reverse the old asset/liability effect (if any), then apply the new one -
   // covers amount/account/payment-type all changing in the same edit.
-  await applyAssetDelta(prevAccountId, prevPaymentType, prevAmount, +1);
-  await applyAssetDelta(patch.account_id, patch.payment_type, amount, -1);
-  await applyLiabilityDelta(prevAccountId, prevPaymentType, prevAmount, -1);
-  await applyLiabilityDelta(patch.account_id, patch.payment_type, amount, +1);
+  //
+  // Skipped entirely for an IMPORTED row, which never applied a balance in the
+  // first place (csvImport.js deliberately does not call the delta helpers,
+  // because the real account already reflected the charge). Reversing and
+  // re-applying one moves a balance that should not move: correcting an
+  // imported $50 to $60 shifted the account by -$10, for a charge the bank had
+  // already settled at its true amount. The same check undoExpense() and
+  // netAmountByAccount() already make.
+  if (!isImported(editing)) {
+    await applyAssetDelta(prevAccountId, prevPaymentType, prevAmount, +1);
+    await applyAssetDelta(patch.account_id, patch.payment_type, amount, -1);
+    await applyLiabilityDelta(prevAccountId, prevPaymentType, prevAmount, -1);
+    await applyLiabilityDelta(patch.account_id, patch.payment_type, amount, +1);
+  }
   await loadAssets(); await loadDebts();
 
   // Learning loop: on a category correction, remember keyword->category.
@@ -5038,8 +5151,14 @@ $("editDelete").onclick = async () => {
   if (!(await confirmModal("This can't be undone.", { title: `Delete ${desc}?` }))) return;
   const { error } = await sb.from("expenses").delete().eq("id", editing.id);
   if (error) return toast(error.message);
-  await applyAssetDelta(editing.account_id, editing.payment_type, Number(editing.amount), +1);
-  await applyLiabilityDelta(editing.account_id, editing.payment_type, Number(editing.amount), -1);
+  // An imported row never applied a balance, so reversing one INVENTS money -
+  // deleting an imported $50 credited $50 that had never been deducted. This
+  // is the exact bug isImported() was introduced for, in the one delete path
+  // that never got the check.
+  if (!isImported(editing)) {
+    await applyAssetDelta(editing.account_id, editing.payment_type, Number(editing.amount), +1);
+    await applyLiabilityDelta(editing.account_id, editing.payment_type, Number(editing.amount), -1);
+  }
   await loadAssets(); await loadDebts();
   closeModal("editModal"); editing = null;
   await loadExpenses(); toast("Deleted");
@@ -5527,13 +5646,13 @@ $("saveFundBtn").onclick = async () => {
 $("deleteFundBtn").onclick = async () => {
   if (!editingFund) return;
   if (!(await confirmModal(`Stop saving for ${editingFund.name}? This only removes the goal - it does not touch any of your accounts.`, { title: "Remove this goal", confirmLabel: "Remove" }))) return;
-  const { error } = await sb.from("sinking_funds").delete().eq("id", editingFund.id);
-  if (error) return toast(error.message, "error");
+  const row = editingFund;
   closeFundForm();
-  await loadSinkingFunds();
-  renderSinkingFunds();
-  renderBudgets();
-  toast("Removed");
+  await deleteLeafRowWithUndo({
+    table: "sinking_funds", row, label: row.name,
+    restoredMsg: "Goal restored",
+    after: async () => { await loadSinkingFunds(); renderSinkingFunds(); renderBudgets(); },
+  });
 };
 
 $("saveBudgetBtn").onclick = async () => {
@@ -8571,12 +8690,15 @@ $("markPaidBtn").onclick = async () => {
 
 $("deleteSubBtn").onclick = async () => {
   if (!editingSub) return;
-  if (!(await confirmModal("This can't be undone.", { title: `Delete ${editingSub.name}?` }))) return;
-  const { error } = await sb.from("subscriptions").delete().eq("id", editingSub.id);
-  if (error) return toast(error.message);
+  if (!(await confirmModal("Its past charges stay in your history. You can undo this straight afterwards.",
+      { title: `Delete ${editingSub.name}?` }))) return;
+  const row = editingSub;
   closeSubForm();
-  await loadSubscriptions();
-  toast("Subscription/bill deleted");
+  await deleteLeafRowWithUndo({
+    table: "subscriptions", row, label: row.name,
+    restoredMsg: "Subscription/bill restored",
+    after: loadSubscriptions,
+  });
 };
 
 // ---- INCOME SOURCES (structurally mirrors subscriptions above) -----------
@@ -8752,12 +8874,15 @@ $("saveIncomeBtn").onclick = async () => {
 
 $("deleteIncomeBtn").onclick = async () => {
   if (!editingIncome) return;
-  if (!(await confirmModal("This can't be undone.", { title: `Delete ${editingIncome.source}?` }))) return;
-  const { error } = await sb.from("income").delete().eq("id", editingIncome.id);
-  if (error) return toast(error.message);
+  if (!(await confirmModal("Deposits already logged from it stay in your history. You can undo this straight afterwards.",
+      { title: `Delete ${editingIncome.source}?` }))) return;
+  const row = editingIncome;
   closeIncomeForm();
-  await loadIncome();
-  toast("Income source deleted");
+  await deleteLeafRowWithUndo({
+    table: "income", row, label: row.source,
+    restoredMsg: "Income source restored",
+    after: loadIncome,
+  });
 };
 
 // ---- PROFILE (feeds discount matching) -------------------------------------

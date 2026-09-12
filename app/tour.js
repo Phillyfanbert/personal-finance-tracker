@@ -47,7 +47,7 @@ export const TOUR_STEPS = {
     {
       target: "logSubTabs",
       title: "Three tabs on this page",
-      body: "Spending is where you write down what you bought. Bills is anything that charges you on a schedule, like a phone plan. Money is what you have and what you owe. The three numbers above stay put whichever tab you are on, and the app remembers which one you were last using.",
+      body: "Spending is where you write down what you bought. Bills is anything that charges you on a schedule, like a phone plan. Accounts is what you have and what you owe. The three numbers above stay put whichever tab you are on, and the app remembers which one you were last using.",
       placement: "bottom",
     },
     {

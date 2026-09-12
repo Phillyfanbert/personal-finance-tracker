@@ -5145,23 +5145,65 @@ $("editSave").onclick = async () => {
   toast((categoryChanged ? "Saved - I'll remember that" : "Saved ✓") + budgetWarningToastSuffix(newCategory));
 };
 
+// An expense is structurally a leaf (only expense_embeddings references one,
+// and those regenerate), so the ROW half is a complete restore - but unlike a
+// subscription it also MOVES MONEY, in both directions, which is why it does
+// not go through deleteLeafRowWithUndo().
+//
+// Deleting credits the amount back; undoing has to deduct it again. That
+// second deduction is a genuine spend against a balance that may have moved in
+// between, and applyAssetDelta() writes without consulting assetDeltaError(),
+// so an unguarded undo could push an account below its floor or a card past
+// its limit. restoreDeletedExpense() runs the same two checks the four real
+// spending paths use, BEFORE putting the row back.
+//
+// An imported row skips both sides: it never applied a balance to begin with,
+// so neither the credit on delete nor the deduction on undo should happen.
+async function deleteExpenseWithUndo(row, desc) {
+  const { error } = await sb.from("expenses").delete().eq("id", row.id);
+  if (error) { toast(error.message, "error"); return false; }
+  if (!isImported(row)) {
+    await applyAssetDelta(row.account_id, row.payment_type, Number(row.amount), +1);
+    await applyLiabilityDelta(row.account_id, row.payment_type, Number(row.amount), -1);
+  }
+  await loadAssets(); await loadDebts(); await loadExpenses();
+  toast(`Deleted ${desc}`, "info", { label: "Undo", onAction: () => restoreDeletedExpense(row) });
+  return true;
+}
+
+async function restoreDeletedExpense(row) {
+  const amount = Number(row.amount);
+  // Checked BEFORE the row goes back, so a refusal leaves everything exactly
+  // as the delete left it. Restoring the row and silently skipping the money
+  // would be the worse outcome: an expense on screen that never left the
+  // account, which is the silent-no-op class this app keeps having to fix.
+  if (!isImported(row)) {
+    const blocked =
+      assetDeltaError([{ accountId: row.account_id, paymentType: row.payment_type, amount, sign: -1 }])
+      || chargeRefusalReason([{ accountId: row.account_id, amount, sign: +1 }]);
+    if (blocked) { toast(`Cannot undo. ${blocked}`, "error"); return; }
+  }
+  const { error } = await sb.from("expenses").insert(row);
+  if (error) { toast(error.message, "error"); return; }
+  if (!isImported(row)) {
+    await applyAssetDelta(row.account_id, row.payment_type, amount, -1);
+    await applyLiabilityDelta(row.account_id, row.payment_type, amount, +1);
+  }
+  await loadAssets(); await loadDebts(); await loadExpenses();
+  toast("Expense restored");
+}
+
 $("editDelete").onclick = async () => {
   if (!editing) return;
   const desc = editing.description || editing.merchant || "this expense";
-  if (!(await confirmModal("This can't be undone.", { title: `Delete ${desc}?` }))) return;
-  const { error } = await sb.from("expenses").delete().eq("id", editing.id);
-  if (error) return toast(error.message);
-  // An imported row never applied a balance, so reversing one INVENTS money -
-  // deleting an imported $50 credited $50 that had never been deducted. This
-  // is the exact bug isImported() was introduced for, in the one delete path
-  // that never got the check.
-  if (!isImported(editing)) {
-    await applyAssetDelta(editing.account_id, editing.payment_type, Number(editing.amount), +1);
-    await applyLiabilityDelta(editing.account_id, editing.payment_type, Number(editing.amount), -1);
-  }
-  await loadAssets(); await loadDebts();
+  const note = isImported(editing)
+    ? "It came from an imported file, so no balance moves either way."
+    : "Its amount goes back onto the account it came from.";
+  if (!(await confirmModal(`${note} You can undo this straight afterwards.`,
+      { title: `Delete ${desc}?` }))) return;
+  const row = editing;
   closeModal("editModal"); editing = null;
-  await loadExpenses(); toast("Deleted");
+  await deleteExpenseWithUndo(row, desc);
 };
 
 // ---- REPORTS ---------------------------------------------------------------

@@ -11,7 +11,13 @@
        A 404 is often the one page served when something is already wrong, so
        it should not depend on anything that could itself be the thing that
        broke. Colours are copied from index.html's tokens rather than shared,
-       for the same reason. -->
+       for the same reason.
+
+       That extends to the theme: this page is always dark and deliberately
+       does NOT read the remembered light/dark choice. Doing so would make a
+       page whose whole job is to work when things are broken depend on
+       localStorage, which is exactly the dependency the rest of this comment
+       exists to avoid. -->
   <style>
     :root { --bg:#0f172a; --panel:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --accent-2:#38bdf8; }
     * { box-sizing: border-box; }

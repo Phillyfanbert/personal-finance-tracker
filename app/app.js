@@ -6454,28 +6454,24 @@ function preserveScrollAcross(anchor, apply) {
   }
 }
 
-let investTab = "market";
-function setInvestTab(tab) {
-  investTab = tab === "portfolio" ? "portfolio" : "market";
-  prefSet("investTab", investTab);
-  $("investTabMarket").classList.toggle("hidden", investTab !== "market");
-  $("investTabPortfolio").classList.toggle("hidden", investTab !== "portfolio");
-  for (const [id, name] of [["investTabMarketBtn", "market"], ["investTabPortfolioBtn", "portfolio"]]) {
-    const active = investTab === name;
-    $(id).style.borderColor = active ? "var(--accent)" : "";
-    $(id).style.color = active ? "var(--accent)" : "";
-    $(id).style.fontWeight = active ? "600" : "";
-  }
-}
-// Only the click paths preserve scroll - the initial load calls below run at
-// scrollY 0, where there is nothing to preserve.
-$("investTabMarketBtn").onclick = () => preserveScrollAcross($("investTabBar"), () => setInvestTab("market"));
-$("investTabPortfolioBtn").onclick = () => preserveScrollAcross($("investTabBar"), () => setInvestTab("portfolio"));
-setInvestTab(prefGet("investTab") || "market");
+// The top-level Market / My portfolio pair is a real tab set and now goes
+// through the same wireSubTabs the three pill groups use. It had its own older
+// switcher, which meant it was the one tab group in the app with no
+// aria-selected, no roving tabindex and no arrow keys - the selected state
+// existed only as an accent border and accent text, both of which are colour.
+// wireSubTabs brings all of that plus the preserveScrollAcross wrapper, so the
+// bespoke version had nothing left that it did better.
+//
+// The stored value changes shape here, from "market" to the panel id
+// "investTabMarket". No migration is needed: wireSubTabs already falls back to
+// the default when a stored value matches no tab, which is exactly what an old
+// reading does.
+wireSubTabs("investTabBar", "investTab", "investTabMarket");
 
 // Sub-tabs within each top-level tab, so a market/portfolio panel is one
 // focused card at a time instead of a long stacked scroll. Same toggle-with-
-// .hidden shape as setInvestTab above and for the identical reason: every
+// .hidden shape as the top-level tab bar above, and for the identical reason:
+// every
 // sub-panel's card keeps its own render function untouched, since hiding a
 // PARENT already hides its children regardless of their own class - no
 // extra work is needed when the top-level tab itself changes.
@@ -6641,7 +6637,7 @@ function openPriceHistory(symbol) {
     return toast(`No price history recorded for ${sym} yet. Add it under "Choose tracked companies" to start building one.`);
   }
   priceHistorySymbol = sym;
-  setInvestTab("market");
+  setSubTab("investTabBar", "investTab", "investTabMarket");
   setSubTab("investSubTabsMarket", "investSubTabMarket", "investSubHistory");
   renderPriceHistory();
   const card = $("priceHistoryCard");

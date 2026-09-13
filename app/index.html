@@ -418,6 +418,10 @@
     .subtab-pill { width: auto; padding: 7px 14px; min-height: var(--target-min); font-size: var(--fs-sm); border-radius: var(--r-pill);
       background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); cursor: pointer; }
     .subtab-pill.active { color: var(--text); border-color: var(--accent); font-weight: 600; }
+    /* The Investments Market / My portfolio pair are oversized .secondary
+       buttons rather than pills, but they are a real tab set and go through
+       the same setSubTab, so their selected look is a class too. */
+    button.secondary.active { color: var(--accent); border-color: var(--accent); font-weight: 700; }
     /* Help topics are collapsed by default. 38 of them across the four
        pages made the sheet a wall of text, so the diagram plus a list of
        headings is the default view and the prose is opened per topic.
@@ -1667,8 +1671,11 @@
            writing into its elements whether or not its tab is showing - no
            render call has to know which tab is active. -->
       <div class="row" id="investTabBar" style="gap:10px;margin:6px 0 18px">
-        <button class="secondary" id="investTabMarketBtn" style="padding:16px 0;font-size:16px;font-weight:600">Market</button>
-        <button class="secondary" id="investTabPortfolioBtn" style="padding:16px 0;font-size:16px;font-weight:600">My portfolio</button>
+        <!-- No id here on purpose: wireSubTabs assigns "<panel>-tab" so the
+             panel's aria-labelledby can point at it, exactly as it does for
+             the three pill groups, which likewise carry none in markup. -->
+        <button type="button" class="secondary" data-subtab="investTabMarket" style="padding:16px 0;font-size:16px">Market</button>
+        <button type="button" class="secondary" data-subtab="investTabPortfolio" style="padding:16px 0;font-size:16px">My portfolio</button>
       </div>
 
       <!-- Sits with the Market/portfolio buttons rather than as a bare cog in

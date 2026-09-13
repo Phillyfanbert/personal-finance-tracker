@@ -27,6 +27,46 @@
          lightest value that clears it against both panel tones: 3.64:1 on
          --panel, 3.12:1 on --panel-2. Measured, not estimated. */
       --border-strong: #708098;
+      /* Ink on a filled control. --ink-on-series rides the identity fills
+         below, which stay light in every theme, so it never flips. --on-solid
+         rides --accent-2 and --err, which go deep in a light theme where dark
+         ink measures under 2.2:1 - the two were the same #002233 literal one
+         line apart in this file and only one of them may follow the theme. */
+      --ink-on-series: #002233;
+      --on-solid: #002233;
+      /* Tints of --accent. Held as whole colours rather than color-mix()
+         because the ALPHA has to change between themes too, not just the base,
+         so a computed mix would be confidently wrong. */
+      --accent-wash: rgba(56, 189, 248, .14);
+      --accent-wash-2: rgba(56, 189, 248, .22);
+      --accent-glow: rgba(56, 189, 248, .6);
+      /* Scrims stay dark in every theme. A light-mode white veil would put a
+         white sheet on white and destroy the "the page behind is inactive"
+         signal a modal exists to give. */
+      --scrim: rgba(0,0,0,.6);
+      --scrim-strong: rgba(0,0,0,.72);
+      /* A second ring between the tour's accent border and its dimmed
+         surround. Transparent here costs nothing and keeps dark pixel-identical
+         to before it existed; see .tour-spot for why light needs it. */
+      --spot-halo: transparent;
+      --shadow-card: 0 12px 32px rgba(0,0,0,.5);
+      /* filter: brightness() on a hover fill. Brightening reads as "lit" on a
+         dark fill and as "washed out" on a light one, so the direction itself
+         is a theme value. */
+      --lift: 1.08;
+      /* One identity palette for both the account circles and the chart
+         series. They were two overlapping lists maintained separately, which
+         is how they drifted; a colour means the same thing in both places now.
+         Every entry is light enough to carry --ink-on-series, so the same
+         eight work in either theme and an account keeps its colour when the
+         theme flips. Measured under simulated colour vision deficiency by
+         tools/check-palette.mjs - do not edit by eye. */
+      --series-1: #0ea5e9; --series-2: #34d399; --series-3: #fbbf24; --series-4: #f87171;
+      --series-5: #a78bfa; --series-6: #f472b6; --series-7: #22d3ee; --series-8: #fb923c;
+      /* The translucent area under a line chart. Per theme, because 15% of a
+         light accent on a dark panel and 15% of a dark accent on white are not
+         interchangeable. */
+      --chart-line-fill: rgba(14,165,233,0.15);
       --fs-xs: 12px; --fs-sm: 14px; --fs-base: 16px;
       --fs-lg: 18px; --fs-xl: 22px; --fs-2xl: 30px;
       --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-6: 24px; --sp-8: 32px;
@@ -68,8 +108,8 @@
        state rather than only flashing after a failed Save. */
     input.field-required, select.field-required { border-color: var(--err); }
     label { display: block; font-size: var(--fs-sm); color: var(--muted); margin: 10px 0 4px; }
-    button { background: var(--accent-2); border: none; color: #002233; font-weight: 700; cursor: pointer; }
-    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 500; }
+    button { background: var(--accent-2); border: none; color: var(--on-solid); font-weight: 700; cursor: pointer; }
+    button.secondary { background: transparent; border: 1px solid var(--border-strong); color: var(--text); font-weight: 500; }
     .row { display: flex; gap: 10px; }
     .row > * { flex: 1; }
     .hidden { display: none !important; }
@@ -110,13 +150,13 @@
     .acct-circles { display: flex; flex-wrap: wrap; gap: 18px; }
     .acct-circle-item { position: relative; display: flex; flex-direction: column; align-items: center; width: 76px; text-align: center; }
     .acct-circle { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-      font-weight: 800; font-size: var(--fs-xl); color: #002233; }
+      font-weight: 800; font-size: var(--fs-xl); color: var(--ink-on-series); }
     .acct-circle-item .name { font-size: 12px; margin-top: 6px; color: var(--text); word-break: break-word; }
     .acct-circle-item .type { font-size: 11px; color: var(--muted); }
     .acct-circle-item .balance { font-size: 12px; font-weight: 700; color: var(--text); margin-top: 2px; }
     /* The visible badge stays 20px so it does not swamp the 64px circle it
        sits on; the padded box around it is what reaches --target-min. */
-    .acct-circle-item .x { position: absolute; top: -2px; right: 2px; background: var(--err); color: #002233;
+    .acct-circle-item .x { position: absolute; top: -2px; right: 2px; background: var(--err); color: var(--on-solid);
       width: 20px; height: 20px; min-width: 0; min-height: 0; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
       font-size: var(--fs-xs); font-weight: 700; cursor: pointer; border: 2px solid var(--panel); }
@@ -146,11 +186,11 @@
        and add an unwanted one on the far left/right too. Muted-tinted
        rgba rather than --border - --border reads almost invisibly close
        to --panel's own background at this small a swatch. */
-    .nav button + button { border-left: 1.5px solid rgba(148, 163, 184, .45); }
-    .nav button.active { color: var(--accent); background: rgba(56, 189, 248, .14);
-      text-shadow: 0 0 12px rgba(56, 189, 248, .6); }
+    .nav button + button { border-left: 1.5px solid var(--border-strong); }
+    .nav button.active { color: var(--accent); background: var(--accent-wash);
+      text-shadow: 0 0 12px var(--accent-glow); }
     /* Modal */
-    .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 70;
+    .modal { position: fixed; inset: 0; background: var(--scrim); z-index: 70;
       display: flex; align-items: flex-end; justify-content: center; }
     .modal .sheet { background: var(--panel); width: 100%; max-width: 560px;
       border-radius: 16px 16px 0 0; border: 1px solid var(--border); padding: 18px;
@@ -172,11 +212,11 @@
        stay visually "live" without the user being able to click through to
        a half-explained control mid-tour (.tour itself catches those). */
     .tour-spot { position: absolute; border-radius: 12px; pointer-events: none;
-      border: 2px solid var(--accent); box-shadow: 0 0 0 9999px rgba(0,0,0,.72);
+      border: 2px solid var(--accent); box-shadow: 0 0 0 2px var(--spot-halo), 0 0 0 9999px var(--scrim-strong);
       transition: top .25s, left .25s, width .25s, height .25s; }
     .tour-card { position: absolute; width: min(420px, calc(100vw - 24px));
       background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-      padding: 18px; box-shadow: 0 12px 32px rgba(0,0,0,.5); }
+      padding: 18px; box-shadow: var(--shadow-card); }
     /* The arrow. Rotated square rather than a border triangle so it can
        carry the same border and background as the card and read as one
        shape; the clip hides the two edges that would show through. */
@@ -212,10 +252,10 @@
        affordance and carries the meaning faster than the word alone. */
     .help-btn { display: inline-flex; align-items: center; gap: 6px;
       width: auto; flex: none; padding: 6px 12px 6px 8px; border-radius: 999px;
-      background: rgba(56, 189, 248, .12); border: 1px solid var(--accent);
+      background: var(--accent-wash); border: 1px solid var(--accent);
       color: var(--accent); font-weight: 600; font-size: var(--fs-sm); cursor: pointer;
       min-height: var(--target-min); transition: background-color .15s; }
-    .help-btn:hover, .help-btn:focus-visible { background: rgba(56, 189, 248, .22); }
+    .help-btn:hover, .help-btn:focus-visible { background: var(--accent-wash-2); }
     /* Export is a peer of Help, not a primary action: same pill, quieter tone
        so it never competes with the page's own content for attention. */
     .export-btn { background: transparent; border-color: var(--border-strong); color: var(--text); }
@@ -310,6 +350,11 @@
     .help-topic.flash > .help-topic-head { border-color: var(--accent); }
     /* Diagram rows are a table of contents, so they need to look tappable. */
     .help-diagram .diagram-row { cursor: pointer; }
+    /* Presentation attributes lose to any CSS rule, so one selector re-strokes
+       all 33 boxes without touching the markup. fill and stroke are both
+       --panel-2/--border in the markup, which leaves a box visible only by a
+       1.2:1 edge. */
+    .help-diagram rect { stroke: var(--border-strong); }
     .help-diagram .diagram-row:hover rect { stroke: var(--accent); }
     .help-topic:last-child { margin-bottom: 0; }
     .help-topic h3 { font-size: var(--fs-base); margin: 0 0 6px; }
@@ -328,9 +373,9 @@
       font: inherit; font-size: var(--fs-sm); font-weight: 700;
       margin-right: var(--sp-3); padding: 0 var(--sp-3); min-height: var(--target-min);
       border: none; border-radius: var(--r-control);
-      background: var(--accent-2); color: #002233; cursor: pointer;
+      background: var(--accent-2); color: var(--on-solid); cursor: pointer;
     }
-    input[type="file"]::file-selector-button:hover { filter: brightness(1.08); }
+    input[type="file"]::file-selector-button:hover { filter: brightness(var(--lift)); }
 
     .help-diagram svg { display: block; width: 100%; height: auto; }
 

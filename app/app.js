@@ -2213,7 +2213,6 @@ function capBackwardLookingDates() {
 // offer future days to anyone looking at the app before init() finishes.
 capBackwardLookingDates();
 
-const ACCT_COLORS = ["#0ea5e9", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6", "#22d3ee", "#fb923c"];
 
 // Renders the account circles from the current accounts/assets/debts globals
 // (no fetch) - called after any of the three load, since a circle's balance
@@ -2265,7 +2264,7 @@ function renderAccountsList() {
         const styleAttr = clickAttr ? ` style="cursor:pointer"` : "";
         return `
       <div class="acct-circle-item" ${clickAttr}${styleAttr}>
-        <div class="acct-circle" style="background:${ACCT_COLORS[i % ACCT_COLORS.length]}">${a.type === "cash" ? "💵" : esc((bankLabel.trim()[0] || "?").toUpperCase())}</div>
+        <div class="acct-circle" style="background:var(--series-${(i % 8) + 1})">${a.type === "cash" ? "💵" : esc((bankLabel.trim()[0] || "?").toUpperCase())}</div>
         ${a.type === "cash" ? "" : `<button type="button" class="x" data-del-acct="${a.id}" aria-label="Delete ${esc(acctLabel(a))}">✕</button>`}
         <div class="name">${esc(bankLabel)}</div>
         <div class="type">${a.name}</div>
@@ -8160,7 +8159,7 @@ async function renderReports() {
   const trailing = reportTrendMonths(period);
   const ive = incomeVsExpense(rows.income, periodExpenses, trailing);
   renderTrendBar($("incomeExpenseChart"), trailing, ive.map((r) => r.expense), {
-    label: "Income", data: ive.map((r) => r.income), color: "#34d399",
+    label: "Income", data: ive.map((r) => r.income),
   });
 
   // The savings rate is for the PERIOD, so a year rate is the year's income
@@ -8263,6 +8262,10 @@ $("exportPdfBtn").onclick = async () => {
     `<tr><td>${esc(r.occurred_at)}</td><td>${esc(r.description || r.merchant || "")}</td><td>${esc(r.category || "")}</td><td style="text-align:right">${fmt(r.amount)}</td></tr>`
   ).join("");
   const catHtml = byCat.map((c) => `<tr><td>${esc(c.label)}</td><td style="text-align:right">${fmt(c.value)}</td></tr>`).join("");
+  // The only colour literals left in this file, and they stay. This is a
+  // separate document written for PAPER: it never sees the app's stylesheet,
+  // so it has no tokens to read, and it is black-on-white whatever theme the
+  // app itself is using.
   win.document.write(`<!doctype html><html><head><title>${period.label} report</title>
 <meta charset="utf-8">
 <style>

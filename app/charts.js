@@ -126,15 +126,71 @@ export function incomeVsExpense(incomeActivity, expenses, months) {
 }
 
 // ---- Chart.js rendering ----------------------------------------------------
-const PALETTE = [
-  "#38bdf8", "#34d399", "#fbbf24", "#f87171", "#a78bfa",
-  "#f472b6", "#22d3ee", "#facc15", "#fb923c", "#4ade80",
-];
-const GRID = "#334155";
-const TEXT = "#94a3b8";
+// A <canvas> cannot resolve a CSS variable: handing Chart.js "var(--accent)"
+// paints nothing at all, silently. So every colour has to arrive already
+// resolved, and the only question is where it resolves. It resolves here,
+// read from the same :root tokens the rest of the app uses, rather than from a
+// second copy of the palette kept in this file - a second copy is exactly what
+// made this module blind to the theme, and what let the chart palette drift
+// until it held two ambers 5.1 apart under normal vision.
+//
+// This module already reaches the DOM for `new Chart(canvas, ...)` and for
+// describeChart(), and for the same stated reason: the canvas is the one
+// element it owns. Its pure half (monthKey, lastMonths, sumBy, monthlyTotals,
+// incomeVsExpense, averageMonth) stays node-importable, which is what
+// "pure-ish logic module" actually protects.
+const SERIES_COUNT = 8;
+// Read per render rather than cached. A cache would need invalidating from the
+// theme toggle, which is one more thing to keep in step for a read of about
+// ten custom properties.
+function themeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  // getPropertyValue keeps the token's leading whitespace, and an unknown
+  // token returns "". Chart.js would take "" and paint black on black, so a
+  // misspelling fails loudly here instead of looking like a rendering bug.
+  const v = (name) => {
+    const raw = cs.getPropertyValue(name).trim();
+    if (!raw) throw new Error(`Missing CSS token ${name}`);
+    return raw;
+  };
+  return {
+    grid: v("--border"),
+    text: v("--muted"),
+    line: v("--accent-2"),
+    lineFill: v("--chart-line-fill"),
+    series: Array.from({ length: SERIES_COUNT }, (_, i) => v(`--series-${i + 1}`)),
+  };
+}
+
 let _charts = {};
 
-function destroy(id) { if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; } }
+// Stores the BUILDER, not just the instance, so a theme change can rebuild
+// every live chart without any render function knowing that a theme exists.
+// Re-invoking build() re-runs themeColors(), which is the whole trick.
+function mount(canvas, build) {
+  destroy(canvas.id);
+  _charts[canvas.id] = { chart: new Chart(canvas, build()), canvas, build };
+}
+
+/**
+ * Repaint every live chart against the current theme tokens.
+ *
+ * Needed because a chart only re-reads its colours when its own data path runs
+ * again, so without this a theme toggle leaves every canvas on screen painted
+ * in the old palette until the user navigates away and back.
+ */
+export function repaintCharts() {
+  for (const id of Object.keys(_charts)) {
+    const { canvas, build } = _charts[id];
+    // Several renderers rewrite innerHTML wholesale, which detaches the canvas
+    // without going through destroy(). Rebuilding into a detached node would
+    // paint nothing and leak the Chart.js instance.
+    if (!canvas.isConnected) { destroy(id); continue; }
+    mount(canvas, build);
+  }
+}
+
+function destroy(id) { if (_charts[id]) { _charts[id].chart.destroy(); delete _charts[id]; } }
 
 /**
  * Gives a canvas an accessible name and a text equivalent of its data.
@@ -188,30 +244,32 @@ const money = (n) => "$" + Number(n ?? 0).toFixed(2);
  * so multiple bar charts on one page don't clobber each other on redraw).
  */
 export function renderBreakdownBar(canvas, data) {
-  destroy(canvas.id);
   const labels = data.map((d) => `${d.label} - $${d.value.toFixed(2)}`);
   const total = data.reduce((s, d) => s + d.value, 0);
   describeChart(canvas,
     data.length ? `Breakdown of ${money(total)} across ${data.length} ${data.length === 1 ? "group" : "groups"}` : "No data yet",
     data.map((d) => [d.label, money(d.value)]), ["Group", "Amount"]);
-  _charts[canvas.id] = new Chart(canvas, {
-    type: "bar",
-    data: {
-      labels,
-      datasets: [{
-        data: data.map((d) => d.value),
-        backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length]),
-        borderRadius: 6,
-      }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: TEXT }, grid: { display: false } },
-        y: { ticks: { color: TEXT, callback: (v) => "$" + v }, grid: { color: GRID } },
+  mount(canvas, () => {
+    const t = themeColors();
+    return {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          data: data.map((d) => d.value),
+          backgroundColor: data.map((_, i) => t.series[i % t.series.length]),
+          borderRadius: 6,
+        }],
       },
-    },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: t.text }, grid: { display: false } },
+          y: { ticks: { color: t.text, callback: (v) => "$" + v }, grid: { color: t.grid } },
+        },
+      },
+    };
   });
 }
 
@@ -221,21 +279,22 @@ export function renderBreakdownBar(canvas, data) {
  * coexist with the bar charts without clobbering them on redraw.
  */
 export function renderLineChart(canvas, labels, values) {
-  destroy(canvas.id);
   const nums = values.filter((v) => Number.isFinite(v));
   describeChart(canvas,
     nums.length
       ? `${labels.length} ${labels.length === 1 ? "point" : "points"}, from ${money(nums[0])} on ${labels[0]} to ${money(nums[nums.length - 1])} on ${labels[labels.length - 1]}. Lowest ${money(Math.min(...nums))}, highest ${money(Math.max(...nums))}.`
       : "No data yet",
     labels.map((l, i) => [l, money(values[i])]), ["Date", "Value"]);
-  _charts[canvas.id] = new Chart(canvas, {
+  mount(canvas, () => {
+    const t = themeColors();
+    return {
     type: "line",
     data: {
       labels,
       datasets: [{
         data: values,
-        borderColor: "#0ea5e9",
-        backgroundColor: "rgba(14,165,233,0.15)",
+        borderColor: t.line,
+        backgroundColor: t.lineFill,
         fill: true,
         tension: 0.2,
         pointRadius: 2,
@@ -245,17 +304,18 @@ export function renderLineChart(canvas, labels, values) {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { ticks: { color: TEXT }, grid: { display: false } },
-        y: { ticks: { color: TEXT, callback: (v) => "$" + v }, grid: { color: GRID } },
+        x: { ticks: { color: t.text }, grid: { display: false } },
+        y: { ticks: { color: t.text, callback: (v) => "$" + v }, grid: { color: t.grid } },
       },
     },
+    };
   });
 }
 
 /**
  * Single-series month-over-month bar chart (the original, unchanged
  * shape - "Last 6 months" on Reports). `secondDataset`, when given
- * (`{label, data, color}`), adds a second bar per month for a paired
+ * (`{label, data}`), adds a second bar per month for a paired
  * comparison (income vs. expense) - the only case that needs a legend at
  * all, since a single series is unambiguous without one. Registry key
  * switched from a hardcoded "trend" to `canvas.id` so a second chart
@@ -264,7 +324,6 @@ export function renderLineChart(canvas, labels, values) {
  * ever referenced the old literal key.
  */
 export function renderTrendBar(canvas, months, totals, secondDataset = null) {
-  destroy(canvas.id);
   const labelFor = (m) => monthLabel(m);
   describeChart(canvas,
     months.length
@@ -276,26 +335,37 @@ export function renderTrendBar(canvas, months, totals, secondDataset = null) {
       ? [labelFor(m), money(secondDataset.data[i]), money(totals[i])]
       : [labelFor(m), money(totals[i])]),
     secondDataset ? ["Month", secondDataset.label, "Money out"] : ["Month", "Total"]);
-  const datasets = [{
-    label: secondDataset ? "Expense" : undefined,
-    data: totals, backgroundColor: "#0ea5e9", borderRadius: 6,
-  }];
-  if (secondDataset) {
-    datasets.push({
-      label: secondDataset.label, data: secondDataset.data,
-      backgroundColor: secondDataset.color || "#34d399", borderRadius: 6,
-    });
-  }
-  _charts[canvas.id] = new Chart(canvas, {
-    type: "bar",
-    data: { labels: months.map(monthLabel), datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: !!secondDataset, labels: { color: TEXT } } },
-      scales: {
-        x: { ticks: { color: TEXT }, grid: { display: false } },
-        y: { ticks: { color: TEXT, callback: (v) => "$" + v }, grid: { color: GRID } },
+  mount(canvas, () => {
+    const t = themeColors();
+    // Built inside the builder, not outside it: a repaint re-invokes this, and
+    // datasets assembled once at call time would keep the old theme's colours.
+    //
+    // The two series are separated by LIGHTNESS, not hue. This is the only
+    // chart in the app where colour has to be decoded back to a meaning (every
+    // other one bakes its label into the bar), so series 1 and 2 are chosen as
+    // the furthest-apart pair in the palette under simulated colour vision
+    // deficiency rather than for looking like "money in" and "money out".
+    const datasets = [{
+      label: secondDataset ? "Expense" : undefined,
+      data: totals, backgroundColor: t.series[0], borderRadius: 6,
+    }];
+    if (secondDataset) {
+      datasets.push({
+        label: secondDataset.label, data: secondDataset.data,
+        backgroundColor: t.series[1], borderRadius: 6,
+      });
+    }
+    return {
+      type: "bar",
+      data: { labels: months.map(monthLabel), datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: !!secondDataset, labels: { color: t.text } } },
+        scales: {
+          x: { ticks: { color: t.text }, grid: { display: false } },
+          y: { ticks: { color: t.text, callback: (v) => "$" + v }, grid: { color: t.grid } },
+        },
       },
-    },
+    };
   });
 }

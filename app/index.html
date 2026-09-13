@@ -56,9 +56,12 @@
       --on-solid: #002233;
       /* Tints of --accent. Held as whole colours rather than color-mix()
          because the ALPHA has to change between themes too, not just the base,
-         so a computed mix would be confidently wrong. */
+         so a computed mix would be confidently wrong. --accent sits ON these
+         as text (the selected nav tab, the Help button), so the alpha is
+         bounded: .22 shipped for months at 4.37:1 and only surfaced when the
+         checker started compositing them. */
       --accent-wash: rgba(56, 189, 248, .14);
-      --accent-wash-2: rgba(56, 189, 248, .22);
+      --accent-wash-2: rgba(56, 189, 248, .20);
       --accent-glow: rgba(56, 189, 248, .6);
       /* Scrims stay dark in every theme. A light-mode white veil would put a
          white sheet on white and destroy the "the page behind is inactive"

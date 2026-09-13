@@ -209,6 +209,17 @@ for (const [name, t] of themes) {
     ok(r >= 4.5, `${name}: ${ink} on ${fill} is ${r}:1, needs 4.5`);
     console.log(`    ${r >= 4.5 ? "ok  " : "FAIL"} ${ink} on ${fill}: ${r}`);
   }
+  // --accent sits ON the washes as text: the selected nav tab and the Help
+  // button both do it. An opaque wash in one theme and an alpha tint in the
+  // other means this cannot be eyeballed from the token values.
+  for (const wash of ["--accent-wash", "--accent-wash-2"]) {
+    if (!t[wash] || !t["--accent"]) continue;
+    const behind = over(t[wash], t["--panel"]);
+    const r = ratio(t["--accent"], behind);
+    ok(r >= 4.5, `${name}: --accent on ${wash} is ${r}:1, needs 4.5`);
+    console.log(`    ${r >= 4.5 ? "ok  " : "FAIL"} --accent on ${wash}: ${r}`);
+  }
+
   // A scrim's contrast is against what it composites to, not its own rgba.
   //
   // Judged on the WCAG ratio OR a raw luminance multiple, because the ratio

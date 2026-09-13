@@ -8,6 +8,7 @@ import { categorize, quickParse, CATEGORIES } from "./categorize.js";
 import {
   monthKey, monthLabel, lastMonths, sumBy, incomeVsExpense, averageMonth,
   renderBreakdownBar, renderTrendBar, renderLineChart,
+  repaintCharts,
 } from "./charts.js";
 import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
@@ -93,6 +94,48 @@ function prefGet(key, fallback = null) {
 function prefSet(key, value) {
   try { localStorage.setItem(key, value); } catch { /* storage blocked; preference is session-only */ }
 }
+
+// ---- Appearance -------------------------------------------------------------
+// Must match the literal in index.html's inline head script, which cannot
+// import this. tools/check-palette.mjs fails if the two ever drift.
+const THEME_KEY = "theme";
+const THEMES = ["dark", "light"];
+
+// Dark is :root's own value, so it is expressed as the ABSENCE of the
+// attribute. That is what makes every failure path - blocked storage, a stale
+// value, a browser that never ran the head script - land on the default
+// instead of on a half-applied theme.
+function applyTheme(key) {
+  if (key === "light") document.documentElement.dataset.theme = "light";
+  else delete document.documentElement.dataset.theme;
+  syncThemeColorMeta();
+  // A canvas keeps whatever colours it was painted with, so without this every
+  // chart on screen stays in the old theme until its own data path runs again.
+  repaintCharts();
+}
+
+// Keeps the browser chrome in step with the page. Read from the token rather
+// than written as a second literal, so there is still exactly one place a
+// background colour is defined.
+function syncThemeColorMeta() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  if (bg) meta.content = bg;
+}
+
+const themePills = wireTogglePills({
+  attr: "data-appearance",
+  storageKey: THEME_KEY,
+  options: THEMES,
+  fallback: "dark",
+  apply: applyTheme,
+});
+// wireTogglePills paints the remembered pill but deliberately does not apply
+// it, and here the head script already did that before first paint. So only
+// the meta tag needs catching up; calling applyTheme would repaint a chart
+// registry that is still empty at module-evaluation time.
+syncThemeColorMeta();
 
 let toastTimer = null;
 let toastShowTimer = null;

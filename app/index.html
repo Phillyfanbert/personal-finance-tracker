@@ -4,6 +4,24 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
+  <!-- The one script outside app.js, and only because a deferred ES module
+       cannot beat first paint: applying the remembered theme from app.js paints
+       one dark frame first, on every single load. It owns no behaviour, which is
+       why it does not really breach the single-entry-point rule - it is a
+       document-level declaration, the same category of thing as the meta tag
+       above it. try/catch for the same reason prefGet has one: localStorage
+       THROWS when site data is blocked, and an exception here would leave the
+       document with no theme at all. Only "light" is ever written, because dark
+       is :root's own value, so every failure path lands on the default with no
+       branch. The key must stay in step with THEME_KEY in app.js;
+       tools/check-palette.mjs fails if the two drift. -->
+  <script>
+    try {
+      if (localStorage.getItem("theme") === "light") {
+        document.documentElement.dataset.theme = "light";
+      }
+    } catch (e) { /* storage blocked; dark is the default anyway */ }
+  </script>
   <!-- Describes the app to a browser or a link preview. Deliberately says
        nothing about the household using it: the app is behind sign-in, so a
        description is read by whoever finds the URL, not by a user. -->
@@ -18,6 +36,8 @@
   <title>Personal Finance Tracker</title>
   <style>
     :root {
+      color-scheme: dark;
+      accent-color: var(--accent);
       --bg: #0f172a; --panel: #1e293b; --panel-2: #273449;
       --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --accent-2: #0ea5e9;
       --ok: #34d399; --err: #f87171; --warn: #fbbf24; --border: #334155;
@@ -79,6 +99,66 @@
          phone-first app where a mis-tap logs a wrong transaction, so it takes
          the strict number rather than the legal floor. */
       --target-min: 44px;
+    }
+
+    /* The light theme is a DELTA, and dark stays the base block on purpose:
+       blocked storage, a stale value, or app/404.html all land on today's look
+       with no branch to get wrong. :root[data-theme="light"] is (0,2,0) against
+       :root's (0,1,0), so it wins on specificity with no !important and no
+       ordering rule to remember, and every existing var(--x) reference follows
+       for free - including the 16 inline colour styles and the 104 SVG diagram
+       attributes, which is what made a theme a small block rather than a
+       rewrite.
+
+       These values are DERIVED, not inverted. Each one solves for its own job:
+       every text token clears 4.5:1 against all three surfaces rather than only
+       --panel, because "which token is ever painted on which surface" is not a
+       property worth auditing by hand. Run tools/check-palette.mjs after any
+       edit here; it measures both themes and prints the table.
+
+       Two that are not obvious. --accent-2 goes DEEP rather than staying
+       mid-tone: a fill that takes dark ink at 4.5:1 and also clears 3:1 against
+       a near-white page has to sit inside a 5% luminance window, which is a
+       coincidence rather than a palette, so it goes dark and takes white ink.
+       And --err and --warn are both darker than the obvious choices, because red
+       and amber collapse together under deuteranopia and LIGHTNESS is the only
+       channel left to tell them apart. Measured: the natural light pair
+       #dc2626 against #b45309 lands at dE00 5.5, and even #991b1b against
+       #a84e08 only reaches 10. This pair reaches 15.4 under deuteranopia and
+       20.8 under protanopia, against dark's own 17. */
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f7fa; --panel: #ffffff; --panel-2: #eef2f7;
+      --text: #0f172a; --muted: #5b6778; --accent: #0369a1; --accent-2: #075985;
+      --ok: #0f766e; --err: #7f1d1d; --warn: #92610a; --border: #dbe2ea;
+      --border-strong: #7c8798;
+      /* White, because --accent-2 and --err are both deep here and #002233
+         measures under 2.2:1 on either. --ink-on-series is deliberately NOT
+         overridden: the identity fills stay light in both themes. */
+      --on-solid: #ffffff;
+      /* Opaque rather than an alpha tint: the alpha itself would have to change
+         with the base, so a single rgba cannot serve both themes. Both keep
+         --accent readable on top at 5.04:1 and 4.64:1. */
+      --accent-wash: #e3eef6;
+      --accent-wash-2: #d6e6f0;
+      /* A glow is a dark-mode device. Transparent keeps the rule one line. */
+      --accent-glow: transparent;
+      /* Still dark, just less so. A white veil would put a white sheet on white
+         and destroy the "the page behind is inactive" signal a modal exists to
+         give. */
+      --scrim: rgba(15,23,42,.45);
+      --scrim-strong: rgba(15,23,42,.60);
+      /* The tour ring cannot be ported by substitution: a deep --accent against
+         the dimmed surround measures 1.21:1 and no colour fixes that, because
+         the ring has to hold against the undimmed content INSIDE the hole and
+         the scrim OUTSIDE it at once. A white halo between the two bounds it on
+         both sides: 5.93:1 against the ring, 4.9:1 against the surround. */
+      --spot-halo: #ffffff;
+      --shadow-card: 0 8px 24px rgba(15,23,42,.16);
+      /* Brightening a mid-tone fill reads as "lit" on dark and "washed out" on
+         light, so the direction is itself a theme value. */
+      --lift: 0.92;
+      --chart-line-fill: rgba(7,89,133,0.15);
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
@@ -153,8 +233,17 @@
     /* Accounts: bigger circular badges so every payment method is visible at a glance */
     .acct-circles { display: flex; flex-wrap: wrap; gap: 18px; }
     .acct-circle-item { position: relative; display: flex; flex-direction: column; align-items: center; width: 76px; text-align: center; }
+    /* The fill cannot carry its own boundary. A fill that takes dark ink at
+       4.5:1 needs luminance >= 0.2372, and 3:1 against a white panel caps it at
+       0.3000; eight hues inside a 26% band would be iso-luminant, and lightness
+       is the one channel colour blindness preserves. So the ink rule wins and
+       the boundary becomes a real ring, 3.64:1 on the page in either theme.
+       Defensible under 1.4.11 on its own terms: the account's name, type and
+       balance are written in words directly beneath every circle, so the disc
+       is identity decoration rather than a graphic that has to be decoded. */
     .acct-circle { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-      font-weight: 800; font-size: var(--fs-xl); color: var(--ink-on-series); }
+      font-weight: 800; font-size: var(--fs-xl); color: var(--ink-on-series);
+      box-shadow: inset 0 0 0 1px var(--border-strong); }
     .acct-circle-item .name { font-size: 12px; margin-top: 6px; color: var(--text); word-break: break-word; }
     .acct-circle-item .type { font-size: 11px; color: var(--muted); }
     .acct-circle-item .balance { font-size: 12px; font-weight: 700; color: var(--text); margin-top: 2px; }
@@ -2259,6 +2348,20 @@
         <option value="student">Student</option>
         <option value="other">Other</option>
       </select>
+      <!-- Appearance. Two pills, not three: there is no "System" option and no
+           prefers-color-scheme following, so the app's look is whatever was
+           last chosen here and nothing changes it underneath the user. The
+           attribute is data-appearance rather than data-theme deliberately -
+           wireTogglePills selects on [attr] from `document`, and data-theme
+           lives on <html>, so it would paint .active and aria-pressed onto the
+           root element. -->
+      <div class="muted" style="font-size:12px;margin:16px 0 4px;font-weight:700">Appearance</div>
+      <div class="subtab-pills" role="group" aria-label="Appearance">
+        <button type="button" class="subtab-pill" data-appearance="dark">Dark</button>
+        <button type="button" class="subtab-pill" data-appearance="light">Light</button>
+      </div>
+      <p class="muted" style="font-size:11px;margin:-8px 0 8px">Remembered on this device only.</p>
+
       <!-- Deal-eligibility fields. Every one is genuinely read by
            discounts.js's qualificationsFor(), so a real military/
            first-responder/senior/educator catalog entry (subscription_
@@ -2347,8 +2450,13 @@
        report rowsecurity = true; the client contacts only Supabase, the
        three jsdelivr libraries below and the home Gemma tunnel; there is no
        analytics, tracking or telemetry code and nothing sets a cookie;
-       localStorage holds exactly three UI preferences plus the sign-in
-       session. Re-run those checks before changing any sentence here. -->
+       localStorage holds the sign-in session plus a handful of display
+       preferences. The sentence below describes that CATEGORY rather than
+       listing the keys: the list form was written when there were three, was
+       already understated by the time the Reports scope, the Investments
+       sub-tabs and the per-page tour flags arrived, and went wrong again when
+       the theme was added. Re-run those checks before changing any sentence
+       here. -->
   <div id="privacyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
     <div class="sheet">
       <div class="topbar">
@@ -2375,7 +2483,7 @@
       </ul>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What is stored on your device</h3>
-      <p class="muted" style="font-size:13px;margin:0 0 10px">Your sign-in, so you stay signed in, and three small preferences: which tab you were last on, which Investments tab you had open, and which spending breakdown you last chose. There are no cookies and no advertising or tracking code of any kind.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Your sign-in, so you stay signed in, and a handful of small display preferences: which tabs you had open, which breakdown you last chose, and whether you picked the light or dark look. There are no cookies and no advertising or tracking code of any kind.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">Getting a copy, or deleting it</h3>
       <p class="muted" style="font-size:13px;margin:0 0 10px">The two buttons above this one download everything you have recorded, as a file saved to your own device. To have your information deleted, ask the person who set this app up.</p>
@@ -2601,7 +2709,7 @@
         <div class="help-topic" id="helpTopic-profile-top-right">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-profile-top-right-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Profile (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-profile-top-right-body">
-          <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Log page's Bills tab, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else.</p>
+          <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Appearance sits below that: two choices, Dark or Light. The app opens in Dark, and whichever you pick is remembered on this device only, so choosing Light on your phone does not change it on a computer. Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Log page's Bills tab, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else.</p>
           <p><strong>Getting your history in and out.</strong> Two buttons at the bottom save a copy to your device, and both ask you to confirm first, because the file they write is readable by anyone who can open it - only do it on a device you trust. <strong>Download a copy of my data</strong> writes everything as one file: balances, every transaction, and this profile. <strong>Download all my spending as a spreadsheet</strong> writes just your transactions, in the same format the app's own Import CSV reads back, so you can move a long history between devices without retyping it.</p>
           <p>To bring history in, use <strong>Import CSV</strong> under Quick Add on the Log page. It reads a spreadsheet exported from a bank or another app: <strong>.csv</strong>, tab-separated <strong>.tsv</strong> or <strong>.txt</strong>, and Excel <strong>.xlsx</strong> and <strong>.xls</strong> files directly, with no need to convert them first. It works out which columns are which, and lets you check everything before anything is saved. It handles money going out and money coming in from the same file. If an Excel workbook has more than one tab, it asks which one holds your transactions rather than guessing - bank exports often put a summary or a disclosures page first, and reading that as if it were your history would produce nonsense.</p>
           </div>

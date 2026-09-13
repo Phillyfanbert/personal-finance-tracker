@@ -151,12 +151,26 @@ section("A. Token parity between themes");
 if (!lightTokens) {
   console.log("  (skipped: no light theme block yet)");
 } else {
+  // Tokens that are the same in both themes ON PURPOSE, so the parity check
+  // does not demand a light value for them. Short and explicit, because adding
+  // to it should be a deliberate act rather than a way to silence the check.
+  //   --ink-on-series  rides the identity fills, which stay light in both
+  //   --series-1..8    one account keeps one colour whichever theme is on
+  const SHARED = (k) => k === "--ink-on-series" || /^--series-\d+$/.test(k);
   const d = new Set(colourNames(darkTokens)), l = new Set(colourNames(lightTokens));
-  const missingInLight = [...d].filter((k) => !l.has(k));
+  const missingInLight = [...d].filter((k) => !l.has(k) && !SHARED(k));
   const extraInLight = [...l].filter((k) => !d.has(k));
+  const wronglyShared = [...l].filter((k) => SHARED(k));
   ok(!missingInLight.length, `colour tokens set in :root but not in the light block: ${missingInLight.join(", ")}`);
   ok(!extraInLight.length, `colour tokens set only in the light block: ${extraInLight.join(", ")}`);
-  if (!missingInLight.length && !extraInLight.length) console.log(`  both themes declare the same ${d.size} colour tokens`);
+  ok(!wronglyShared.length, `tokens meant to be theme-invariant are overridden in light: ${wronglyShared.join(", ")}`);
+  // --lift is a number rather than a colour, so colourNames misses it, but it
+  // must still differ: brightness() has to go the other way on a light fill.
+  ok(!!lightTokens["--lift"], "--lift must be set in the light block; brightening a light fill washes it out");
+  if (!missingInLight.length && !extraInLight.length) {
+    console.log(`  both themes declare the same ${d.size - [...d].filter(SHARED).length} theme-varying colour tokens`);
+    console.log(`  ${[...d].filter(SHARED).length} tokens are shared by design (ink-on-series, series-1..8)`);
+  }
 }
 
 // ---- B: WCAG contrast, every theme -----------------------------------------

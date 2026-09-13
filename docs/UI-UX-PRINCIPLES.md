@@ -169,7 +169,7 @@ in generalities ("Are you sure?").
 **6.1 Text contrast (WCAG 1.4.3, AA).** Normal text at least **4.5:1** against its
 background. Large text (18.66px bold, or 24px) at least **3:1**.
 
-This app's palette, measured:
+This app's **dark** palette, measured (`node tools/check-palette.mjs` prints both):
 
 | Pair | Ratio | Verdict |
 |---|---|---|
@@ -183,17 +183,40 @@ This app's palette, measured:
 | `--warn` `#fbbf24` on `--panel` | 8.76:1 | pass |
 | `#002233` on `--accent-2` `#0ea5e9` (primary button) | 5.94:1 | pass |
 
-The palette is sound. **Do not "improve" these colours without re-measuring** - they
-were chosen to clear AA and they do.
+And the **light** palette, derived rather than inverted, so every text token clears
+4.5:1 against all three surfaces rather than only `--panel`:
+
+| Pair | on `--panel` `#ffffff` | on `--panel-2` `#eef2f7` | on `--bg` `#f4f7fa` |
+|---|---|---|---|
+| `--text` `#0f172a` | 17.85:1 | 15.88:1 | 16.60:1 |
+| `--muted` `#5b6778` | 5.74:1 | 5.11:1 | 5.34:1 |
+| `--accent` `#0369a1` | 5.93:1 | 5.28:1 | 5.52:1 |
+| `--accent-2` `#075985` | 7.56:1 | 6.73:1 | 7.03:1 |
+| `--ok` `#0f766e` | 5.47:1 | 4.87:1 | 5.09:1 |
+| `--err` `#7f1d1d` | 10.02:1 | 8.91:1 | 9.32:1 |
+| `--warn` `#92610a` | 5.33:1 | 4.75:1 | 4.96:1 |
+| `--border-strong` `#7c8798` (needs 3:1) | 3.64:1 | 3.23:1 | 3.38:1 |
+| `--on-solid` `#ffffff` on `--accent-2` | 7.56:1 | | |
+| `--on-solid` on `--err` | 10.02:1 | | |
+
+Both palettes are sound. **Do not "improve" these colours without re-measuring**,
+in both themes - they were chosen to clear AA and they do. `node
+tools/check-palette.mjs` is the measurement; it parses the stylesheet rather than
+holding its own copy, so it cannot quietly agree with a palette that has drifted.
 
 **6.2 Non-text contrast (WCAG 1.4.11, AA).** UI component boundaries and meaningful
 graphics need **3:1**. An input border the user must find in order to know where to
 type is a UI boundary, not decoration.
 
 White text on a coloured chip is the trap here. Measured against this app's eight
-account colours, `#fff` fails every one (1.67:1 to 2.77:1) while the existing
-`#002233` ink passes every one (5.94:1 to 9.85:1). **On a mid-tone accent fill, use
-dark ink.**
+identity colours, `#fff` fails every one while `#002233` passes every one (5.37:1
+to 12.01:1). **On a mid-tone fill, use dark ink.**
+
+Two inks, and the difference matters: `--ink-on-series` rides the identity fills,
+which stay light in both themes, so it never flips. `--on-solid` rides `--accent-2`
+and `--err`, which go deep in the light theme where `#002233` measures under 2.2:1,
+so it flips to white. They were the same `#002233` literal one line apart in the
+stylesheet and only one of them may follow the theme.
 
 **6.3 Never use colour as the only carrier of meaning (WCAG 1.4.1, A).** A red
 number, an amber bar, a green dot - each needs a second channel: a sign, a word, an
@@ -209,6 +232,43 @@ a checkmark - and the matching ARIA state (§8.4).
 
 **6.5** Do not remove focus outlines. If the default ring is ugly, replace it with a
 better one; never `outline: none` with nothing after it.
+
+**6.6 Two themes, one token set. [house rule]** Dark is `:root`. Light is a single
+`:root[data-theme="light"]` delta, which wins on specificity (0,2,0 against 0,1,0)
+with no `!important` and no ordering rule to remember. Dark stays the base so every
+failure path - blocked storage, a stale value, `404.html` - lands on the default.
+
+**A CSS rule may not contain a colour literal, `rgba()` included.** If a value
+differs by theme it is a token; if it does not, it is still a token. The corollary
+is the one that gets used in practice: **a new colour means two values, not one.**
+`tools/check-palette.mjs` fails on any literal outside the two `:root` blocks, and
+on a colour token set in one theme but not the other.
+
+Three tokens are shared by design and the checker knows it: `--ink-on-series` and
+`--series-1..8`, so an account keeps its colour when the theme flips.
+
+**6.7 Identity palettes are measured under simulated colour vision deficiency.
+[house rule]** One shared `--series-1..8` for the account circles and the chart
+series, minimum pairwise CIEDE2000 **7.0** under Machado (2009) protanopia,
+deuteranopia and tritanopia. The floor is calibrated to what the palette actually
+measures (7.2) rather than to a round number, so it catches a regression instead of
+blessing one. The values are Paul Tol's qualitative "light" scheme plus Okabe-Ito's
+reddish purple, published schemes that can be cited rather than a machine-optimised
+set nobody can re-derive.
+
+The palette is deliberately **not** iso-luminant, because lightness is the one
+channel colour vision deficiency preserves. That has a consequence worth writing
+down, because it looks like an oversight otherwise: **the identity fills cannot also
+carry their own 3:1 boundary, and this is arithmetic rather than taste.** A fill that
+takes dark ink at 4.5:1 needs luminance at least 0.2372; 3:1 against a white panel
+caps it at 0.3000; eight hues inside a 26% luminance band would be iso-luminant. So
+the ink rule wins and the boundary becomes a real ring on `.acct-circle`, 3.64:1 in
+either theme. **Do not "simplify" that ring away.**
+
+`--err` and `--warn` additionally hold a separation floor of dE00 15 under
+deuteranopia, because they sit beside each other on a budget bar constantly. Dark
+measures 17, light 15.4. The obvious light pair (`#dc2626` against `#b45309`)
+measures 5.5 and is indistinguishable, which is only visible if you measure.
 
 ---
 
@@ -398,6 +458,7 @@ For any new or changed screen:
 - [ ] Toasts and async results announced to assistive tech
 - [ ] Destructive actions confirmed or undoable
 - [ ] Type, spacing and colour all from tokens
+- [ ] Checked in both themes (`node tools/check-palette.mjs` passes)
 - [ ] Words a first-timer understands; explanations behind the "i"
 - [ ] Help entry and tour step updated in the same change
 - [ ] No em dashes, no decorative emoji, no internal identifiers on screen

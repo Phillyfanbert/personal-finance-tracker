@@ -205,6 +205,12 @@ export function contributionLimitUsage(assets, contributionActivity, limitGroups
 // allocation drift instead of budget overspend.
 export const ALLOCATION_DRIFT_WARN_PCT = 5;
 
+// Exactly zero is neither a gain nor a loss. app.js's gainColor() has said so
+// since a flat 0.00% mover rendered green, but the tone producer kept `>= 0`,
+// so on a flat day the health dot showed green directly above a stat tile
+// reading a neutral $0.00 (0%). Same rule, one definition.
+const zeroSafeTone = (n) => (n > 0 ? "ok" : n < 0 ? "warn" : "neutral");
+
 // A contribution group counts as "approaching" its limit at 90% used, not
 // just once actually over - same threshold and reasoning as budgets.js's
 // WARN_THRESHOLD_PCT.
@@ -242,11 +248,11 @@ export function portfolioHealthSummary(totals, allocation, limitUsage, holdings)
   const lines = [];
 
   lines.push(totals.todayChange != null
-    ? { kind: "today", tone: totals.todayChange >= 0 ? "ok" : "warn", value: totals.totalValue, change: totals.todayChange, changePct: totals.todayChangePct }
+    ? { kind: "today", tone: zeroSafeTone(totals.todayChange), value: totals.totalValue, change: totals.todayChange, changePct: totals.todayChangePct }
     : { kind: "today", tone: "neutral", value: totals.totalValue, change: null, changePct: null });
 
   lines.push(totals.totalGainLoss != null
-    ? { kind: "gainLoss", tone: totals.totalGainLoss >= 0 ? "ok" : "warn", gainLoss: totals.totalGainLoss, gainLossPct: totals.totalGainLossPct }
+    ? { kind: "gainLoss", tone: zeroSafeTone(totals.totalGainLoss), gainLoss: totals.totalGainLoss, gainLossPct: totals.totalGainLossPct }
     : { kind: "gainLoss", tone: "neutral", gainLoss: null, gainLossPct: null });
 
   // Only the single furthest-off-target bucket, not the whole table - the

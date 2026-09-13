@@ -15,7 +15,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
 import {
@@ -6100,7 +6100,13 @@ function renderInvestments() {
   const allocation = allocationVsTarget(countable, holdings, investmentTargets);
   $("investTargetsList").innerHTML = allocation.length ? allocation.map((a) => {
     const pctClamped = Math.min(100, a.currentPct);
-    const barColor = a.currentPct > a.targetPercent ? "var(--err)" : "var(--ok)";
+    // Same threshold the health dot uses, which it did not share before: the
+    // dot warns past ALLOCATION_DRIFT_WARN_PCT while this bar reddened at any
+    // amount over target, so a bucket 2 points overweight showed a green dot
+    // and a red bar at the same time. The 5-point figure is the reasoned one
+    // and it is exported, so this reads it rather than restating it.
+    const barColor = Math.abs(a.currentPct - a.targetPercent) >= ALLOCATION_DRIFT_WARN_PCT
+      ? "var(--err)" : "var(--ok)";
     const gapLabel = a.gapDollars >= 0 ? `${fmt(a.gapDollars)} under target` : `${fmt(Math.abs(a.gapDollars))} over target`;
     return `
       <div style="margin-bottom:10px">
@@ -6153,6 +6159,17 @@ function renderInvestments() {
 // esc() happen here, same split every other Investments render function
 // already keeps between math and presentation.
 const HEALTH_TONE_COLOR = { ok: "var(--ok)", warn: "var(--err)", neutral: "var(--muted)" };
+// The dot is the scan layer of this card: the thing that lets you skim five
+// lines and see "two fine, one needs attention" without reading them. Every
+// line states its fact in words through healthLineText, so a screen reader was
+// always fine, but green against red at 8px is the exact pair that collapses
+// under the commonest colour blindness, and the skim was lost. A shape per
+// tone survives greyscale: filled circle, filled diamond, hollow ring.
+const HEALTH_TONE_SHAPE = {
+  ok: "border-radius:50%",
+  warn: "border-radius:1px;transform:rotate(45deg)",
+  neutral: "border-radius:50%;background:transparent;border:1.5px solid var(--muted)",
+};
 function healthLineText(l) {
   switch (l.kind) {
     case "today":
@@ -6185,7 +6202,7 @@ function renderInvestmentHealth(totals, allocation, limitUsage, holdings) {
   const health = portfolioHealthSummary(totals, allocation, limitUsage, holdings);
   $("investHealthList").innerHTML = health.map((l) => `
     <div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0">
-      <span style="width:8px;height:8px;border-radius:50%;flex:none;background:${HEALTH_TONE_COLOR[l.tone]}"></span>
+      <span aria-hidden="true" style="width:8px;height:8px;flex:none;background:${HEALTH_TONE_COLOR[l.tone]};${HEALTH_TONE_SHAPE[l.tone]}"></span>
       <span>${healthLineText(l)}</span>
     </div>`).join("");
 }
@@ -6955,7 +6972,14 @@ function renderDailyRecap() {
   const breadth = recap.breadth;
   const breadthEl = $("dailyRecapBreadth");
   if (breadth) {
-    breadthEl.textContent = `${breadth.up} of the ${breadth.total} companies you track finished the day up`;
+    // Says what the colour says. The tint compares up against DOWN, and the
+    // sentence used to state only up and total - but `flat` is a real third
+    // bucket (marketBreadth counts it separately), so down is NOT total minus
+    // up, and the same sentence could render green or red on a comparison the
+    // reader was never shown. Naming `down` makes the colour redundant rather
+    // than load-bearing, which is what 6.3 actually asks for.
+    breadthEl.textContent =
+      `${breadth.up} of the ${breadth.total} companies you track finished the day up, ${breadth.down} down`;
     breadthEl.style.color = breadth.up > breadth.down ? "var(--ok)"
       : breadth.down > breadth.up ? "var(--err)" : "var(--text)";
   } else {
@@ -7078,7 +7102,10 @@ function renderMarketOverview() {
       // the recap headline above would read as the app contradicting
       // itself during market hours, when the two legitimately differ.
       const when = marketOpen ? "Right now" : "At the last close";
-      pulseEl.textContent = `${when}: ${pulse.up} of ${pulse.total} tracked large-caps up${avgText}`;
+      // Names `down` for the same reason the recap breadth line above does:
+      // the colour is an up-versus-down comparison and the sentence stated
+      // only up and total.
+      pulseEl.textContent = `${when}: ${pulse.up} of ${pulse.total} tracked large-caps up, ${pulse.down} down${avgText}`;
     }
   }
   $("marketOverviewList").innerHTML = indexes.map((idx) => {

@@ -9624,9 +9624,14 @@ $("exportPlanBtn").onclick = () => exportPage(
   `plan-${today()}`,
   () => {
     const account = accounts.find((a) => a.id === $("forecastAccountSelect").value);
+    // Computed exactly the way renderSafeToSpend() does, from the same three
+    // inputs, so the file and the card can never disagree about the figure.
+    const statuses = budgetStatus(budgets, sumBy(allExpenses, "category", monthKey()));
+    const fundStatuses = sinkingFundStatus(sinkingFunds);
     return planSections({
-      budgets: budgetStatus(budgets, sumBy(allExpenses, "category", monthKey())),
-      funds: sinkingFundStatus(sinkingFunds),
+      safeToSpend: safeToSpend(statuses, subscriptions, sinkingFundMonthlyTotal(fundStatuses)),
+      budgets: statuses,
+      funds: fundStatuses,
       payoff: compareDebtStrategies(debts, parseFloat($("debtStrategyExtra").value) || 0),
       forecast: account ? forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30) : [],
       forecastAccount: account ? acctLabel(account) : "",

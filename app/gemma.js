@@ -305,6 +305,22 @@ export const QA_ADVICE_PHRASES = [
   "buy stock", "sell stock",
   "will rise to", "will fall to", "will be worth", "will double",
   "will likely rise", "will likely fall", "poised to",
+  // Added 2026-09-12 after measuring the list against a corpus of 16 answers
+  // this feature is meant to give and 10 genuinely advisory ones: the list
+  // rejected 0 good but let 3 bad through, all of them forms it had no entry
+  // for. A security named with a GERUND slipped past every buy/sell entry,
+  // because "sell shares" is not a substring of "selling your Apple shares".
+  "selling your", "buying more",
+  // A balance or net-worth prediction, which this function's own contract says
+  // it rejects and had no entry for. Deliberately "will reach $" and not the
+  // bare "will reach": the app legitimately answers "at $400 a month you will
+  // reach your registration goal by December", and the bare form rejected it -
+  // measured, not guessed, which is the whole reason this list is tuned
+  // against a corpus rather than by eye. "balance will" was a candidate too
+  // and is deliberately absent: it caught nothing "will double" did not
+  // already catch, and a phrase that adds no coverage is only a false-positive
+  // risk.
+  "will reach $", "net worth will",
 ];
 
 /**

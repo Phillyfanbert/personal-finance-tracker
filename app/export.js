@@ -84,12 +84,26 @@ export function logSections({ expenses = [], activity = [], subscriptions = [], 
 }
 
 /** Plan: the limits you set, the payoff comparison, the projected balance. */
-export function planSections({ budgets = [], funds = [], payoff = null, forecast = [], forecastAccount = "" }) {
+export function planSections({ safeToSpend = null, budgets = [], funds = [], payoff = null, forecast = [], forecastAccount = "" }) {
   const strategy = (label, r) => !r ? null
     : r.neverPaysOff ? [label, "never at this payment", ""]
     : [label, `${r.months} months`, money(r.totalInterest)];
   const payoffRows = payoff ? [strategy("Highest interest rate first (avalanche)", payoff.avalanche), strategy("Smallest amount first (snowball)", payoff.snowball)].filter(Boolean) : [];
   return ([
+    // First, matching the page: Safe to spend is the Plan page's headline card
+    // and the export silently omitted it, so a saved file covered less than
+    // the page it claims to save. Its parts are listed rather than just the
+    // total, because the subscription commitment it nets off appears nowhere
+    // else here - without them the figure could not be checked against the
+    // rest of the file, only taken on trust.
+    { title: "Safe to spend", header: ["Measure", "Value"],
+      rows: safeToSpend ? [
+        ["Left across budgeted categories", money(safeToSpend.budgetedRoom)],
+        ["Of that, overspent", money(safeToSpend.overspent)],
+        ["Bills due before the month ends", money(safeToSpend.upcoming)],
+        ["Being set aside this month", money(safeToSpend.funds)],
+        ["Safe to spend", money(safeToSpend.available)],
+      ] : [] },
     { title: "Budgets (this month)", header: ["Category", "Limit", "Spent", "Percent used", "Status"],
       rows: budgets.map((b) => [b.category, money(b.limit), money(b.spent), `${b.pct}%`, b.over ? "over" : b.warn ? "close to the limit" : "ok"]) },
     // "Needed each month" is blank rather than 0 for an undated fund: there is

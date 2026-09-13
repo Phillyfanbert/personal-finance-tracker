@@ -2282,7 +2282,7 @@ function renderAccountsList() {
   // Unarchive can bring back the exact same balance. It DOES change what's
   // DISPLAYED, though: net worth and every asset/liability listing treat an
   // archived account as if deleted (topLevelAssets/countableDebts) - see
-  // archivedAccountAssetIds' comment for the reasoning. Only one direction
+  // hiddenAssetIds' comment for the reasoning. Only one direction
   // here now: this list holds active accounts only, so unarchiving lives in
   // the archived modal instead (renderArchivedAccounts).
   document.querySelectorAll("[data-archive-acct]").forEach((el) => {
@@ -2339,6 +2339,53 @@ async function unarchiveAccount(acctId) {
   if (error) return toast(error.message, "error");
   await loadAccounts();
   toast("Account unarchived");
+}
+
+// ---- Deferred delete for a row hidden by a CHOKEPOINT ----------------------
+// Assets and liabilities are not leaves: deleting an asset nulls
+// account_activity.asset_id, accounts.linked_asset_id and holding_sales.asset_id,
+// and CASCADES to every holding under it; a liability nulls
+// account_activity.liability_id and accounts.linked_liability_id. So the same
+// reasoning as deleteAccount() applies - delay the destruction rather than try
+// to rebuild it.
+//
+// What makes this cheap is that the app ALREADY has one place per side that
+// decides what is hidden from every listing and total: hiddenAssetIds() and
+// hiddenLiabilityIds(). Adding a pending id there hides the row from net
+// worth, the cards, the Investments tab and the pickers at once, with no new
+// filtering to write - and the asset one's existing parent loop hides a
+// pending parent's HOLDINGS along with it, for free.
+//
+// Unlike an account there is no archived_at to fall back on, so the pending
+// state is purely in memory. A tab closed inside the window therefore leaves
+// the row completely untouched and it reappears, which is the safest possible
+// failure: nothing happened at all.
+const pendingAssetDeletes = new Map();      // assetId -> timer
+const pendingLiabilityDeletes = new Map();  // liabilityId -> timer
+
+function deferRowDelete({ pending, id, table, label, restoredMsg, reload }) {
+  pending.set(id, setTimeout(async () => {
+    pending.delete(id);
+    const { error } = await sb.from(table).delete().eq("id", id);
+    if (error) toast(error.message, "error");
+    // loadAccounts too: the delete nulls accounts.linked_asset_id /
+    // linked_liability_id, and a stale cache would leave an account pointing
+    // at a row that no longer exists.
+    await loadAccounts();
+    await reload();
+  }, DELETE_UNDO_MS));
+  toast(`Deleted ${label}`, "info", {
+    label: "Undo",
+    onAction: async () => {
+      const timer = pending.get(id);
+      if (!timer) { toast("That delete has already gone through", "error"); return; }
+      clearTimeout(timer);
+      pending.delete(id);
+      // Nothing was ever removed, so this only has to stop hiding it.
+      await reload();
+      toast(restoredMsg);
+    },
+  });
 }
 
 // ---- Delete with undo, for a LEAF row -------------------------------------
@@ -2481,8 +2528,8 @@ async function deleteAccount(acctId) {
 //
 // While archived, its linked asset/liability is excluded from every
 // listing and total (Assets/Liabilities cards, net worth, Investments tab -
-// see archivedAccountAssetIds/archivedAccountLiabilityIds) even though the
-// row itself, and every past expense/account_activity referencing this
+// see hiddenAssetIds/hiddenLiabilityIds) even though the row itself, and
+// every past expense/account_activity referencing this
 // account, stays fully intact - that's the "acts deleted, but recoverable
 // and history-preserving" behavior this whole feature is for. The balance
 // shown here is read directly, bypassing that exclusion, since a recovery
@@ -2773,7 +2820,7 @@ $("saveAssetBtn").onclick = async () => {
 // math; those two are generic day-delta helpers, not actually
 // subscription-specific despite living in that file.
 function upcomingMaturities(withinDays = 30, today = new Date()) {
-  const hidden = archivedAccountAssetIds();
+  const hidden = hiddenAssetIds();
   return assets
     .filter((a) => a.type === "cd" && a.maturity_date && !hidden.has(a.id))
     .map((a) => ({ ...a, days: daysUntil(a.maturity_date, today) }))
@@ -2792,7 +2839,7 @@ function upcomingMaturities(withinDays = 30, today = new Date()) {
 // 25_touch_updated_at_trigger.sql - before that migration it was
 // permanently stuck at creation time regardless of later edits.
 function staleAssets(monthsThreshold = 6, today = new Date()) {
-  const hidden = archivedAccountAssetIds();
+  const hidden = hiddenAssetIds();
   return assets
     .filter((a) => a.type !== "cash" && a.type !== "bank" && a.updated_at && !hidden.has(a.id))
     .filter((a) => !(a.type === "vehicle" && estimateValue(a.purchase_price, a.purchase_date, a.depreciation_rate) !== null))
@@ -2819,26 +2866,37 @@ function staleAssets(monthsThreshold = 6, today = new Date()) {
 // user is already looking at or a past transaction that must stay
 // resolvable regardless of the account's current archived state. Only the
 // listing/summing call sites below do.
-function archivedAccountAssetIds() {
-  const archivedParents = new Set(
+// The ONE place that decides which assets are hidden from every listing and
+// total. Named for what it answers rather than for one of its two reasons:
+// an asset is hidden either because its account is archived, or because it has
+// a delete pending its undo window. Every summing/listing call site goes
+// through this, which is what makes adding a second reason a one-line change
+// rather than a sweep.
+function hiddenAssetIds() {
+  const hiddenParents = new Set(
     accounts.filter((a) => a.archived_at && a.linked_asset_id).map((a) => a.linked_asset_id)
   );
-  // A holding nested inside an archived parent (40_asset_holdings.sql) has
+  for (const id of pendingAssetDeletes.keys()) hiddenParents.add(id);
+  // A holding nested inside a hidden parent (40_asset_holdings.sql) has
   // no linked_asset_id of its own - hidden via its parent's id here, not a
-  // separate check, so archiving hides the whole position list at once,
-  // not just the summary line.
-  const ids = new Set(archivedParents);
-  for (const a of assets) if (a.parent_asset_id && archivedParents.has(a.parent_asset_id)) ids.add(a.id);
+  // separate check, so hiding a parent hides the whole position list at once,
+  // not just the summary line. A pending delete gets that for free, which
+  // matters because deleting the parent really does CASCADE to its holdings.
+  const ids = new Set(hiddenParents);
+  for (const a of assets) if (a.parent_asset_id && hiddenParents.has(a.parent_asset_id)) ids.add(a.id);
   return ids;
 }
-function archivedAccountLiabilityIds() {
-  return new Set(accounts.filter((a) => a.archived_at && a.linked_liability_id).map((a) => a.linked_liability_id));
+// The liabilities counterpart, same two reasons.
+function hiddenLiabilityIds() {
+  const ids = new Set(accounts.filter((a) => a.archived_at && a.linked_liability_id).map((a) => a.linked_liability_id));
+  for (const id of pendingLiabilityDeletes.keys()) ids.add(id);
+  return ids;
 }
 // The liabilities-table counterpart to topLevelAssets, below - every
 // summing/listing call site (net worth, the Liabilities card) goes through
 // this.
 function countableDebts() {
-  const hidden = archivedAccountLiabilityIds();
+  const hidden = hiddenLiabilityIds();
   return debts.filter((d) => !hidden.has(d.id));
 }
 
@@ -2849,10 +2907,10 @@ function countableDebts() {
 // `assets` array - net worth, the Assets card, and the snapshot writer all
 // do. The Investments tab is the deliberate exception: it wants the
 // individual positions, which is the entire point of the tab. Also drops
-// anything belonging to an archived account - see archivedAccountAssetIds
-// above.
+// anything currently hidden - an archived account's asset, or one with a
+// delete pending - see hiddenAssetIds above.
 function topLevelAssets() {
-  const hidden = archivedAccountAssetIds();
+  const hidden = hiddenAssetIds();
   return assets.filter((a) => !a.parent_asset_id && !hidden.has(a.id));
 }
 // Holdings roll up: an investment account is worth the sum of the positions
@@ -2975,11 +3033,23 @@ async function loadAssets() {
   document.querySelectorAll("[data-del-asset]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
-      const target = assets.find((a) => a.id === el.dataset.delAsset);
-      if (!(await confirmModal("This can't be undone.", { title: `Delete ${target?.name || "this asset"}?` }))) return;
-      const { error } = await sb.from("assets").delete().eq("id", el.dataset.delAsset);
-      if (error) return toast(error.message);
-      await loadAssets(); toast("Asset deleted"); renderNetWorth();
+      const id = el.dataset.delAsset;
+      const target = assets.find((a) => a.id === id);
+      // Holdings CASCADE with the parent asset and the old message never said
+      // so, the same gap the account confirm had - deleting an investment
+      // account's asset silently destroyed every position under it.
+      const holdings = assets.filter((a) => a.parent_asset_id === id).length;
+      const note = holdings
+        ? ` Its ${holdings} holding${holdings === 1 ? "" : "s"} go with it.`
+        : "";
+      if (!(await confirmModal(`It stops counting toward your net worth.${note} You can undo this straight afterwards.`,
+          { title: `Delete ${target?.name || "this asset"}?` }))) return;
+      deferRowDelete({
+        pending: pendingAssetDeletes, id, table: "assets",
+        label: target?.name || "that asset", restoredMsg: "Asset restored",
+        reload: async () => { await loadAssets(); renderNetWorth(); },
+      });
+      await loadAssets(); renderNetWorth();
     };
   });
   const maturing = upcomingMaturities();
@@ -3647,11 +3717,16 @@ async function loadDebts() {
   document.querySelectorAll("[data-del-debt]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
-      const target = debts.find((d) => d.id === el.dataset.delDebt);
-      if (!(await confirmModal("This can't be undone.", { title: `Delete ${target?.name || "this liability"}?` }))) return;
-      const { error } = await sb.from("liabilities").delete().eq("id", el.dataset.delDebt);
-      if (error) return toast(error.message);
-      await loadDebts(); toast("Liability deleted"); renderNetWorth();
+      const id = el.dataset.delDebt;
+      const target = debts.find((d) => d.id === id);
+      if (!(await confirmModal("It stops counting against your net worth, and payments already recorded stay in your history. You can undo this straight afterwards.",
+          { title: `Delete ${target?.name || "this liability"}?` }))) return;
+      deferRowDelete({
+        pending: pendingLiabilityDeletes, id, table: "liabilities",
+        label: target?.name || "that liability", restoredMsg: "Liability restored",
+        reload: async () => { await loadDebts(); renderNetWorth(); },
+      });
+      await loadDebts(); renderNetWorth();
     };
   });
   document.querySelectorAll("[data-pay-debt]").forEach((el) => {
@@ -5782,12 +5857,13 @@ const signedPct = (n) => {
 };
 
 // Every investment-flavoured asset, parents and per-ticker holdings alike,
-// EXCLUDING anything belonging to an archived account (archivedAccountAssetIds
-// - same "archived acts deleted" rule as topLevelAssets). Fine for DISPLAY,
+// EXCLUDING anything hidden (hiddenAssetIds - an archived account's asset, or
+// one with a delete pending; same "acts deleted" rule as topLevelAssets).
+// Fine for DISPLAY,
 // where the grouping wants both parent and holdings, but never for
 // totalling - see countableInvestmentAssets.
 function allInvestmentAssets() {
-  const hidden = archivedAccountAssetIds();
+  const hidden = hiddenAssetIds();
   return assets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type) && !hidden.has(a.id));
 }
 // The set that may be summed without double-counting. An account whose value
@@ -7065,9 +7141,9 @@ const CONTRIBUTION_LIMIT_GROUPS = {
 // asset added from the Assets card can hold tickers too, so both are offered
 // as parents. A holding itself is never a parent (no nesting).
 function holdingParentAssets() {
-  // allInvestmentAssets() already drops anything belonging to an archived
-  // account (archivedAccountAssetIds) - so an archived account isn't
-  // offered as somewhere to file a new holding either. Deliberately NOT
+  // allInvestmentAssets() already drops anything hidden (hiddenAssetIds), so
+  // an archived account, or one mid-delete, isn't offered as somewhere to
+  // file a new holding either. Deliberately NOT
   // countableInvestmentAssets(): that helper drops a parent that ALREADY
   // has holdings, for double-counting reasons in totals - the wrong list
   // here, since an account with existing positions must still be offered

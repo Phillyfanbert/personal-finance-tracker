@@ -4822,7 +4822,7 @@ $("bulkDeleteBtn").onclick = async () => {
   const ok = await confirmModal(
     `This deletes ${n} expense${n === 1 ? "" : "s"} totalling ${fmt(total)} and puts that money back on the accounts they came from.`
       + (imported ? ` ${imported} of them came from an imported file, so ${imported === 1 ? "its" : "their"} balance is left alone.` : "")
-      + " This can't be undone.",
+      + " You can undo this straight afterwards.",
     { title: `Delete ${n} expense${n === 1 ? "" : "s"}?`, confirmLabel: "Delete" }
   );
   if (!ok) return;
@@ -4836,8 +4836,43 @@ $("bulkDeleteBtn").onclick = async () => {
   $("bulkDeleteBtn").disabled = false;
   selectedTxnIds.clear();
   await loadAssets(); await loadDebts(); await loadExpenses();
-  toast(`Deleted ${n} expense${n === 1 ? "" : "s"}`);
+  const what = `${n} expense${n === 1 ? "" : "s"}`;
+  toast(`Deleted ${what}`, "info", { label: "Undo", onAction: () => restoreDeletedExpenses(rows, what) });
 };
+
+// The batch counterpart to restoreDeletedExpense(). Three things make this the
+// same problem rather than N copies of the single-row one:
+//
+// The balance is NETTED per account, by the same netAmountByAccount() the
+// delete used - applyAssetDelta reads asset.value from the cached array and
+// does not write it back, so one call per row would make every call after the
+// first read a stale value and clobber its predecessor. Netting gives exactly
+// one write per asset, in both directions.
+//
+// The GUARD is netted too, and for free: assetDeltaError() and
+// creditLimitError() each already net a whole deltas array per asset and per
+// liability before judging it, so the batch is checked as the single end state
+// it really is rather than row by row. Checked before anything goes back, same
+// ordering rule as the single-row restore.
+//
+// The re-insert is ONE statement, so it is all-or-nothing - there is no state
+// where half a batch came back. An all-imported batch nets to an empty map,
+// which correctly means no guard and no balance movement at all.
+async function restoreDeletedExpenses(rows, what) {
+  const net = [...netAmountByAccount(rows)];
+  const blocked =
+    assetDeltaError(net.map(([accountId, amount]) => ({ accountId, amount, sign: -1 })))
+    || chargeRefusalReason(net.map(([accountId, amount]) => ({ accountId, amount, sign: +1 })));
+  if (blocked) { toast(`Cannot undo. ${blocked}`, "error"); return; }
+  const { error } = await sb.from("expenses").insert(rows);
+  if (error) { toast(error.message, "error"); return; }
+  for (const [accountId, amount] of net) {
+    await applyAssetDelta(accountId, null, amount, -1);
+    await applyLiabilityDelta(accountId, null, amount, +1);
+  }
+  await loadAssets(); await loadDebts(); await loadExpenses();
+  toast(`Restored ${what}`);
+}
 
 $("bulkApplyBtn").onclick = async () => {
   const category = $("bulkCategorySelect").value;

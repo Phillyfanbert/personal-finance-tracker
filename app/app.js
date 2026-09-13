@@ -9614,6 +9614,10 @@ $("exportLogBtn").onclick = () => exportPage(
   () => logSections({
     expenses: [...allExpenses].sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at))),
     activity: accountActivity, subscriptions, accounts, assets, debts, income: incomeSources,
+    // The same two calls renderNetWorth() makes, in the same order, so the
+    // headline in the file is the one on the card rather than a second
+    // total summed from the rows below it.
+    netWorth: computeNetWorth(topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) })), countableDebts()),
   }, acctName),
   allExpenses.length || accountActivity.length || subscriptions.length || accounts.length
     || assets.length || debts.length || incomeSources.length,
@@ -9640,24 +9644,41 @@ $("exportPlanBtn").onclick = () => exportPage(
   budgets.length || sinkingFunds.length || debts.length || accounts.length,
   { page: "Plan" });
 
-$("exportInvestBtn").onclick = () => exportPage(
-  "your investments",
-  `investments-${today()}`,
-  () => {
-    // Mirrors renderInvestments' own calls, including the countable-vs-display
-    // split that stops holdings being counted twice.
-    const countable = countableInvestmentAssets();
-    const holdings = investmentHoldings(allInvestmentAssets(), assetPriceFindings);
-    return investmentsSections({
-      totals: portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable),
-      holdings,
-      realized: holdingSales,
-      limits: contributionLimitUsage(assets, accountActivity.filter((a) => a.kind === "contribution"), CONTRIBUTION_LIMIT_GROUPS),
-      targets: allocationVsTarget(countable, holdings, investmentTargets),
-    });
-  },
-  allInvestmentAssets().length || holdingSales.length || investmentTargets.length,
-  { page: "Investments" });
+// Async because portfolio_snapshots is the one thing this page draws that
+// is not already in memory, and exportPage's builder is synchronous - so it
+// is fetched first, the same shape the Reports export already uses for
+// reportRows. A failed fetch aborts rather than writing an empty "Value
+// over time" section: a file stating the history is empty when the load
+// broke is the failure-looks-like-emptiness bug renderLoadError exists to
+// prevent, and a saved file outlives the toast that would have explained it.
+$("exportInvestBtn").onclick = async () => {
+  const { data, error } = await sb.from("portfolio_snapshots").select("*").order("snapshot_date", { ascending: true });
+  if (error) return toast(error.message, "error");
+  const snapshots = data || [];
+  exportPage(
+    "your investments",
+    `investments-${today()}`,
+    () => {
+      // Mirrors renderInvestments' own calls, including the countable-vs-display
+      // split that stops holdings being counted twice.
+      const countable = countableInvestmentAssets();
+      const holdings = investmentHoldings(allInvestmentAssets(), assetPriceFindings);
+      return investmentsSections({
+        totals: portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable),
+        holdings,
+        snapshots,
+        realized: holdingSales,
+        // allInvestmentAssets(), not the raw assets array - the same fix the
+        // card's own call got on 2026-09-09 and this one was missed by. Raw
+        // assets puts an archived account's whole limit group in the file,
+        // stating a retirement account the card treats as gone.
+        limits: contributionLimitUsage(allInvestmentAssets(), accountActivity.filter((a) => a.kind === "contribution"), CONTRIBUTION_LIMIT_GROUPS),
+        targets: allocationVsTarget(countable, holdings, investmentTargets),
+      });
+    },
+    allInvestmentAssets().length || holdingSales.length || investmentTargets.length || snapshots.length,
+    { page: "Investments" });
+};
 
 $("exportReportsBtn").onclick = async () => {
   const period = reportPeriod();

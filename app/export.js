@@ -63,7 +63,7 @@ export function buildSectionedCsv(sections) {
 }
 
 /** Log: what you spent, what charges you on a schedule, and what you hold. */
-export function logSections({ expenses = [], activity = [], subscriptions = [], accounts = [], assets = [], debts = [], income = [] }, accountName = () => "") {
+export function logSections({ expenses = [], activity = [], subscriptions = [], accounts = [], assets = [], debts = [], income = [], netWorth = null }, accountName = () => "") {
   const kind = { asset_adjust: "Balance change", liability_payment: "Payment", transfer: "Transfer", income: "Income", contribution: "Contribution", owed_adjust: "Amount owed changed", holding_sale: "Investment sold" };
   return ([
     { title: "Spending", header: ["Date", "Description", "Category", "Payment Type", "Account", "Amount"],
@@ -74,6 +74,17 @@ export function logSections({ expenses = [], activity = [], subscriptions = [], 
       rows: subscriptions.map((s) => [s.name || "", s.category || "", money(s.amount), s.billing_cycle || "", s.next_renewal || "", accountName(s.account_id) || "", s.is_active ? "yes" : "no"]) },
     { title: "Income sources", header: ["Source", "Amount", "How often", "Next expected", "Account", "Active"],
       rows: income.map((i) => [i.source || "", money(i.amount), i.cadence || "", i.next_expected || "", accountName(i.account_id) || "", i.is_active ? "yes" : "no"]) },
+    // Passed in rather than summed from the two sections below it: those
+    // hold the DISPLAYED assets and debts, and net worth is taken over the
+    // depreciation-adjusted, archived-excluded sets renderNetWorth() uses.
+    // Recomputing here would be a second definition of the figure, free to
+    // disagree with the card.
+    { title: "Net worth", header: ["Measure", "Value"],
+      rows: netWorth ? [
+        ["What you have", money(netWorth.assetsTotal)],
+        ["What you owe", money(netWorth.liabilitiesTotal)],
+        ["Net worth", money(netWorth.netWorth)],
+      ] : [] },
     { title: "Accounts", header: ["Bank", "Account", "Type"],
       rows: accounts.map((a) => [a.bank_name || "", a.name || "", a.type || ""]) },
     { title: "Things you have", header: ["Name", "Type", "Value"],
@@ -117,7 +128,7 @@ export function planSections({ safeToSpend = null, budgets = [], funds = [], pay
 }
 
 /** Investments: holdings, limits and targets, never a recommendation. */
-export function investmentsSections({ totals = null, holdings = [], realized = [], limits = [], targets = [] }) {
+export function investmentsSections({ totals = null, holdings = [], snapshots = [], realized = [], limits = [], targets = [] }) {
   return ([
     { title: "Totals", header: ["Measure", "Value"],
       rows: totals ? [["Total value", money(totals.totalValue)], ["Total cost basis", money(totals.totalCostBasis)],
@@ -125,6 +136,13 @@ export function investmentsSections({ totals = null, holdings = [], realized = [
                       ["Gain or loss percent", totals.totalGainLossPct != null ? `${totals.totalGainLossPct}%` : ""]] : [] },
     { title: "Holdings", header: ["Account", "Symbol", "Shares", "Cost basis", "Latest price", "Current value", "Gain or loss"],
       rows: holdings.map((h) => [h.asset?.name || "", h.symbol || "", h.quantity ?? "", money(h.costBasis), money(h.latestPrice), money(h.currentValue), money(h.gainLoss)]) },
+    // The one thing on this page a reader cannot reconstruct from the rest
+    // of the file: a snapshot is only written on a day the app was opened,
+    // so the series is not derivable from today's holdings. Cost basis
+    // rides along because it is stored on the same row and is what makes
+    // each day's gain checkable.
+    { title: "Value over time", header: ["Date", "Total value", "Total cost basis"],
+      rows: snapshots.map((s) => [s.snapshot_date || "", money(s.total_value), money(s.total_cost_basis)]) },
     { title: "Realized gain and loss", header: ["Date", "Symbol", "Shares sold", "Proceeds", "Realized gain"],
       rows: realized.map((r) => [r.sold_on || r.sold_at || "", r.symbol || "", r.quantity ?? "", money(r.proceeds), money(r.realized_gain)]) },
     { title: "Contribution limits (this year)", header: ["Group", "Contributed", "Limit", "Left", "Status"],

@@ -6244,7 +6244,7 @@ function renderInvestments() {
           ? children.map(holdingRow).join("")
           : `<p class="muted" style="font-size:12px;padding-left:12px;margin:6px 0 0">No specific holdings recorded - use "+ Add stock" to enter tickers.</p>`}
       </div>`;
-  }).join("") : `<p class="muted" style="font-size:13px">No investments added yet - add one from the Assets card on the Log page (Brokerage, IRA, 401(k), crypto, ...).</p>`;
+  }).join("") : `<p class="muted" style="font-size:13px">No investments added yet - add one from Things you have on the Log page (Brokerage, IRA, 401(k), crypto, and so on).</p>`;
   document.querySelectorAll("[data-log-contribution]").forEach((el) => {
     el.onclick = (ev) => { ev.stopPropagation(); openContributionForm(el.dataset.logContribution); };
   });
@@ -7690,7 +7690,7 @@ function openHoldingForm(holding) {
   holdingSymbolOverrideConfirmedFor = null;
   const parents = holdingParentAssets();
   if (!parents.length) {
-    return toast("Add an investment account first (Accounts or Assets card on the Log page) - a pension can't hold individual tickers.");
+    return toast("Add an investment account first, from Accounts or Things you have on the Log page. A pension cannot hold individual tickers.");
   }
   const opts = parents
     .map((a) => `<option value="${a.id}">${esc(a.name)} (${assetTypeLabel(a.type)})</option>`).join("");

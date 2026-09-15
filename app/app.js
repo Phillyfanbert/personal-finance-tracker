@@ -5709,7 +5709,7 @@ function renderBudgetSplit(statuses) {
 
   el.innerHTML = `
     <div class="muted" style="font-size:var(--fs-xs);margin-bottom:4px">How your ${fmt(split.taggedTotal)} of tagged budget splits, and how it is going</div>
-    <div style="display:flex;background:var(--panel-2);border-radius:6px;height:8px;overflow:hidden">${bar}</div>
+    <div class="budget-split-bar">${bar}</div>
     ${parts.map(row).join("")}
     <p class="muted" style="font-size:var(--fs-xs);margin:8px 0 0">This is a share of what you have budgeted, not of your income.${untaggedNote}</p>`;
 }

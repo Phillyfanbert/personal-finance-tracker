@@ -178,6 +178,14 @@
       font: inherit; width: 100%; padding: 13px 14px; border-radius: 10px;
       border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text);
     }
+    /* The app never styled ::placeholder, so all 50 of them inherited the
+       browser default (#757575) and failed 1.4.3 in BOTH themes: 4.10:1 on
+       the light control background and 2.72:1 on the dark one. --muted is the
+       app's own secondary-text tone and is already measured against
+       --panel-2, which is exactly the surface a placeholder sits on.
+       UI-UX-PRINCIPLES already warns a placeholder "usually fails contrast";
+       that was true here and invisible because no rule mentioned it. */
+    input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
     input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); }
     /* There was no button focus rule at all, and `-webkit-tap-highlight-color:
        transparent` above removes the touch flash too, so a keyboard user had
@@ -271,6 +279,18 @@
        target with 8px of clear space between neighbours, and at a tighter
        pitch a tap under one cross would start to reach the next category's.
        Do not shrink it without re-measuring both numbers. */
+    /* The stacked plan bar carries its own boundary, for the same reason
+       .acct-circle does. Its segments come from the identity palette, which is
+       tuned to separate the eight hues from EACH OTHER rather than from a
+       near-white surface: --series-2 measures 1.22:1 against --panel in light,
+       so that band's top and bottom edges disappear and it reads as a gap
+       between its neighbours rather than as a segment. The track behind it is
+       --panel-2, itself only 1.05:1 on a white card, so the track cannot
+       supply the edge either. A real ring can: --border-strong is 3.64:1 on
+       the page in both themes. */
+    .budget-split-bar { display: flex; height: 8px; overflow: hidden;
+      background: var(--panel-2); border-radius: 6px;
+      box-shadow: inset 0 0 0 1px var(--border-strong); }
     .budget-row { position: relative; margin-bottom: 24px; }
     .budget-row-head { display: flex; align-items: center; gap: 8px;
       font-size: var(--fs-sm); padding-bottom: 8px; }

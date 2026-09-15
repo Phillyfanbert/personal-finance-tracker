@@ -365,6 +365,19 @@ const strays = [...rules.matchAll(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/gi)].map((m) 
 ok(!strays.length, `colour literals outside the :root blocks: ${[...new Set(strays)].join(", ")}`);
 if (!strays.length) console.log("  no colour literals in CSS rules; every colour comes from a token");
 
+// Placeholders inherit the BROWSER's grey when no rule names them, and that
+// default fails 1.4.3 on both of this app's control surfaces: it measured
+// 4.10:1 in light and 2.72:1 in dark across all 50 of them. The failure is
+// invisible to a token-pair check because no token is involved until a rule
+// exists, so the guard is that the rule exists and uses a token.
+const phRule = noComments.match(/::placeholder\s*(?:,[^{]*)?\{([^}]*)\}/);
+ok(!!phRule, "no ::placeholder rule: every placeholder falls back to the browser grey, which fails AA in both themes");
+if (phRule) {
+  const usesToken = /var\(--[a-z0-9-]+\)/.test(phRule[1]);
+  ok(usesToken, `::placeholder does not take its colour from a token: ${phRule[1].trim()}`);
+  if (usesToken) console.log("  ::placeholder colour comes from a token, not the browser default");
+}
+
 // A theme change users never receive looks like a change that did not work.
 const cache = read("app/sw.js").match(/const CACHE = "([^"]+)"/);
 console.log(`  service worker cache: ${cache ? cache[1] : "not found"} (bump this when index.html or a module changes)`);

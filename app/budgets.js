@@ -130,6 +130,80 @@ export function budgetSplit(statuses, sinkingFundMonthly = 0) {
   };
 }
 
+/**
+ * A YEAR rolled up from the months that were actually recorded, so a whole
+ * year can be compared against the budgets that really applied across it.
+ *
+ * The month set is computed PER CATEGORY, and that is the whole difficulty.
+ * Budget Food from March and Transport from July and the two cover different
+ * spans, so a single year-wide month set would compare one of them against
+ * months it was never budgeted in. Each category's limit is summed over its
+ * own recorded months and its spending is taken from exactly those same
+ * months - anything else is not an apples-to-apples comparison.
+ *
+ * Spending in a month a category had no budget is therefore EXCLUDED, not
+ * counted as overspend. It is not overspend: there was no limit to exceed.
+ * `unbudgetedSpend` reports it separately so it is visible rather than
+ * silently dropped.
+ *
+ * @param {object[]} periodRows budget_periods rows, each {period, category,
+ *   monthly_limit, classification}
+ * @param {object[]} expenses raw expense rows with `category`, `amount` and an
+ *   `occurred_at` of YYYY-MM-DD
+ * @returns {{rows, monthsCovered, unbudgetedSpend}|null} rows carry the same
+ *   shape budgetStatus() returns, so the same row template renders both, plus
+ *   `months` (how many recorded months went into that category's figures).
+ *   Null when nothing was ever recorded for the year.
+ */
+export function budgetYearStatus(periodRows, expenses) {
+  const rows = periodRows || [];
+  if (!rows.length) return null;
+
+  const byCategory = new Map();
+  for (const r of rows) {
+    if (!r || !r.category || !r.period) continue;
+    let e = byCategory.get(r.category);
+    if (!e) { e = { limit: 0, months: new Set(), classification: null }; byCategory.set(r.category, e); }
+    e.limit = r2(e.limit + (Number(r.monthly_limit) || 0));
+    e.months.add(r.period);
+    // The most recent recorded month wins the tag, so a category retagged
+    // part-way through the year reports how it was most recently classified
+    // rather than how it started.
+    if (r.period >= (e.latest || "")) { e.latest = r.period; e.classification = r.classification || null; }
+  }
+
+  const spentIn = new Map();     // "category|YYYY-MM" -> amount
+  const spentByCat = new Map();  // category -> amount, whole year
+  for (const x of expenses || []) {
+    const month = String(x.occurred_at || "").slice(0, 7);
+    if (!month) continue;
+    const amount = Number(x.amount) || 0;
+    spentIn.set(`${x.category}|${month}`, r2((spentIn.get(`${x.category}|${month}`) || 0) + amount));
+    spentByCat.set(x.category, r2((spentByCat.get(x.category) || 0) + amount));
+  }
+
+  const months = new Set();
+  let unbudgetedSpend = 0;
+  const out = [];
+  for (const [category, e] of byCategory) {
+    let spent = 0;
+    for (const m of e.months) { spent = r2(spent + (spentIn.get(`${category}|${m}`) || 0)); months.add(m); }
+    const limit = e.limit;
+    const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
+    const over = spent > limit;
+    unbudgetedSpend = r2(unbudgetedSpend + Math.max(0, r2((spentByCat.get(category) || 0) - spent)));
+    out.push({ category, limit, spent, pct, over, warn: over || pct >= WARN_THRESHOLD_PCT,
+      classification: e.classification, months: e.months.size });
+  }
+  // Spending in a category that was never budgeted at all this year.
+  for (const [category, total] of spentByCat) {
+    if (!byCategory.has(category)) unbudgetedSpend = r2(unbudgetedSpend + total);
+  }
+
+  out.sort((a, b) => b.pct - a.pct);
+  return { rows: out, monthsCovered: months.size, unbudgetedSpend };
+}
+
 // Auto-log-eligible cycles only (mirrors app.js's autoLogDueSubscriptions
 // filter exactly) - a billing_cycle of "other" never posts itself, so it has
 // no reliable "not yet posted" date to net against here.

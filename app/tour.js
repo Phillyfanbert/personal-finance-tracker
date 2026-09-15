@@ -182,7 +182,7 @@ export const TOUR_STEPS = {
     {
       target: "budgetActualCard",
       title: "How a past month went",
-      body: "The Budgets card on the Plan page is always about the month you are in. This one looks back: pick any month above and it shows what you actually spent against the limits you had set at the time. It uses that month's own limits, not the ones you have now, so raising a limit today never makes a past month look better than it was. A month from before you started budgeting has no record, and says so rather than guessing.",
+      body: "The Budgets card on the Plan page is always about the month you are in. This one looks back: pick any month above and it shows what you actually spent against the limits you had set at the time. It uses that month's own limits, not the ones you have now, so raising a limit today never makes a past month look better than it was. Pick a whole year and it adds up the months that were recorded, and tells you how many that was. A month from before you started budgeting has no record, and says so rather than guessing.",
       placement: "top",
     },
     {

@@ -14,7 +14,7 @@ import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
-import { budgetStatus, budgetSplit, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal, WARN_THRESHOLD_PCT } from "./budgets.js";
+import { budgetStatus, budgetSplit, budgetYearStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal, WARN_THRESHOLD_PCT } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
@@ -5584,12 +5584,15 @@ async function syncBudgetPeriod() {
   await gone;
 }
 
-// The picked month's recorded budget, for the Reports comparison. Deliberately
-// its own fetch rather than a cache: Reports can reach back further than the
-// expense cache does, and this is one small indexed read per period change.
-async function loadBudgetPeriod(period) {
-  const { data, error } = await sb.from("budget_periods")
-    .select("category, monthly_limit, classification").eq("period", period).order("category");
+// The picked period's recorded budgets, for the Reports comparison.
+// Deliberately its own fetch rather than a cache: Reports can reach back
+// further than the expense cache does, and this is one small indexed read per
+// period change. `key` is "YYYY-MM" for a month or "YYYY" for a whole year,
+// matching reportPeriod().key exactly so the two cannot disagree about scope.
+async function loadBudgetPeriods(key) {
+  let q = sb.from("budget_periods").select("period, category, monthly_limit, classification");
+  q = key.length === 4 ? q.like("period", `${key}-%`) : q.eq("period", key);
+  const { data, error } = await q.order("period").order("category");
   if (error) throw error;
   return data || [];
 }
@@ -8229,11 +8232,11 @@ async function renderBudgetVsActual(period, periodExpenses, loadError) {
   const card = $("budgetActualCard");
   const body = $("budgetActualBody");
   const hide = () => { card.classList.add("hidden"); body.innerHTML = ""; };
-  if (loadError || period.scope === "year") return hide();
+  if (loadError) return hide();
 
   let rows, everUsed;
   try {
-    [rows, everUsed] = await Promise.all([loadBudgetPeriod(period.key), hasAnyBudgetHistory()]);
+    [rows, everUsed] = await Promise.all([loadBudgetPeriods(period.key), hasAnyBudgetHistory()]);
   } catch (error) {
     // A failed read is not "you had no budget" - saying so would assert
     // something about a month we could not read. Same rule as the fig() dash.
@@ -8250,11 +8253,17 @@ async function renderBudgetVsActual(period, periodExpenses, loadError) {
     return;
   }
 
-  const statuses = budgetStatus(rows, sumBy(periodExpenses, "category", period.key));
-  // No sinking-fund figure for a past month: contributions are kept as a
-  // running total and never dated, so there is nothing to attribute to this
-  // month. Passing 0 keeps savings honest - it counts only what was actually
-  // tagged savings and spent.
+  // A year sums each category over ITS OWN recorded months, which is why it
+  // cannot just reuse the month path: budget Food from March and Transport
+  // from July and a single year-wide month set would charge each of them for
+  // months it was never budgeted in.
+  const isYear = period.scope === "year";
+  const year = isYear ? budgetYearStatus(rows, periodExpenses) : null;
+  const statuses = isYear ? year.rows : budgetStatus(rows, sumBy(periodExpenses, "category", period.key));
+  // No sinking-fund figure for a past period: contributions are kept as a
+  // running total and never dated, so there is nothing to attribute to it.
+  // Passing 0 keeps savings honest - it counts only what was actually tagged
+  // savings and spent.
   const split = budgetSplit(statuses, 0);
   const totalLimit = statuses.reduce((t, x) => t + x.limit, 0);
   const totalSpent = statuses.reduce((t, x) => t + x.spent, 0);
@@ -8264,14 +8273,26 @@ async function renderBudgetVsActual(period, periodExpenses, loadError) {
     ? `Spent ${fmt(totalSpent)} against ${fmt(totalLimit)} budgeted, over by ${fmt(overBy)}.`
     : `Spent ${fmt(totalSpent)} against ${fmt(totalLimit)} budgeted, ${fmt(-overBy)} left unspent.`;
   const splitLine = split
-    ? `<p class="muted" style="font-size:var(--fs-xs);margin:8px 0 0">That month's plan was ${split.need.pct}% needs, ${split.want.pct}% wants, ${split.savings.pct}% savings, of ${fmt(split.taggedTotal)} tagged.</p>`
+    ? `<p class="muted" style="font-size:var(--fs-xs);margin:8px 0 0">The plan was ${split.need.pct}% needs, ${split.want.pct}% wants, ${split.savings.pct}% savings, of ${fmt(split.taggedTotal)} tagged.</p>`
+    : "";
+
+  // A year is almost never twelve recorded months, and saying which months
+  // went in is what stops the total reading as a full year. The current month
+  // is called out separately because it is the one that is genuinely half
+  // counted: a whole month's limit against a part month's spending.
+  const includesThisMonth = isYear && rows.some((r) => r.period === monthKey());
+  const coverage = isYear
+    ? ` Covers the ${year.monthsCovered} ${year.monthsCovered === 1 ? "month" : "months"} of ${esc(period.label)} with budgets recorded${includesThisMonth ? ", including this one, which is not finished yet" : ""}.`
+    : "";
+  const unbudgeted = isYear && year.unbudgetedSpend > 0
+    ? ` A further ${fmt(year.unbudgetedSpend)} was spent in months or categories with no budget recorded, so it is not counted above.`
     : "";
 
   body.innerHTML = `
     <p style="font-size:13px;margin:0 0 12px">${headline}</p>
     ${statuses.map((x) => budgetRowHtml(x)).join("")}
     ${splitLine}
-    <p class="muted" style="font-size:var(--fs-xs);margin:8px 0 0">Measured against the limits recorded for ${esc(period.label)}, not against your limits today.</p>`;
+    <p class="muted" style="font-size:var(--fs-xs);margin:8px 0 0">Measured against the limits recorded for ${esc(period.label)}, not against your limits today.${coverage}${unbudgeted}</p>`;
 }
 
 async function renderReports() {
@@ -9959,13 +9980,18 @@ $("exportReportsBtn").onclick = async () => {
   if (!rows) return;
   const { expenses, income } = rows;
   // Fetched before exportPage, which takes a synchronous builder - the same
-  // shape the Investments export uses for its snapshots. A year has no monthly
-  // limit to compare against, so it carries no section rather than a wrong one.
+  // shape the Investments export uses for its snapshots. A year rolls up each
+  // category over its OWN recorded months, matching the card exactly, so the
+  // file and the page can never disagree about which months went in.
   let budgetVsActual = [];
-  if (period.scope === "month") {
+  {
     try {
-      const recorded = await loadBudgetPeriod(ym);
-      if (recorded.length) budgetVsActual = budgetStatus(recorded, sumBy(expenses, "category", ym));
+      const recorded = await loadBudgetPeriods(ym);
+      if (recorded.length) {
+        budgetVsActual = period.scope === "year"
+          ? (budgetYearStatus(recorded, expenses)?.rows || [])
+          : budgetStatus(recorded, sumBy(expenses, "category", ym));
+      }
     } catch (error) {
       // A file that silently omits the comparison would read as "no budget",
       // which is a different claim from "we could not read it".

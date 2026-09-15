@@ -2360,7 +2360,7 @@ function renderAccountsList() {
         ${a.type === "cash" ? "" : `<button type="button" class="link-action muted" data-archive-acct="${a.id}" aria-label="Archive ${esc(acctLabel(a))}">Archive</button>`}
       </div>`;
       }).join("")
-    : `<p class="muted" style="font-size:13px">No accounts yet.</p>`;
+    : `<p class="muted" style="font-size:13px">No accounts yet. Use + Add to put in the first one.</p>`;
   // Archive - reversible, unlike deleteAccount above. The DB row (archived_
   // at timestamp only) is all that changes here; the linked asset/liability
   // itself is left completely untouched (22_account_archive.sql) so
@@ -3098,7 +3098,7 @@ async function loadAssets() {
 
   $("assetsList").innerHTML = listedAssets.length
     ? otherRows.map(rowFor).join("") + investmentRow
-    : `<p class="muted" style="font-size:13px">Nothing added yet.</p>`;
+    : `<p class="muted" style="font-size:13px">Nothing added yet. Use + Add for anything you own that is worth money.</p>`;
   const investRow = $("assetsInvestmentRow");
   if (investRow) investRow.onclick = () => { goToView("invest"); };
   document.querySelectorAll("[data-edit-asset]").forEach((el) => {
@@ -5714,7 +5714,7 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
   const statuses = budgetStatus(budgets, byCat);
   $("budgetsList").innerHTML = statuses.length
     ? statuses.map((s) => budgetRowHtml(s, { removable: true })).join("")
-    : `<p class="muted" style="font-size:13px">No budgets set yet.</p>`;
+    : `<p class="muted" style="font-size:13px">No budgets set yet. Set one below to cap what you spend on a category each month.</p>`;
   document.querySelectorAll("[data-del-budget]").forEach((el) => {
     el.onclick = async () => {
       // Removing a budget threw away the limit AND its needs/wants/savings tag
@@ -6332,7 +6332,7 @@ function renderInvestments() {
           <div style="background:${barColor};width:${pctClamped}%;height:100%"></div>
         </div>
       </div>`;
-  }).join("") : `<p class="muted" style="font-size:13px">No targets set yet.</p>`;
+  }).join("") : `<p class="muted" style="font-size:13px">No targets set yet. Set one below to compare where your money is against where you want it.</p>`;
 
   // Each target is validated 0-100 on its own, but nothing checked the
   // TOTAL, so a mix adding to 150% was accepted and the card then printed

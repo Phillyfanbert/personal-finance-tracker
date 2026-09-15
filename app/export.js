@@ -162,11 +162,11 @@ export function investmentsSections({ totals = null, holdings = [], snapshots = 
     // each day's gain checkable.
     { title: "Value over time", header: ["Date", "Total value", "Total cost basis"],
       rows: snapshots.map((s) => [s.snapshot_date || "", money(s.total_value), money(s.total_cost_basis)]) },
-    { title: "Realized gain and loss", header: ["Date", "Symbol", "Shares sold", "Proceeds", "Realized gain"],
+    { title: "What you made on sales", header: ["Date", "Symbol", "Shares sold", "Proceeds", "Realized gain"],
       rows: realized.map((r) => [r.sold_on || r.sold_at || "", r.symbol || "", r.quantity ?? "", money(r.proceeds), money(r.realized_gain)]) },
-    { title: "Contribution limits (this year)", header: ["Group", "Contributed", "Limit", "Left", "Status"],
+    { title: "How much more you can put in this year", header: ["Group", "Contributed", "Limit", "Left", "Status"],
       rows: limits.map((l) => [l.label || "", money(l.contributed), money(l.limit), money(l.remaining), l.overLimit ? "over the limit" : ""]) },
-    { title: "Target allocation", header: ["Type", "Current percent", "Target percent", "Dollars from target"],
+    { title: "Your target mix", header: ["Type", "Current percent", "Target percent", "Dollars from target"],
       rows: targets.map((t) => [t.bucket || "", t.currentPct != null ? `${t.currentPct}%` : "", t.targetPercent != null ? `${t.targetPercent}%` : "", money(t.gapDollars)]) },
   ]);
 }

@@ -1391,6 +1391,30 @@ document.addEventListener("visibilitychange", () => {
 // `.value = row.category ?? CATEGORIES[0]` (openEdit, below) still
 // explicitly selects a real category for an existing expense regardless -
 // an already-saved expense always has one, so it never lands on "None".
+// How often money moves, in words rather than the stored enum. "Semiannual"
+// and "Biweekly" are finance-form words, not ones a first-timer reads quickly,
+// and "Semimonthly" is genuinely ambiguous (twice a month, or every two
+// weeks?) - it is the one people most often get wrong.
+//
+// ONE map per enum, read by BOTH the picker and the list, for the reason
+// fillCategorySelect exists: the option labels used to live in index.html
+// while the list rendered cap(billing_cycle), so the form said one word and
+// the row beneath it said another. The stored VALUES are untouched - renaming
+// those would mean migrating live financial data for a label change.
+const BILLING_CYCLE_LABEL = {
+  monthly: "Every month", quarterly: "Every 3 months", semiannual: "Every 6 months",
+  annual: "Once a year", other: "Something else",
+};
+const INCOME_CADENCE_LABEL = {
+  weekly: "Every week", biweekly: "Every 2 weeks", semimonthly: "Twice a month",
+  monthly: "Every month", annual: "Once a year", one_time: "Just once",
+};
+const fillEnumSelect = (sel, labels) => {
+  const keep = sel.value;
+  sel.innerHTML = Object.entries(labels).map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+  if (keep) sel.value = keep;
+};
+
 function fillCategorySelect(sel) {
   sel.innerHTML = `<option value="">None</option>` + CATEGORIES.map((c) => `<option>${c}</option>`).join("");
 }
@@ -2829,7 +2853,7 @@ $("saveAssetBtn").onclick = async () => {
   const name = $("assetName").value.trim();
   const type = $("assetType").value;
   const value = parseFloat($("assetValue").value);
-  if (!name) { flagField("assetName"); return toast("Asset name required"); }
+  if (!name) { flagField("assetName"); return toast("Give it a name first"); }
   if (!Number.isFinite(value)) { flagField("assetValue"); return toast("Enter a value"); }
   if (type === "cash") { flagField("assetType"); return toast("Cash is automatic - use the Cash account's +/- panel instead."); }
   if (type === "bank") { flagField("assetType"); return toast("Bank assets come from a Checking account - add one in the Accounts card instead."); }
@@ -2857,7 +2881,7 @@ $("saveAssetBtn").onclick = async () => {
     const pct = parseFloat(depRateRaw);
     if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
       flagField("assetDepRate", "Enter a depreciation rate from 0 to 100 percent.");
-      return toast("Depreciation rate must be between 0 and 100 percent", "error");
+      return toast("How much it loses a year must be between 0 and 100 percent", "error");
     }
   }
   const depreciation_rate = isVehicle && depRateRaw !== "" ? parseFloat(depRateRaw) / 100 : null;
@@ -2873,7 +2897,7 @@ $("saveAssetBtn").onclick = async () => {
   if (error) { flagField("assetName"); return toast(error.message); }
   const wasEditing = !!editingAsset;
   closeAssetForm();
-  await loadAssets(); toast(wasEditing ? "Asset updated" : "Asset added");
+  await loadAssets(); toast(wasEditing ? "Asset updated" : "Added");
 };
 
 // CD is the only asset type with a maturity date today - reuses
@@ -3074,7 +3098,7 @@ async function loadAssets() {
 
   $("assetsList").innerHTML = listedAssets.length
     ? otherRows.map(rowFor).join("") + investmentRow
-    : `<p class="muted" style="font-size:13px">No assets yet.</p>`;
+    : `<p class="muted" style="font-size:13px">Nothing added yet.</p>`;
   const investRow = $("assetsInvestmentRow");
   if (investRow) investRow.onclick = () => { goToView("invest"); };
   document.querySelectorAll("[data-edit-asset]").forEach((el) => {
@@ -3566,7 +3590,7 @@ $("adjustMaturitySaveBtn").onclick = async () => {
   const { error } = await sb.from("assets").update({ maturity_date }).eq("id", adjustingAssetId);
   if (error) { flagField("adjustMaturityDate"); return toast(error.message); }
   await loadAssets();
-  toast("Maturity date saved");
+  toast("Date saved");
 };
 
 // ---- LIABILITIES (tracked debts) ---------------------------------------
@@ -3590,7 +3614,7 @@ $("saveDebtBtn").onclick = async () => {
   const name = $("debtName").value.trim();
   const type = $("debtType").value;
   const balance = parseFloat($("debtBalance").value);
-  if (!name) { flagField("debtName"); return toast("Liability name required"); }
+  if (!name) { flagField("debtName"); return toast("Give it a name first"); }
   if (!Number.isFinite(balance)) { flagField("debtBalance"); return toast("Enter a balance"); }
   const row = {
     name, type, balance,
@@ -3602,7 +3626,7 @@ $("saveDebtBtn").onclick = async () => {
   if (error) { flagField("debtName"); return toast(error.message); }
   $("debtName").value = ""; $("debtBalance").value = ""; $("debtRate").value = "";
   $("debtMinPay").value = ""; $("debtDue").value = ""; $("debtForm").classList.add("hidden");
-  await loadDebts(); toast("Liability added");
+  await loadDebts(); toast("Added");
 };
 
 // Derived from ACCOUNT_TYPES (every liability-kind entry's linkType ->
@@ -3675,7 +3699,7 @@ function helocPhaseInfo(d, today = new Date()) {
   const todayStr = localDateISO(today);
   return d.draw_period_end < todayStr
     ? { phase: "repayment", label: `Repayment period (draw ended ${d.draw_period_end})` }
-    : { phase: "draw", label: `Draw period (interest-only) - ends ${d.draw_period_end}` };
+    : { phase: "draw", label: `You can still borrow more until ${d.draw_period_end}, and payments only cover interest until then` };
 }
 
 async function loadDebts() {
@@ -3700,7 +3724,7 @@ async function loadDebts() {
     if (d.interest_rate == null || d.minimum_payment == null) return "";
     const p = payoffProjection(d.balance, d.interest_rate, d.minimum_payment);
     if (!p) return "";
-    if (p.neverPaysOff) return `<div class="meta" style="color:var(--err)">Min payment won't cover interest - balance will grow</div>`;
+    if (p.neverPaysOff) return `<div class="meta" style="color:var(--err)">The smallest allowed payment does not cover the interest, so this would keep growing</div>`;
     if (p.months <= 0) return "";
     return `<div class="meta">Payoff in ${p.months}mo (${p.payoffDate}) · ${fmt(p.totalInterest)} interest</div>`;
   };
@@ -3774,7 +3798,7 @@ async function loadDebts() {
     : `<p class="muted" style="font-size:13px">No credit accounts yet.</p>`;
   $("debtsList").innerHTML = otherDebts.length
     ? otherDebts.map(rowHtml).join("")
-    : `<p class="muted" style="font-size:13px">No other liabilities.</p>`;
+    : `<p class="muted" style="font-size:13px">Nothing else owed.</p>`;
   document.querySelectorAll("[data-del-debt]").forEach((el) => {
     el.onclick = async (ev) => {
       ev.stopPropagation();
@@ -3938,7 +3962,7 @@ $("debtDetailsSaveBtn").onclick = async () => {
   if (error) { flagField(touchedIds); return toast(error.message); }
   closeDebtDetailsForm();
   await loadDebts();
-  toast("Liability details saved");
+  toast("Details saved");
 };
 
 // ---- ADJUST A LIABILITY'S BALANCE (owed vs. paying it down) -------------
@@ -4062,7 +4086,7 @@ $("payConfirmBtn").onclick = async () => {
   if (!assetId) { flagField("payFromAsset"); return toast("Choose an account to pay from - add one in the Accounts card if none are listed."); }
   const debt = debts.find((d) => d.id === activeDebtId);
   const asset = assets.find((a) => a.id === assetId);
-  if (!debt || !asset) { flagField("payFromAsset"); return toast("Pick a valid liability and asset"); }
+  if (!debt || !asset) { flagField("payFromAsset"); return toast("Pick what you are paying off, and the account to pay from"); }
   if (amount > Number(asset.value)) { flagField("payAmount"); return toast(`Not enough in ${asset.name} to pay ${fmt(amount)}`); }
   // Paying more than is owed used to silently destroy money: the balance
   // floored at $0 while the FULL amount still left the funding account, so
@@ -4967,7 +4991,7 @@ async function undoActivity(row) {
     // "subtract what was applied," correct whether the original correction
     // raised the balance (a missed charge, an interest charge) or lowered it.
     const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
-    if (!debt) return toast("Can't undo - the liability no longer exists.");
+    if (!debt) return toast("Cannot undo this - what you owed is no longer there.");
     const newBalance = Math.round((Number(debt.balance) - Number(row.amount)) * 100) / 100;
     if (newBalance < 0) return toast(`Can't undo - would take ${debt.name} below $0 owed.`);
     const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
@@ -4976,7 +5000,7 @@ async function undoActivity(row) {
     const account = accounts.find((a) => a.id === row.account_id);
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
     const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
-    if (!asset || !debt) return toast("Can't undo - the linked account or liability no longer exists.");
+    if (!asset || !debt) return toast("Cannot undo this - the account or debt it belonged to is no longer there.");
     const newAssetValue = Math.round((Number(asset.value) + Number(row.amount)) * 100) / 100;
     const newBalance = Math.round((Number(debt.balance) + Number(row.amount)) * 100) / 100;
     const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
@@ -9103,7 +9127,7 @@ function renderSubscriptions() {
       <div class="exp" data-sub="${s.id}" style="${s.is_active ? "" : "opacity:.5"}">
         <div>
           <div>${esc(s.name)}${s.is_essential ? " · Essential" : ""}${s.is_active ? "" : " · (inactive)"}</div>
-          <div class="meta">${s.category ? esc(s.category) + " · " : ""}${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + cap(s.billing_cycle) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
+          <div class="meta">${s.category ? esc(s.category) + " · " : ""}${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + (BILLING_CYCLE_LABEL[s.billing_cycle] || cap(s.billing_cycle)) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")
@@ -9255,7 +9279,7 @@ function renderIncomeList() {
       <div class="exp" data-income="${s.id}" style="${s.is_active ? "" : "opacity:.5"}">
         <div>
           <div>${esc(s.source)}${s.is_active ? "" : " · (inactive)"}</div>
-          <div class="meta">${cap(s.cadence.replace("_", " "))}${s.next_expected ? " · next " + s.next_expected : ""}${acctName(s.account_id) ? " · " + esc(acctName(s.account_id)) : ""}</div>
+          <div class="meta">${INCOME_CADENCE_LABEL[s.cadence] || cap(String(s.cadence).replace("_", " "))}${s.next_expected ? " · next " + s.next_expected : ""}${acctName(s.account_id) ? " · " + esc(acctName(s.account_id)) : ""}</div>
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")
@@ -9272,6 +9296,8 @@ function renderIncomeList() {
 function updateIncomeSemimonthlyVisibility() {
   $("incomeSemimonthlyRow").classList.toggle("hidden", $("incCadence").value !== "semimonthly");
 }
+fillEnumSelect($("incCadence"), INCOME_CADENCE_LABEL);
+fillEnumSelect($("sCycle"), BILLING_CYCLE_LABEL);
 $("incCadence").addEventListener("change", updateIncomeSemimonthlyVisibility);
 
 const openNewIncomeForm = () => openIncomeForm(null);

@@ -302,6 +302,44 @@ for (const [name, t] of themes) {
   console.log(`    ${d >= 15 ? "ok  " : "FAIL"} ${name}: err vs warn under deuteranopia: ${d}`);
 }
 
+// ---- E: a progress fill against its own track -------------------------------
+// WCAG 1.4.11: a graphic you have to decode needs 3:1. A bar's fill says how
+// full it is only if it is distinguishable from the track behind it, and this
+// caught a real failure by hand before it was a check: a bucket bar was filled
+// with the bucket's IDENTITY colour, and --series-2 measures 1.22:1 against
+// --panel-2 in light, which is no bar at all.
+//
+// The identity palette is deliberately NOT held to this. Those eight hues are
+// tuned in section C to separate from EACH OTHER under colour vision
+// deficiency, and they are only ever painted as adjacent segments of a stacked
+// bar that always sums to 100%, so the track is never exposed behind them.
+// Status tones are the ones that sit on an exposed track, so they are the ones
+// measured here.
+const appJsForFills = read("app/app.js");
+section("E. Progress fills against their track (WCAG 1.4.11, 3:1)");
+const FILL_FLOOR = 3.0;
+const TRACKS = ["--panel-2", "--panel"];
+const STATUS_FILLS = ["--ok", "--warn", "--err"];
+for (const [name, T] of themes) {
+  for (const fill of STATUS_FILLS) {
+    for (const track of TRACKS) {
+      if (!T[fill] || !T[track]) continue;
+      const r = ratio(T[fill], T[track]);
+      ok(r >= FILL_FLOOR, `${name}: ${fill} on ${track} is ${r.toFixed(2)}:1, below ${FILL_FLOOR}`);
+      if (r >= FILL_FLOOR) console.log(`  ${name.padEnd(5)} ${fill.padEnd(7)} on ${track.padEnd(9)} ${r.toFixed(2)}:1`);
+    }
+  }
+}
+// The rule this encodes, so a future edit cannot quietly undo the fix: a bar
+// whose track is visible must be filled from the status tones, never from the
+// identity palette.
+const splitFill = appJsForFills.match(/const tone = b\.over[^;]*;/s);
+if (splitFill) {
+  const usesSeries = /--series-\d/.test(splitFill[0]);
+  ok(!usesSeries, "the bucket bar fill uses an identity colour; it must use a status tone (see above)");
+  if (!usesSeries) console.log("  bucket bar fills come from status tones, not the identity palette");
+}
+
 // ---- D: drift guards --------------------------------------------------------
 section("D. Drift guards");
 const appJs = read("app/app.js");

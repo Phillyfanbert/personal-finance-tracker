@@ -5600,7 +5600,7 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
         return `
       <div class="budget-row">
         <div class="budget-row-head">
-          <span class="budget-row-name">${esc(s.category)}${s.classification ? ` <span class="muted" style="font-size:11px">${CLASS_LABEL[s.classification]}</span>` : ""}</span>
+          <span class="budget-row-name">${esc(s.category)}${s.classification ? ` <span class="muted" style="font-size:var(--fs-xs)">${CLASS_LABEL[s.classification]}</span>` : ""}</span>
           <span class="budget-row-figs">${fmt(s.spent)} / ${fmt(s.limit)}${state}</span>
           <button type="button" class="x" data-del-budget="${esc(s.category)}" aria-label="Remove the ${esc(s.category)} budget">✕</button>
         </div>
@@ -5612,12 +5612,25 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
     : `<p class="muted" style="font-size:13px">No budgets set yet.</p>`;
   document.querySelectorAll("[data-del-budget]").forEach((el) => {
     el.onclick = async () => {
-      const { error } = await sb.from("budgets").delete().eq("category", el.dataset.delBudget);
-      if (error) return toast(error.message);
-      await loadBudgets();
-      renderBudgets();
-      renderBudgetWarnings(); // a removed budget can also remove a Log-page warning
-      toast("Budget removed");
+      // Removing a budget threw away the limit AND its needs/wants/savings tag
+      // with no confirm and no undo, which the review checklist does not allow
+      // for a destructive action. Confirmed against the live schema that no
+      // foreign key anywhere references `budgets`, which is the precondition
+      // deleteLeafRowWithUndo documents: the row goes back verbatim, id
+      // included, so a restore is complete rather than approximate.
+      const row = budgets.find((b) => b.category === el.dataset.delBudget);
+      if (!row) return toast("That budget is no longer there", "error");
+      await deleteLeafRowWithUndo({
+        table: "budgets",
+        row,
+        label: `the ${row.category} budget`,
+        restoredMsg: "Budget restored",
+        after: async () => {
+          await loadBudgets();
+          renderBudgets();
+          renderBudgetWarnings(); // a removed budget can also remove a Log-page warning
+        },
+      });
     };
   });
   renderBudgetSplit(statuses);
@@ -5665,11 +5678,18 @@ function renderBudgetSplit(statuses) {
         ? `${fmt(b.spent)} of ${fmt(b.planned)}, over by ${fmt(b.spent - b.planned)}`
         : `${fmt(b.spent)} of ${fmt(b.planned)}`;
     const fill = Math.min(100, b.usedPct);
-    const tone = b.over ? "var(--err)" : b.usedPct >= WARN_THRESHOLD_PCT ? "var(--warn)" : p.color;
+    // Status tones, NOT the bucket's identity colour. A fill has to be
+    // readable against its own track to say how full it is (WCAG 1.4.11,
+    // 3:1), and the identity palette is tuned to separate eight hues from
+    // EACH OTHER, not from a near-white track: --series-2 measures 1.22:1
+    // against --panel-2 in light, which is no bar at all. The swatch beside
+    // the label still carries identity; the bar carries state, which also
+    // makes it read identically to the category rows below.
+    const tone = b.over ? "var(--err)" : b.usedPct >= WARN_THRESHOLD_PCT ? "var(--warn)" : "var(--ok)";
     return `
       <div style="margin-top:8px">
-        <div class="row" style="justify-content:space-between;gap:8px;font-size:13px">
-          <span><span aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${p.color};margin-right:6px"></span>${p.label} ${b.pct}%</span>
+        <div class="row" style="justify-content:space-between;gap:8px;font-size:var(--fs-sm)">
+          <span><span aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${p.color};margin-right:8px"></span>${p.label} ${b.pct}%</span>
           <span class="${b.over ? "" : "muted"}">${reality}</span>
         </div>
         ${b.undated ? "" : `<div class="budget-bar">
@@ -5688,10 +5708,10 @@ function renderBudgetSplit(statuses) {
     : "";
 
   el.innerHTML = `
-    <div class="muted" style="font-size:12px;margin-bottom:4px">How your ${fmt(split.taggedTotal)} of tagged budget splits, and how it is going</div>
+    <div class="muted" style="font-size:var(--fs-xs);margin-bottom:4px">How your ${fmt(split.taggedTotal)} of tagged budget splits, and how it is going</div>
     <div style="display:flex;background:var(--panel-2);border-radius:6px;height:8px;overflow:hidden">${bar}</div>
     ${parts.map(row).join("")}
-    <p class="muted" style="font-size:11px;margin:8px 0 0">This is a share of what you have budgeted, not of your income.${untaggedNote}</p>`;
+    <p class="muted" style="font-size:var(--fs-xs);margin:8px 0 0">This is a share of what you have budgeted, not of your income.${untaggedNote}</p>`;
 }
 
 // Takes the already-computed statuses rather than recomputing budgetStatus()

@@ -263,37 +263,34 @@
        the name, the figures and the remove button shared one wrapping span
        the button dropped onto a line of its own, centred under the row - it
        read as a rendering fault rather than a control. The name is the only
-       flexible part and truncates; the figures and the button never wrap. */
-    /* The head is 44px because the remove button carries the touch minimum,
-       while the text in it is 15px - so roughly 29px per row is space the
-       button creates and nothing uses. The bar sits INSIDE that band rather
-       than below it, which is why the row is 44px total and not 52px.
-       48px of pitch between adjacent remove buttons is the floor and is
-       deliberate: their hit boxes are 44px tall, so a tighter row would make
-       neighbouring boxes overlap and a tap just under one cross would delete
-       the next category's budget. Compactness stops here. */
-    .budget-row { position: relative; margin-bottom: 16px; }
-    .budget-row-head { display: flex; align-items: center; gap: 8px; font-size: 13px;
-      padding-bottom: 8px; }
+       flexible part and truncates; the figures and the button never wrap.
+
+       The 24px row margin is load-bearing rather than taste. The remove
+       button's hit box is 44px tall while its glyph is 22px, so the margin is
+       what holds adjacent hit boxes 10px apart - the house rule is a 44px
+       target with 8px of clear space between neighbours, and at a tighter
+       pitch a tap under one cross would start to reach the next category's.
+       Do not shrink it without re-measuring both numbers. */
+    .budget-row { position: relative; margin-bottom: 24px; }
+    .budget-row-head { display: flex; align-items: center; gap: 8px;
+      font-size: var(--fs-sm); padding-bottom: 8px; }
     .budget-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
       text-overflow: ellipsis; white-space: nowrap; }
     .budget-row-figs { flex: 0 0 auto; white-space: nowrap; }
-    /* Muted until wanted, scoped to this list rather than changing .x for all
-       ten delete glyphs at once. Six red bold crosses down the card pulled the
-       eye harder than the figures they sat beside. Still 44x44, still a real
-       button, and it returns to --err on hover and on keyboard focus. */
     /* Same reasoning as .info-icon and .acct-circle-item .x: the glyph stays
-       small so the row can be 30px instead of 52px, and the hit box does not
-       shrink with it. The 16px row margin is load-bearing rather than taste -
-       it puts 46px of pitch between adjacent hit boxes, which are 44px tall,
-       so no tap can land in two of them at once. */
+       small so the row is not padded out to the height of its own hit box,
+       and the hit box does not shrink with it. Muted for this list only
+       rather than changing .x at all ten of its call sites - six red bold
+       crosses down one card pulled harder than the figures beside them. Back
+       to --err on hover and on keyboard focus, and the global
+       button:focus-visible ring carries discoverability regardless. */
     .budget-row-head .x { flex: 0 0 auto; position: relative; color: var(--muted);
       font-weight: 400; min-width: 0; min-height: 0; width: 22px; height: 22px; }
     .budget-row-head .x::after { content: ""; position: absolute; top: 50%; left: 50%;
       width: var(--target-min); height: var(--target-min); transform: translate(-50%, -50%); }
     .budget-row-head .x:hover, .budget-row-head .x:focus-visible { color: var(--err); }
     .budget-bar { background: var(--panel-2); border-radius: 4px; height: 5px;
-      margin-top: 3px; overflow: hidden; }
+      margin-top: 4px; overflow: hidden; }
     .budget-row .budget-bar { position: absolute; left: 0; right: 0; bottom: 0; margin-top: 0; }
     .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     /* Wraps rather than squeezing. Three tiles in a fixed row overflowed a

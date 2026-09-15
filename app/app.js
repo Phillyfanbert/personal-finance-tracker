@@ -14,7 +14,7 @@ import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
-import { budgetStatus, budgetSplit, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal } from "./budgets.js";
+import { budgetStatus, budgetSplit, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal, WARN_THRESHOLD_PCT } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
@@ -5620,9 +5620,9 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
 
 const CLASS_LABEL = { need: "need", want: "want", savings: "savings" };
 
-// The needs/wants/savings view of budgeted money. Hidden entirely when nothing
-// is tagged: an untagged set has no split to state, and a 0/0/0 bar would
-// assert something about the user's money that they never said.
+// The needs/wants/savings view: what the plan is, and whether it is being
+// followed. Hidden entirely when nothing is tagged - an untagged set has no
+// split to state, and a 0/0/0 bar would assert something the user never said.
 //
 // Every string here says "budgeted", never "income". The frameworks this
 // mirrors are shares of INCOME, so calling a share of budgeted money 50/30/20
@@ -5641,28 +5641,51 @@ function renderBudgetSplit(statuses) {
     { key: "want", label: "Wants", color: "var(--series-2)" },
     { key: "savings", label: "Savings", color: "var(--series-8)" },
   ];
-  // A zero-width segment would be an invisible slice with a visible legend
-  // entry, so the figure beside the label is what actually carries each share.
+  // A zero-width segment would be an invisible slice with a visible row, so
+  // the figure in each row is what actually carries that bucket's share.
   const bar = parts.map((p) =>
     `<div style="background:${p.color};width:${split[p.key].pct}%;height:100%"></div>`).join("");
-  const legend = parts.map((p) =>
-    `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px">
-       <span aria-hidden="true" style="width:8px;height:8px;border-radius:2px;background:${p.color};flex:none"></span>
-       ${p.label} ${split[p.key].pct}% (${fmt(split[p.key].planned)})
-     </span>`).join("");
 
-  const fundsNote = split.sinkingFundMonthly > 0
-    ? ` Savings includes ${fmt(split.sinkingFundMonthly)} a month being set aside in Saving up for something.`
-    : "";
+  // One row per bucket: the share of the plan, then what has actually gone
+  // out against it. Same spent-of-limit shape as the category rows below, so
+  // this is the card's existing visual language aggregated, not a new one.
+  const row = (p) => {
+    const b = split[p.key];
+    // Words, never colour alone (WCAG 1.4.1) - read this row aloud in
+    // greyscale and the state still comes through.
+    const reality = b.undated
+      ? `<span class="muted">no monthly figure</span>`
+      : b.over
+        ? `${fmt(b.spent)} of ${fmt(b.planned)}, over by ${fmt(b.spent - b.planned)}`
+        : `${fmt(b.spent)} of ${fmt(b.planned)}`;
+    const fill = Math.min(100, b.usedPct);
+    const tone = b.over ? "var(--err)" : b.usedPct >= WARN_THRESHOLD_PCT ? "var(--warn)" : p.color;
+    return `
+      <div style="margin-top:8px">
+        <div class="row" style="justify-content:space-between;gap:8px;font-size:13px">
+          <span><span aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${p.color};margin-right:6px"></span>${p.label} ${b.pct}%</span>
+          <span class="${b.over ? "" : "muted"}">${reality}</span>
+        </div>
+        ${b.undated ? "" : `<div style="background:var(--panel-2);border-radius:4px;height:5px;overflow:hidden;margin-top:4px">
+          <div style="background:${tone};width:${fill}%;height:100%"></div>
+        </div>`}
+      </div>`;
+  };
+
+  // Only what is specific to THIS user's numbers stays visible. The general
+  // "why does savings have no figure" explanation lives behind the card's "i",
+  // per the project-wide rule that a paragraph teaching a concept moves there
+  // while a line stating a fact can stay - five dense lines of 11px prose is
+  // what made this card heavy at 375px, measured rather than guessed.
   const untaggedNote = split.untaggedCount
-    ? ` ${fmt(split.untaggedTotal)} across ${split.untaggedCount} ${split.untaggedCount === 1 ? "category" : "categories"} is not tagged yet, so it is not in the split.`
+    ? ` ${fmt(split.untaggedTotal)} across ${split.untaggedCount} ${split.untaggedCount === 1 ? "category" : "categories"} is not tagged, so it is not in the split.`
     : "";
 
   el.innerHTML = `
-    <div class="muted" style="font-size:12px;margin-bottom:4px">How your ${fmt(split.taggedTotal)} of tagged budget splits</div>
+    <div class="muted" style="font-size:12px;margin-bottom:4px">How your ${fmt(split.taggedTotal)} of tagged budget splits, and how it is going</div>
     <div style="display:flex;background:var(--panel-2);border-radius:6px;height:8px;overflow:hidden">${bar}</div>
-    <div class="muted" style="font-size:12px;margin-top:6px">${legend}</div>
-    <p class="muted" style="font-size:11px;margin:6px 0 0">This is a share of what you have budgeted, not of your income.${fundsNote}${untaggedNote}</p>`;
+    ${parts.map(row).join("")}
+    <p class="muted" style="font-size:11px;margin:8px 0 0">This is a share of what you have budgeted, not of your income.${untaggedNote}</p>`;
 }
 
 // Takes the already-computed statuses rather than recomputing budgetStatus()

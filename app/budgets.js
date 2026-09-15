@@ -60,14 +60,19 @@ export function budgetStatus(budgets, spendByCategory) {
  *   empty. The caller states that it is included.
  */
 export function budgetSplit(statuses, sinkingFundMonthly = 0) {
-  const planned = { need: 0, want: 0, savings: r2(Math.max(0, Number(sinkingFundMonthly) || 0)) };
-  let untaggedTotal = 0, untaggedCount = 0;
+  const funds = r2(Math.max(0, Number(sinkingFundMonthly) || 0));
+  const planned = { need: 0, want: 0, savings: funds };
+  const spent = { need: 0, want: 0, savings: 0 };
+  let untaggedTotal = 0, untaggedCount = 0, untaggedSpent = 0;
   for (const s of statuses || []) {
     const limit = Number(s.limit) || 0;
+    const used = Number(s.spent) || 0;
     if (s.classification && Object.prototype.hasOwnProperty.call(planned, s.classification)) {
       planned[s.classification] = r2(planned[s.classification] + limit);
+      spent[s.classification] = r2(spent[s.classification] + used);
     } else {
       untaggedTotal = r2(untaggedTotal + limit);
+      untaggedSpent = r2(untaggedSpent + used);
       untaggedCount++;
     }
   }
@@ -86,14 +91,42 @@ export function budgetSplit(statuses, sinkingFundMonthly = 0) {
   }
   const pctOf = (k) => out.find((e) => e.key === k).pct;
 
+  // `usedPct` is spending against THIS bucket's own plan, not against the
+  // month. Deliberately no "you are ahead of pace for the 14th" figure: that
+  // assumes spending arrives evenly, and rent lands on the 1st, so a needs
+  // bucket would read alarmingly over-pace for three weeks of every month and
+  // be wrong every time. See docs/budgeting-methodologies.md 2.4 on why needs
+  // are the bucket most concentrated in a few large fixed charges.
+  const bucket = (k) => {
+    const p = planned[k], used = spent[k];
+    return {
+      planned: p,
+      pct: pctOf(k),
+      spent: used,
+      usedPct: p > 0 ? Math.round((used / p) * 100) : 0,
+      over: used > p,
+    };
+  };
+
+  const savings = bucket("savings");
+  // A sinking fund contribution raises `saved` and writes no dated row - that
+  // it never moves real money is the load-bearing decision of that feature,
+  // since setting money aside is a plan for money already held rather than a
+  // movement of it. So there is no way to ask what was set aside THIS month.
+  // Reporting "$0 of $400" for someone who did put money aside would be
+  // confidently wrong, which is worse than saying there is no figure.
+  savings.undated = funds > 0;
+
   return {
-    need: { planned: planned.need, pct: pctOf("need") },
-    want: { planned: planned.want, pct: pctOf("want") },
-    savings: { planned: planned.savings, pct: pctOf("savings") },
+    need: bucket("need"),
+    want: bucket("want"),
+    savings,
     taggedTotal,
+    taggedSpent: r2(spent.need + spent.want + spent.savings),
     untaggedTotal,
+    untaggedSpent,
     untaggedCount,
-    sinkingFundMonthly: r2(Math.max(0, Number(sinkingFundMonthly) || 0)),
+    sinkingFundMonthly: funds,
   };
 }
 

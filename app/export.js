@@ -123,14 +123,19 @@ export function planSections({ safeToSpend = null, budgets = [], split = null, f
     // exactly 100, so recomputing them here would be a second definition free
     // to disagree with the card. Untagged is a row, not an omission - a share
     // taken over part of a budget means nothing without knowing how much part.
-    { title: "Needs, wants and savings", header: ["Bucket", "Budgeted", "Share of tagged budget"],
+    // Spent is blank rather than 0.00 for savings when a sinking fund is in
+    // play: a contribution is not dated, so there is no this-month figure, and
+    // a 0 would read as "set nothing aside" for someone who did.
+    { title: "Needs, wants and savings", header: ["Bucket", "Budgeted", "Share of tagged budget", "Spent", "Percent of budget used"],
       rows: split ? [
-        ["Needs", money(split.need.planned), `${split.need.pct}%`],
-        ["Wants", money(split.want.planned), `${split.want.pct}%`],
-        ["Savings", money(split.savings.planned), `${split.savings.pct}%`],
-        ["Of savings, set aside in Saving up for something", money(split.sinkingFundMonthly), ""],
-        ["Tagged total", money(split.taggedTotal), "100%"],
-        [`Not tagged (${split.untaggedCount} ${split.untaggedCount === 1 ? "category" : "categories"})`, money(split.untaggedTotal), ""],
+        ["Needs", money(split.need.planned), `${split.need.pct}%`, money(split.need.spent), `${split.need.usedPct}%`],
+        ["Wants", money(split.want.planned), `${split.want.pct}%`, money(split.want.spent), `${split.want.usedPct}%`],
+        ["Savings", money(split.savings.planned), `${split.savings.pct}%`,
+          split.savings.undated ? "" : money(split.savings.spent),
+          split.savings.undated ? "" : `${split.savings.usedPct}%`],
+        ["Of savings, set aside in Saving up for something", money(split.sinkingFundMonthly), "", "", ""],
+        ["Tagged total", money(split.taggedTotal), "100%", money(split.taggedSpent), ""],
+        [`Not tagged (${split.untaggedCount} ${split.untaggedCount === 1 ? "category" : "categories"})`, money(split.untaggedTotal), "", money(split.untaggedSpent), ""],
       ] : [] },
     // "Needed each month" is blank rather than 0 for an undated fund: there is
     // no deadline to divide by, and a 0 would read as "nothing more to save".

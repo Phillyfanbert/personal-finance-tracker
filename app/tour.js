@@ -130,7 +130,7 @@ export const TOUR_STEPS = {
     {
       target: "budgetsCard",
       title: "Setting a spending limit",
-      body: "If you want to cap how much you spend on something each month - say $200 on eating out - set it here. The app warns you as you get close, not only once you have gone over, and the warning shows up on the Log page where you are actually spending.",
+      body: "If you want to cap how much you spend on something each month - say $200 on eating out - set it here. The app warns you as you get close, not only once you have gone over, and the warning shows up on the Log page where you are actually spending. You can also tag a category as a need, a want, or savings, and a small bar shows how your budget divides between the three. Tagging is optional: some categories are honestly both, and an untagged one is simply left out of the bar rather than guessed at.",
       placement: "bottom",
     },
     {

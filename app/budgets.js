@@ -28,9 +28,74 @@ export function budgetStatus(budgets, spendByCategory) {
       const limit = Number(b.monthly_limit);
       const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
       const over = spent > limit;
-      return { category: b.category, limit, spent, pct, over, warn: over || pct >= WARN_THRESHOLD_PCT };
+      return { category: b.category, limit, spent, pct, over, warn: over || pct >= WARN_THRESHOLD_PCT,
+        classification: b.classification || null };
     })
     .sort((a, b) => b.pct - a.pct);
+}
+
+/**
+ * The needs / wants / savings split of budgeted money, which is what every
+ * percentage-of-income framework in docs/budgeting-methodologies.md is built
+ * on (50/30/20 and its 60/30/10 and 70/20/10 variants, the 60% Solution).
+ *
+ * It splits WHAT HAS BEEN BUDGETED, not income, and the caller must say so.
+ * That distinction is the whole boundary this feature sits on: 50/30/20 is a
+ * share of income, so presenting a share of budgeted money as though it were
+ * the same number would state something false. Budgeting $1,000 of a $3,000
+ * income 60/30/10 is not living on 60/30/10. The app shows the user their own
+ * arithmetic and stops. Naming 50/30/20 as general education is fine; working
+ * out a framework, a split or a limit for this user from their own income is
+ * not, the same boundary compareDebtStrategies() holds for avalanche versus
+ * snowball.
+ *
+ * Returns null when nothing is tagged - there is no honest split to state yet,
+ * the same reason safeToSpend() returns null with no budgets rather than $0.
+ *
+ * @param {object[]} statuses from budgetStatus(), carrying `classification`
+ * @param {number} sinkingFundMonthly from sinkingFundMonthlyTotal(), counted
+ *   as savings because money set aside for a known future cost is savings by
+ *   every one of those frameworks. Without it the savings bucket would read
+ *   zero for almost everyone, since this app has no "Savings" spending
+ *   category to budget against - the bucket would look broken rather than
+ *   empty. The caller states that it is included.
+ */
+export function budgetSplit(statuses, sinkingFundMonthly = 0) {
+  const planned = { need: 0, want: 0, savings: r2(Math.max(0, Number(sinkingFundMonthly) || 0)) };
+  let untaggedTotal = 0, untaggedCount = 0;
+  for (const s of statuses || []) {
+    const limit = Number(s.limit) || 0;
+    if (s.classification && Object.prototype.hasOwnProperty.call(planned, s.classification)) {
+      planned[s.classification] = r2(planned[s.classification] + limit);
+    } else {
+      untaggedTotal = r2(untaggedTotal + limit);
+      untaggedCount++;
+    }
+  }
+  const taggedTotal = r2(planned.need + planned.want + planned.savings);
+  if (taggedTotal <= 0) return null;
+
+  // Largest-remainder, so the three shares sum to exactly 100. Rounding each
+  // independently gives 99 or 101 often enough to matter, and a split that
+  // does not add up reads as a broken card rather than a rounding artifact.
+  const exact = ["need", "want", "savings"].map((k) => ({ key: k, raw: (planned[k] / taggedTotal) * 100 }));
+  const out = exact.map((e) => ({ ...e, pct: Math.floor(e.raw) }));
+  let left = 100 - out.reduce((sum, e) => sum + e.pct, 0);
+  for (const e of [...out].sort((a, b) => (b.raw - b.pct) - (a.raw - a.pct))) {
+    if (left <= 0) break;
+    e.pct++; left--;
+  }
+  const pctOf = (k) => out.find((e) => e.key === k).pct;
+
+  return {
+    need: { planned: planned.need, pct: pctOf("need") },
+    want: { planned: planned.want, pct: pctOf("want") },
+    savings: { planned: planned.savings, pct: pctOf("savings") },
+    taggedTotal,
+    untaggedTotal,
+    untaggedCount,
+    sinkingFundMonthly: r2(Math.max(0, Number(sinkingFundMonthly) || 0)),
+  };
 }
 
 // Auto-log-eligible cycles only (mirrors app.js's autoLogDueSubscriptions

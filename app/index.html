@@ -1573,14 +1573,30 @@
       <div class="card" id="budgetsCard">
         <div class="card-head">
           <h2>Budgets</h2>
-          <span class="info-icon" tabindex="0" role="button" data-info="budgetsExplainer" title="A limit is a ceiling, not a target to spend up to. The bar turns amber at 90 percent and red once over, and the words beside it say the same thing so colour is never carrying it alone. This always means the current real-world month, whatever month the Reports page is showing.">i</span>
+          <span class="info-icon" tabindex="0" role="button" data-info="budgetsExplainer" title="A limit is a ceiling, not a target to spend up to. The bar turns amber at 90 percent and red once over, and the words beside it say the same thing so colour is never carrying it alone. This always means the current real-world month, whatever month the Reports page is showing. Tagging a category as a need, a want, or savings shows how your budgeted money splits between the three, which is the shape the common percentage frameworks use. It is a share of what you have budgeted, not of your income, and the app never fills in a target for you.">i</span>
         </div>
-        <p class="muted explainer hidden" id="budgetsExplainer">A limit is a ceiling, not a target to spend up to. The bar turns amber at 90 percent and red once over, and the words beside it say the same thing so colour is never carrying it alone. This always means the current real-world month, whatever month the Reports page is showing.</p>
+        <p class="muted explainer hidden" id="budgetsExplainer">A limit is a ceiling, not a target to spend up to. The bar turns amber at 90 percent and red once over, and the words beside it say the same thing so colour is never carrying it alone. This always means the current real-world month, whatever month the Reports page is showing. Tagging a category as a need, a want, or savings shows how your budgeted money splits between the three, which is the shape the common percentage frameworks use. It is a share of what you have budgeted, not of your income, and the app never fills in a target for you.</p>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Monthly limit per category, for the current month.</p>
+        <!-- Hidden until something is tagged. An untagged set has no honest
+             split to state, so the card simply does not claim one. -->
+        <div id="budgetSplit" class="hidden" style="margin-top:10px"></div>
         <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
-        <div class="row" style="margin-top:10px">
-          <select id="budgetCategory" aria-label="Category to set a limit for" style="flex:1"></select>
-          <input id="budgetLimit" aria-label="Monthly limit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1" />
+        <!-- Wraps rather than squeezing. A fourth control took each field to
+             71px at 375px, where "Monthly limit" rendered as "Mor" and "Not
+             set" as "No" - a placeholder nobody can read is not a label. Two
+             per line on a phone, one line on anything wider. -->
+        <div class="row" style="margin-top:10px;flex-wrap:wrap">
+          <select id="budgetCategory" aria-label="Category to set a limit for" style="flex:1;min-width:130px"></select>
+          <input id="budgetLimit" aria-label="Monthly limit" type="number" step="0.01" inputmode="decimal" placeholder="Monthly limit" style="flex:1;min-width:130px" />
+          <!-- Optional, and it stays optional: "Shopping" and "Other" are
+               genuinely either depending on what was bought, so forcing a
+               choice would make the split a record of guesses. -->
+          <select id="budgetClass" aria-label="Is this a need, a want, or savings" style="flex:1;min-width:130px">
+            <option value="">Not set</option>
+            <option value="need">Need</option>
+            <option value="want">Want</option>
+            <option value="savings">Savings</option>
+          </select>
           <button id="saveBudgetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
         </div>
       </div>
@@ -2788,6 +2804,9 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-budgets-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Budgets</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-budgets-body">
           <p>A monthly spending limit per category. Unlike the charts on the Reports page, a budget always applies to the <em>current</em> real-world month - it doesn't follow any month picker. Once you're at 90% of a limit the bar turns amber and the figure beside it says "close to the limit"; over it, the bar turns red and it says "over". The words matter as much as the colour, so it still reads correctly if colours are hard to tell apart, and a "Budget warning" banner appears at the very top of this page (and a toast fires right at the moment a save actually crosses the line). Set a category's limit again to change it; tap the ✕ to remove it entirely.</p>
+          <p><strong>Needs, wants and savings.</strong> When you set a limit you can also tag that category as one of three things. A <em>need</em> is something with a real consequence if you don't pay it: rent, the electricity bill, medicine, the smallest payment a card or loan requires. A <em>want</em> is spending that makes life better but could stop tomorrow without anything going wrong. <em>Savings</em> is money you are deliberately putting aside, or paying off a debt with beyond the smallest payment required. Once at least one category is tagged, a small bar above the list shows how your tagged budgets divide between the three. Anything you are setting aside under "Saving up for something" is counted into savings too, since that is what it is.</p>
+          <p><strong>Leaving a category untagged is a real answer, not a blank you need to fill.</strong> Some categories honestly hold both kinds of spending at once. "Shopping" might be a winter coat or a treat; "Other" could be anything. A category with no tag is left out of the bar and its total is stated separately underneath, so the split never quietly claims to cover more of your budget than it does.</p>
+          <p><strong>The bar is a share of what you have budgeted, not of what you earn.</strong> There is a widely known rule of thumb for this called 50/30/20 - 50% needs, 30% wants, 20% savings - and there are other versions of it that assume higher fixed costs. This app will not work out a target from your income or tell you what your own split should be: what is realistic depends on where you live, what you earn and what you are already committed to, none of which it can judge for you. It shows you your own numbers and leaves the reading to you.</p>
           </div>
         </div>
 

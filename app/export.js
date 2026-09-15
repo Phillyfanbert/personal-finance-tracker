@@ -94,8 +94,13 @@ export function logSections({ expenses = [], activity = [], subscriptions = [], 
   ]);
 }
 
+// Anything outside the three reads as "not tagged" for the same reason
+// budgetSplit() counts it into no bucket: both are printed in one file, and a
+// row labelled with a value the split beneath it ignores would contradict it.
+const CLASS_LABELS = { need: "need", want: "want", savings: "savings" };
+
 /** Plan: the limits you set, the payoff comparison, the projected balance. */
-export function planSections({ safeToSpend = null, budgets = [], funds = [], payoff = null, forecast = [], forecastAccount = "" }) {
+export function planSections({ safeToSpend = null, budgets = [], split = null, funds = [], payoff = null, forecast = [], forecastAccount = "" }) {
   const strategy = (label, r) => !r ? null
     : r.neverPaysOff ? [label, "never at this payment", ""]
     : [label, `${r.months} months`, money(r.totalInterest)];
@@ -115,8 +120,22 @@ export function planSections({ safeToSpend = null, budgets = [], funds = [], pay
         ["Being set aside this month", money(safeToSpend.funds)],
         ["Safe to spend", money(safeToSpend.available)],
       ] : [] },
-    { title: "Budgets (this month)", header: ["Category", "Limit", "Spent", "Percent used", "Status"],
-      rows: budgets.map((b) => [b.category, money(b.limit), money(b.spent), `${b.pct}%`, b.over ? "over" : b.warn ? "close to the limit" : "ok"]) },
+    { title: "Budgets (this month)", header: ["Category", "Limit", "Spent", "Percent used", "Status", "Need, want or saving"],
+      rows: budgets.map((b) => [b.category, money(b.limit), money(b.spent), `${b.pct}%`, b.over ? "over" : b.warn ? "close to the limit" : "ok", CLASS_LABELS[b.classification] || "not tagged"]) },
+    // The card's own budgetSplit() result is passed in rather than re-derived
+    // from the rows above: the shares are largest-remainder rounded to sum to
+    // exactly 100, so recomputing them here would be a second definition free
+    // to disagree with the card. Untagged is a row, not an omission - a share
+    // taken over part of a budget means nothing without knowing how much part.
+    { title: "Needs, wants and savings", header: ["Bucket", "Budgeted", "Share of tagged budget"],
+      rows: split ? [
+        ["Needs", money(split.need.planned), `${split.need.pct}%`],
+        ["Wants", money(split.want.planned), `${split.want.pct}%`],
+        ["Savings", money(split.savings.planned), `${split.savings.pct}%`],
+        ["Of savings, set aside in Saving up for something", money(split.sinkingFundMonthly), ""],
+        ["Tagged total", money(split.taggedTotal), "100%"],
+        [`Not tagged (${split.untaggedCount} ${split.untaggedCount === 1 ? "category" : "categories"})`, money(split.untaggedTotal), ""],
+      ] : [] },
     // "Needed each month" is blank rather than 0 for an undated fund: there is
     // no deadline to divide by, and a 0 would read as "nothing more to save".
     { title: "Saving up for something", header: ["Goal", "Target", "Set aside", "Still needed", "Needed by", "Needed each month"],

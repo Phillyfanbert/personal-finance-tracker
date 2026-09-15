@@ -14,7 +14,7 @@ import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection, compareDebtStrategies } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
-import { budgetStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal } from "./budgets.js";
+import { budgetStatus, budgetSplit, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
@@ -5653,7 +5653,7 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
         return `
       <div style="margin-bottom:10px">
         <div class="row" style="justify-content:space-between;font-size:13px">
-          <span>${esc(s.category)}</span>
+          <span>${esc(s.category)}${s.classification ? ` <span class="muted" style="font-size:11px">${CLASS_LABEL[s.classification]}</span>` : ""}</span>
           <span>
             ${fmt(s.spent)} / ${fmt(s.limit)} (${s.pct}%${s.over ? ", over" : s.warn ? ", close to the limit" : ""})
             <button type="button" class="x" data-del-budget="${esc(s.category)}" style="margin-left:8px" aria-label="Remove the ${esc(s.category)} budget">✕</button>
@@ -5675,7 +5675,55 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
       toast("Budget removed");
     };
   });
+  renderBudgetSplit(statuses);
   renderSafeToSpend(statuses);
+}
+
+const CLASS_LABEL = { need: "need", want: "want", savings: "savings" };
+
+// The needs/wants/savings view of budgeted money. Hidden entirely when nothing
+// is tagged: an untagged set has no split to state, and a 0/0/0 bar would
+// assert something about the user's money that they never said.
+//
+// Every string here says "budgeted", never "income". The frameworks this
+// mirrors are shares of INCOME, so calling a share of budgeted money 50/30/20
+// would state something false - see budgetSplit()'s own comment. The card
+// shows the user their own arithmetic and names the common reference point
+// without ever computing a target for them.
+function renderBudgetSplit(statuses) {
+  const el = $("budgetSplit");
+  const fundsMonthly = sinkingFundMonthlyTotal(sinkingFundStatus(sinkingFunds));
+  const split = budgetSplit(statuses, fundsMonthly);
+  if (!split) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  el.classList.remove("hidden");
+
+  const parts = [
+    { key: "need", label: "Needs", color: "var(--series-1)" },
+    { key: "want", label: "Wants", color: "var(--series-2)" },
+    { key: "savings", label: "Savings", color: "var(--series-8)" },
+  ];
+  // A zero-width segment would be an invisible slice with a visible legend
+  // entry, so the figure beside the label is what actually carries each share.
+  const bar = parts.map((p) =>
+    `<div style="background:${p.color};width:${split[p.key].pct}%;height:100%"></div>`).join("");
+  const legend = parts.map((p) =>
+    `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px">
+       <span aria-hidden="true" style="width:8px;height:8px;border-radius:2px;background:${p.color};flex:none"></span>
+       ${p.label} ${split[p.key].pct}% (${fmt(split[p.key].planned)})
+     </span>`).join("");
+
+  const fundsNote = split.sinkingFundMonthly > 0
+    ? ` Savings includes ${fmt(split.sinkingFundMonthly)} a month being set aside in Saving up for something.`
+    : "";
+  const untaggedNote = split.untaggedCount
+    ? ` ${fmt(split.untaggedTotal)} across ${split.untaggedCount} ${split.untaggedCount === 1 ? "category" : "categories"} is not tagged yet, so it is not in the split.`
+    : "";
+
+  el.innerHTML = `
+    <div class="muted" style="font-size:12px;margin-bottom:4px">How your ${fmt(split.taggedTotal)} of tagged budget splits</div>
+    <div style="display:flex;background:var(--panel-2);border-radius:6px;height:8px;overflow:hidden">${bar}</div>
+    <div class="muted" style="font-size:12px;margin-top:6px">${legend}</div>
+    <p class="muted" style="font-size:11px;margin:6px 0 0">This is a share of what you have budgeted, not of your income.${fundsNote}${untaggedNote}</p>`;
 }
 
 // Takes the already-computed statuses rather than recomputing budgetStatus()
@@ -5863,6 +5911,17 @@ $("deleteFundBtn").onclick = async () => {
   });
 };
 
+// Picking a category that already has a budget pre-fills its tag, because the
+// save is an upsert that writes whatever the select says. Without this,
+// changing a limit on a tagged category would silently clear the tag - and
+// "Not set" has to keep meaning "untag this", so refusing to write null is not
+// the fix; showing the current value is.
+$("budgetCategory").onchange = () => {
+  const existing = budgets.find((b) => b.category === $("budgetCategory").value);
+  $("budgetClass").value = existing?.classification || "";
+  if (existing) $("budgetLimit").value = existing.monthly_limit;
+};
+
 $("saveBudgetBtn").onclick = async () => {
   const category = $("budgetCategory").value;
   const monthly_limit = parseFloat($("budgetLimit").value);
@@ -5873,11 +5932,16 @@ $("saveBudgetBtn").onclick = async () => {
   // or quietly overwritten. The picker also kept its last value, so setting a
   // second category meant re-picking it or overwriting the first by accident.
   const replacing = budgets.some((b) => b.category === category);
+  // Empty select means untagged, which is stored as NULL rather than "" - the
+  // CHECK constraint only admits the three real values, and NULL is what the
+  // split counts into no bucket.
+  const classification = $("budgetClass").value || null;
   const { error } = await sb.from("budgets")
-    .upsert({ category, monthly_limit }, { onConflict: "user_id,category" });
+    .upsert({ category, monthly_limit, classification }, { onConflict: "user_id,category" });
   if (error) { flagField("budgetLimit"); return toast(error.message); }
   $("budgetLimit").value = "";
   $("budgetCategory").value = "";
+  $("budgetClass").value = "";
   await loadBudgets();
   renderBudgets();
   renderBudgetWarnings(); // a changed limit can newly trigger (or clear) a Log-page warning
@@ -9722,6 +9786,7 @@ $("exportPlanBtn").onclick = () => exportPage(
     return planSections({
       safeToSpend: safeToSpend(statuses, subscriptions, sinkingFundMonthlyTotal(fundStatuses)),
       budgets: statuses,
+      split: budgetSplit(statuses, sinkingFundMonthlyTotal(fundStatuses)),
       funds: fundStatuses,
       payoff: compareDebtStrategies(debts, parseFloat($("debtStrategyExtra").value) || 0),
       forecast: account ? forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30) : [],

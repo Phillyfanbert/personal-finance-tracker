@@ -28,7 +28,13 @@ already happened (kakeibo, values-based). Almost none of them disagree about
 the more basic things underneath: irregular income needs its own handling
 (section 6), an emergency fund is close to universally recommended (section
 7), and simply seeing your spending, in nearly any format, changes behavior
-more than the specific split does (section 8).
+more than the specific split does (section 9).
+
+A fourth question sits underneath question 2 and is answered far less often
+than it is asked: **which bucket does a given expense belong in?** Every
+framework that names its categories assumes the sorting is obvious, and for
+a real month of spending it is not. Section 2.4 covers that step on its own,
+because it is where a percentage framework is usually abandoned.
 
 ---
 
@@ -124,6 +130,172 @@ This is one of the few frameworks that explicitly names a target for one
 number (60% max) rather than assigning a fixed split to everything, which
 makes it closer to a health check than a full plan; it does not, on its own,
 tell you how to spend the other 40% day to day.
+
+### 2.4 Deciding what counts as a need, want or saving
+
+Every framework above hands you three buckets and no rule for sorting
+anything into them. That sorting is the step where a percentage framework
+actually gets used or abandoned, and it is the part the frameworks themselves
+say least about. 50/30/20 is one sentence; classifying a real month of
+spending against it is the whole job. Sources that explain the rule in
+detail still describe this step as a judgment call rather than a lookup, and
+say plainly that the answer differs per person.
+([SmartAsset](https://smartasset.com/financial-advisor/needs-vs-wants), [Experian](https://www.experian.com/blogs/ask-experian/budgeting-needs-vs-wants/))
+
+**Four tests are in common use, and they do not agree with each other.**
+
+**1. The contractual-obligation test.** Warren and Tyagi's own definition in
+*All Your Worth* is the strictest and most mechanical of the four: a
+must-have is something you are contractually obliged to pay, and a recurring
+expense you could not put off for six months. Rent or the mortgage,
+utilities, insurance premiums, property tax. Cable television is not.
+([Ironclad Finances](https://ironcladfinances.wordpress.com/2011/01/31/all-your-worth-the-balanced-money-formula/), [sobrief summary](https://sobrief.com/books/all-your-worth))
+It is the only one of the four that gives two different people the same
+answer about the same bill, which is why it is worth starting from. Its
+limit is that it is silent on the large part of ordinary spending that is
+obviously essential and not contracted at all: groceries, fuel, a
+prescription.
+
+**2. The consequence test.** A need is something with an immediate,
+concrete consequence if it goes unpaid: eviction, a disconnection, going
+without medicine. ([SoFi](https://www.sofi.com/learn/content/needs-vs-wants/), [NerdWallet](https://www.nerdwallet.com/finance/learn/financial-needs-versus-wants))
+This covers exactly the gap the first test leaves. Its weakness is that
+"consequence" stretches: missing a professional membership fee has a real
+career consequence eventually, and almost any recurring payment can be
+argued into the bucket on a long enough horizon.
+
+**3. The survival test.** Ask whether you need it to survive. This is the
+version most commonly given to beginners and the one that collapses fastest,
+because essentially nobody's budget is a subsistence budget. A test that
+files internet access, a phone, or transport to work as wants is not
+describing anyone's actual life, and applying it honestly produces a needs
+figure so far below reality that the resulting percentages mean nothing.
+
+**4. Function versus tier.** The most useful reframing of the four: the
+*function* is the need, the *amount* is the choice. Housing is a need;
+whether this particular home's rent is the right amount is a separate
+question. Two people can both genuinely need a car for work while needing
+very different cars.
+([U.S. News](https://money.usnews.com/money/personal-finance/family-finance/articles/wants-vs-needs-in-your-budget-how-to-tell-the-difference))
+This is what stops the exercise collapsing into either self-justification or
+self-blame, but note what it means for the arithmetic:
+under every framework in this section the *whole* rent goes in needs, because
+that is the amount actually leaving the account. The tier question is a
+separate decision about whether to move, not a reclassification.
+
+**What works in practice is the first two, with the fourth to settle
+arguments about amount**: contractual obligation catches the fixed bills,
+consequence-if-unpaid catches the essential spending that is never
+contracted, and function-versus-tier keeps the argument about a specific
+purchase from contaminating the classification of the category. The survival
+test is best abandoned.
+
+**This is a judgment that moves, and there is hard evidence of it moving.**
+Pew Research Center has asked a nationally representative sample the same
+luxury-or-necessity question about the same household items since 1996. The
+share of American adults calling a microwave oven a necessity went from 32%
+in 1996 to 68% in 2006, then fell back to 47% in 2009 after the recession.
+Dishwashers fell 14 points over the same three years. Same object, same
+country, same question: the label moved 36 points up and then 21 points back
+down as circumstances changed.
+([Pew, 2006](https://www.pewresearch.org/social-trends/2006/12/14/luxury-or-necessity/), [Pew, 2009](https://www.pewresearch.org/social-trends/2009/04/23/luxury-or-necessity-the-public-makes-a-u-turn/))
+Note what this does and does not show. It is strong evidence that the label
+is assigned from circumstances rather than read off the item, and Pew's own
+reporting is that the size of the effect varies a lot by item rather than
+moving uniformly, so no single multiplier or rule of thumb falls out of it.
+The practical reading for anyone building a tool: treat "need" as a label a
+person assigns from where they are standing, and do not expect one fixed list
+to be right for two different users, or for the same user two years apart.
+This is the same point a personal-finance desk makes less formally when it
+describes people as reference dependent, with their surroundings setting what
+registers as a necessity.
+([U.S. News](https://money.usnews.com/money/personal-finance/family-finance/articles/wants-vs-needs-in-your-budget-how-to-tell-the-difference))
+
+**Where the line conventionally lands.** Across the mainstream explanations
+of 50/30/20, a consistent core does exist even though the edges do not:
+
+| Usually needs | Usually wants | Genuinely contested |
+|---|---|---|
+| Rent or mortgage, utilities, insurance, property tax | Dining out, entertainment, holidays | Groceries above the basics |
+| Groceries, basic transport, prescriptions and care | Streaming and non-essential subscriptions | Clothing (work vs. fashion) |
+| Minimum required debt payments | Upgrades to something you already have | Phone and internet tier |
+| Childcare required in order to work | Gifts, hobbies | A car payment above what the job requires |
+
+([Experian](https://www.experian.com/blogs/ask-experian/what-is-the-50-30-20-rule/), [Forbes Advisor](https://www.forbes.com/advisor/banking/guide-to-50-30-20-budget/), [Union Bank & Trust](https://www.ubt.com/learning-center/blogs/how-budget-needs-and-wants-and-know-difference))
+
+The pattern in the contested column is worth naming: almost every disputed
+case is a category that contains both kinds of spending at once, not a
+category nobody can classify. Groceries and restaurant meals are both food;
+a work coat and a fashion purchase are both clothing. The ambiguity lives in
+the category boundary, not in the concept.
+
+**The savings bucket has its own ambiguity, and it is the one most often
+misread.** The standard treatment: minimum required debt payments are needs,
+because you owe them; anything paid above the minimum is savings, because it
+is a choice that improves your position. Retirement contributions, emergency
+fund contributions, and money set aside for a known irregular cost are all
+savings.
+([The Penny Hoarder](https://www.thepennyhoarder.com/budgeting/50-30-20-rule/), [Experian](https://www.experian.com/blogs/ask-experian/what-is-the-50-30-20-rule/))
+Two traps follow from that. The first is that the same credit card can
+appear in two buckets in one month, which is correct and looks like an
+error. The second is that 50/30/20 is defined on after-tax income, so a
+pre-tax workplace retirement deduction never appears in the split at all
+unless it is deliberately added back, which quietly understates the savings
+share for anyone contributing through payroll.
+
+Note also that this puts the 60% Solution's separate 10% short-term savings
+bucket (2.3) and the 50/30/20 family's treatment of irregular costs on the
+same side of the line: money set aside monthly for an annual bill is saving
+while it sits there, and only becomes a need in the month the bill lands.
+
+**A divergence between the rule's origin and its popular form, worth knowing
+about.** Warren and Tyagi's original must-have definition, as rendered by the
+secondary summaries cited here rather than read from the book, excludes credit
+card debt from the contractual obligations that count, on the logic
+that the card balance is the thing you are trying to eliminate, not a fixed
+cost to plan around. The modern popular rendering does the opposite and files
+the minimum payment under needs. Both are defensible; they are not the same
+rule, and the same spending will land in different buckets depending on which
+one is being followed.
+([Ironclad Finances](https://ironcladfinances.wordpress.com/2011/01/31/all-your-worth-the-balanced-money-formula/), [Experian](https://www.experian.com/blogs/ask-experian/what-is-the-50-30-20-rule/))
+
+**Consistency matters more than correctness.** The number a split produces is
+only meaningful compared against something: last month, or the framework's
+own target. Both comparisons break if an item changes bucket between
+readings. A category quietly reclassified from want to need moves the
+percentages with no change in spending at all, which is the failure mode
+most likely to make someone believe a good month happened when it did not.
+The practical rule is to decide once, write it down, and change it only
+deliberately, treating a reclassification as an event rather than a
+correction.
+
+**Both directions of error cost something, and they cost different things.**
+Classifying too much as a need makes the needs percentage unreachable, which
+reads every month as personal failure when it is really a mismatch between
+the framework's assumption and the real numbers: exactly the problem 60/30/10
+exists to solve (2.2), and the reason it is worth ruling out a
+classification problem before concluding the framework does not fit.
+Classifying too little as a need produces a flattering split that no month
+will ever match, and hides the genuinely fixed obligations that determine how
+much shock a budget can absorb, which is the one number the 60% Solution
+argues matters most (2.3).
+
+**What this means for a tool rather than a person.** Three findings from the
+above transfer directly to software:
+
+1. **The tag has to come from the user, not the category name.** The
+   classification is not a property of the item, it tracks the person's
+   circumstances, and it changes over time. Any attempt to infer it from a
+   category label is a guess presented as a fact.
+2. **"Not classified" has to be a real, supported state.** Most disputed
+   cases are categories holding both kinds of spending at once, so for a
+   general-purpose category list there will always be some that cannot be
+   honestly assigned. Forcing a choice produces a number about the software's
+   assumptions rather than the user's money; a default of "need" does it
+   silently and for everyone at once.
+3. **A split reported over partial tagging must say how much is untagged.**
+   A percentage computed over 40% of a budget and printed without that
+   context is not a smaller answer, it is a wrong one.
 
 ---
 
@@ -470,6 +642,11 @@ budget, and they are worth naming once rather than repeating per framework:
    month when it is actually a mismatch between the framework's assumption
    and the real numbers (see section 2's discussion of why 60/30/10 exists
    at all).
+6. **Sorting the same expense into a different bucket from one month to the
+   next**, which moves every percentage in a needs/wants/savings framework
+   without a single dollar of spending changing (section 2.4). It is the
+   failure most likely to be mistaken for progress, because the numbers
+   improve and nothing real did.
 
 ---
 

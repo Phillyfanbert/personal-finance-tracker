@@ -1467,6 +1467,25 @@
         <div class="chartbox short hidden" id="breakdownBoxPay"><canvas id="payChart"></canvas></div>
       </div>
 
+      <!-- Budget against reality for the PICKED month, which the Plan page
+           structurally cannot answer: its Budgets card is hard-wired to the
+           current month and ignores this page's picker. Plan is what happens
+           next, Reports is what already happened, and "did I keep to it in
+           August" is the second question.
+
+           Reads budget_periods, never the live `budgets` table. Comparing a
+           past month against today's limit measures it against a number that
+           may not have existed then - see the migration for why that record
+           exists at all. -->
+      <div class="card hidden" id="budgetActualCard">
+        <div class="card-head">
+          <h2 id="budgetActualTitle">How the month went against your budget</h2>
+          <span class="info-icon" tabindex="0" role="button" data-info="budgetActualExplainer" title="How the month you are looking at turned out against the budget you had set AT THE TIME. The limits are read from a record written each month, not from your limits today, so changing a limit now never rewrites how a past month looks. A month before you started budgeting, or one you did not open the app in, has no record and says so rather than guessing. Only months can be compared: a monthly limit has nothing to measure a whole year against.">i</span>
+        </div>
+        <p class="muted explainer hidden" id="budgetActualExplainer">How the month you are looking at turned out against the budget you had set AT THE TIME. The limits are read from a record written each month, not from your limits today, so changing a limit now never rewrites how a past month looks. A month before you started budgeting, or one you did not open the app in, has no record and says so rather than guessing. Only months can be compared: a monthly limit has nothing to measure a whole year against.</p>
+        <div id="budgetActualBody"></div>
+      </div>
+
       <!-- Reads account_activity rows with kind='income' (see the Income
            sources card on the Log page) plus the same monthly expense
            totals the rest of this page uses - see incomeVsExpense()
@@ -2848,21 +2867,23 @@
       </div>
       <div id="helpContentReports" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramReports" role="group" aria-label="The Reports page, card by card, in the order they appear" viewBox="0 0 680 390" xmlns="http://www.w3.org/2000/svg">
-            <rect x="10" y="10" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="39" fill="var(--text)" font-size="14">Ask about your spending</text>
-            <rect x="10" y="64" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="93" fill="var(--text)" font-size="14">Monthly report</text>
-            <rect x="10" y="118" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="147" fill="var(--text)" font-size="14">Expense log</text>
-            <rect x="10" y="172" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="201" fill="var(--text)" font-size="14">Where your money went</text>
-            <rect x="10" y="226" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="255" fill="var(--text)" font-size="14">Money in and out</text>
-            <rect x="10" y="280" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="309" fill="var(--text)" font-size="14">Account balance history</text>
-            <rect x="10" y="334" width="660" height="46" rx="10" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="363" fill="var(--text)" font-size="14">Net worth trend</text>
+          <svg id="helpDiagramReports" role="group" aria-label="The Reports page, card by card, in the order they appear" viewBox="0 0 680 356" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="34" fill="var(--text)" font-size="14">Ask about your spending</text>
+            <rect x="10" y="54" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="78" fill="var(--text)" font-size="14">Monthly report</text>
+            <rect x="10" y="98" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="122" fill="var(--text)" font-size="14">Expense log</text>
+            <rect x="10" y="142" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="166" fill="var(--text)" font-size="14">Where your money went</text>
+            <rect x="10" y="186" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="210" fill="var(--text)" font-size="14">How the month went against your budget</text>
+            <rect x="10" y="230" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="254" fill="var(--text)" font-size="14">Money in and out</text>
+            <rect x="10" y="274" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="298" fill="var(--text)" font-size="14">Account balance history</text>
+            <rect x="10" y="318" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="342" fill="var(--text)" font-size="14">Net worth trend</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. The Month / Year buttons and the dropdown beside them (top right) set what most of this page shows, along with the first two of the three totals beneath it. The third total, and the last three cards, always cover your whole history instead - see below for which.</p>
@@ -2918,7 +2939,18 @@
           </div>
         </div>
 
-        <div class="help-topic" id="helpTopic-income-vs-expense">
+                <div class="help-topic" id="helpTopic-budget-vs-actual">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-budget-vs-actual-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>How the month went against your budget</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-budget-vs-actual-body">
+          <p>The Budgets card on the Plan page always shows the month you are in, because a limit is something you are spending against right now. This card answers the other question: how did a month that has already finished actually turn out.</p>
+          <p><strong>It uses the limits you had at the time, not the ones you have now.</strong> The app writes down what each budget was every month, so raising a limit today never quietly makes last month look better than it was. The line under the figures says which month's limits were used.</p>
+          <p>A month with no record says so instead of guessing. That happens for any month before you started setting budgets, and for a month you never opened the app in, since the record is written when the app runs. It is left blank rather than filled in with today's limits, because that would be measuring a month against a number that did not exist yet.</p>
+          <p><strong>Only a month can be compared.</strong> Switch this page to a whole year and the card disappears, because a monthly limit has nothing meaningful to measure twelve months of spending against.</p>
+          <p>Savings shows no set-aside figure here. Money you put into "Saving up for something" is kept as a running total rather than dated, so there is no way to say how much of it went in during one particular past month.</p>
+          </div>
+        </div>
+
+<div class="help-topic" id="helpTopic-income-vs-expense">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-income-vs-expense-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Money in and out</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-income-vs-expense-body">
           <p>Two bars for each of the last six months: green for money that came in, blue for money that went out. Income comes from whatever you have added under Income sources on the Log page, whether the app logged it automatically when it was due or you entered a deposit yourself.</p>

@@ -172,13 +172,21 @@ export function investmentsSections({ totals = null, holdings = [], snapshots = 
 }
 
 /** Reports: the analysis of a month, not the raw rows (those are on Log). */
-export function reportsSections({ monthLabel = "", totals = [], byCategory = [], byAccount = [], byPaymentType = [], incomeVsExpense = [] }) {
+export function reportsSections({ monthLabel = "", totals = [], byCategory = [], byAccount = [], byPaymentType = [], budgetVsActual = [], incomeVsExpense = [] }) {
   const pct = (v) => (v == null ? "" : `${Math.round(v * 1000) / 10}%`);
   return ([
     { title: `Summary - ${monthLabel}`, header: ["Measure", "Value"], rows: totals },
     { title: "Where your money went - by category", header: ["Category", "Amount"], rows: byCategory.map((d) => [d.label, money(d.value)]) },
     { title: "Where your money went - by account", header: ["Account", "Amount"], rows: byAccount.map((d) => [d.label, money(d.value)]) },
     { title: "Where your money went - by how you paid", header: ["Payment type", "Amount"], rows: byPaymentType.map((d) => [d.label, money(d.value)]) },
+    // The limits are the ones RECORDED for that month, not today's, which is
+    // the whole reason budget_periods exists - a file saying August was within
+    // budget because the limit was raised in September would be worse than no
+    // file. Empty for a year, for a month with no record, and for a user who
+    // has never budgeted; the card is absent in exactly those cases too.
+    { title: "Against your budget", header: ["Category", "Budgeted", "Spent", "Percent used", "Status", "Need, want or saving"],
+      rows: budgetVsActual.map((b) => [b.category, money(b.limit), money(b.spent), `${b.pct}%`,
+        b.over ? "over" : b.warn ? "close to the limit" : "ok", CLASS_LABELS[b.classification] || "not tagged"]) },
     // Titled from the months actually present rather than a hardcoded "last 6
     // months": the Reports page can now be scoped to a whole year, where this
     // section carries that year's months instead, and a fixed title would

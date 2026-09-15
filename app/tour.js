@@ -180,6 +180,12 @@ export const TOUR_STEPS = {
       placement: "top",
     },
     {
+      target: "budgetActualCard",
+      title: "How a past month went",
+      body: "The Budgets card on the Plan page is always about the month you are in. This one looks back: pick any month above and it shows what you actually spent against the limits you had set at the time. It uses that month's own limits, not the ones you have now, so raising a limit today never makes a past month look better than it was. A month from before you started budgeting has no record, and says so rather than guessing.",
+      placement: "top",
+    },
+    {
       target: "trendCard",
       title: "The charts",
       body: "Where your money goes, which you can switch between by type, by account and by how you paid. Then what came in against what went out over the last six months, one account's balance over time, and your net worth over time. The last three ignore the month picker on purpose - they are about the whole run of your history, not one month.",

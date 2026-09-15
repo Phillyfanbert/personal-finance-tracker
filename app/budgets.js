@@ -46,8 +46,7 @@ export function budgetStatus(budgets, spendByCategory) {
  * income 60/30/10 is not living on 60/30/10. The app shows the user their own
  * arithmetic and stops. Naming 50/30/20 as general education is fine; working
  * out a framework, a split or a limit for this user from their own income is
- * not, the same boundary compareDebtStrategies() holds for avalanche versus
- * snowball.
+ * not, the same boundary this app holds everywhere it shows financial math.
  *
  * Returns null when nothing is tagged - there is no honest split to state yet,
  * the same reason safeToSpend() returns null with no budgets rather than $0.

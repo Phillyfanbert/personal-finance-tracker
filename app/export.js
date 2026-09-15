@@ -100,11 +100,7 @@ export function logSections({ expenses = [], activity = [], subscriptions = [], 
 const CLASS_LABELS = { need: "need", want: "want", savings: "savings" };
 
 /** Plan: the limits you set, the payoff comparison, the projected balance. */
-export function planSections({ safeToSpend = null, budgets = [], split = null, funds = [], payoff = null, forecast = [], forecastAccount = "" }) {
-  const strategy = (label, r) => !r ? null
-    : r.neverPaysOff ? [label, "never at this payment", ""]
-    : [label, `${r.months} months`, money(r.totalInterest)];
-  const payoffRows = payoff ? [strategy("Highest interest rate first (avalanche)", payoff.avalanche), strategy("Smallest amount first (snowball)", payoff.snowball)].filter(Boolean) : [];
+export function planSections({ safeToSpend = null, budgets = [], split = null, funds = [], forecast = [], forecastAccount = "" }) {
   return ([
     // First, matching the page: Safe to spend is the Plan page's headline card
     // and the export silently omitted it, so a saved file covered less than
@@ -140,7 +136,6 @@ export function planSections({ safeToSpend = null, budgets = [], split = null, f
     // no deadline to divide by, and a 0 would read as "nothing more to save".
     { title: "Saving up for something", header: ["Goal", "Target", "Set aside", "Still needed", "Needed by", "Needed each month"],
       rows: funds.map((f) => [f.name, money(f.target), money(f.saved), money(f.remaining), f.targetDate || "", f.monthlyNeeded != null ? money(f.monthlyNeeded) : ""]) },
-    { title: "Paying off what you owe", header: ["Approach", "Time to clear", "Total interest"], rows: payoffRows },
     { title: `Cash flow forecast${forecastAccount ? " - " + forecastAccount : ""}`, header: ["Date", "Projected balance"],
       rows: forecast.map((p) => [p.date, money(p.balance)]) },
   ]);

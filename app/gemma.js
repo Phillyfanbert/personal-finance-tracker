@@ -287,8 +287,8 @@ export function plainDashes(text) {
 // hands Gemma only the user's own expenses/subscriptions/income/profile -
 // no market or ticker data at all - so any of these phrases can only be the
 // model inventing investment advice this app does not give anywhere (the
-// same boundary compareDebtStrategies() and the credit-utilization line
-// already hold, extended here to the one place a free-text model could
+// same boundary the credit-utilization line and the target-allocation
+// calculator already hold, extended here to the one place a free-text model could
 // cross it). Deliberately narrower than tools/price-agent.js's recap list:
 // this feature is explicitly allowed to reason about the user's own
 // debt-vs-savings tradeoffs (a real, documented use case), so ordinary

@@ -1233,14 +1233,6 @@
         </div>
       </div>
 
-      <!-- Avalanche vs. snowball payoff-order comparison across ALL
-           eligible debts at once (a debt missing rate/minimum, already
-           at $0, or an in-draw-period HELOC is excluded, same gating the
-           Liabilities card's own per-debt payoff line already applies -
-           see compareDebtStrategies(), payoff.js). Purely informational -
-           shows the real math for both orders side by side, never says
-           which to pick, same boundary the Investments tab's allocation
-           calculator already holds for what to buy. -->
       <!-- Recurring income sources. Moved here from Subscriptions/Bills
            on 2026-08-25: it was structurally similar to a subscription
            (a recurring definition auto-logged when due, and
@@ -1604,32 +1596,6 @@
       <!-- The explanation lives behind the "i" like every other card that
            has one, rather than as a permanently-visible paragraph - see
            wireInfoIcons(). -->
-      <div class="card" id="debtStrategyCard">
-        <div class="card-head">
-          <h2>Paying off what you owe</h2>
-          <span class="info-icon" tabindex="0" role="button" data-info="debtStrategyExplainer" title="Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.">i</span>
-        </div>
-        <p class="muted explainer hidden" id="debtStrategyExplainer">Two common ways to pay off several debts: put spare money on the one with the highest interest rate, or on the smallest one first. This shows what each would cost you, and never says which to choose.</p>
-        <!-- A short line saying what the card IS, always visible. The concept
-             explanation stays behind the "i". Without this the first thing on
-             the card was a form field, so it asked for a number before saying
-             what the number was for - reported as exactly that confusion. -->
-        <p class="muted text-sm" id="debtStrategyLead" style="margin:0 0 10px">When you owe money in more than one place, the order you pay them off in changes how much interest you pay in total. Put in what you could spare each month and this compares the two usual orders.</p>
-        <label for="debtStrategyExtra">Spare money you could put toward debt each month</label>
-        <input id="debtStrategyExtra" type="number" step="0.01" inputmode="decimal" placeholder="0" />
-        <div id="debtStrategyResult" style="margin-top:10px;font-size:13px"></div>
-        <p class="muted" id="debtStrategyExcluded" style="font-size:12px;margin-top:8px"></p>
-      </div>
-
-      <!-- Forward-projecting mirror of Reports' balance-history card - see
-           forecastCashFlow() (app/cashflow.js). Moved off Reports
-           (2026-08-26) because it is the one card there that describes what
-           has not happened yet, which is this page's whole remit. Known
-           scheduled items only (active subscriptions + income sources tied
-           to the picked account) - deliberately no blended average-spending
-           estimate, the same restraint every other real-math-only card in
-           this app holds. populateForecastAccountSelect/renderCashFlowForecast
-           moved out of loadReports into goToView's "plan" branch with it. -->
       <div class="card" id="forecastCard">
         <div class="topbar" style="margin-bottom:6px">
           <div class="card-head">
@@ -2760,7 +2726,7 @@
       </div>
       <div id="helpContentPlan" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramPlan" role="group" aria-label="The Plan page, card by card, in the order they appear" viewBox="0 0 680 234" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramPlan" role="group" aria-label="The Plan page, card by card, in the order they appear" viewBox="0 0 680 190" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="34" fill="var(--text)" font-size="14">Safe to spend</text>
             <rect x="10" y="54" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -2768,9 +2734,7 @@
             <rect x="10" y="98" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="122" fill="var(--text)" font-size="14">Budgets</text>
             <rect x="10" y="142" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="166" fill="var(--text)" font-size="14">Paying off what you owe</text>
-            <rect x="10" y="186" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="210" fill="var(--text)" font-size="14">Cash flow forecast</text>
+            <text x="40" y="166" fill="var(--text)" font-size="14">Cash flow forecast</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Everything on this page is about what happens <em>next</em>, which is what separates it from Reports: a limit you are setting, an order you are weighing up, and a balance projected forward. Nothing here changes any of your balances on its own. Subscriptions and bills used to be this tab and now live under Log, with the rest of your spending.</p>
@@ -2807,17 +2771,6 @@
           <p><strong>Needs, wants and savings.</strong> When you set a limit you can also tag that category as one of three things. A <em>need</em> is something with a real consequence if you don't pay it: rent, the electricity bill, medicine, the smallest payment a card or loan requires. A <em>want</em> is spending that makes life better but could stop tomorrow without anything going wrong. <em>Savings</em> is money you are deliberately putting aside, or paying off a debt with beyond the smallest payment required. Once at least one category is tagged, a small bar above the list shows how your tagged budgets divide between the three. Anything you are setting aside under "Saving up for something" is counted into savings too, since that is what it is.</p>
           <p><strong>Leaving a category untagged is a real answer, not a blank you need to fill.</strong> Some categories honestly hold both kinds of spending at once. "Shopping" might be a winter coat or a treat; "Other" could be anything. A category with no tag is left out of the bar and its total is stated separately underneath, so the split never quietly claims to cover more of your budget than it does.</p>
           <p><strong>The bar is a share of what you have budgeted, not of what you earn.</strong> There is a widely known rule of thumb for this called 50/30/20 - 50% needs, 30% wants, 20% savings - and there are other versions of it that assume higher fixed costs. This app will not work out a target from your income or tell you what your own split should be: what is realistic depends on where you live, what you earn and what you are already committed to, none of which it can judge for you. It shows you your own numbers and leaves the reading to you.</p>
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-debt-payoff-strategy">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-debt-payoff-strategy-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Paying off what you owe</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-debt-payoff-strategy-body">
-          <p>If you owe money in more than one place, there are two common ways to decide where any spare money should go. One is to put it toward whichever debt charges the highest interest rate. The other is to put it toward whichever debt is smallest, so you clear one sooner. This card works out what each would actually cost you and shows both, side by side.</p>
-          <p>The box is for spare money you could put toward debt each month, on top of the smallest payment each one already requires. For each option you get how many months until everything is paid off, and how much interest you would pay in total getting there.</p>
-          <p><strong>The box is what makes the two differ.</strong> Left at 0, every debt only ever gets its own smallest required payment, so there is no spare money to send anywhere and the order you choose changes nothing - the card shows a single result and says so, rather than printing the same numbers twice. Put an amount in and the two orders separate, because that is the money each one is deciding where to send. With only one debt there is likewise no order to choose, and the card says that too.</p>
-          <p>It will never tell you which to choose. Both are reasonable, people pick differently for good reasons, and this app shows you the numbers rather than making that decision for you.</p>
-          <p>A debt is left out of the comparison if the app does not yet know its interest rate and smallest monthly payment, if it is already paid off, or if it is a home equity line you can still borrow more from (those work differently enough that including them would give a misleading answer). A short note under the numbers says how many were left out, and you can fill in the missing details by tapping that debt under Liabilities.</p>
           </div>
         </div>
 

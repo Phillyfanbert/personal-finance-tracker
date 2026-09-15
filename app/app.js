@@ -12,7 +12,7 @@ import {
 } from "./charts.js";
 import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
-import { payoffProjection, compareDebtStrategies } from "./payoff.js";
+import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, budgetSplit, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
@@ -741,11 +741,11 @@ function goToView(view) {
   // tap and the first card painting, which is the exact "is it working?"
   // gap this indicator exists to close.
   // Log owns subscriptions/bills now, so it needs the same load its own tab
-  // used to do. renderBudgets/renderDebtStrategy already run off loadExpenses
+  // used to do. renderBudgets already runs off loadExpenses
   // and the liabilities load, so Plan only has to populate the one picker
   // that used to be filled by loadReports.
   if (view === "log") withBusy(loadSubscriptions());
-  else if (view === "plan") { populateForecastAccountSelect(); renderCashFlowForecast(); renderDebtStrategy(); renderSinkingFunds(); }
+  else if (view === "plan") { populateForecastAccountSelect(); renderCashFlowForecast(); renderSinkingFunds(); }
   else if (view === "reports") withBusy(loadReports());
   else if (view === "invest") {
     renderInvestments(); renderInvestmentsTrend(); renderMarketOverview();
@@ -3828,68 +3828,7 @@ async function loadDebts() {
   });
   renderNetWorth();
   renderAccountsList(); // a changed liability balance may be a linked account's balance line
-  renderDebtStrategy();
 }
-
-// Purely informational - shows real avalanche/snowball numbers side by
-// side, never states which to pick (same boundary the Investments tab's
-// allocation calculator already holds for what to buy). Re-runs live as
-// the "extra monthly" input changes and whenever loadDebts() re-runs, so
-// it always reflects the current liabilities and their real balances.
-function renderDebtStrategy() {
-  const extra = parseFloat($("debtStrategyExtra").value) || 0;
-  const { avalanche, snowball, excludedCount } = compareDebtStrategies(debts, extra);
-  const el = $("debtStrategyResult");
-  if (!avalanche) {
-    // Two genuinely different empty states. Telling someone with no debts at
-    // all to "fill in an interest rate" names a field they have nothing to
-    // put it on, and the old copy said "under Liabilities above" - Liabilities
-    // moved to the Log page's Accounts tab in the 2026-08-26 restructure, so
-    // "above" sent the reader scrolling this page for a card that is not on it.
-    el.innerHTML = debts.length
-      ? `<p class="muted">To compare, at least one thing you owe needs its interest rate and its smallest allowed monthly payment filled in. Add those on the Log page, under Liabilities on the Accounts tab.</p>`
-      : `<p class="muted">Nothing to compare yet. This fills in once you have added something you owe, on the Log page under Liabilities on the Accounts tab.</p>`;
-    // No comparison means the "not included" note below would just repeat
-    // what the line above already says, in more technical words. It is only
-    // useful ALONGSIDE a real comparison, to explain what is missing from it.
-    $("debtStrategyExcluded").textContent = "";
-    return;
-  }
-  const outcome = (r) => r.neverPaysOff
-    ? "the smallest allowed payment does not cover the interest, so the amount owed would keep growing"
-    : `paid off in ${r.months} month${r.months === 1 ? "" : "s"}, ${fmt(r.totalInterest)} paid in interest along the way`;
-  // Plain description first; the common names are kept in brackets so the
-  // words are still recognisable if someone reads them elsewhere.
-  const line = (label, r) => `<div><strong>${esc(label)}:</strong> ${outcome(r)}</div>`;
-
-  // Printing identical numbers twice is what made this card read as broken.
-  // The two orders genuinely coincide whenever there is no spare money to
-  // direct at one debt over another, which is the DEFAULT state of this card -
-  // so the common first impression was the same figures repeated with nothing
-  // saying why. Detected at runtime rather than assumed from the inputs:
-  // The project notes record that "identical at $0 extra" holds for two debts but is
-  // not guaranteed for three or more, so this must never be hardcoded.
-  const same = !avalanche.neverPaysOff && !snowball.neverPaysOff
-    && avalanche.months === snowball.months
-    && avalanche.totalInterest === snowball.totalInterest;
-  const eligibleCount = debts.length - excludedCount;
-
-  if (same) {
-    let why = "Both orders come out exactly the same here, so there is nothing to choose between them.";
-    if (eligibleCount === 1) why = "With one debt there is no order to choose - this is simply what clearing it looks like.";
-    else if (extra <= 0) why = "Both orders come out exactly the same while there is no spare money to direct at one debt over another. Put an amount in above and they start to differ.";
-    el.innerHTML = `<div>${cap(outcome(avalanche))}</div>`
-      + `<p class="muted" style="margin:6px 0 0">${esc(why)}</p>`;
-  } else {
-    el.innerHTML = line("Highest interest rate first (avalanche)", avalanche)
-      + line("Smallest amount first (snowball)", snowball);
-  }
-
-  $("debtStrategyExcluded").textContent = excludedCount
-    ? `${excludedCount === 1 ? "One debt is" : excludedCount + " debts are"} left out of this: either it still needs an interest rate and a smallest monthly payment, it is already paid off, or it is a home equity line you can still borrow from.`
-    : "";
-}
-$("debtStrategyExtra").addEventListener("input", renderDebtStrategy);
 
 // Interest rate / minimum payment / due date / draw period end - never
 // balance, which stays strictly driven by real expenses/payments against
@@ -9788,7 +9727,6 @@ $("exportPlanBtn").onclick = () => exportPage(
       budgets: statuses,
       split: budgetSplit(statuses, sinkingFundMonthlyTotal(fundStatuses)),
       funds: fundStatuses,
-      payoff: compareDebtStrategies(debts, parseFloat($("debtStrategyExtra").value) || 0),
       forecast: account ? forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30) : [],
       forecastAccount: account ? acctLabel(account) : "",
     });

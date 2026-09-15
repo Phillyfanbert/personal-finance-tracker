@@ -35,9 +35,10 @@ minus tracked debts, and every balance changes only through a real, dated,
 undoable entry.
 
 **Plan ahead.** Per-category budgets that warn before you go over rather than
-after, a "safe to spend" figure that nets off bills already committed, sinking
-funds for costs that do not arrive monthly, a 30-day cash-flow projection, and
-a side-by-side comparison of avalanche against snowball for paying down debt.
+after, tagged as needs, wants or savings so you can see the shape of the plan
+they add up to, a "safe to spend" figure that nets off bills already committed,
+sinking funds for costs that do not arrive monthly, and a 30-day cash-flow
+projection.
 
 **Follow your investments.** Holdings priced every fifteen minutes while the
 market is open, a daily written recap of what moved and why, the biggest movers

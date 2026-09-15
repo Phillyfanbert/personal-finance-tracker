@@ -134,12 +134,6 @@ export const TOUR_STEPS = {
       placement: "bottom",
     },
     {
-      target: "debtStrategyCard",
-      title: "Which debt to pay off first",
-      body: "If you owe money on more than one thing, the order you clear them in changes how much interest you pay in total. Type what you could spare each month and this shows you two common approaches side by side: paying off the highest interest rate first, or the smallest balance first. It never tells you which to pick. The box matters: left at 0 there is no spare money to send anywhere, so both orders come out the same and the card says so. Each debt also needs its interest rate and smallest monthly payment filled in, which you add under Liabilities on the Log page.",
-      placement: "top",
-    },
-    {
       target: "forecastChart",
       title: "Where your balance is heading",
       body: "Pick an account and see the next 30 days, built only from bills and pay you have already told the app about. It does not try to guess your everyday spending, so treat it as the floor rather than a prediction.",

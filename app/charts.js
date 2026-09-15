@@ -139,7 +139,11 @@ export function incomeVsExpense(incomeActivity, expenses, months) {
 // element it owns. Its pure half (monthKey, lastMonths, sumBy, monthlyTotals,
 // incomeVsExpense, averageMonth) stays node-importable, which is what
 // "pure-ish logic module" actually protects.
-const SERIES_COUNT = 8;
+// Exported because the account circles wrap on it too. It was a literal 8
+// there, which put the palette size in three places (here, that literal, and
+// the tokens themselves) after a change whose whole point was to stop the
+// circles and the charts keeping separate lists.
+export const SERIES_COUNT = 8;
 // Read per render rather than cached. A cache would need invalidating from the
 // theme toggle, which is one more thing to keep in step for a read of about
 // ten custom properties.
@@ -168,8 +172,15 @@ let _charts = {};
 // every live chart without any render function knowing that a theme exists.
 // Re-invoking build() re-runs themeColors(), which is the whole trick.
 function mount(canvas, build) {
+  // Build BEFORE destroying. themeColors() throws on purpose for a missing
+  // token, and with destroy() first that throw left the canvas blank, the
+  // registry entry gone, and the exception still escaping into the caller's
+  // render - a destructive failure, which is the opposite of the loud-but-safe
+  // one the throw exists to give. Building first means a bad token leaves the
+  // previous chart standing.
+  const config = build();
   destroy(canvas.id);
-  _charts[canvas.id] = { chart: new Chart(canvas, build()), canvas, build };
+  _charts[canvas.id] = { chart: new Chart(canvas, config), canvas, build };
 }
 
 /**
@@ -186,7 +197,15 @@ export function repaintCharts() {
     // without going through destroy(). Rebuilding into a detached node would
     // paint nothing and leak the Chart.js instance.
     if (!canvas.isConnected) { destroy(id); continue; }
-    mount(canvas, build);
+    try {
+      mount(canvas, build);
+    } catch (err) {
+      // One chart must not strand the others. An uncaught throw here exited
+      // the loop, so the charts already repainted showed the new theme and the
+      // rest kept the old one, with nothing on screen saying why. mount()
+      // builds before it destroys, so this chart simply keeps its old paint.
+      console.error(`Could not repaint chart ${id}`, err);
+    }
   }
 }
 
@@ -288,26 +307,26 @@ export function renderLineChart(canvas, labels, values) {
   mount(canvas, () => {
     const t = themeColors();
     return {
-    type: "line",
-    data: {
-      labels,
-      datasets: [{
-        data: values,
-        borderColor: t.line,
-        backgroundColor: t.lineFill,
-        fill: true,
-        tension: 0.2,
-        pointRadius: 2,
-      }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: t.text }, grid: { display: false } },
-        y: { ticks: { color: t.text, callback: (v) => "$" + v }, grid: { color: t.grid } },
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          borderColor: t.line,
+          backgroundColor: t.lineFill,
+          fill: true,
+          tension: 0.2,
+          pointRadius: 2,
+        }],
       },
-    },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: t.text }, grid: { display: false } },
+          y: { ticks: { color: t.text, callback: (v) => "$" + v }, grid: { color: t.grid } },
+        },
+      },
     };
   });
 }

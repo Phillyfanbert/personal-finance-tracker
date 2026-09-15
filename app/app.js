@@ -8,7 +8,7 @@ import { categorize, quickParse, CATEGORIES } from "./categorize.js";
 import {
   monthKey, monthLabel, lastMonths, sumBy, incomeVsExpense, averageMonth,
   renderBreakdownBar, renderTrendBar, renderLineChart,
-  repaintCharts,
+  repaintCharts, SERIES_COUNT,
 } from "./charts.js";
 import { buildBalanceHistory } from "./accountHistory.js";
 import { estimateValue, effectiveAssetValue } from "./depreciation.js";
@@ -105,13 +105,28 @@ const THEMES = ["dark", "light"];
 // attribute. That is what makes every failure path - blocked storage, a stale
 // value, a browser that never ran the head script - land on the default
 // instead of on a half-applied theme.
+// Atomic: either the theme is fully applied or fully not. wireTogglePills'
+// rollback repaints the PILLS and nothing else, so a throw partway through
+// here used to leave the page in the new theme with the control showing the
+// old one and nothing persisted - and because the throw is synchronous, the
+// handler's promise-path catch never ran, so there was no toast either.
 function applyTheme(key) {
-  if (key === "light") document.documentElement.dataset.theme = "light";
-  else delete document.documentElement.dataset.theme;
-  syncThemeColorMeta();
-  // A canvas keeps whatever colours it was painted with, so without this every
-  // chart on screen stays in the old theme until its own data path runs again.
-  repaintCharts();
+  const previous = document.documentElement.dataset.theme;
+  const paint = (theme) => {
+    if (theme) document.documentElement.dataset.theme = theme;
+    else delete document.documentElement.dataset.theme;
+    syncThemeColorMeta();
+  };
+  try {
+    paint(key === "light" ? "light" : "");
+    // A canvas keeps whatever colours it was painted with, so without this
+    // every chart on screen stays in the old theme until its own data path
+    // runs again.
+    repaintCharts();
+  } catch (err) {
+    paint(previous);
+    throw err;
+  }
 }
 
 // Keeps the browser chrome in step with the page. Read from the token rather
@@ -124,7 +139,7 @@ function syncThemeColorMeta() {
   if (bg) meta.content = bg;
 }
 
-const themePills = wireTogglePills({
+wireTogglePills({
   attr: "data-appearance",
   storageKey: THEME_KEY,
   options: THEMES,
@@ -2256,7 +2271,6 @@ function capBackwardLookingDates() {
 // offer future days to anyone looking at the app before init() finishes.
 capBackwardLookingDates();
 
-
 // Renders the account circles from the current accounts/assets/debts globals
 // (no fetch) - called after any of the three load, since a circle's balance
 // line depends on whichever one of assets/debts is linked to it, and those
@@ -2307,7 +2321,7 @@ function renderAccountsList() {
         const styleAttr = clickAttr ? ` style="cursor:pointer"` : "";
         return `
       <div class="acct-circle-item" ${clickAttr}${styleAttr}>
-        <div class="acct-circle" style="background:var(--series-${(i % 8) + 1})">${a.type === "cash" ? "💵" : esc((bankLabel.trim()[0] || "?").toUpperCase())}</div>
+        <div class="acct-circle" style="background:var(--series-${(i % SERIES_COUNT) + 1})">${a.type === "cash" ? "💵" : esc((bankLabel.trim()[0] || "?").toUpperCase())}</div>
         ${a.type === "cash" ? "" : `<button type="button" class="x" data-del-acct="${a.id}" aria-label="Delete ${esc(acctLabel(a))}">✕</button>`}
         <div class="name">${esc(bankLabel)}</div>
         <div class="type">${a.name}</div>
@@ -6158,7 +6172,12 @@ function renderInvestments() {
 // That function returns raw structured data, not text - formatting and
 // esc() happen here, same split every other Investments render function
 // already keeps between math and presentation.
-const HEALTH_TONE_COLOR = { ok: "var(--ok)", warn: "var(--err)", neutral: "var(--muted)" };
+// Kept orthogonal to HEALTH_TONE_SHAPE below: neutral's fill used to be
+// var(--muted) here and then re-declared transparent by the shape string, so
+// the hollow ring worked only because the shape happened to be concatenated
+// second. Reordering the template would have silently turned it into a filled
+// circle indistinguishable from "ok".
+const HEALTH_TONE_COLOR = { ok: "var(--ok)", warn: "var(--err)", neutral: "transparent" };
 // The dot is the scan layer of this card: the thing that lets you skim five
 // lines and see "two fine, one needs attention" without reading them. Every
 // line states its fact in words through healthLineText, so a screen reader was
@@ -6168,7 +6187,7 @@ const HEALTH_TONE_COLOR = { ok: "var(--ok)", warn: "var(--err)", neutral: "var(-
 const HEALTH_TONE_SHAPE = {
   ok: "border-radius:50%",
   warn: "border-radius:1px;transform:rotate(45deg)",
-  neutral: "border-radius:50%;background:transparent;border:1.5px solid var(--muted)",
+  neutral: "border-radius:50%;border:1.5px solid var(--muted)",
 };
 function healthLineText(l) {
   switch (l.kind) {
@@ -6471,8 +6490,7 @@ wireSubTabs("investTabBar", "investTab", "investTabMarket");
 // Sub-tabs within each top-level tab, so a market/portfolio panel is one
 // focused card at a time instead of a long stacked scroll. Same toggle-with-
 // .hidden shape as the top-level tab bar above, and for the identical reason:
-// every
-// sub-panel's card keeps its own render function untouched, since hiding a
+// every sub-panel's card keeps its own render function untouched, since hiding a
 // PARENT already hides its children regardless of their own class - no
 // extra work is needed when the top-level tab itself changes.
 //

@@ -140,9 +140,6 @@ function tokensIn(selector) {
 const darkTokens = tokensIn(":root");
 const lightTokens = tokensIn(':root[data-theme="light"]');
 
-const isColour = (v) => /^#[0-9a-f]{3,8}$/i.test(v) || /^rgba?\(/i.test(v) || v === "transparent";
-const colourNames = (m) => Object.keys(m).filter((k) => isColour(m[k]));
-
 console.log(`Read ${Object.keys(darkTokens || {}).length} tokens from :root`
   + (lightTokens ? `, ${Object.keys(lightTokens).length} from the light block` : ", no light block yet"));
 
@@ -151,25 +148,34 @@ section("A. Token parity between themes");
 if (!lightTokens) {
   console.log("  (skipped: no light theme block yet)");
 } else {
-  // Tokens that are the same in both themes ON PURPOSE, so the parity check
-  // does not demand a light value for them. Short and explicit, because adding
-  // to it should be a deliberate act rather than a way to silence the check.
+  // Which tokens MUST differ per theme is derived by exclusion, never from the
+  // shape of their value. That distinction is the whole check: a value-shaped
+  // test only recognises #hex/rgba(), so --shadow-card (which starts with a
+  // length) and --lift (a bare number) both slipped through it. Deleting
+  // --shadow-card from the light block used to PASS while every card in light
+  // mode grew a 50%-black shadow. --lift had a hand-written special case;
+  // deriving the set instead covers shadows, filters, gradients and whatever
+  // comes next with no further entries.
+  //
+  // The scales (type, spacing, radius, target size) are identical in both
+  // themes by definition, so they are the exclusion.
+  const SCALE = (k) => /^--(fs|sp|r|target)-/.test(k);
+  // Shared in both themes ON PURPOSE. Short and explicit, because adding to it
+  // should be a deliberate act rather than a way to silence the check.
   //   --ink-on-series  rides the identity fills, which stay light in both
   //   --series-1..8    one account keeps one colour whichever theme is on
   const SHARED = (k) => k === "--ink-on-series" || /^--series-\d+$/.test(k);
-  const d = new Set(colourNames(darkTokens)), l = new Set(colourNames(lightTokens));
-  const missingInLight = [...d].filter((k) => !l.has(k) && !SHARED(k));
-  const extraInLight = [...l].filter((k) => !d.has(k));
-  const wronglyShared = [...l].filter((k) => SHARED(k));
-  ok(!missingInLight.length, `colour tokens set in :root but not in the light block: ${missingInLight.join(", ")}`);
-  ok(!extraInLight.length, `colour tokens set only in the light block: ${extraInLight.join(", ")}`);
+  const varying = Object.keys(darkTokens).filter((k) => !SCALE(k) && !SHARED(k));
+  const light = new Set(Object.keys(lightTokens));
+  const missingInLight = varying.filter((k) => !light.has(k));
+  const extraInLight = [...light].filter((k) => !(k in darkTokens));
+  const wronglyShared = [...light].filter((k) => SHARED(k) || SCALE(k));
+  ok(!missingInLight.length, `theme-varying tokens set in :root but not in the light block: ${missingInLight.join(", ")}`);
+  ok(!extraInLight.length, `tokens set only in the light block: ${extraInLight.join(", ")}`);
   ok(!wronglyShared.length, `tokens meant to be theme-invariant are overridden in light: ${wronglyShared.join(", ")}`);
-  // --lift is a number rather than a colour, so colourNames misses it, but it
-  // must still differ: brightness() has to go the other way on a light fill.
-  ok(!!lightTokens["--lift"], "--lift must be set in the light block; brightening a light fill washes it out");
-  if (!missingInLight.length && !extraInLight.length) {
-    console.log(`  both themes declare the same ${d.size - [...d].filter(SHARED).length} theme-varying colour tokens`);
-    console.log(`  ${[...d].filter(SHARED).length} tokens are shared by design (ink-on-series, series-1..8)`);
+  if (!missingInLight.length && !extraInLight.length && !wronglyShared.length) {
+    console.log(`  both themes declare the same ${varying.length} theme-varying tokens`);
+    console.log(`  ${Object.keys(darkTokens).filter(SHARED).length} shared by design, ${Object.keys(darkTokens).filter(SCALE).length} scale tokens excluded`);
   }
 }
 

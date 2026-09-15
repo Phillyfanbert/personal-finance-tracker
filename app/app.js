@@ -818,9 +818,10 @@ async function initInner() {
   // open, not just whenever someone happens to manually edit a holding.
   await syncAllParentAssetValues();
   // Runs after loadBudgets in the Promise.all above, so this month's record
-  // reflects the live limits on every open. Best effort: a failure here loses
-  // one month's comparison on Reports and must never stop the app loading.
-  try { await syncBudgetPeriod(); } catch (e) { console.warn("budget period sync failed", e); }
+  // reflects the live limits on every open. Best effort and self-healing: a
+  // failure leaves budgetPeriodSyncedFor null, so the next Plan or Reports
+  // render retries rather than silently losing the month.
+  await ensureBudgetPeriodCurrent();
   await Promise.all([loadExpenses(), loadSubscriptions(), loadIncome()]);
   await autoLogDueSubscriptions();
   await autoLogDueIncome();
@@ -5564,24 +5565,60 @@ async function loadBudgets() {
 // The delete half matters as much as the upsert: removing a budget mid-month
 // has to remove this month's record of it too, or the comparison would keep
 // measuring against a limit the user has since taken away.
+let budgetPeriodSyncedFor = null;
+
 async function syncBudgetPeriod() {
   const period = monthKey();
-  if (budgets.length) {
-    await sb.from("budget_periods").upsert(
-      budgets.map((b) => ({
+  // Read first, write only on a real difference. The overwhelmingly common
+  // case is opening the app on a day nothing changed, and an unconditional
+  // upsert plus delete made that cost two writes before loadExpenses even ran.
+  const { data, error: readErr } = await sb.from("budget_periods")
+    .select("id, category, monthly_limit, classification").eq("period", period);
+  if (readErr) throw readErr;
+  const existing = data || [];
+  const stored = new Map(existing.map((r) => [r.category, r]));
+  const unchanged = (r, b) => r
+    && Number(r.monthly_limit) === Number(b.monthly_limit)
+    && (r.classification ?? null) === (b.classification ?? null);
+
+  const changed = budgets.filter((b) => !unchanged(stored.get(b.category), b));
+  if (changed.length) {
+    const { error } = await sb.from("budget_periods").upsert(
+      changed.map((b) => ({
         period, category: b.category,
         monthly_limit: b.monthly_limit, classification: b.classification ?? null,
         updated_at: new Date().toISOString(),
       })),
       { onConflict: "user_id,period,category" }
     );
+    // supabase-js RESOLVES on a query error rather than rejecting, so without
+    // this the caller's try/catch can never fire and a failed write is
+    // invisible - the silent-no-op class this project keeps having to fix.
+    if (error) throw error;
   }
-  const live = budgets.map((b) => b.category);
-  let gone = sb.from("budget_periods").delete().eq("period", period);
-  // .not("category", "in", "()") is not valid PostgREST, so an empty budget
-  // set clears the whole month rather than filtering against nothing.
-  if (live.length) gone = gone.not("category", "in", `(${live.map((c) => `"${c}"`).join(",")})`);
-  await gone;
+
+  // Deleted BY ID rather than by a "not in (...)" filter built from category
+  // names. That filter was assembled by string-joining quoted names, so a
+  // category containing a comma or a double quote would split into two values,
+  // match neither, and delete the record of a budget the user still has set.
+  const goneIds = existing.filter((r) => !budgets.some((b) => b.category === r.category)).map((r) => r.id);
+  if (goneIds.length) {
+    const { error } = await sb.from("budget_periods").delete().in("id", goneIds);
+    if (error) throw error;
+  }
+  budgetPeriodSyncedFor = period;
+}
+
+// Catches the month rolling over while the app stays open. This is a PWA whose
+// home-screen icon is expected to stay open all day, so without it an app left
+// running from the 31st into the 1st never records the month it has just
+// entered until the next cold load - the same past-midnight class
+// capBackwardLookingDates() already guards against. Also retries a sync that
+// failed earlier, since a failure leaves budgetPeriodSyncedFor null.
+// Costs a string compare in the common case.
+async function ensureBudgetPeriodCurrent() {
+  if (budgetPeriodSyncedFor === monthKey()) return;
+  try { await syncBudgetPeriod(); } catch (e) { console.warn("budget period sync failed", e); }
 }
 
 // The picked period's recorded budgets, for the Reports comparison.
@@ -5602,7 +5639,11 @@ async function loadBudgetPeriods(key) {
 // budgets but had none in this particular month", which is a real answer worth
 // printing rather than a blank card.
 async function hasAnyBudgetHistory() {
-  const { count } = await sb.from("budget_periods").select("id", { count: "exact", head: true });
+  const { count, error } = await sb.from("budget_periods").select("id", { count: "exact", head: true });
+  // Swallowing this returned false, which hides the card and reads as "you
+  // have never used budgets" - a failed read stating a fact about the user.
+  // Throwing puts it on the same renderLoadError path as the period fetch.
+  if (error) throw error;
   return (count || 0) > 0;
 }
 
@@ -5643,6 +5684,9 @@ function budgetWarningToastSuffix(category) {
 // loadExpenses() alongside renderBudgetWarnings(), which already computes
 // the same current-month sumBy for the warning banner.
 function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
+  // Deliberately not awaited: the card draws from `budgets` either way, and
+  // this only catches the month having rolled over under a long-open tab.
+  ensureBudgetPeriodCurrent();
   const statuses = budgetStatus(budgets, byCat);
   $("budgetsList").innerHTML = statuses.length
     ? statuses.map((s) => budgetRowHtml(s, { removable: true })).join("")
@@ -5664,7 +5708,7 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
         restoredMsg: "Budget restored",
         after: async () => {
           await loadBudgets();
-          await syncBudgetPeriod(); // and drops this month's record of it
+          try { await syncBudgetPeriod(); } catch (e) { toast("Removed, but this month's budget record could not be updated", "error"); }
           renderBudgets();
           renderBudgetWarnings(); // a removed budget can also remove a Log-page warning
         },
@@ -5691,12 +5735,17 @@ function budgetRowHtml(s, { removable = false } = {}) {
   const state = s.over
     ? ` <span style="color:var(--err)">over</span>`
     : s.warn ? ` <span style="color:var(--warn)">close</span>` : "";
-  const tag = s.classification
-    ? ` <span class="muted" style="font-size:var(--fs-xs)">${CLASS_LABEL[s.classification]}</span>` : "";
+  // Looked up BEFORE the truthiness test: a classification outside the three
+  // is truthy but has no label, and indexing straight into the map rendered
+  // the literal string "undefined" beside the category while the export said
+  // "not tagged" for the very same row. Unknown now reads as untagged in both.
+  const label = CLASS_LABEL[s.classification];
+  const tag = label
+    ? ` <span class="muted" style="font-size:var(--fs-xs)">${label}</span>` : "";
   const remove = removable
     ? `<button type="button" class="x" data-del-budget="${esc(s.category)}" aria-label="Remove the ${esc(s.category)} budget">✕</button>` : "";
   return `
-      <div class="budget-row">
+      <div class="budget-row${removable ? " budget-row-removable" : ""}">
         <div class="budget-row-head">
           <span class="budget-row-name">${esc(s.category)}${tag}</span>
           <span class="budget-row-figs">${fmt(s.spent)} / ${fmt(s.limit)}${state}</span>
@@ -6000,7 +6049,9 @@ $("saveBudgetBtn").onclick = async () => {
   $("budgetCategory").value = "";
   $("budgetClass").value = "";
   await loadBudgets();
-  await syncBudgetPeriod(); // this month's record follows the change immediately
+  // The user just acted, so a failure here is worth saying out loud: without
+  // the record this month cannot be compared on Reports later.
+  try { await syncBudgetPeriod(); } catch (e) { toast("Saved, but this month's budget record could not be updated", "error"); }
   renderBudgets();
   renderBudgetWarnings(); // a changed limit can newly trigger (or clear) a Log-page warning
   toast(replacing ? `${category} limit changed to ${fmt(monthly_limit)}` : `${category} limit set to ${fmt(monthly_limit)}`);
@@ -8228,26 +8279,35 @@ $("qaAskBtn").onclick = async () => {
 //   - history, none that month -> "no budget recorded", a real answer
 //   - a year is selected     -> hidden; a monthly limit has nothing to compare
 //                               against twelve months of spending
-async function renderBudgetVsActual(period, periodExpenses, loadError) {
+async function renderBudgetVsActual(period, periodExpenses, loadError, current = () => true) {
   const card = $("budgetActualCard");
   const body = $("budgetActualBody");
   const hide = () => { card.classList.add("hidden"); body.innerHTML = ""; };
   if (loadError) return hide();
+  // Written BEFORE the fetch, alongside the other period-dependent labels
+  // renderReports sets up front and for the same reason: the error path below
+  // reveals the card, and leaving the heading on the previous period told the
+  // reader that September had failed when they had asked for August.
+  $("budgetActualTitle").textContent = `How ${period.label} went against your budget`;
 
-  let rows, everUsed;
+  let rows, everUsed = true;
   try {
-    [rows, everUsed] = await Promise.all([loadBudgetPeriods(period.key), hasAnyBudgetHistory()]);
+    rows = await loadBudgetPeriods(period.key);
+    // Only asked when there is nothing for this period: with rows in hand the
+    // answer is already yes, and this was a second round trip on every render.
+    if (!rows.length) everUsed = await hasAnyBudgetHistory();
   } catch (error) {
+    if (!current()) return;
     // A failed read is not "you had no budget" - saying so would assert
     // something about a month we could not read. Same rule as the fig() dash.
     card.classList.remove("hidden");
     renderLoadError("budgetActualBody", error, () => renderReports());
     return;
   }
+  if (!current()) return;
   if (!everUsed) return hide();
 
   card.classList.remove("hidden");
-  $("budgetActualTitle").textContent = `How ${period.label} went against your budget`;
   if (!rows.length) {
     body.innerHTML = `<p class="muted" style="font-size:13px">No budget was recorded for ${esc(period.label)}. A month is recorded the first time the app is opened during it, so months before you started budgeting have nothing to compare.</p>`;
     return;
@@ -8269,9 +8329,13 @@ async function renderBudgetVsActual(period, periodExpenses, loadError) {
   const totalSpent = statuses.reduce((t, x) => t + x.spent, 0);
   const overBy = totalSpent - totalLimit;
 
+  // Scoped in words to the budgeted categories, because this total covers ONLY
+  // them while the "Spent in ..." tile higher up the same page covers every
+  // category. Two figures a scroll apart both labelled "spent" is the
+  // two-answers-to-one-question failure that got averageMonth() unified.
   const headline = overBy > 0
-    ? `Spent ${fmt(totalSpent)} against ${fmt(totalLimit)} budgeted, over by ${fmt(overBy)}.`
-    : `Spent ${fmt(totalSpent)} against ${fmt(totalLimit)} budgeted, ${fmt(-overBy)} left unspent.`;
+    ? `Across the categories you budgeted, you spent ${fmt(totalSpent)} of ${fmt(totalLimit)}, over by ${fmt(overBy)}.`
+    : `Across the categories you budgeted, you spent ${fmt(totalSpent)} of ${fmt(totalLimit)}, leaving ${fmt(-overBy)}.`;
   const splitLine = split
     ? `<p class="muted" style="font-size:var(--fs-xs);margin:8px 0 0">The plan was ${split.need.pct}% needs, ${split.want.pct}% wants, ${split.savings.pct}% savings, of ${fmt(split.taggedTotal)} tagged.</p>`
     : "";
@@ -8295,7 +8359,18 @@ async function renderBudgetVsActual(period, periodExpenses, loadError) {
     <p class="muted" style="font-size:var(--fs-xs);margin:8px 0 0">Measured against the limits recorded for ${esc(period.label)}, not against your limits today.${coverage}${unbudgeted}</p>`;
 }
 
+// Overlapping renders settle by sequence, the same idiom wireTogglePills uses
+// for overlapping pill clicks. This page used to resolve a month switch
+// straight from the in-memory expense cache, so there was no real await
+// window; it now reads budget_periods, and two fast month changes could
+// finish out of order and leave one month's card under another month's
+// picker. Only the newest render may write.
+let reportsSeq = 0;
+
 async function renderReports() {
+  const mine = ++reportsSeq;
+  const current = () => mine === reportsSeq;
+  await ensureBudgetPeriodCurrent(); // the month may have rolled over under a long-open tab
   const period = reportPeriod();
   const ym = period.key; // a date PREFIX: "2026-09" for a month, "2026" for a year
 
@@ -8329,6 +8404,8 @@ async function renderReports() {
     rows = { expenses: [], income: [] };
     loadError = error;
   }
+  // A superseded render must not paint: everything below writes to the DOM.
+  if (!current()) return;
   // The one thing empty rows get wrong: a total of zero would ASSERT nothing
   // was spent. A period we could not load has no figure, so say so.
   const fig = (v) => (loadError ? "-" : fmt(v));
@@ -8366,7 +8443,7 @@ async function renderReports() {
   // from the database, and letting it settle after the rest of the page has
   // painted would pop a card in underneath content the reader is already
   // looking at.
-  await renderBudgetVsActual(period, periodExpenses, loadError);
+  await renderBudgetVsActual(period, periodExpenses, loadError, current);
 
   // Typical monthly spending, replacing the old emergency-fund runway.
   //
@@ -10020,7 +10097,10 @@ $("exportReportsBtn").onclick = async () => {
         incomeVsExpense: incomeVsExpense(income, expenses, reportTrendMonths(period)),
       });
     },
-    expenses.some((e) => String(e.occurred_at || "").startsWith(ym)),
+    // A recorded budget is real content even with nothing spent against it -
+    // "you spent nothing against a $2,400 plan" is a finding worth saving.
+    // Same reasoning that put snapshots.length into the Investments export.
+    expenses.some((e) => String(e.occurred_at || "").startsWith(ym)) || budgetVsActual.length > 0,
     { page: "Reports", month: ym });
 };
 

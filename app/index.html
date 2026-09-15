@@ -291,7 +291,11 @@
     .budget-split-bar { display: flex; height: 8px; overflow: hidden;
       background: var(--panel-2); border-radius: 6px;
       box-shadow: inset 0 0 0 1px var(--border-strong); }
-    .budget-row { position: relative; margin-bottom: 24px; }
+    .budget-row { position: relative; margin-bottom: 8px; }
+    /* Only the rows that CARRY a remove button need the wider pitch - the
+       margin exists to hold adjacent 44px hit boxes 8px apart, and the
+       read-only Reports rows have no buttons to separate. */
+    .budget-row-removable { margin-bottom: 24px; }
     .budget-row-head { display: flex; align-items: center; gap: 8px;
       font-size: var(--fs-sm); padding-bottom: 8px; }
     .budget-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden;

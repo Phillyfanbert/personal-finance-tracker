@@ -259,6 +259,42 @@
     /* Same reasoning as .info-icon: the badge stays small, the hit box does not. */
     .acct-circle-item .x::after { content: ""; position: absolute; top: 50%; left: 50%;
       width: var(--target-min); height: var(--target-min); transform: translate(-50%, -50%); }
+    /* Budget rows. The figures are long enough to wrap on a phone, and when
+       the name, the figures and the remove button shared one wrapping span
+       the button dropped onto a line of its own, centred under the row - it
+       read as a rendering fault rather than a control. The name is the only
+       flexible part and truncates; the figures and the button never wrap. */
+    /* The head is 44px because the remove button carries the touch minimum,
+       while the text in it is 15px - so roughly 29px per row is space the
+       button creates and nothing uses. The bar sits INSIDE that band rather
+       than below it, which is why the row is 44px total and not 52px.
+       48px of pitch between adjacent remove buttons is the floor and is
+       deliberate: their hit boxes are 44px tall, so a tighter row would make
+       neighbouring boxes overlap and a tap just under one cross would delete
+       the next category's budget. Compactness stops here. */
+    .budget-row { position: relative; margin-bottom: 16px; }
+    .budget-row-head { display: flex; align-items: center; gap: 8px; font-size: 13px;
+      padding-bottom: 8px; }
+    .budget-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    .budget-row-figs { flex: 0 0 auto; white-space: nowrap; }
+    /* Muted until wanted, scoped to this list rather than changing .x for all
+       ten delete glyphs at once. Six red bold crosses down the card pulled the
+       eye harder than the figures they sat beside. Still 44x44, still a real
+       button, and it returns to --err on hover and on keyboard focus. */
+    /* Same reasoning as .info-icon and .acct-circle-item .x: the glyph stays
+       small so the row can be 30px instead of 52px, and the hit box does not
+       shrink with it. The 16px row margin is load-bearing rather than taste -
+       it puts 46px of pitch between adjacent hit boxes, which are 44px tall,
+       so no tap can land in two of them at once. */
+    .budget-row-head .x { flex: 0 0 auto; position: relative; color: var(--muted);
+      font-weight: 400; min-width: 0; min-height: 0; width: 22px; height: 22px; }
+    .budget-row-head .x::after { content: ""; position: absolute; top: 50%; left: 50%;
+      width: var(--target-min); height: var(--target-min); transform: translate(-50%, -50%); }
+    .budget-row-head .x:hover, .budget-row-head .x:focus-visible { color: var(--err); }
+    .budget-bar { background: var(--panel-2); border-radius: 4px; height: 5px;
+      margin-top: 3px; overflow: hidden; }
+    .budget-row .budget-bar { position: absolute; left: 0; right: 0; bottom: 0; margin-top: 0; }
     .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     /* Wraps rather than squeezing. Three tiles in a fixed row overflowed a
        375px screen once a tile carried a longer label, clipping the number
@@ -1572,7 +1608,7 @@
         <!-- Hidden until something is tagged. An untagged set has no honest
              split to state, so the card simply does not claim one. -->
         <div id="budgetSplit" class="hidden" style="margin-top:10px"></div>
-        <div id="budgetsList" style="margin-top:8px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
+        <div id="budgetsList" style="margin-top:16px"><p class="muted" style="font-size:13px">No budgets set yet.</p></div>
         <!-- Wraps rather than squeezing. A fourth control took each field to
              71px at 375px, where "Monthly limit" rendered as "Mor" and "Not
              set" as "No" - a placeholder nobody can read is not a label. Two

@@ -5589,16 +5589,22 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
     ? statuses.map((s) => {
         const pctClamped = Math.min(100, s.pct);
         const barColor = s.over ? "var(--err)" : s.warn ? "var(--warn)" : "var(--ok)";
+        // The percentage was in the text AND the bar AND the words, three
+        // times per row. The bar carries proportion, so the text keeps only
+        // what the bar cannot say: the real money, and a state word on the
+        // rows where there is a state worth naming. A healthy row says
+        // nothing extra, which is what makes the unhealthy ones stand out.
+        const state = s.over
+          ? ` <span style="color:var(--err)">over</span>`
+          : s.warn ? ` <span style="color:var(--warn)">close</span>` : "";
         return `
-      <div style="margin-bottom:10px">
-        <div class="row" style="justify-content:space-between;font-size:13px">
-          <span>${esc(s.category)}${s.classification ? ` <span class="muted" style="font-size:11px">${CLASS_LABEL[s.classification]}</span>` : ""}</span>
-          <span>
-            ${fmt(s.spent)} / ${fmt(s.limit)} (${s.pct}%${s.over ? ", over" : s.warn ? ", close to the limit" : ""})
-            <button type="button" class="x" data-del-budget="${esc(s.category)}" style="margin-left:8px" aria-label="Remove the ${esc(s.category)} budget">✕</button>
-          </span>
+      <div class="budget-row">
+        <div class="budget-row-head">
+          <span class="budget-row-name">${esc(s.category)}${s.classification ? ` <span class="muted" style="font-size:11px">${CLASS_LABEL[s.classification]}</span>` : ""}</span>
+          <span class="budget-row-figs">${fmt(s.spent)} / ${fmt(s.limit)}${state}</span>
+          <button type="button" class="x" data-del-budget="${esc(s.category)}" aria-label="Remove the ${esc(s.category)} budget">✕</button>
         </div>
-        <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
+        <div class="budget-bar">
           <div style="background:${barColor};width:${pctClamped}%;height:100%"></div>
         </div>
       </div>`;
@@ -5666,7 +5672,7 @@ function renderBudgetSplit(statuses) {
           <span><span aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${p.color};margin-right:6px"></span>${p.label} ${b.pct}%</span>
           <span class="${b.over ? "" : "muted"}">${reality}</span>
         </div>
-        ${b.undated ? "" : `<div style="background:var(--panel-2);border-radius:4px;height:5px;overflow:hidden;margin-top:4px">
+        ${b.undated ? "" : `<div class="budget-bar">
           <div style="background:${tone};width:${fill}%;height:100%"></div>
         </div>`}
       </div>`;

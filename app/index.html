@@ -30,9 +30,13 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Expenses" />
   <link rel="manifest" href="manifest.json" />
+  <!-- 32 first: a browser tab renders at 16-32px and was previously handed the
+       192 to downsample, which muddies a small mark. apple-touch-icon wants
+       180 specifically; it was being given 192 and rescaled. -->
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
-  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png" />
   <title>Personal Finance Tracker</title>
   <style>
     :root {
@@ -326,7 +330,46 @@
        375px screen once a tile carried a longer label, clipping the number
        itself off the right edge - the whole point of the tile. flex-basis
        plus wrap lets the third drop to its own line instead. */
+    /* A soft wash behind the top of the page, so the app has some depth rather
+       than one flat field of --bg. Drawn from the accent wash token, which is
+       already defined per theme (it is near-transparent blue in dark and a
+       pale tint in light), so this adds no colour literal.
+
+       z-index -1 is load-bearing: a negative-index pseudo paints above the
+       body background but below every piece of content, so nothing needs a
+       stacking context of its own and no text is covered. pointer-events:none
+       keeps it out of hit testing. */
+    body::before { content: ""; position: fixed; left: 0; right: 0; top: 0;
+      height: 340px; z-index: -1; pointer-events: none;
+      background: radial-gradient(130% 100% at 50% 0%, var(--accent-wash), transparent 68%); }
+
+    /* The app mark: the same three ascending bars as the launcher icon, built
+       from tokens rather than an image so it follows the theme, costs no
+       request, and adds no colour literal for the palette checker to fail on.
+       Purely decorative - every place it appears sits beside the real title,
+       so it is aria-hidden and nothing is lost without it. */
+    .brand-mark { display: inline-flex; align-items: flex-end; gap: 2px;
+      height: 20px; flex: 0 0 auto; }
+    .brand-mark i { display: block; width: 5px; border-radius: 3px; }
+    .brand-mark i:nth-child(1) { height: 45%; background: var(--series-8); opacity: .5; }
+    .brand-mark i:nth-child(2) { height: 72%; background: var(--series-8); opacity: .8; }
+    .brand-mark i:nth-child(3) { height: 100%; background: var(--accent); }
+    .brand-mark.lg { height: 44px; gap: 5px; }
+    .brand-mark.lg i { width: 11px; border-radius: 6px; }
+
     .totals { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+    /* Three identical grey boxes held the three most important numbers on the
+       page, so nothing told them apart at a glance. A 3px rule in the identity
+       palette gives each its own colour. Decorative only: the label above each
+       number still says which is which, so the colour carries nothing on its
+       own (WCAG 1.4.1). The identity palette is not held to a 3:1 contrast
+       floor, which is fine here for the same reason - it states nothing. */
+    .totals .card { position: relative; overflow: hidden; }
+    .totals .card::before { content: ""; position: absolute; left: 0; right: 0;
+      top: 0; height: 3px; background: var(--series-1); }
+    .totals .card:nth-child(2)::before { background: var(--series-8); }
+    .totals .card:nth-child(3)::before { background: var(--series-2); }
+    .totals .card:nth-child(4)::before { background: var(--series-7); }
     .totals .card { flex: 1 1 150px; min-width: 0; text-align: center; margin: 0; }
     .totals .big { font-size: 22px; font-weight: 800; }
     .chartbox { position: relative; height: 240px; }
@@ -643,6 +686,7 @@
 
     <!-- ============ AUTH VIEW ============ -->
     <div id="authView">
+      <span class="brand-mark lg" aria-hidden="true"><i></i><i></i><i></i></span>
       <h1>Personal Finance Tracker</h1>
       <div class="card">
         <p class="muted">Sign in with your password. Haven't set one yet? Send yourself a magic link below, then set a password from Profile once you're in.</p>
@@ -678,7 +722,7 @@
            space in a single row. -->
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
-          <h1 style="margin:0;font-size:17px">Personal Finance Tracker</h1>
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0;font-size:17px">Personal Finance Tracker</h1>
           <button class="help-btn" id="helpLogBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportLogBtn" title="Export everything on the Log page as a spreadsheet" aria-label="Export everything on the Log page as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
@@ -1378,7 +1422,7 @@
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="secondary" id="backFromReports" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">←</button>
-          <h1 style="margin:0">Reports</h1>
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Reports</h1>
           <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportReportsBtn" title="Export this month's analysis as a spreadsheet" aria-label="Export this month's analysis as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
@@ -1572,7 +1616,7 @@
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="secondary" id="backFromPlan" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">&#8592;</button>
-          <h1 style="margin:0">Plan</h1>
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Plan</h1>
           <button class="help-btn" id="helpPlanBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>
@@ -1712,7 +1756,7 @@
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="secondary" id="backFromInvest" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">←</button>
-          <h1 style="margin:0">Investments</h1>
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Investments</h1>
           <button class="help-btn" id="helpInvestBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportInvestBtn" title="Export your investments as a spreadsheet" aria-label="Export your investments as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
         </div>

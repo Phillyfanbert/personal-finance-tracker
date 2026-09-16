@@ -2796,22 +2796,28 @@ async function loadAccounts() {
   // spendable list above intentionally includes) - see transferForm's
   // own comment in index.html for why this would otherwise be a real,
   // silent balance-not-actually-changing bug.
+  // ASSET-BACKED ONLY, and every picker below shares that one filter and one
+  // reason: applyAssetDelta/assetDeltaError are silent no-ops for an account
+  // with no linked_asset_id, which every credit-type account is, so offering
+  // one here would toast success and move no money at all. The spendable list
+  // used by the expense pickers deliberately DOES include a card, because a
+  // card really is a way to pay for something; none of these are.
+  //
+  // Filled through one helper rather than five near-identical assignments,
+  // which is what they had drifted into: a change to acctLabel or to the
+  // filter had to be made in five places.
   const transferable = accounts.filter((a) => a.linked_asset_id && !a.archived_at);
-  const transferOpts = `<option value="">Choose an account</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
-  $("transferFrom").innerHTML = transferOpts;
-  $("transferTo").innerHTML = transferOpts;
-  // Same asset-backed-only reasoning as Transfer above - an income
-  // deposit needs a real linked_asset_id to actually apply via
-  // applyAssetDelta, which a credit-type account never has.
-  $("incAccount").innerHTML = `<option value="">None</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
-  // Same asset-backed-only list, same reason. A one-off deposit credits a
-  // real balance through applyAssetDelta, which does nothing at all for an
-  // account with no linked_asset_id - so offering a credit card here would
-  // toast success and move no money.
-  $("moneyInAccount").innerHTML = `<option value="">Choose an account</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
-  // Same asset-backed-only list again: a dividend paid out as cash lands in a
-  // real balance, which applyAssetDelta cannot move for a credit account.
-  $("dividendAccount").innerHTML = `<option value="">Choose an account</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  const fillAssetBackedSelect = (id, placeholder) => {
+    $(id).innerHTML = `<option value="">${placeholder}</option>`
+      + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  };
+  fillAssetBackedSelect("transferFrom", "Choose an account");
+  fillAssetBackedSelect("transferTo", "Choose an account");
+  // "None" rather than "Choose an account": an income source with no deposit
+  // account is a legitimate thing to record, it just never auto-logs.
+  fillAssetBackedSelect("incAccount", "None");
+  fillAssetBackedSelect("moneyInAccount", "Choose an account");
+  fillAssetBackedSelect("dividendAccount", "Choose an account");
   // A previously-typed bank_name (including one added via the "not
   // recognized, add anyway" override in saveAcctBtn) becomes just as
   // suggestable as a seeded FDIC name next time - rankBankMatches reads
@@ -5240,16 +5246,22 @@ async function undoActivity(row) {
     const holding = assets.find((a) => a.id === row.asset_id);
     if (!holding) return toast("Can't undo - that holding no longer exists.");
 
-    const account = accounts.find((a) => a.id === row.account_id);
+    // A sale with no account moved no money, so there is no balance to put
+    // back and no account to resolve - only the shares and the realized gain.
+    // Its history row exists precisely so that case is still undoable.
+    const account = row.account_id ? accounts.find((a) => a.id === row.account_id) : null;
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
-    if (!asset) return toast("Can't undo - the account the money went into no longer exists.");
-    // Putting the shares back means taking the proceeds back out, and that
-    // money may already have been spent. Refused rather than floored, the same
-    // way every other reversal in this file refuses rather than destroying the
-    // difference.
-    const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
-    if (newValue < -overdraftAllowance(asset)) {
-      return toast(`Can't undo - ${asset.name} no longer holds the ${fmt(row.amount)} this sale paid in.`);
+    if (row.account_id && !asset) return toast("Can't undo - the account the money went into no longer exists.");
+    let newValue = null;
+    if (asset) {
+      // Putting the shares back means taking the proceeds back out, and that
+      // money may already have been spent. Refused rather than floored, the
+      // same way every other reversal in this file refuses rather than
+      // destroying the difference.
+      newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
+      if (newValue < -overdraftAllowance(asset)) {
+        return toast(`Can't undo - ${asset.name} no longer holds the ${fmt(row.amount)} this sale paid in.`);
+      }
     }
 
     const restoredQty = Math.round((Number(holding.quantity || 0) + Number(sale.quantity)) * 1e6) / 1e6;
@@ -5257,14 +5269,22 @@ async function undoActivity(row) {
     const { error: holdErr } = await sb.from("assets")
       .update({ quantity: restoredQty, purchase_price: restoredBasis }).eq("id", holding.id);
     if (holdErr) return toast(holdErr.message);
-    const { error: valErr } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-    if (valErr) return toast(valErr.message);
+    if (asset) {
+      const { error: valErr } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+      if (valErr) return toast(valErr.message);
+    }
     // Deleted last: while it exists the realized gain is still counted, which
     // is the safe way round if anything above fails.
     const { error: saleErr } = await sb.from("holding_sales").delete().eq("id", sale.id);
     if (saleErr) return toast(saleErr.message);
-    await syncParentAssetValue(holding.parent_asset_id);
+    // RELOADED BEFORE SYNCING, which is the order the sell flow itself uses.
+    // syncParentAssetValue prices the parent from the CACHED assets array, so
+    // calling it straight after the write above rolled the parent up from the
+    // stale post-sale quantity and wrote a value understating the position by
+    // exactly the shares just restored.
+    await loadAssets();
     await loadHoldingSales();
+    await syncParentAssetValue(holding.parent_asset_id);
   } else if (row.kind === "income") {
     // Always a positive deposit, so undoing is always a straight
     // subtraction - never a sign-dependent reversal the way asset_adjust's
@@ -5412,6 +5432,9 @@ function openEdit(row) {
   $("eDate").value = row.occurred_at ?? localDateISO();
   capBackwardLookingDates(); // re-stamped on open: an app left open past midnight would otherwise cap to yesterday
   $("eLearn").checked = true;
+  // Money back on money back is not a thing, so the control is not offered on
+  // a refund row at all rather than being offered and then refused.
+  $("openRefundBtn").classList.toggle("hidden", Number(row.amount) < 0 || !!row.refund_of);
   openModal("editModal");
 }
 $("editClose").onclick = () => { closeModal("editModal"); editing = null; };
@@ -5472,10 +5495,14 @@ $("dividendConfirmBtn").onclick = async () => {
   if (!(await confirmLargeAmount(amount, "this dividend"))) return;
 
   const label = dividendAsset.price_symbol || dividendAsset.name;
+  // Disabled across the awaits, the same guard saveBtn uses: a second tap on a
+  // slow connection would otherwise record the dividend twice.
+  $("dividendConfirmBtn").disabled = true;
   await applyAssetDelta(accountId, null, amount, +1);
   await logActivity(
     "income", `Dividend from ${label}`, amount, date, accountId, null, null, dividendAsset.id
   );
+  $("dividendConfirmBtn").disabled = false;
   closeModal("dividendModal");
   dividendAsset = null;
   await loadAssets();
@@ -5501,11 +5528,22 @@ let refunding = null;
 
 $("openRefundBtn").onclick = () => {
   if (!editing) return;
+  // A refund row must not itself be refundable: money back on money back is
+  // not a thing that happens, and allowing it let one $42 purchase drive the
+  // category to -$84. openEdit() hides the button for those rows, so this is
+  // the second line of defence rather than the only one.
+  if (Number(editing.amount) < 0 || editing.refund_of) {
+    return toast("This row is already money back on something else");
+  }
   refunding = editing;
   const paid = Math.abs(Number(refunding.amount) || 0);
   const what = refunding.description || refunding.merchant || refunding.category || "this purchase";
-  $("refundSub").textContent = `You paid ${fmt(paid)} for ${what} on ${refunding.occurred_at}. Enter the whole amount, or less if only part came back.`;
-  $("refundAmount").value = paid ? paid.toFixed(2) : "";
+  $("refundSub").textContent = `You paid ${fmt(paid)} for ${what} on ${refunding.occurred_at}. Enter how much came back.`;
+  // Deliberately BLANK rather than pre-filled with the whole purchase. A
+  // pre-filled total makes the lowest-effort action a full refund, and a
+  // partial return of one item off a larger receipt is the commoner case;
+  // every other money form in this app asks for the amount outright.
+  $("refundAmount").value = "";
   $("refundDate").value = localDateISO();
   capBackwardLookingDates();
   openModal("refundModal");
@@ -5519,19 +5557,55 @@ $("refundConfirmBtn").onclick = async () => {
     flagField("refundAmount", "Enter how much came back.");
     return toast("Enter a valid amount");
   }
-  const paid = Math.abs(Number(refunding.amount) || 0);
-  // You cannot be given back more than you handed over for one purchase, and
-  // allowing it would quietly turn a refund into invented income.
-  if (amount > paid + 0.005) {
-    flagField("refundAmount", `That is more than the ${fmt(paid)} you paid. Enter ${fmt(paid)} or less.`);
-    return toast("A refund cannot be larger than the purchase", "error");
-  }
   const date = $("refundDate").value;
   if (!date) { flagField("refundDate", "Pick the date it came back."); return toast("Choose a date"); }
   const dateErr = futureDateError(date, "Money back");
   if (dateErr) { flagField("refundDate", dateErr); return toast(dateErr); }
 
-  const account = accounts.find((a) => a.id === refunding.account_id);
+  const original = refunding;
+  const paid = Math.abs(Number(original.amount) || 0);
+
+  // The ceiling is what is LEFT to refund, not the purchase price. Capping
+  // against the purchase on every attempt meant nothing recorded that money
+  // had already come back, so the same row could be refunded again and again,
+  // each time up to the full amount. Read from the database rather than the
+  // allExpenses cache: a refund written in another tab, or one older than the
+  // cache window, still has to count against the ceiling.
+  const { data: priorRows, error: priorErr } = await sb.from("expenses")
+    .select("amount").eq("refund_of", original.id);
+  // supabase-js RESOLVES on a query error rather than rejecting, so this is
+  // checked explicitly. Refusing is the safe direction: carrying on would
+  // treat an unknown history as no history and re-allow a full refund.
+  if (priorErr) {
+    flagField("refundAmount", priorErr.message);
+    return toast("Could not check what has already come back on this", "error");
+  }
+  const already = (priorRows || []).reduce((sum, r) => sum + Math.abs(Number(r.amount) || 0), 0);
+  const remaining = Math.round((paid - already) * 100) / 100;
+  if (remaining <= 0) {
+    flagField("refundAmount", `The whole ${fmt(paid)} has already come back on this purchase.`);
+    return toast("This purchase has already been fully refunded", "error");
+  }
+  if (amount > remaining + 0.005) {
+    flagField("refundAmount", already > 0
+      ? `${fmt(already)} has already come back, so only ${fmt(remaining)} is left to refund.`
+      : `That is more than the ${fmt(paid)} you paid. Enter ${fmt(paid)} or less.`);
+    return toast("A refund cannot be larger than what is left of the purchase", "error");
+  }
+
+  // Resolved before use, and refused rather than skipped. The guard below and
+  // both delta helpers return early on an unresolved account, so without this
+  // the row landed, the category total fell, and no balance moved anywhere -
+  // the silent partial write this repo has already shipped twice. An expense
+  // with no account at all is a different, legitimate case and still allowed.
+  let account = null;
+  if (original.account_id) {
+    account = accounts.find((a) => a.id === original.account_id);
+    if (!account) {
+      flagField("refundAmount", "The account this was paid from no longer exists, so the money cannot go back to it.");
+      return toast("That account is no longer available", "error");
+    }
+  }
   // A refund onto a CREDIT account reduces what is owed, and
   // applyLiabilityDelta floors at $0 - so refunding more than the current
   // balance would silently destroy the difference, which is exactly how the
@@ -5546,7 +5620,10 @@ $("refundConfirmBtn").onclick = async () => {
     }
   }
 
-  const original = refunding;
+  // Disabled across the await, the same guard saveBtn uses. Without it a
+  // second tap during a slow round trip re-enters the whole handler with the
+  // same amount still in the field and writes a second refund.
+  $("refundConfirmBtn").disabled = true;
   const { error } = await sb.from("expenses").insert({
     // user_id is left to the column default, the same as every other expense
     // insert in this file.
@@ -5558,7 +5635,9 @@ $("refundConfirmBtn").onclick = async () => {
     payment_type: original.payment_type,
     account_id: original.account_id,
     occurred_at: date,
+    refund_of: original.id,
   });
+  $("refundConfirmBtn").disabled = false;
   if (error) { flagField("refundAmount", error.message); return toast(error.message, "error"); }
 
   // The same pair undoExpense() applies, and for the same reason: an imported
@@ -6952,11 +7031,14 @@ $("sellConfirmBtn").onclick = async () => {
     .eq("id", sellingHolding.id);
   if (assetErr) return toast(assetErr.message);
 
-  if (accountId) {
-    await applyAssetDelta(accountId, null, proceeds, +1);
-    await logActivity("holding_sale", `Sold ${qty} ${sellingHolding.price_symbol || ""}`.trim(),
-      proceeds, soldOn, accountId, null, null, sellingHolding.id);
-  }
+  // The balance only moves when an account was chosen, but the HISTORY row is
+  // written either way. Gating the row on the account too meant a sale with
+  // untracked proceeds reduced the holding and booked a realized gain with
+  // nothing in Recent History, so it could never be undone: the shares were
+  // gone for good and the gain counted permanently.
+  if (accountId) await applyAssetDelta(accountId, null, proceeds, +1);
+  await logActivity("holding_sale", `Sold ${qty} ${sellingHolding.price_symbol || ""}`.trim(),
+    proceeds, soldOn, accountId, null, null, sellingHolding.id);
 
   const parentId = sellingHolding.parent_asset_id;
   closeModal("sellHoldingModal");
@@ -7219,11 +7301,16 @@ const PRICE_HISTORY_RANGES = [
 let priceHistorySymbol = null;
 let priceHistoryRangeDays = 30;
 
+// Same sign rule as fmt(): the minus goes OUTSIDE the currency symbol, so a
+// negative compact figure reads "-$1.50B" rather than "$-1.50B". Left
+// inconsistent with fmt() at first, which meant the app formatted negative
+// money two different ways depending on magnitude.
 const fmtCompact = (n) => {
   const abs = Math.abs(n);
-  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
   return fmt(n);
 };
 

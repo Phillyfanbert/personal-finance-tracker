@@ -7,7 +7,15 @@
 // way a hand-written coverage table would.
 //
 // Each entry names a real-world event, the mechanism that records it, and a
-// marker that must still be present in the source. A DEFERRED entry is a way
+// marker that must still be present in the source.
+//
+// A marker must name something only the LIVE CODE can satisfy: an import
+// specifier, a handler assignment, a call together with its arguments. The
+// first version used bare substrings like "depreciat", which any passing
+// comment kept green long after the implementation could have been deleted,
+// which is exactly the checker-agrees-with-a-drifting-app failure this file
+// exists to prevent. Section A strips comments before matching, so a marker
+// that survives only in prose now fails. A DEFERRED entry is a way
 // money really can move that this app deliberately does not model; it carries
 // the reason, and it is listed rather than omitted so the gap stays visible.
 
@@ -31,24 +39,24 @@ const PATHS = [
   { dir: "in",  event: "A one-off payment, gift or sale",  via: "Money received",                  marker: '$("moneyInConfirmBtn")' },
   { dir: "in",  event: "Interest on a deposit account",    via: "autoLogSavingsInterest",          marker: "async function autoLogSavingsInterest" },
   { dir: "in",  event: "A dividend from a holding",        via: "dividend modal",                  marker: '$("dividendConfirmBtn")' },
-  { dir: "in",  event: "Selling an investment",            via: "holding_sale",                    marker: '"holding_sale"' },
+  { dir: "in",  event: "Selling an investment",            via: "holding_sale",                    marker: 'logActivity("holding_sale"' },
   { dir: "in",  event: "Money back on a purchase",         via: "negative expense",                marker: '$("refundConfirmBtn")' },
-  { dir: "in",  event: "Imported pay from a bank file",    via: "CSV import, income rows",         marker: 'kind: "income"' },
+  { dir: "in",  event: "Imported pay from a bank file",    via: "CSV import, income rows",         marker: "csvLastImportedActivityIds" },
   { dir: "in",  event: "Correcting a balance upward",      via: "asset_adjust",                    marker: '$("adjustAddBtn")' },
-  { dir: "in",  event: "Moving money between own accounts", via: "transfer",                       marker: '"transfer",' },
+  { dir: "in",  event: "Moving money between own accounts", via: "transfer",                       marker: '"transfer", `Transferred' },
 
   // ---- money out ---------------------------------------------------------
   { dir: "out", event: "Everyday spending",                via: "expenses / Quick Add",            marker: '$("saveBtn")' },
   { dir: "out", event: "A bill or subscription falling due", via: "autoLogDueSubscriptions",       marker: "async function autoLogDueSubscriptions" },
-  { dir: "out", event: "Paying down a debt",               via: "liability_payment",               marker: '"liability_payment"' },
-  { dir: "out", event: "Buying an investment",             via: "holding funding account",         marker: "costBasisDelta" },
-  { dir: "out", event: "Putting new money into an investment", via: "contribution",                marker: '"contribution",' },
+  { dir: "out", event: "Paying down a debt",               via: "liability_payment",               marker: '"liability_payment", `Paid' },
+  { dir: "out", event: "Buying an investment",             via: "holding funding account",         marker: "const costBasisDelta" },
+  { dir: "out", event: "Putting new money into an investment", via: "contribution",                marker: '"contribution", `Contributed' },
   { dir: "out", event: "Interest charged on a card",       via: "log interest charge",             marker: "data-log-interest" },
-  { dir: "out", event: "A charge added to what is owed",   via: "owed_adjust",                     marker: '"owed_adjust"' },
+  { dir: "out", event: "A charge added to what is owed",   via: "owed_adjust",                     marker: '"owed_adjust", reason' },
   { dir: "out", event: "Correcting a balance downward",    via: "asset_adjust",                    marker: '$("adjustSubtractBtn")' },
-  { dir: "out", event: "Imported spending from a bank file", via: "CSV import, expense rows",      marker: 'source: "import"' },
-  { dir: "out", event: "Going overdrawn",                  via: "overdraft allowance",             marker: "overdraftAllowance" },
-  { dir: "out", event: "An asset losing value over time",  via: "depreciation",                    marker: "depreciat" },
+  { dir: "out", event: "Imported spending from a bank file", via: "CSV import, expense rows",      marker: "csvLastImportedIds" },
+  { dir: "out", event: "Going overdrawn",                  via: "overdraft allowance",             marker: "function overdraftAllowance" },
+  { dir: "out", event: "An asset losing value over time",  via: "depreciation",                    marker: 'from "./depreciation.js"' },
 
   // ---- neither: a plan for money already held ----------------------------
   { dir: "plan", event: "Setting money aside for a known cost", via: "sinking funds",              marker: "sinkingFundStatus" },
@@ -68,8 +76,18 @@ const DEFERRED = [
 ];
 
 section("A. Every recorded way money moves");
+// Comments are prose, not implementation: a path counts as present only if
+// its marker survives their removal.
+const stripComments = (src) => src
+  .split("\n")
+  .filter((l) => !l.trim().startsWith("//"))
+  .join("\n")
+  .replace(/<!--[\s\S]*?-->/g, "");
+const appCode = stripComments(app);
+const htmlCode = stripComments(html);
+
 for (const p of PATHS) {
-  const found = app.includes(p.marker) || html.includes(p.marker);
+  const found = appCode.includes(p.marker) || htmlCode.includes(p.marker);
   ok(found, `${p.dir.toUpperCase()} "${p.event}" should be recorded by ${p.via}, but its marker ${JSON.stringify(p.marker)} is gone`);
   if (found) console.log(`  ${p.dir.padEnd(4)} ${p.event.padEnd(44)} ${p.via}`);
 }
@@ -105,11 +123,23 @@ if (div) {
 section("D. Every money event is reversible");
 // Anything that moves money must be undoable, or a mistake is permanent.
 const undo = app.match(/async function undoActivity\(row\)[\s\S]*?\n\}/)[0];
+// Split into the real branches, so each can be checked for WORK rather than
+// only for its own name appearing somewhere in the function. The first version
+// asserted `undo.includes('"holding_sale"')`, which an empty
+// `} else if (row.kind === "holding_sale") {}` would have satisfied just as
+// well as a real reversal - and an absent branch was the only failure it could
+// actually catch.
+const branches = undo.split(/(?:\} else )?if \(row\.kind === /).slice(1);
+const branchFor = (kind) => branches.find((b) => b.startsWith(`"${kind}"`));
 for (const kind of ["asset_adjust", "owed_adjust", "liability_payment", "contribution", "transfer", "income", "holding_sale"]) {
-  ok(undo.includes(`"${kind}"`), `undoActivity has no branch for ${kind}, so it cannot be reversed`);
+  const b = branchFor(kind);
+  ok(b, `undoActivity has no branch for ${kind}, so it cannot be reversed`);
+  // A reversal has to WRITE something back. Every branch here restores a
+  // balance, a quantity or an owed amount, so one of these calls must appear.
+  if (b) ok(/\.update\(|\.delete\(/.test(b), `undoActivity's ${kind} branch writes nothing, so it deletes the history row without reversing anything`);
 }
 ok(/async function undoExpense/.test(app), "an expense must be undoable");
-console.log("  every activity kind has an undo branch, and expenses have their own");
+console.log(`  ${branches.length} undo branches, each writing a reversal, plus undoExpense`);
 
 section("E. Deliberately not modelled");
 for (const d of DEFERRED) console.log(`  ${d.event}`);

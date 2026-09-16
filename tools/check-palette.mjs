@@ -333,12 +333,29 @@ for (const [name, T] of themes) {
 // The rule this encodes, so a future edit cannot quietly undo the fix: a bar
 // whose track is visible must be filled from the status tones, never from the
 // identity palette.
-const splitFill = appJsForFills.match(/const tone = b\.over[^;]*;/s);
-if (splitFill) {
-  const usesSeries = /--series-\d/.test(splitFill[0]);
-  ok(!usesSeries, "the bucket bar fill uses an identity colour; it must use a status tone (see above)");
-  if (!usesSeries) console.log("  bucket bar fills come from status tones, not the identity palette");
+//
+// Written as a scan over EVERY budget bar rather than a match on one
+// function. The first version keyed off the split row's own `const tone =`
+// line, so deleting that row deleted its guard with it: the suite dropped
+// from 55 assertions to 54 and still reported "0 failed", which is the
+// checker-agrees-with-a-drifting-app failure this file exists to prevent. A
+// scan that finds nothing is now itself a failure.
+const barFills = [...appJsForFills.matchAll(/class="budget-bar"[\s\S]{0,240}?background:([^;"]+)/g)]
+  .map((m) => m[1].trim());
+ok(barFills.length > 0, "found no budget bar fills to check - the scan pattern has gone stale");
+for (const expr of barFills) {
+  // Either an inline var(--x) or a ${name} referring to a const above it.
+  const ref = /^\$\{([A-Za-z0-9_$.]+)\}?$/.exec(expr);
+  let resolved = expr;
+  if (ref) {
+    const decl = new RegExp(`const ${ref[1]}\\s*=([^;]*);`).exec(appJsForFills);
+    ok(decl, `cannot find where the budget bar fill \`${ref[1]}\` is defined`);
+    resolved = decl ? decl[1] : expr;
+  }
+  ok(!/--series-\d/.test(resolved),
+    `a budget bar fill uses an identity colour (${expr}); it must use a status tone (see above)`);
 }
+console.log(`  ${barFills.length} budget bar fill(s) come from status tones, not the identity palette`);
 
 // ---- D: drift guards --------------------------------------------------------
 section("D. Drift guards");

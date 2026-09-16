@@ -5807,36 +5807,38 @@ function renderBudgetSplit(statuses) {
   const bar = parts.map((p) =>
     `<div style="background:${p.color};width:${split[p.key].pct}%;height:100%"></div>`).join("");
 
-  // One row per bucket: the share of the plan, then what has actually gone
-  // out against it. Same spent-of-limit shape as the category rows below, so
-  // this is the card's existing visual language aggregated, not a new one.
+  // One row per bucket: its share of the plan, then what has actually gone
+  // out against it. Deliberately NO per-row progress bar, unlike the category
+  // rows below, and the difference is the summary bar above: this section
+  // already leads with a graphic carrying proportion, so a bar per row is the
+  // third encoding of one fact (figures, state word, bar) sitting under a
+  // fourth. The category rows have no summary graphic, which is exactly why
+  // their bar survived the same compaction that took their percentage.
+  //
+  // It also removes a real collision. --warn (#fbbf24) and --series-2
+  // (#EEDD88) are both yellow, so a needs bucket at 92% drew a "getting
+  // close" bar immediately above the swatch identifying Wants - one colour
+  // saying two unrelated things twenty pixels apart.
   const row = (p) => {
     const b = split[p.key];
     // Words, never colour alone (WCAG 1.4.1) - read this row aloud in
-    // greyscale and the state still comes through.
-    const reality = b.undated
+    // greyscale and the state still comes through. Same vocabulary as
+    // budgetRowHtml() below ("$x / $y" and a bare state word), so one card
+    // does not state the same kind of fact two different ways.
+    const state = b.over
+      ? ` <span style="color:var(--err)">over</span>`
+      : b.usedPct >= WARN_THRESHOLD_PCT ? ` <span style="color:var(--warn)">close</span>` : "";
+    // The share STAYS in the text here, unlike the category rows. There the
+    // percentage duplicated a bar in its own row; here it is the payload -
+    // comparing a split against a 50/30/20-style reference is the whole point
+    // of tagging, and a 5% slice of an 8px bar cannot be read to the point.
+    const figures = b.undated
       ? `<span class="muted">no monthly figure</span>`
-      : b.over
-        ? `${fmt(b.spent)} of ${fmt(b.planned)}, over by ${fmt(b.spent - b.planned)}`
-        : `${fmt(b.spent)} of ${fmt(b.planned)}`;
-    const fill = Math.min(100, b.usedPct);
-    // Status tones, NOT the bucket's identity colour. A fill has to be
-    // readable against its own track to say how full it is (WCAG 1.4.11,
-    // 3:1), and the identity palette is tuned to separate eight hues from
-    // EACH OTHER, not from a near-white track: --series-2 measures 1.22:1
-    // against --panel-2 in light, which is no bar at all. The swatch beside
-    // the label still carries identity; the bar carries state, which also
-    // makes it read identically to the category rows below.
-    const tone = b.over ? "var(--err)" : b.usedPct >= WARN_THRESHOLD_PCT ? "var(--warn)" : "var(--ok)";
+      : `${fmt(b.spent)} / ${fmt(b.planned)}${state}`;
     return `
-      <div style="margin-top:8px">
-        <div class="row" style="justify-content:space-between;gap:8px;font-size:var(--fs-sm)">
-          <span><span aria-hidden="true" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${p.color};margin-right:8px"></span>${p.label} ${b.pct}%</span>
-          <span class="${b.over ? "" : "muted"}">${reality}</span>
-        </div>
-        ${b.undated ? "" : `<div class="budget-bar">
-          <div style="background:${tone};width:${fill}%;height:100%"></div>
-        </div>`}
+      <div class="budget-row-head">
+        <span class="budget-row-name"><span aria-hidden="true" class="split-chip" style="background:${p.color}"></span>${p.label} ${b.pct}%</span>
+        <span class="budget-row-figs">${figures}</span>
       </div>`;
   };
 

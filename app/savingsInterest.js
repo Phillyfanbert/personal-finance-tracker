@@ -16,8 +16,6 @@
 // statement against - the same claim cycleStatus()'s interestEstimate already
 // makes on the credit side.
 
-import { advanceIncomeDate } from "./income.js";
-
 const r2 = (n) => Math.round(n * 100) / 100;
 
 // Decided per TYPE, never per category, the same rule BANK_VALIDATED_TYPES and
@@ -38,9 +36,20 @@ export const INTEREST_BEARING_ASSET_TYPES = new Set([
 ]);
 
 // Same 36-cycle ceiling autoLogDueSubscriptions and autoLogDueIncome use, and
-// for the same reason: an app opened after a long gap should catch up, not
-// run unbounded.
-export const MAX_INTEREST_CATCHUP_MONTHS = 36;
+// for the same reason: an app opened after a long gap should catch up, not run
+// unbounded. Deliberately NOT exported - nothing outside this module has a
+// reason to compare against it, and `capped` on the result already tells a
+// caller the ceiling was reached.
+const MAX_INTEREST_CATCHUP_MONTHS = 36;
+
+// Two decimals, because assets.interest_rate is numeric(5,2): anything finer
+// is silently rounded by the database, so a rate that rounds to 0.00 would be
+// stored as a real-looking value that interestEligible() then rejects forever.
+// The save handler refuses those rather than storing a number that does
+// nothing, which is the same rule a zero credit limit and a zero overdraft
+// already follow.
+export const RATE_DECIMALS = 2;
+export const roundRate = (n) => Math.round(Number(n) * 100) / 100;
 
 /** A rate is only usable if the type earns interest AND a real rate is set. */
 export function interestEligible(asset) {
@@ -57,9 +66,38 @@ export function monthlyInterest(balance, ratePct) {
   return r2(b * (r / 100 / 12));
 }
 
+// One month on, keeping the ORIGINAL day of month as the anchor rather than
+// carrying a clamped day forward.
+//
+// Stepping from the previous result is what made a payment day ratchet
+// earlier and never recover: from the 31st, a naive step gives Feb 28, then
+// Mar 28, then Apr 28 forever. Anchored, it gives Feb 28, Mar 31, Apr 30,
+// which is how a real monthly schedule behaves. Deliberately local rather
+// than income.js's advanceIncomeDate, which clamps from the previous value
+// for a cadence whose parameters genuinely differ - the same
+// each-module-self-contained reasoning income.js itself records for not
+// importing payoff.js's addMonthsISO.
+function addMonthAnchored(iso, anchorDay) {
+  const [y, m] = iso.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return null;
+  let targetYear = y;
+  let targetMonth = m + 1;
+  if (targetMonth > 12) { targetMonth = 1; targetYear++; }
+  const lastDay = new Date(targetYear, targetMonth, 0).getDate();
+  const day = Math.min(anchorDay, lastDay);
+  return `${targetYear}-${String(targetMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 /**
  * Every interest payment owed between the asset's `interest_last_paid` and
- * `today`, oldest first, plus the date the marker should move to.
+ * `today`, oldest first, plus the date the marker should move to and the total
+ * to credit.
+ *
+ * `total` exists so the caller applies ONE balance write. applyAssetDelta
+ * reads asset.value from the cached `assets` array and never writes back, so
+ * calling it once per payment makes every call after the first read a stale
+ * value and clobber its predecessor - the trap this repo already documents for
+ * bulk expense delete, where netAmountByAccount() solves the same problem.
  *
  * Compounds across the catch-up, because a real account does: each month is
  * computed on the balance including what was credited the month before.
@@ -72,42 +110,44 @@ export function monthlyInterest(balance, ratePct) {
  * caller seeds it instead. Back-paying would invent interest on balances this
  * app never knew, since it holds no history of what the balance was.
  *
- * @returns {{payments: {date: string, amount: number, balanceAfter: number}[], lastPaid: string|null, capped: boolean}}
+ * @returns {{payments: {date: string, amount: number}[], lastPaid: string|null, total: number, capped: boolean}}
  */
-export function interestPayments(asset, today, startingBalance = null) {
-  const none = { payments: [], lastPaid: null, capped: false };
+export function interestPayments(asset, today) {
+  const none = { payments: [], lastPaid: null, total: 0, capped: false };
   if (!interestEligible(asset) || !today) return none;
   const from = asset.interest_last_paid;
   if (!from) return none;
 
+  const anchorDay = Number(from.split("-")[2]);
+  if (!Number.isFinite(anchorDay)) return none;
+
   const rate = Number(asset.interest_rate);
-  let balance = Number(startingBalance ?? asset.value);
+  let balance = Number(asset.value);
   if (!Number.isFinite(balance)) return none;
 
   const payments = [];
   let marker = from;
+  let total = 0;
   let cycles = 0;
   let capped = false;
 
   for (;;) {
-    const next = advanceIncomeDate(marker, "monthly");
-    // A cadence that cannot advance would loop forever against the cap while
-    // writing the same month over and over - the exact bug autoLogDueIncome
-    // was fixed for. Stop rather than log.
-    if (!next || next === marker) break;
+    const next = addMonthAnchored(marker, anchorDay);
+    if (!next || next <= marker) break;
     if (next > today) break;
     if (cycles >= MAX_INTEREST_CATCHUP_MONTHS) { capped = true; break; }
 
     const amount = monthlyInterest(balance, rate);
     if (amount > 0) {
       balance = r2(balance + amount);
-      payments.push({ date: next, amount, balanceAfter: balance });
+      total = r2(total + amount);
+      payments.push({ date: next, amount });
     }
     marker = next;
     cycles++;
   }
 
-  return { payments, lastPaid: marker === from ? null : marker, capped };
+  return { payments, lastPaid: marker === from ? null : marker, total, capped };
 }
 
 /** What the next payment would be worth today, for showing on the card. */

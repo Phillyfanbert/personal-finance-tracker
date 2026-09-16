@@ -31,7 +31,7 @@ import {
   detectRecurringExpenses,
 } from "./subscriptions.js";
 import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
-import { INTEREST_BEARING_ASSET_TYPES, interestEligible, interestPayments, nextInterestEstimate } from "./savingsInterest.js";
+import { INTEREST_BEARING_ASSET_TYPES, interestEligible, interestPayments, nextInterestEstimate, roundRate } from "./savingsInterest.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
@@ -3644,13 +3644,20 @@ $("adjustInterestSaveBtn").onclick = async () => {
       flagField("adjustInterestRate", "Enter a rate of 0 or more, or leave it blank.");
       return toast("An interest rate can't be negative", "error");
     }
-    if (rate === 0) {
-      flagField("adjustInterestRate", "A rate of 0 is the same as having none. Leave it blank instead.");
-      return toast("Leave it blank rather than entering 0", "error");
-    }
     if (rate > 100) {
       flagField("adjustInterestRate", "That is above 100% a year. Check the figure on your statement.");
       return toast("That rate looks too high", "error");
+    }
+    // Rounded to what the column can actually hold BEFORE judging it, because
+    // assets.interest_rate is numeric(5,2). Anything under 0.005 is stored as
+    // 0.00 by the database, which interestEligible() then rejects forever - so
+    // a rate like 0.001 was accepted, seeded a marker, showed a saved rate and
+    // silently never paid a cent. Refused for the same reason a zero credit
+    // limit and a zero overdraft are: it stores a number that does nothing.
+    rate = roundRate(rate);
+    if (rate === 0) {
+      flagField("adjustInterestRate", "That rounds to 0% a year, which is the same as having none. Enter at least 0.01, or leave it blank.");
+      return toast("Leave it blank rather than entering 0", "error");
     }
   }
   // Seeded to TODAY the first time a rate is set, never left null for a
@@ -9043,14 +9050,17 @@ async function autoLogDueIncome() {
 // Never silent. It toasts what it added, every payment is an undoable row in
 // Recent History, and it only ever touches an account the user gave a rate.
 //
-// Iterates ACCOUNTS rather than assets because the money has to move through
-// applyAssetDelta and be attributed to an account id: undoActivity()'s income
-// branch resolves the asset via account.linked_asset_id, so a standalone asset
-// with no account would log a row that could not be undone.
+// Iterates ACCOUNTS rather than assets because the money has to be attributed
+// to an account id: undoActivity()'s income branch resolves the asset via
+// account.linked_asset_id, so a standalone asset with no account would log a
+// row that could not be undone.
 async function autoLogSavingsInterest() {
   const today = localDateISO();
-  let paidCount = 0;
+  const rows = [];
   let paidTotal = 0;
+  let accountsPaid = 0;
+  let mostMonths = 0;
+  let anyCapped = false;
 
   for (const account of accounts) {
     if (!account.linked_asset_id || account.archived_at) continue;
@@ -9060,32 +9070,73 @@ async function autoLogSavingsInterest() {
     // overwrite anything credited here on the next load.
     if (asset.parent_asset_id) continue;
 
-    const { payments, lastPaid } = interestPayments(asset, today);
+    const { payments, lastPaid, total, capped } = interestPayments(asset, today);
     if (!lastPaid) continue;
 
-    for (const p of payments) {
-      await applyAssetDelta(account.id, null, p.amount, +1);
-      await logActivity(
-        "income", `Interest from ${asset.name} (${asset.interest_rate}% a year)`,
-        p.amount, p.date, account.id
-      );
-      paidCount++;
-      paidTotal = Math.round((paidTotal + p.amount) * 100) / 100;
+    // ONE write, carrying the new balance and the marker together.
+    //
+    // Two bugs are closed by that being a single statement. Calling
+    // applyAssetDelta once per payment read a stale cached balance every time
+    // after the first and clobbered its predecessor, so a three-month
+    // catch-up credited only the last month while logging all three as
+    // income. And updating the balance and the marker separately left a
+    // window where the money landed and the marker did not, which re-pays the
+    // same months on the next load. Postgres applies one UPDATE atomically,
+    // so the balance and the marker now move together or neither does.
+    const newValue = total > 0
+      ? Math.round((Number(asset.value) + total) * 100) / 100
+      : Number(asset.value);
+    const { error } = await sb.from("assets")
+      .update({ value: newValue, interest_last_paid: lastPaid })
+      .eq("id", asset.id);
+    // Nothing moved and the marker did not advance, so the same months are
+    // retried on the next load. supabase-js RESOLVES on a query error instead
+    // of rejecting, so this has to be checked explicitly - a try/catch around
+    // it would catch nothing.
+    if (error) {
+      toast(`Could not add interest to ${asset.name}: ${error.message}`, "error");
+      continue;
     }
-    // Written even when nothing was paid (an overdrawn month), or the same
-    // month would be retried on every load forever.
-    const { error } = await sb.from("assets").update({ interest_last_paid: lastPaid }).eq("id", asset.id);
-    // A failed write here would re-pay the same month on the next load, which
-    // is money invented out of nothing, so it is surfaced rather than ignored.
-    // supabase-js RESOLVES on a query error instead of rejecting, so this has
-    // to be checked explicitly - a try/catch around it would catch nothing.
-    if (error) toast(`Could not record that interest was added to ${asset.name}: ${error.message}`, "error");
+
+    for (const pmt of payments) {
+      rows.push({
+        kind: "income",
+        description: `Interest from ${asset.name} (${asset.interest_rate}% a year)`,
+        amount: pmt.amount,
+        occurred_at: pmt.date,
+        account_id: account.id,
+      });
+    }
+    if (payments.length) {
+      accountsPaid++;
+      paidTotal = Math.round((paidTotal + total) * 100) / 100;
+      mostMonths = Math.max(mostMonths, payments.length);
+    }
+    if (capped) anyCapped = true;
   }
 
-  if (paidCount) {
-    await loadAssets();
-    toast(`Added ${fmt(paidTotal)} of interest across ${paidCount} month${paidCount === 1 ? "" : "s"}`);
-  }
+  if (!rows.length) return;
+
+  // Inserted as ONE statement rather than through logActivity(), which
+  // refetches the whole activity table after every successful insert - a
+  // 36-month catch-up would otherwise mean 36 full reloads awaited one after
+  // another during startup. The balance is already correct at this point, so
+  // a failure here costs history rows rather than money, and it is surfaced.
+  const { error } = await sb.from("account_activity").insert(rows);
+  if (error) toast(`Interest was added, but its history could not be saved: ${error.message}`, "error");
+
+  await loadAssets();
+  await loadAccountActivity();
+  renderRecentTransactions();
+
+  // Counts the real thing in each case: how many accounts were paid, and the
+  // longest catch-up among them. paidCount used to be the number of PAYMENTS
+  // and was worded as months, so two accounts each paying one month read as a
+  // two-month catch-up.
+  const where = accountsPaid === 1 ? "" : ` across ${accountsPaid} accounts`;
+  const months = mostMonths === 1 ? "" : ` (${mostMonths} months of catch-up)`;
+  const more = anyCapped ? " More is still owed and will be added next time you open the app." : "";
+  toast(`Added ${fmt(paidTotal)} of interest${where}${months}.${more}`);
 }
 
 // ---- RECURRING-EXPENSE DETECTION (README appendix open decision, the project notes

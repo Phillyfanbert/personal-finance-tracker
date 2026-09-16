@@ -31,6 +31,7 @@ import {
   detectRecurringExpenses,
 } from "./subscriptions.js";
 import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
+import { INTEREST_BEARING_ASSET_TYPES, interestEligible, interestPayments, nextInterestEstimate } from "./savingsInterest.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
@@ -825,6 +826,7 @@ async function initInner() {
   await Promise.all([loadExpenses(), loadSubscriptions(), loadIncome()]);
   await autoLogDueSubscriptions();
   await autoLogDueIncome();
+  await autoLogSavingsInterest();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
   // After loadAssets(), since this reads assets.price_symbol.
@@ -3577,6 +3579,15 @@ function openAssetAdjust(accountId) {
   const showOverdraft = OVERDRAFT_ELIGIBLE_ASSET_TYPES.has(asset.type);
   $("adjustOverdraftSection").classList.toggle("hidden", !showOverdraft);
   if (showOverdraft) $("adjustOverdraftLimit").value = asset.overdraft_limit ?? "";
+  // Same per-type gating and the same hidden-not-disabled reasoning: a
+  // brokerage does not pay a stated rate, so offering the field would imply
+  // it did.
+  const showInterest = INTEREST_BEARING_ASSET_TYPES.has(asset.type);
+  $("adjustInterestSection").classList.toggle("hidden", !showInterest);
+  if (showInterest) {
+    $("adjustInterestRate").value = asset.interest_rate ?? "";
+    renderInterestNote(asset);
+  }
   panel.classList.remove("hidden");
 }
 
@@ -3615,6 +3626,61 @@ $("adjustOverdraftSaveBtn").onclick = async () => {
   if (error) { flagField("adjustOverdraftLimit", error.message); return toast(error.message, "error"); }
   await loadAssets();
   toast(limit === null ? "Overdraft removed" : `Overdraft allowance set to ${fmt(limit)}`);
+}
+
+$("adjustInterestSaveBtn").onclick = async () => {
+  const asset = assets.find((a) => a.id === adjustingAssetId);
+  if (!asset) return;
+  const raw = $("adjustInterestRate").value.trim();
+  // Blank clears the rate back to "this account pays none", which is the
+  // honest way to say so. Zero is refused for the same reason a zero credit
+  // limit and a zero overdraft are: it stores a number that does nothing.
+  let rate = null;
+  if (raw !== "") {
+    rate = parseFloat(raw);
+    // min/max on a number input is a browser hint, not enforced on a typed or
+    // pasted value, so the real bounds are checked here.
+    if (!Number.isFinite(rate) || rate < 0) {
+      flagField("adjustInterestRate", "Enter a rate of 0 or more, or leave it blank.");
+      return toast("An interest rate can't be negative", "error");
+    }
+    if (rate === 0) {
+      flagField("adjustInterestRate", "A rate of 0 is the same as having none. Leave it blank instead.");
+      return toast("Leave it blank rather than entering 0", "error");
+    }
+    if (rate > 100) {
+      flagField("adjustInterestRate", "That is above 100% a year. Check the figure on your statement.");
+      return toast("That rate looks too high", "error");
+    }
+  }
+  // Seeded to TODAY the first time a rate is set, never left null for a
+  // catch-up to find. This app holds no record of what the balance was in past
+  // months, so back-paying would invent interest on balances it never knew.
+  // Clearing the rate clears the marker with it, so re-adding one later starts
+  // fresh rather than paying for the gap it was switched off for.
+  const patch = rate === null
+    ? { interest_rate: null, interest_last_paid: null }
+    : { interest_rate: rate, interest_last_paid: asset.interest_last_paid || localDateISO() };
+  const { error } = await sb.from("assets").update(patch).eq("id", asset.id);
+  if (error) { flagField("adjustInterestRate", error.message); return toast(error.message, "error"); }
+  await loadAssets();
+  const updated = assets.find((a) => a.id === adjustingAssetId);
+  if (updated) renderInterestNote(updated);
+  toast(rate === null ? "Interest rate removed" : `Interest set to ${rate}% a year`);
+};
+
+// One definition, read when the panel opens and again after a save, so the
+// "about $X a month" line can never describe a rate other than the stored one.
+// States the consequence in this account's own numbers rather than in the
+// abstract, the same way the credit-limit field says that filling it in starts
+// refusing charges.
+function renderInterestNote(asset) {
+  const note = $("adjustInterestNote");
+  const estimate = nextInterestEstimate(asset);
+  note.classList.toggle("hidden", !estimate);
+  if (!estimate) return;
+  note.textContent = `At ${asset.interest_rate}% on ${fmt(asset.value)}, that is about ${fmt(estimate)} a month.`
+    + (asset.interest_last_paid ? ` Last added ${asset.interest_last_paid}.` : "");
 }
 
 $("adjustAddBtn").onclick = async () => {
@@ -8960,6 +9026,65 @@ async function autoLogDueIncome() {
     await loadAssets();
     await loadIncome();
     toast(`Logged ${loggedCount} income deposit${loggedCount === 1 ? "" : "s"} automatically`);
+  }
+}
+
+// ---- MONTHLY INTEREST ON DEPOSIT ACCOUNTS --------------------------------
+// A close mirror of autoLogDueIncome() above, and deliberately so: the
+// "fires whenever the app happens to be opened, double-charging or skipping
+// months" problem that keeps CREDIT interest manual is already solved by that
+// function's shape, a stored marker plus a catch-up loop with a cycle cap.
+//
+// What makes crediting safe here and not there: not crediting is also wrong,
+// and wrong in a guaranteed direction. A savings balance with no interest
+// applied falls behind the real one every single month. See
+// savingsInterest.js's own header for the full reasoning.
+//
+// Never silent. It toasts what it added, every payment is an undoable row in
+// Recent History, and it only ever touches an account the user gave a rate.
+//
+// Iterates ACCOUNTS rather than assets because the money has to move through
+// applyAssetDelta and be attributed to an account id: undoActivity()'s income
+// branch resolves the asset via account.linked_asset_id, so a standalone asset
+// with no account would log a row that could not be undone.
+async function autoLogSavingsInterest() {
+  const today = localDateISO();
+  let paidCount = 0;
+  let paidTotal = 0;
+
+  for (const account of accounts) {
+    if (!account.linked_asset_id || account.archived_at) continue;
+    const asset = assets.find((a) => a.id === account.linked_asset_id);
+    if (!asset || !interestEligible(asset)) continue;
+    // A holding under a parent is priced by syncParentAssetValue, which would
+    // overwrite anything credited here on the next load.
+    if (asset.parent_asset_id) continue;
+
+    const { payments, lastPaid } = interestPayments(asset, today);
+    if (!lastPaid) continue;
+
+    for (const p of payments) {
+      await applyAssetDelta(account.id, null, p.amount, +1);
+      await logActivity(
+        "income", `Interest from ${asset.name} (${asset.interest_rate}% a year)`,
+        p.amount, p.date, account.id
+      );
+      paidCount++;
+      paidTotal = Math.round((paidTotal + p.amount) * 100) / 100;
+    }
+    // Written even when nothing was paid (an overdrawn month), or the same
+    // month would be retried on every load forever.
+    const { error } = await sb.from("assets").update({ interest_last_paid: lastPaid }).eq("id", asset.id);
+    // A failed write here would re-pay the same month on the next load, which
+    // is money invented out of nothing, so it is surfaced rather than ignored.
+    // supabase-js RESOLVES on a query error instead of rejecting, so this has
+    // to be checked explicitly - a try/catch around it would catch nothing.
+    if (error) toast(`Could not record that interest was added to ${asset.name}: ${error.message}`, "error");
+  }
+
+  if (paidCount) {
+    await loadAssets();
+    toast(`Added ${fmt(paidTotal)} of interest across ${paidCount} month${paidCount === 1 ? "" : "s"}`);
   }
 }
 

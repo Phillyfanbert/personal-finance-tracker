@@ -55,7 +55,14 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ---- tiny helpers ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
-const fmt = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// The sign goes OUTSIDE the currency symbol: "-$40.00", not "$-40.00", which
+// is what prefixing "$" to a negative produced. Already wrong for an overdrawn
+// balance before refunds existed; refunds are simply the first figure that is
+// routinely negative, so it stopped being an edge case.
+const fmt = (n) => {
+  const v = Number(n || 0);
+  return (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 // Same numeric formatting as fmt(), no "$" prefix - a market index level
 // (Market overview card) is a points figure, not a dollar amount.
 const fmtNum = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -2376,6 +2383,7 @@ function futureDateError(dateStr, label) {
 const BACKWARD_LOOKING_DATE_FIELDS = [
   "fDate", "eDate", "sellDate", "contributionDate",
   "assetPurchaseDate", "debtDetailsStatementDate", "moneyInDate",
+  "refundDate", "dividendDate",
 ];
 function capBackwardLookingDates() {
   const today = localDateISO();
@@ -2801,6 +2809,9 @@ async function loadAccounts() {
   // account with no linked_asset_id - so offering a credit card here would
   // toast success and move no money.
   $("moneyInAccount").innerHTML = `<option value="">Choose an account</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  // Same asset-backed-only list again: a dividend paid out as cash lands in a
+  // real balance, which applyAssetDelta cannot move for a credit account.
+  $("dividendAccount").innerHTML = `<option value="">Choose an account</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
   // A previously-typed bank_name (including one added via the "not
   // recognized, add anyway" override in saveAcctBtn) becomes just as
   // suggestable as a seeded FDIC name next time - rankBankMatches reads
@@ -5202,6 +5213,58 @@ async function undoActivity(row) {
     const newFromValue = Math.round((Number(fromAsset.value) + Number(row.amount)) * 100) / 100;
     const { error: fromErr } = await sb.from("assets").update({ value: newFromValue }).eq("id", fromAsset.id);
     if (fromErr) return toast(fromErr.message);
+  } else if (row.kind === "holding_sale") {
+    // Selling moved FOUR things: a holding_sales row recording the realized
+    // gain, the holding's own quantity and blended cost basis, the proceeds
+    // into an account, and this history row. Before this branch existed the
+    // undo fell through the whole chain and deleted ONLY this row, so the
+    // shares stayed sold, the proceeds stayed spent-able, the realized gain
+    // stayed counted, and the one visible trace of it disappeared - an undo
+    // that made the record wrong instead of putting it back.
+    //
+    // account_activity does not carry the quantity or the basis removed, so
+    // the matching holding_sales row is what makes a real reversal possible.
+    const sales = holdingSales.filter((sale) =>
+      sale.asset_id === row.asset_id &&
+      sale.sold_on === row.occurred_at &&
+      Math.abs(Number(sale.proceeds) - Number(row.amount)) < 0.005);
+    // Exactly one, or nothing - the same rule selectAccountFromText applies.
+    // Two identical sales of the same holding on one day are genuinely
+    // ambiguous, and reversing the wrong one silently is worse than saying so.
+    if (sales.length !== 1) {
+      return toast(sales.length
+        ? "Can't undo automatically - there is more than one identical sale that day. Adjust the holding by hand."
+        : "Can't undo - the record of this sale is no longer there.");
+    }
+    const sale = sales[0];
+    const holding = assets.find((a) => a.id === row.asset_id);
+    if (!holding) return toast("Can't undo - that holding no longer exists.");
+
+    const account = accounts.find((a) => a.id === row.account_id);
+    const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
+    if (!asset) return toast("Can't undo - the account the money went into no longer exists.");
+    // Putting the shares back means taking the proceeds back out, and that
+    // money may already have been spent. Refused rather than floored, the same
+    // way every other reversal in this file refuses rather than destroying the
+    // difference.
+    const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
+    if (newValue < -overdraftAllowance(asset)) {
+      return toast(`Can't undo - ${asset.name} no longer holds the ${fmt(row.amount)} this sale paid in.`);
+    }
+
+    const restoredQty = Math.round((Number(holding.quantity || 0) + Number(sale.quantity)) * 1e6) / 1e6;
+    const restoredBasis = Math.round((Number(holding.purchase_price || 0) + Number(sale.cost_basis_removed)) * 100) / 100;
+    const { error: holdErr } = await sb.from("assets")
+      .update({ quantity: restoredQty, purchase_price: restoredBasis }).eq("id", holding.id);
+    if (holdErr) return toast(holdErr.message);
+    const { error: valErr } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+    if (valErr) return toast(valErr.message);
+    // Deleted last: while it exists the realized gain is still counted, which
+    // is the safe way round if anything above fails.
+    const { error: saleErr } = await sb.from("holding_sales").delete().eq("id", sale.id);
+    if (saleErr) return toast(saleErr.message);
+    await syncParentAssetValue(holding.parent_asset_id);
+    await loadHoldingSales();
   } else if (row.kind === "income") {
     // Always a positive deposit, so undoing is always a straight
     // subtraction - never a sign-dependent reversal the way asset_adjust's
@@ -5218,6 +5281,11 @@ async function undoActivity(row) {
   if (error) return toast(error.message);
   await loadAssets(); await loadDebts(); await loadAccountActivity();
   renderRecentTransactions();
+  // Undoing a sale puts shares and cost basis back, which the Investments
+  // panels are built from. They stay in the DOM while the Log page is on
+  // screen, so without this they would still show the position as sold until
+  // the next full load.
+  if (row.kind === "holding_sale") { renderInvestments(); renderRealizedGains(); renderNetWorth(); }
   toast("Undone");
 }
 
@@ -5347,6 +5415,165 @@ function openEdit(row) {
   openModal("editModal");
 }
 $("editClose").onclick = () => { closeModal("editModal"); editing = null; };
+
+// ---- DIVIDEND FROM A HOLDING --------------------------------------------
+// Selling at a gain was the only way this app could record a share paying
+// you, which left out the other half of how equities actually return money.
+//
+// Logged as `income` carrying asset_id, so it is attributable to the holding
+// that paid it with no new activity kind and no new table - asset_id is the
+// column `contribution` already uses for exactly this reason, most investment
+// assets being standalone with no account to indirect through.
+//
+// Deliberately does NOT touch the holding's own value or cost basis. A cash
+// dividend leaves the position untouched and arrives as money somewhere else;
+// adjusting the holding would double-count it against the next price sync,
+// which syncParentAssetValue() owns.
+let dividendAsset = null;
+
+function openDividendForm(assetId) {
+  const asset = assets.find((a) => a.id === assetId);
+  if (!asset) return;
+  dividendAsset = asset;
+  const label = asset.price_symbol || asset.name;
+  $("dividendSub").textContent = `Cash paid out by ${label}. It is recorded as money in, and the holding itself is left alone.`;
+  $("dividendAmount").value = "";
+  $("dividendDate").value = localDateISO();
+  $("dividendAccount").value = "";
+  capBackwardLookingDates();
+  openModal("dividendModal");
+}
+$("dividendClose").onclick = () => { closeModal("dividendModal"); dividendAsset = null; };
+
+$("dividendConfirmBtn").onclick = async () => {
+  if (!dividendAsset) return;
+  const amount = parseFloat($("dividendAmount").value);
+  if (!amount || amount <= 0) {
+    flagField("dividendAmount", "Enter how much was paid out.");
+    return toast("Enter a valid amount");
+  }
+  const accountId = $("dividendAccount").value;
+  if (!accountId) {
+    flagField("dividendAccount", "Pick where the money landed.");
+    return toast("Choose an account");
+  }
+  // Resolved before use: the picker goes stale when an account is archived or
+  // deleted in another tab, and an unguarded linked_asset_id would throw where
+  // the user sees only a Save that did nothing.
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account || !account.linked_asset_id || account.archived_at) {
+    flagField("dividendAccount", "That account is no longer available.");
+    return toast("Choose a valid account");
+  }
+  const date = $("dividendDate").value;
+  if (!date) { flagField("dividendDate", "Pick the date it was paid."); return toast("Choose a date"); }
+  const dateErr = futureDateError(date, "A dividend");
+  if (dateErr) { flagField("dividendDate", dateErr); return toast(dateErr); }
+  if (!(await confirmLargeAmount(amount, "this dividend"))) return;
+
+  const label = dividendAsset.price_symbol || dividendAsset.name;
+  await applyAssetDelta(accountId, null, amount, +1);
+  await logActivity(
+    "income", `Dividend from ${label}`, amount, date, accountId, null, null, dividendAsset.id
+  );
+  closeModal("dividendModal");
+  dividendAsset = null;
+  await loadAssets();
+  renderRecentTransactions();
+  toast(`${fmt(amount)} dividend recorded`);
+};
+
+// ---- MONEY BACK ON A PURCHASE -------------------------------------------
+// A return, a partial refund, a reimbursement, a statement credit: all the
+// same event, money coming back on something already bought.
+//
+// Recorded as a NEGATIVE expense in the original's own category, never as
+// income. Booking it as income would move BOTH sides of the savings rate for
+// one event and leave the category budget still showing the full spend, so a
+// $40 return would read as $40 earned and $40 spent. A negative expense
+// reduces exactly what it should, and because monthlyTotals(), budgetStatus()
+// and every Reports breakdown already SUM amounts, none of them need to learn
+// that refunds exist.
+//
+// The balance movement is the same pair undoExpense() applies, for the same
+// reason: money comes back to the asset, or comes off what is owed.
+let refunding = null;
+
+$("openRefundBtn").onclick = () => {
+  if (!editing) return;
+  refunding = editing;
+  const paid = Math.abs(Number(refunding.amount) || 0);
+  const what = refunding.description || refunding.merchant || refunding.category || "this purchase";
+  $("refundSub").textContent = `You paid ${fmt(paid)} for ${what} on ${refunding.occurred_at}. Enter the whole amount, or less if only part came back.`;
+  $("refundAmount").value = paid ? paid.toFixed(2) : "";
+  $("refundDate").value = localDateISO();
+  capBackwardLookingDates();
+  openModal("refundModal");
+};
+$("refundClose").onclick = () => { closeModal("refundModal"); refunding = null; };
+
+$("refundConfirmBtn").onclick = async () => {
+  if (!refunding) return;
+  const amount = parseFloat($("refundAmount").value);
+  if (!amount || amount <= 0) {
+    flagField("refundAmount", "Enter how much came back.");
+    return toast("Enter a valid amount");
+  }
+  const paid = Math.abs(Number(refunding.amount) || 0);
+  // You cannot be given back more than you handed over for one purchase, and
+  // allowing it would quietly turn a refund into invented income.
+  if (amount > paid + 0.005) {
+    flagField("refundAmount", `That is more than the ${fmt(paid)} you paid. Enter ${fmt(paid)} or less.`);
+    return toast("A refund cannot be larger than the purchase", "error");
+  }
+  const date = $("refundDate").value;
+  if (!date) { flagField("refundDate", "Pick the date it came back."); return toast("Choose a date"); }
+  const dateErr = futureDateError(date, "Money back");
+  if (dateErr) { flagField("refundDate", dateErr); return toast(dateErr); }
+
+  const account = accounts.find((a) => a.id === refunding.account_id);
+  // A refund onto a CREDIT account reduces what is owed, and
+  // applyLiabilityDelta floors at $0 - so refunding more than the current
+  // balance would silently destroy the difference, which is exactly how the
+  // overpayment bug vaporised $484. A real card would carry a credit balance;
+  // this app has no concept to hold one, so it is refused rather than floored.
+  if (account && account.linked_liability_id) {
+    const debt = debts.find((d) => d.id === account.linked_liability_id);
+    const owed = debt ? Number(debt.balance) : 0;
+    if (debt && amount > owed + 0.005) {
+      flagField("refundAmount", `${debt.name} only has ${fmt(owed)} owed on it, so ${fmt(amount)} cannot come off it. Record the rest with Money received once the card refunds you.`);
+      return toast("That is more than is still owed on the card", "error");
+    }
+  }
+
+  const original = refunding;
+  const { error } = await sb.from("expenses").insert({
+    // user_id is left to the column default, the same as every other expense
+    // insert in this file.
+    // NEGATIVE: this is spending undone, not money earned.
+    amount: -amount,
+    description: `Money back: ${original.description || original.merchant || original.category}`,
+    merchant: original.merchant ?? null,
+    category: original.category,
+    payment_type: original.payment_type,
+    account_id: original.account_id,
+    occurred_at: date,
+  });
+  if (error) { flagField("refundAmount", error.message); return toast(error.message, "error"); }
+
+  // The same pair undoExpense() applies, and for the same reason: an imported
+  // row never moved a balance, so a refund against one must not move one back.
+  if (!isImported(original)) {
+    await applyAssetDelta(original.account_id, original.payment_type, amount, +1);
+    await applyLiabilityDelta(original.account_id, original.payment_type, amount, -1);
+  }
+  closeModal("refundModal");
+  closeModal("editModal");
+  refunding = null; editing = null;
+  await loadAssets(); await loadDebts(); await loadExpenses();
+  toast(`${fmt(amount)} recorded as money back`);
+};
+
 
 $("editSave").onclick = async () => {
   if (!editing) return;
@@ -6375,7 +6602,7 @@ function renderInvestments() {
           </div>
           <div style="text-align:right">
             <div class="amt">${fmt(h.currentValue)}<button type="button" class="x" data-del-holding="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(h.symbol)}">✕</button></div>
-            ${h.quantity ? `<div><button type="button" class="link-action" data-sell-holding="${a.id}" style="color:var(--accent)" aria-label="Sell ${esc(h.symbol)}">Sell</button></div>` : ""}
+            ${h.quantity ? `<div><button type="button" class="link-action" data-sell-holding="${a.id}" style="color:var(--accent)" aria-label="Sell ${esc(h.symbol)}">Sell</button><button type="button" class="link-action muted" data-dividend-holding="${a.id}" style="margin-left:12px" aria-label="Record a dividend from ${esc(h.symbol)}">Dividend</button></div>` : ""}
             <div style="font-size:12px;color:${gainColor(h.gainLoss)}">${h.gainLoss != null ? `${fmt(h.gainLoss)} (${signedPct(h.gainLossPct)})` : "no cost basis set"}</div>
             ${h.dayChange != null ? `<div style="font-size:12px;color:${gainColor(h.dayChange)}">today ${fmt(h.dayChange)} (${signedPct(h.dayChangePct)})</div>` : ""}
           </div>
@@ -6417,6 +6644,9 @@ function renderInvestments() {
   });
   document.querySelectorAll("[data-edit-holding]").forEach((el) => {
     el.onclick = () => openHoldingForm(assets.find((a) => a.id === el.dataset.editHolding));
+  });
+  document.querySelectorAll("[data-dividend-holding]").forEach((el) => {
+    el.onclick = (ev) => { ev.stopPropagation(); openDividendForm(el.dataset.dividendHolding); };
   });
   document.querySelectorAll("[data-sell-holding]").forEach((el) => {
     el.onclick = (ev) => {

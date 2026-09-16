@@ -47,14 +47,14 @@ export const TOUR_STEPS = {
     {
       target: "logSubTabs",
       title: "Three tabs on this page",
-      body: "Spending is where you write down what you bought. Bills is anything that charges you on a schedule, like a phone plan. Accounts is what you have and what you owe. The three numbers above stay put whichever tab you are on, and the app remembers which one you were last using.",
+      body: "Spending is where you write down what you bought. Bills is anything that charges you on a schedule, like a phone plan. Money is what you have, what you owe, and what comes in. The three numbers above stay put whichever tab you are on, and the app remembers which one you were last using.",
       placement: "bottom",
     },
     {
       target: "quickAddCard",
       subtab: "logSubSpending",
       title: "Writing down something you bought",
-      body: "Type it however you would say it out loud, like \"14 lunch chipotle debit\". The app pulls out the amount, where you spent it, and which card or account you used, then shows you what it worked out before saving. Nothing is saved until you press Save, so it is safe to experiment. If you have a file of transactions from your bank, Import CSV brings those in instead.",
+      body: "Type it however you would say it out loud, like \"14 lunch chipotle debit\". The app pulls out the amount, where you spent it, and which card or account you used, then shows you what it worked out before saving. Nothing is saved until you press Save, so it is safe to experiment. If you have a file of transactions from your bank, Import CSV brings those in instead. Money received is the other direction: money that came IN once, like a side job or a gift.",
       placement: "bottom",
     },
     {

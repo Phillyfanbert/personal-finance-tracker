@@ -130,12 +130,21 @@ export function annualIncome(sources) {
 // it out here would make a real, already-paid deposit stop counting as
 // evidence of income at the exact moment it actually arrived. A recurring
 // source turned inactive (a lost job) correctly still excludes.
-export function hasAnyIncome(sources) {
-  if (!Array.isArray(sources)) return false;
-  return sources.some((s) => {
+//
+// `activity` is account_activity rows already filtered to kind "income", and
+// it is counted for the same reason one_time sources are. A one-off recorded
+// through Money received never becomes an `income` row at all - it has
+// nothing to recur - so reading the sources table alone would tell someone
+// whose only earnings are cash side jobs that no income is recorded, which is
+// precisely the "tips, seasonal work, self-employment" the real test names.
+// annualIncome() still excludes both, correctly: a past deposit is not a rate.
+export function hasAnyIncome(sources, activity = []) {
+  const real = (amount) => Number.isFinite(amount) && amount > 0;
+  const fromSources = Array.isArray(sources) && sources.some((s) => {
     if (!s) return false;
-    const amount = Number(s.amount);
-    if (!Number.isFinite(amount) || amount <= 0) return false;
+    if (!real(Number(s.amount))) return false;
     return s.cadence === "one_time" || s.is_active !== false;
   });
+  if (fromSources) return true;
+  return Array.isArray(activity) && activity.some((a) => a && real(Number(a.amount)));
 }

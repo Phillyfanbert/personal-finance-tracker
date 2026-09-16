@@ -724,7 +724,7 @@
       <div id="logSubSpending">
       <!-- Quick add -->
       <div class="card quickadd" id="quickAddCard">
-        <h2>Expenses Quick Add</h2>
+        <h2>Quick Add</h2>
         <label for="quick" class="hidden">Quick add</label>
         <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" style="margin-top:8px" />
         <p class="muted" style="font-size:12px;margin:8px 0 0">Type it however you would say it, like "14 lunch chipotle debit". The app fills in the rest for you to check before saving.</p>
@@ -749,7 +749,10 @@
             <button class="secondary" id="cancelBtn">Cancel</button>
           </div>
         </div>
-        <button class="secondary" id="openCsvImportBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">Import CSV</button>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="secondary btn-xs" id="openCsvImportBtn">Import CSV</button>
+          <button class="secondary btn-xs" id="moneyInFromQuickBtn">Money received</button>
+        </div>
       </div>
 
       <!-- Expense list -->
@@ -1307,9 +1310,12 @@
       <div class="card" id="incomeSourcesCard">
         <div class="topbar" style="margin-bottom:6px">
           <h2>Income sources</h2>
-          <button class="secondary" id="addIncomeBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
+          <div style="display:flex;gap:8px">
+            <button class="secondary btn-xs" id="moneyInFromIncomeBtn">Money received</button>
+            <button class="secondary btn-xs" id="addIncomeBtn">+ Add</button>
+          </div>
         </div>
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Recurring income (paychecks, etc.) - logged automatically once each one comes due, the same way a bill charge is. Tap one to edit.</p>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Money that arrives regularly, like a paycheck - logged automatically once each one comes due, the same way a bill charge is. Tap one to edit. Got paid once off the books? Use Money received.</p>
         <div id="incomeList" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
 
@@ -2249,6 +2255,41 @@
     </div>
   </div>
 
+  <!-- One-off money in: a side job, a gift, a refund, something sold.
+       Deliberately NOT a row in `income`. That table holds recurring
+       DEFINITIONS the app auto-logs when they come due, and a one-off has
+       nothing to recur - filing one there leaves a deactivated "source"
+       describing something that was never a source, and credits nothing
+       until the next app load, because autoLogDueIncome() only runs in
+       init().
+
+       This writes the SAME account_activity row autoLogDueIncome() writes
+       when a source falls due, so it needs no new plumbing anywhere: it
+       shows in Recent History, undoActivity()'s existing `income` branch
+       already reverses it, the Log export picks it up under "Other money
+       movements", and it counts in Money in and out and the savings rate.
+
+       Paid into is asset-backed only, the same filter and the same reason
+       as Transfer and incAccount: applyAssetDelta is a silent no-op for an
+       account with no linked_asset_id, so a credit-type account here would
+       toast success and move nothing. -->
+  <div id="moneyInModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="moneyInTitle">
+    <div class="sheet">
+      <div class="topbar"><strong id="moneyInTitle">Money received</strong><button class="secondary btn-xs" id="moneyInClose" aria-label="Close">✕</button></div>
+      <p class="muted" style="font-size:var(--fs-xs);margin:0 0 8px">Money that came in once, not on a schedule: a side job, a gift, a refund, something you sold. For money that arrives regularly, add it under Income sources instead so the app can log it for you.</p>
+      <div class="row">
+        <div><label for="moneyInAmount">Amount (required)</label><input id="moneyInAmount" type="number" step="0.01" min="0" inputmode="decimal" /></div>
+        <div><label for="moneyInDate">Date (required)</label><input id="moneyInDate" type="date" /></div>
+      </div>
+      <label for="moneyInAccount">Paid into (required)</label>
+      <select id="moneyInAccount"></select>
+      <label for="moneyInDesc">What was it for (optional)</label>
+      <input id="moneyInDesc" placeholder="Sold my old bike" />
+      <div style="height:12px"></div>
+      <button id="moneyInConfirmBtn">Add money received</button>
+    </div>
+  </div>
+
   <div id="fundContributeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fundContributeTitle">
     <div class="sheet">
       <div class="topbar"><strong id="fundContributeTitle">Set money aside</strong><button class="secondary" id="fundContributeClose" style="width:auto;padding:6px 12px" aria-label="Close">✕</button></div>
@@ -2630,7 +2671,7 @@
             <text x="28" y="24" fill="var(--muted)" font-size="12.5">This month / Entries / Income per year - always shown</text>
             <text x="28" y="54" fill="var(--accent)" font-size="13" font-weight="600">Spending tab</text>
             <rect x="10" y="74" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="98" fill="var(--text)" font-size="14">Expenses Quick Add</text>
+            <text x="40" y="98" fill="var(--text)" font-size="14">Quick Add</text>
             <rect x="10" y="118" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="142" fill="var(--text)" font-size="14">Recent History</text>
             <text x="28" y="186" fill="var(--accent)" font-size="13" font-weight="600">Bills tab</text>
@@ -2655,14 +2696,15 @@
             <text x="40" y="626" fill="var(--text)" font-size="14">Income sources</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">This page has three tabs, and the three totals at the top stay on screen whichever one you are looking at. Spending is where you write things down, Bills is anything that charges you on a schedule, and Accounts is what you have and what you owe. A budget-warning banner can appear above the tabs when a category is close to or over its limit. Tap any row above to jump to what it does.</p>
+        <p class="muted" style="font-size:12px;margin:-10px 0 18px">This page has three tabs, and the three totals at the top stay on screen whichever one you are looking at. Spending is where you write things down, Bills is anything that charges you on a schedule, and Money is what you have, what you owe, and what comes in. A budget-warning banner can appear above the tabs when a category is close to or over its limit. Tap any row above to jump to what it does.</p>
 
         <div class="help-topic" id="helpTopic-expenses-quick-add">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-expenses-quick-add-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Expenses Quick Add</button></h3>
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-expenses-quick-add-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Quick Add</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-expenses-quick-add-body">
           <p>Type a whole expense as free text, e.g. "$14 lunch chipotle debit" - amount, merchant, and a matching account (if you name a payment type like "debit" or a bank name) are detected automatically as you type. This always works with no setup (a built-in keyword parser). If this household's optional Gemma server is set up, a second pass runs a moment later and can fill in fields the keyword parser missed or got less precisely - you'll see "Asking Gemma..." then "Parsed by Gemma" in small text under the field. Nothing is saved until you tap Save.</p>
           <p>Four fields are required before Save will go through: Amount, Account, Category, Date. Any of the four that's still empty gets a live red border the whole time, not just after a rejected Save - it clears the instant you fill it in. Description/merchant is the only optional field.</p>
           <p>If the account it guessed is wrong (or it couldn't guess), just pick the right one from the Account dropdown yourself - it never blocks you, it just doesn't guess when it isn't confident (for example, two Chase accounts and the text only says "chase").</p>
+          <p><strong>Money received</strong> (next to Import CSV) is for money coming IN that is not a regular paycheck: a side job, a gift, a refund, something you sold. It asks for four things and adds the money to the account straight away. It is not the same as an income source: a source is something that repeats, which the app logs for you each time it comes due, and this is a one-off that has already happened. Both show up in Recent History, both can be undone there, and both count in Money in and out on the Reports page.</p>
           <p><strong>Import CSV</strong> (the small button under the box) brings in a file from your bank or another app, in four steps: pick the file, check the columns, look over what it found, then confirm. The file never leaves your device.</p>
           <p>It reads the column names and fills the settings in for you, so usually there is nothing to change. It handles both shapes of bank file: one where a single amount column goes negative for money spent, and one with separate money-out and money-in columns. When it spots the second kind it uses those two columns and stops asking about signs, because the column already says which direction the money went.</p>
           <p><strong>One file can bring in both what you spent and what you were paid.</strong> "What is in this file?" is set to read both by default, which is right for a normal bank statement. Change it to one or the other if your file only holds one kind, and anything pointing the other way is skipped instead of being brought in backwards. Money you received is shown in green with a plus sign so you can tell the two apart before confirming.</p>

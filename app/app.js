@@ -1707,7 +1707,13 @@ function approxAge(profile) {
 // Returns null when the profile has no birth year rather than nagging: an
 // unanswered profile field is not evidence of anything, and this app has a
 // standing rule against stating a number it does not actually know.
-function accountEligibilityWarning(type, profile, sources) {
+// Income the app has actually watched land, as opposed to a recurring
+// definition that may never have paid out yet. Money received writes only
+// these, so the eligibility check would otherwise not see a cash side job at
+// all - see hasAnyIncome() in income.js.
+const loggedIncomeActivity = () => accountActivity.filter((a) => a.kind === "income");
+
+function accountEligibilityWarning(type, profile, sources, incomeActivity = []) {
   const rule = ACCOUNT_AGE_RULES[type];
   if (!rule) return null;
   const age = approxAge(profile);
@@ -1734,7 +1740,7 @@ function accountEligibilityWarning(type, profile, sources) {
   // nothing here is ever manually typed, it just reflects whatever the
   // user has already logged on the Income sources form.
   if (rule.under21NeedsIncome && age != null && age < 21 && age >= 18) {
-    if (!hasAnyIncome(sources)) {
+    if (!hasAnyIncome(sources, incomeActivity)) {
       return `You are around ${age}, and no income is recorded. Under 21, US law requires you to show independent income or have a cosigner for a ${label.toLowerCase()}. ${rule.note}`;
     }
   }
@@ -2085,7 +2091,7 @@ function renderAccountTypeRequirement(type) {
   // the line is informational by default and never scolds by simply existing.
   // The "Check this" prefix is what carries that in words - the note itself
   // is identical in both states, so the tint alone stated nothing reachable.
-  const warn = accountEligibilityWarning(type, profile, incomeSources);
+  const warn = accountEligibilityWarning(type, profile, incomeSources, loggedIncomeActivity());
   el.textContent = warn ? `Check this: ${rule.note}` : rule.note;
   el.style.color = warn ? "var(--warn)" : "";
 }
@@ -2163,6 +2169,87 @@ $("transferConfirmBtn").onclick = async () => {
   toast("Transfer recorded");
 };
 
+// ---- MONEY RECEIVED: a one-off deposit, not a recurring source ------------
+// Reachable from two buttons (Quick Add on the Spending sub-tab, Income
+// sources on Money) because both cards raise the question. They open this ONE
+// modal rather than growing a second entry path, which would drift the first
+// time either was tuned - the same reason budgetRowHtml() is shared.
+//
+// Writes the SAME account_activity row autoLogDueIncome() writes when a
+// source falls due. See the modal's own comment in index.html for why a
+// one-off deliberately never becomes an `income` row.
+const REQUIRED_MONEY_IN_FIELDS = ["moneyInAmount", "moneyInAccount", "moneyInDate"];
+// Fourth instance of the live red-border pattern, reused rather than
+// reinvented (after quick add, holdings and income).
+function updateMoneyInFieldHighlighting() {
+  for (const id of REQUIRED_MONEY_IN_FIELDS) {
+    const el = $(id);
+    if (el) el.classList.toggle("field-required", !el.value);
+  }
+}
+for (const id of REQUIRED_MONEY_IN_FIELDS) {
+  const el = $(id);
+  if (!el) continue;
+  el.addEventListener("input", updateMoneyInFieldHighlighting);
+  el.addEventListener("change", updateMoneyInFieldHighlighting);
+}
+
+function openMoneyInModal() {
+  $("moneyInAmount").value = "";
+  $("moneyInDesc").value = "";
+  $("moneyInAccount").value = "";
+  $("moneyInDate").value = localDateISO();
+  // Re-capped on open as well as at load: an app left open past midnight
+  // would otherwise still be capped to yesterday.
+  capBackwardLookingDates();
+  updateMoneyInFieldHighlighting();
+  openModal("moneyInModal");
+}
+$("moneyInFromQuickBtn").onclick = openMoneyInModal;
+$("moneyInFromIncomeBtn").onclick = openMoneyInModal;
+$("moneyInClose").onclick = () => closeModal("moneyInModal");
+
+$("moneyInConfirmBtn").onclick = async () => {
+  const amount = parseFloat($("moneyInAmount").value);
+  if (!amount || amount <= 0) {
+    flagField("moneyInAmount", "Enter how much came in.");
+    return toast("Enter a valid amount");
+  }
+  const accountId = $("moneyInAccount").value;
+  if (!accountId) {
+    flagField("moneyInAccount", "Pick where the money landed.");
+    return toast("Choose an account");
+  }
+  // Resolved before use. The picker goes stale whenever an account is deleted
+  // or archived in another tab or on another device, and an unguarded
+  // .linked_asset_id would throw where the user sees only a Save that quietly
+  // did nothing - the silent-no-op class this repo has already shipped twice.
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account || !account.linked_asset_id || account.archived_at) {
+    flagField("moneyInAccount", "That account is no longer available.");
+    return toast("Choose a valid account");
+  }
+  const date = $("moneyInDate").value;
+  if (!date) {
+    flagField("moneyInDate", "Pick the date it came in.");
+    return toast("Choose a date");
+  }
+  const dateErr = futureDateError(date, "Money received");
+  if (dateErr) { flagField("moneyInDate", dateErr); return toast(dateErr); }
+  // The confirmation is the LAST gate, after every cheap rejection: asking
+  // whether $150,000 is right and then refusing for a missing date wastes
+  // the answer.
+  if (!(await confirmLargeAmount(amount, "money received"))) return;
+
+  const description = $("moneyInDesc").value.trim() || "Money received";
+  await applyAssetDelta(accountId, null, amount, +1);
+  await logActivity("income", description, amount, date, accountId);
+  closeModal("moneyInModal");
+  await loadAssets();
+  renderRecentTransactions();
+  toast("Money received recorded");
+};
+
 // bank_name is separate from linked_asset_id/linked_liability_id - it's
 // which institution the account is at (Chase, Discover), purely a
 // display/grouping label; the linked asset/liability is what tracks the
@@ -2204,7 +2291,7 @@ $("saveAcctBtn").onclick = async () => {
     if (!ok) { flagField("acctCard"); return; }
   }
 
-  const eligibility = accountEligibilityWarning(type, profile, incomeSources);
+  const eligibility = accountEligibilityWarning(type, profile, incomeSources, loggedIncomeActivity());
   if (eligibility) {
     const ok = await confirmModal(eligibility, {
       title: "Check this account type",
@@ -2286,7 +2373,7 @@ function futureDateError(dateStr, label) {
 // on a typed or pasted value - the same lesson as min/max on a number.
 const BACKWARD_LOOKING_DATE_FIELDS = [
   "fDate", "eDate", "sellDate", "contributionDate",
-  "assetPurchaseDate", "debtDetailsStatementDate",
+  "assetPurchaseDate", "debtDetailsStatementDate", "moneyInDate",
 ];
 function capBackwardLookingDates() {
   const today = localDateISO();
@@ -2707,6 +2794,11 @@ async function loadAccounts() {
   // deposit needs a real linked_asset_id to actually apply via
   // applyAssetDelta, which a credit-type account never has.
   $("incAccount").innerHTML = `<option value="">None</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  // Same asset-backed-only list, same reason. A one-off deposit credits a
+  // real balance through applyAssetDelta, which does nothing at all for an
+  // account with no linked_asset_id - so offering a credit card here would
+  // toast success and move no money.
+  $("moneyInAccount").innerHTML = `<option value="">Choose an account</option>` + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
   // A previously-typed bank_name (including one added via the "not
   // recognized, add anyway" override in saveAcctBtn) becomes just as
   // suggestable as a seeded FDIC name next time - rankBankMatches reads

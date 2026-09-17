@@ -1,6 +1,6 @@
 {
-  "name": "Windfall",
-  "short_name": "Windfall",
+  "name": "Goldwell",
+  "short_name": "Goldwell",
   "description": "Private personal expense tracker with quick natural-language entry.",
   "start_url": "./index.html",
   "scope": "./",

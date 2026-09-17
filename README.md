@@ -1,4 +1,4 @@
-# Windfall
+# Goldwell
 
 A private, self-hosted app for tracking where your money goes, what you own
 and owe, and what your investments are doing. Built for one household of about

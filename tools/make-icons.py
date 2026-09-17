@@ -3,14 +3,15 @@
 
 Three gold coins caught mid-fall: the same shape as the in-app mark
 (.brand-mark in app/index.html), so the two must be changed together.
-Redesigned from an ascending-bars chart (2026-09-15) when the app moved past a
-bare "Finance Tracker" name - bars read as "growth over time", generic
-fintech iconography that fits almost any tracker and said nothing specific to
-any one name. The coins have survived two renames since (first Windfall, now
-Goldwell, both 2026-09-16) because the image reads correctly under both: gold
-is literally the app's own name, and three coins cascading toward a single
-landing point reads as coins going INTO a well - the same gesture as tossing
-a coin into a wishing well.
+Redesigned from an ascending-bars chart (2026-09-15) - bars read as "growth
+over time", generic fintech iconography that fits almost any tracker and
+said nothing specific. Gold reads as money on its own, with no name-specific
+pun required, which is why the mark survived every naming attempt tried and
+dropped in this session (2026-09-16) unchanged: three coins cascading toward
+a single landing point reads as coins going INTO a well - the same gesture
+as tossing a coin into a wishing well. The app currently has no branded
+name; manifest.json's "name" is "Personal Finance Tracker" and "short_name"
+is "PF Tracker" (the home-screen label).
 
 Colours are the app's own tokens, pre-composited onto the dark ground so the
 PNGs need no transparency:

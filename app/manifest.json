@@ -1,7 +1,7 @@
 {
-  "name": "Goldwell",
-  "short_name": "Goldwell",
-  "description": "Private personal expense tracker with quick natural-language entry.",
+  "name": "Personal Finance Tracker",
+  "short_name": "PF Tracker",
+  "description": "A private personal finance tracker for expenses, accounts, net worth and investments. Sign-in required.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

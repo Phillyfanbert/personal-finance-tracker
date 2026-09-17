@@ -1,6 +1,6 @@
 {
-  "name": "Expense Tracker",
-  "short_name": "Expenses",
+  "name": "Windfall",
+  "short_name": "Windfall",
   "description": "Private personal expense tracker with quick natural-language entry.",
   "start_url": "./index.html",
   "scope": "./",

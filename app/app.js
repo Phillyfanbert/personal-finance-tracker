@@ -1,5 +1,5 @@
 // ============================================================================
-// Expense Tracker - Phase 1 app logic (plain ES modules, no build step).
+// Windfall - Phase 1 app logic (plain ES modules, no build step).
 // Adds: editable expenses, the category-correction learning loop,
 // richer account management, and monthly charts.
 // RLS scopes every query to the signed-in user.

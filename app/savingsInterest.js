@@ -113,16 +113,27 @@ function addMonthAnchored(iso, anchorDay) {
  * @returns {{payments: {date: string, amount: number}[], lastPaid: string|null, total: number, capped: boolean}}
  */
 export function interestPayments(asset, today) {
+  if (!interestEligible(asset) || !today) return { payments: [], lastPaid: null, total: 0, capped: false };
+  return accrueMonthly(Number(asset.value), asset.interest_rate, asset.interest_last_paid, today);
+}
+
+/**
+ * The month-by-month accrual itself, with no idea what kind of balance it is
+ * running on. A savings account and a loan both compound monthly on the
+ * balance including what was added the month before, so both go through this
+ * rather than each keeping a loop that could drift from the other. Eligibility
+ * is the caller's job: what earns interest and what owes it are different
+ * questions.
+ */
+export function accrueMonthly(startBalance, ratePct, from, today) {
   const none = { payments: [], lastPaid: null, total: 0, capped: false };
-  if (!interestEligible(asset) || !today) return none;
-  const from = asset.interest_last_paid;
-  if (!from) return none;
+  if (!from || !today) return none;
 
   const anchorDay = Number(from.split("-")[2]);
   if (!Number.isFinite(anchorDay)) return none;
 
-  const rate = Number(asset.interest_rate);
-  let balance = Number(asset.value);
+  const rate = Number(ratePct);
+  let balance = Number(startBalance);
   if (!Number.isFinite(balance)) return none;
 
   const payments = [];

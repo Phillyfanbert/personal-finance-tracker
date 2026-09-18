@@ -52,6 +52,7 @@ const PATHS = [
   { dir: "out", event: "Buying an investment",             via: "holding funding account",         marker: "const costBasisDelta" },
   { dir: "out", event: "Putting new money into an investment", via: "contribution",                marker: '"contribution", `Contributed' },
   { dir: "out", event: "Interest charged on a card",       via: "log interest charge",             marker: "data-log-interest" },
+  { dir: "out", event: "Interest charged on a loan",       via: "autoAccrueLoanInterest",          marker: "async function autoAccrueLoanInterest" },
   { dir: "out", event: "A charge added to what is owed",   via: "owed_adjust",                     marker: '"owed_adjust", reason' },
   { dir: "out", event: "Correcting a balance downward",    via: "asset_adjust",                    marker: '$("adjustSubtractBtn")' },
   { dir: "out", event: "Imported spending from a bank file", via: "CSV import, expense rows",      marker: "csvLastImportedIds" },

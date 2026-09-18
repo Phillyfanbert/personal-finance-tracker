@@ -32,6 +32,7 @@ import {
 } from "./subscriptions.js";
 import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { INTEREST_BEARING_ASSET_TYPES, interestEligible, interestPayments, nextInterestEstimate, roundRate } from "./savingsInterest.js";
+import { loanInterestEligible, loanInterestAccruals } from "./loanInterest.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
@@ -834,6 +835,7 @@ async function initInner() {
   await autoLogDueSubscriptions();
   await autoLogDueIncome();
   await autoLogSavingsInterest();
+  await autoAccrueLoanInterest();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
   // After loadAssets(), since this reads assets.price_symbol.
@@ -1364,6 +1366,11 @@ async function refreshLivePrices() {
     // top of the freshest stored data rather than being merged underneath.
     if (quotes) applyLiveQuotes(quotes);
     renderPriceDependentCards();
+    // The prices above are only worth something to net worth if it follows
+    // them. Recomputed from the same findings, then written back (and the
+    // day's snapshot refreshed) only when a value actually moved.
+    renderNetWorth();
+    if (await syncAllParentAssetValues()) await snapshotNetWorthIfNeeded();
   } catch {
     // Leave the existing prices and their honest "as of" reading in place.
   }
@@ -3114,48 +3121,84 @@ function topLevelAssets() {
 // on the fly so that every existing reader (the account circle's balance
 // line, net worth, the trend snapshots, the Assets card) keeps working off
 // the same single column it always has, with no idea holdings exist.
-async function syncParentAssetValue(parentAssetId) {
-  if (!parentAssetId) return;
+// What an investment account is worth from the positions inside it, priced off
+// the findings currently in memory. Null when it holds nothing, in which case
+// its own stored value is all there is (a plain 401(k)). The ONE definition:
+// the writer below, the bulk sync and the net worth figure all read it, so they
+// cannot disagree about what a portfolio is worth.
+function parentRollupValue(parentAssetId) {
   const holdings = assets.filter((a) => a.parent_asset_id === parentAssetId);
-  if (!holdings.length) return; // last holding removed - leave the manual value alone
+  if (!holdings.length) return null;
   const priced = investmentHoldings(holdings, assetPriceFindings);
   const total = holdings.reduce((sum, h) => {
     const live = priced.find((p) => p.asset.id === h.id);
     return sum + (live ? live.currentValue : Number(h.value || 0));
   }, 0);
-  await sb.from("assets").update({ value: Math.round(total * 100) / 100 }).eq("id", parentAssetId);
+  return Math.round(total * 100) / 100;
 }
 
-// Runs syncParentAssetValue for every parent with holdings, not just the
-// one being actively edited - this is what makes Net Worth/the Assets
-// card/the net-worth trend chart pick up a background price-agent.js
-// refresh on the next app open, instead of only ever seeing a live price
-// at the moment someone happens to open a holding's edit form. Each
-// parent's sync targets a distinct row with no interdependency, so these
-// run in parallel; one trailing loadAssets() (mirroring saveHoldingBtn's
-// own pattern) pulls the resynced values into memory and re-renders.
-async function syncAllParentAssetValues() {
+// Every priced investment's value right now, keyed by asset id: parents rolled
+// up from their holdings, plus STANDALONE priced assets (a price_symbol and
+// quantity with no holdings under it and no parent above it), which have no
+// parent to roll into. Computed from the live findings, NOT from the stored
+// column - the stored value is only as fresh as the last time it was written,
+// and net worth was reading it, so a price moving after the app opened never
+// reached the headline figure.
+function investmentLiveValues() {
+  const values = new Map();
   const parentIds = new Set(assets.filter((a) => a.parent_asset_id).map((a) => a.parent_asset_id));
-
-  // A STANDALONE priced asset (its own price_symbol and quantity, with no
-  // holdings under it and no parent above it) has no parent to roll up into,
-  // so it was never covered here - its value only ever changed when someone
-  // pressed Apply on the Log page's "Live asset prices" card. That card is
-  // gone, so this now keeps those assets current automatically too, which is
-  // what the card was really for.
+  for (const id of parentIds) {
+    const v = parentRollupValue(id);
+    if (v != null) values.set(id, v);
+  }
   const standalone = assets.filter((a) =>
     a.price_symbol && a.quantity && !a.parent_asset_id && !parentIds.has(a.id));
-  const priced = investmentHoldings(standalone, assetPriceFindings);
-  const standaloneWrites = priced
-    .filter((h) => h.currentValue != null && Math.abs(h.currentValue - Number(h.asset.value || 0)) > 0.005)
-    .map((h) => sb.from("assets").update({ value: Math.round(h.currentValue * 100) / 100 }).eq("id", h.asset.id));
+  for (const h of investmentHoldings(standalone, assetPriceFindings)) {
+    if (h.currentValue != null) values.set(h.asset.id, Math.round(h.currentValue * 100) / 100);
+  }
+  return values;
+}
 
-  if (!parentIds.size && !standaloneWrites.length) return;
-  await Promise.all([
-    ...[...parentIds].map((id) => syncParentAssetValue(id)),
-    ...standaloneWrites,
-  ]);
+// The asset list net worth and its snapshot are computed from: top-level assets
+// only (holdings are inside their parent), vehicles at their depreciated
+// estimate, priced investments at what the latest prices say. Net worth, the
+// daily snapshot and the Log export all call this, so the card, the trend and
+// the file cannot show three different totals.
+function netWorthAssets() {
+  const live = investmentLiveValues();
+  return topLevelAssets().map((a) => ({
+    ...a, value: live.has(a.id) ? live.get(a.id) : effectiveAssetValue(a),
+  }));
+}
+
+async function syncParentAssetValue(parentAssetId) {
+  if (!parentAssetId) return;
+  const total = parentRollupValue(parentAssetId);
+  if (total == null) return; // last holding removed - leave the manual value alone
+  // supabase-js RESOLVES on a query error rather than rejecting, so an
+  // unchecked write here failed silently and left the stored value stale.
+  const { error } = await sb.from("assets").update({ value: total }).eq("id", parentAssetId);
+  if (error) toast(`Could not save the latest value of an investment account: ${error.message}`, "error");
+}
+
+// Writes the live values back so the stored column, the Assets card, the
+// account balances and the trend all follow a price change - on load AND on
+// every live tick, which is what keeps an installed icon that is never
+// reloaded from showing yesterday's portfolio. Only rows that actually moved
+// are written, so a quiet tick costs no writes. Returns whether anything
+// changed, so a caller can skip work when nothing did.
+async function syncAllParentAssetValues() {
+  const writes = [];
+  for (const [id, value] of investmentLiveValues()) {
+    const row = assets.find((a) => a.id === id);
+    if (!row || Math.abs(value - Number(row.value || 0)) <= 0.005) continue;
+    writes.push(sb.from("assets").update({ value }).eq("id", id).then(({ error }) => error));
+  }
+  if (!writes.length) return false;
+  const errors = (await Promise.all(writes)).filter(Boolean);
+  if (errors.length) toast(`Could not save the latest value of ${errors.length} investment account${errors.length === 1 ? "" : "s"}: ${errors[0].message}`, "error");
   await loadAssets();
+  return true;
 }
 
 async function loadAssets() {
@@ -4053,6 +4096,7 @@ function openDebtDetailsForm(debt) {
   closeAcctForm(); closeTransferForm(); // never leave the add-account/transfer panels stacked behind this
   editingDebtDetails = debt;
   $("debtDetailsRate").value = debt.interest_rate ?? "";
+  $("debtDetailsRateNote").classList.toggle("hidden", GRACE_PERIOD_LIABILITY_TYPES.has(debt.type));
   $("debtDetailsMinPay").value = debt.minimum_payment ?? "";
   $("debtDetailsDue").value = debt.due_date ?? "";
   const hasLimit = CREDIT_LIMIT_LIABILITY_TYPES.has(debt.type);
@@ -4139,6 +4183,13 @@ $("debtDetailsSaveBtn").onclick = async () => {
     patch.due_day = dueDay;
     patch.last_statement_balance = stmtBalance;
     patch.last_statement_date = $("debtDetailsStatementDate").value || null;
+  }
+  // A loan's interest clock follows its rate: seeded when a rate first appears
+  // (never back-charged), cleared when it is removed so switching it back on
+  // later starts fresh instead of charging the months in between.
+  if (!GRACE_PERIOD_LIABILITY_TYPES.has(editingDebtDetails.type)) {
+    patch.interest_last_accrued = patch.interest_rate > 0
+      ? (editingDebtDetails.interest_last_accrued || localDateISO()) : null;
   }
   const { error } = await sb.from("liabilities").update(patch).eq("id", editingDebtDetails.id);
   if (error) { flagField(touchedIds); return toast(error.message); }
@@ -4316,8 +4367,7 @@ function renderNetWorth() {
   // holdings (already rolled into their parent - counting both would
   // double every invested dollar) and anything belonging to an archived
   // account (archiving now acts like a delete for net-worth purposes).
-  const depreciatedAssets = topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) }));
-  const nw = computeNetWorth(depreciatedAssets, countableDebts());
+  const nw = computeNetWorth(netWorthAssets(), countableDebts());
 
   $("netWorthTotal").textContent = fmt(nw.netWorth);
   $("assetsTotal").textContent = fmt(nw.assetsTotal);
@@ -4349,8 +4399,7 @@ function renderNetWorth() {
 async function snapshotNetWorthIfNeeded() {
   // See renderNetWorth's comment - same two exclusions (child holdings,
   // archived-account assets/liabilities) apply to the daily snapshot too.
-  const depreciatedAssets = topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) }));
-  const nw = computeNetWorth(depreciatedAssets, countableDebts());
+  const nw = computeNetWorth(netWorthAssets(), countableDebts());
   const snapshot_date = localDateISO();
   await sb.from("net_worth_snapshots").upsert(
     { snapshot_date, assets_total: nw.assetsTotal, liabilities_total: nw.liabilitiesTotal, net_worth: nw.netWorth },
@@ -9456,6 +9505,91 @@ async function autoLogSavingsInterest() {
   toast(`Added ${fmt(paidTotal)} of interest${where}${months}.${more}`);
 }
 
+// Monthly interest on loans (mortgage, auto, student, personal, HELOC ...),
+// added to what is owed - see loanInterest.js for why this is automatic when
+// card interest is not. Payments reduce the balance by their full amount, so
+// without this the owed figure only ever fell and net worth drifted upward.
+//
+// Same shape as autoLogSavingsInterest, and for the same reasons: ONE write
+// carries the new balance and the marker so they move together or not at all,
+// and the history rows go in as one batch. It also fixes the two things that
+// function still leaves open: the write only lands if the marker AND the
+// balance are still what this device read, so two devices opening together
+// cannot both charge the month, and a balance changed elsewhere in the
+// meantime is never overwritten with a stale total. Losing that race is not an
+// error - the next load simply recomputes from fresh data.
+async function autoAccrueLoanInterest() {
+  const today = localDateISO();
+  const hidden = hiddenLiabilityIds();
+  const rows = [];
+  let chargedTotal = 0;
+  let loansCharged = 0;
+  let mostMonths = 0;
+  let anyCapped = false;
+
+  for (const debt of debts) {
+    if (hidden.has(debt.id) || !loanInterestEligible(debt, GRACE_PERIOD_LIABILITY_TYPES)) continue;
+
+    // First sight of a rate: start the clock today rather than charging for
+    // months this app has no record of.
+    if (!debt.interest_last_accrued) {
+      const { error } = await sb.from("liabilities").update({ interest_last_accrued: today }).eq("id", debt.id);
+      if (error) toast(`Could not start interest on ${debt.name}: ${error.message}`, "error");
+      continue;
+    }
+
+    const { payments, lastPaid, total, capped } = loanInterestAccruals(debt, today, GRACE_PERIOD_LIABILITY_TYPES);
+    if (!lastPaid) continue;
+
+    const newBalance = Math.round((Number(debt.balance) + total) * 100) / 100;
+    const { data: written, error } = await sb.from("liabilities")
+      .update({ balance: newBalance, interest_last_accrued: lastPaid })
+      .eq("id", debt.id)
+      .eq("interest_last_accrued", debt.interest_last_accrued)
+      .eq("balance", debt.balance)
+      .select("id");
+    if (error) {
+      toast(`Could not add interest to ${debt.name}: ${error.message}`, "error");
+      continue;
+    }
+    if (!written || !written.length) continue; // changed elsewhere; retried next load
+
+    const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
+    for (const pmt of payments) {
+      rows.push({
+        kind: "owed_adjust",
+        description: `Interest on ${debt.name} (${debt.interest_rate}% a year, estimated)`,
+        amount: pmt.amount,
+        occurred_at: pmt.date,
+        account_id: debtAccountId,
+        liability_id: debt.id,
+      });
+    }
+    if (payments.length) {
+      loansCharged++;
+      chargedTotal = Math.round((chargedTotal + total) * 100) / 100;
+      mostMonths = Math.max(mostMonths, payments.length);
+    }
+    if (capped) anyCapped = true;
+  }
+
+  if (!rows.length) return;
+
+  // The balance is already correct here, so a failure costs history rows, not
+  // money - and is surfaced.
+  const { error } = await sb.from("account_activity").insert(rows);
+  if (error) toast(`Interest was added, but its history could not be saved: ${error.message}`, "error");
+
+  await loadDebts();
+  await loadAccountActivity();
+  renderRecentTransactions();
+
+  const where = loansCharged === 1 ? "" : ` across ${loansCharged} loans`;
+  const months = mostMonths === 1 ? "" : ` (${mostMonths} months of catch-up)`;
+  const more = anyCapped ? " More is still owed and will be added next time you open the app." : "";
+  toast(`Added ${fmt(chargedTotal)} of interest to what you owe${where}${months}.${more}`);
+}
+
 // ---- RECURRING-EXPENSE DETECTION (README appendix open decision, the project notes
 // Log/Quick Add #1) --------------------------------------------------------
 // Depends on both allExpenses and subscriptions, which load in parallel in
@@ -10600,7 +10734,7 @@ $("exportLogBtn").onclick = () => exportPage(
     // The same two calls renderNetWorth() makes, in the same order, so the
     // headline in the file is the one on the card rather than a second
     // total summed from the rows below it.
-    netWorth: computeNetWorth(topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) })), countableDebts()),
+    netWorth: computeNetWorth(netWorthAssets(), countableDebts()),
   }, acctName),
   allExpenses.length || accountActivity.length || subscriptions.length || accounts.length
     || assets.length || debts.length || incomeSources.length,

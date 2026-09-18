@@ -37,7 +37,7 @@ import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
 import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures, isAboutOwnMoney, CONTEXT_WINDOW_MONTHS } from "./wiki.js";
-import { computeNetWorth } from "./networth.js";
+import { computeNetWorth, netWorthCaveats } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 import { TOUR_STEPS, visibleSteps, clampStep } from "./tour.js";
 import { localDateISO } from "./dates.js";
@@ -4359,6 +4359,43 @@ $("payConfirmBtn").onclick = async () => {
 // ---- NET WORTH (Log page) ----------------------------------------------
 // Recomputed from already-loaded state - cheap, no extra queries. Call
 // after anything that changes assets, debts, or expenses.
+// Words under the net worth figure saying how far to trust it: a price that has
+// stopped updating, a holding that never got one, a value nobody has touched in
+// months. Built from the SAME inputs the figure uses (investmentLiveValues,
+// countableInvestmentAssets), so a caveat can never describe something the
+// number does not include. The figure itself is never adjusted.
+function renderNetWorthCaveats() {
+  const el = $("netWorthNote");
+  if (!el) return;
+  const live = investmentLiveValues();
+  const held = countableInvestmentAssets();
+  const priced = investmentHoldings(held, assetPriceFindings);
+  const unpriced = priced.filter((h) => h.latestPrice == null || h.quantity == null).map((h) => h.asset.name);
+
+  // A priced holding or its parent is kept current by the price sync and
+  // carries no updated_at of its own worth judging, so only values a person
+  // typed and has to remember to refresh are called stale.
+  const stale = staleAssets()
+    .filter((a) => !a.parent_asset_id && !live.has(a.id))
+    .map((a) => ({ name: a.name, months: a.monthsSince }));
+
+  let priceAge = null;
+  const newest = priced.length ? latestFinnhubRefresh(assetPriceFindings) : null;
+  if (newest) {
+    const minutes = (Date.now() - new Date(newest).getTime()) / 60000;
+    // Same rule renderPricesAsOf uses: inside the session a price older than
+    // twice the refresh interval is behind, and outside it the last close is
+    // the correct latest price, so only an absurdly old one (past a long
+    // weekend plus a holiday) counts as stale.
+    const stalePrice = marketStatus().open ? minutes > PRICE_REFRESH_WARN_MINUTES : minutes > 5 * 24 * 60;
+    priceAge = { label: timeAgo(newest), stale: stalePrice };
+  }
+
+  const lines = netWorthCaveats({ unpriced, stale, priceAge });
+  el.classList.toggle("hidden", !lines.length);
+  el.innerHTML = lines.map((l) => `<div>${esc(l)}</div>`).join("");
+}
+
 function renderNetWorth() {
   // Depreciation-adjusted at the call site, not inside computeNetWorth -
   // networth.js stays pure aggregation with no idea depreciation exists
@@ -4372,6 +4409,7 @@ function renderNetWorth() {
   $("netWorthTotal").textContent = fmt(nw.netWorth);
   $("assetsTotal").textContent = fmt(nw.assetsTotal);
   $("liabilitiesTotal").textContent = fmt(nw.liabilitiesTotal);
+  renderNetWorthCaveats();
 
   // Monthly liabilities is just this month's charges against any
   // liability-linked account type (credit card, HELOC, mortgage, ...) - a
@@ -4401,11 +4439,20 @@ async function snapshotNetWorthIfNeeded() {
   // archived-account assets/liabilities) apply to the daily snapshot too.
   const nw = computeNetWorth(netWorthAssets(), countableDebts());
   const snapshot_date = localDateISO();
-  await sb.from("net_worth_snapshots").upsert(
+  const { error } = await sb.from("net_worth_snapshots").upsert(
     { snapshot_date, assets_total: nw.assetsTotal, liabilities_total: nw.liabilitiesTotal, net_worth: nw.netWorth },
     { onConflict: "user_id,snapshot_date" }
   );
+  // supabase-js resolves on a query error, so an unchecked upsert dropped the
+  // day's trend point with nothing to say so. Said once per session: this also
+  // runs on live price ticks, and a persistent failure would otherwise repeat
+  // the same message every quarter hour.
+  if (error && !snapshotErrorShown) {
+    snapshotErrorShown = true;
+    toast(`Could not save today's net worth for the trend chart: ${error.message}`, "error");
+  }
 }
+let snapshotErrorShown = false;
 
 // ---- QUICK ADD -------------------------------------------------------------
 // There's no separate "Payment" field anymore - an expense's payment type
@@ -9270,6 +9317,54 @@ async function loadIncome() {
 // (or another subscription sharing the same account) sees an accurate
 // balance without a full reload per iteration. loadAssets/loadDebts at the
 // end resync everything for real.
+// A bill that pays down a debt is a PAYMENT, not spending: it lowers what is
+// owed and the account it leaves, and writes the same liability_payment the Pay
+// button does, never a row in expenses (so it cannot inflate spending, a
+// category budget or the savings rate). Shared by the automatic run and Mark as
+// paid so the two cannot disagree about what such a bill does.
+//
+// Pays the LESSER of the bill and what is owed: paying more than is owed is
+// refused everywhere else in this app, and an autopay that keeps running after
+// a loan is cleared must stop moving money rather than fail. Nothing owed means
+// nothing leaves the account.
+//
+// Two writes cannot be one statement here (an asset and a liability are
+// separate tables), so if the second fails the first is put back, otherwise
+// money would leave the account without lowering the debt.
+//
+// Returns {paid} on success, {blocked} with the reason when the account cannot
+// cover it, or {error} on a failed write.
+async function payBillTowardDebt(sub, occurredAt) {
+  const debt = debts.find((d) => d.id === sub.pays_liability_id);
+  const account = accounts.find((a) => a.id === sub.account_id);
+  const asset = account?.linked_asset_id ? assets.find((a) => a.id === account.linked_asset_id) : null;
+  if (!debt) return { error: "The debt this bill pays down is no longer there." };
+  if (!asset) return { error: "Pick a checking or savings account to pay from - a credit card cannot pay a debt." };
+  const owed = Number(debt.balance);
+  if (!(owed > 0)) return { paid: 0 };
+  const pay = Math.min(Number(sub.amount), owed);
+  const blocked = assetDeltaError([{ accountId: sub.account_id, paymentType: account.type, amount: pay, sign: -1 }]);
+  if (blocked) return { blocked };
+
+  const priorAsset = Number(asset.value);
+  const newAsset = Math.round((priorAsset - pay) * 100) / 100;
+  const newOwed = Math.round((owed - pay) * 100) / 100;
+  const first = await sb.from("assets").update({ value: newAsset }).eq("id", asset.id);
+  if (first.error) return { error: first.error.message };
+  const second = await sb.from("liabilities").update({ balance: newOwed }).eq("id", debt.id);
+  if (second.error) {
+    await sb.from("assets").update({ value: priorAsset }).eq("id", asset.id);
+    return { error: second.error.message };
+  }
+  asset.value = newAsset;
+  debt.balance = newOwed;
+
+  const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
+  await logActivity("liability_payment", `Paid ${fmt(pay)} to ${debt.name} from ${asset.name} (${sub.name})`,
+    pay, occurredAt, account.id, debtAccountId, debt.id);
+  return { paid: pay };
+}
+
 async function autoLogDueSubscriptions() {
   const today = localDateISO();
   let loggedCount = 0;
@@ -9290,6 +9385,14 @@ async function autoLogDueSubscriptions() {
     let renewal = sub.next_renewal;
     let cycles = 0;
     while (renewal <= today && cycles < 36) {
+      if (sub.pays_liability_id) {
+        const result = await payBillTowardDebt(sub, renewal);
+        if (result.blocked || result.error) { blockedNames.add(sub.name); break; }
+        if (result.paid) loggedCount++;
+        renewal = advanceRenewal(renewal, sub.billing_cycle);
+        cycles++;
+        continue;
+      }
       const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
       if (assetErr) { blockedNames.add(sub.name); break; }
       // A renewal that would breach the card's limit is held back rather
@@ -9452,9 +9555,17 @@ async function autoLogSavingsInterest() {
     const newValue = total > 0
       ? Math.round((Number(asset.value) + total) * 100) / 100
       : Number(asset.value);
-    const { error } = await sb.from("assets")
+    // Conditional on the marker AND the balance still being what this device
+    // read, the same guard loan interest has: two devices opening together
+    // cannot both credit the month, and a balance changed elsewhere in the
+    // meantime is never overwritten with a stale total. Losing the race is not
+    // an error - the next load recomputes from fresh data.
+    const { data: written, error } = await sb.from("assets")
       .update({ value: newValue, interest_last_paid: lastPaid })
-      .eq("id", asset.id);
+      .eq("id", asset.id)
+      .eq("interest_last_paid", asset.interest_last_paid)
+      .eq("value", asset.value)
+      .select("id");
     // Nothing moved and the marker did not advance, so the same months are
     // retried on the next load. supabase-js RESOLVES on a query error instead
     // of rejecting, so this has to be checked explicitly - a try/catch around
@@ -9463,6 +9574,7 @@ async function autoLogSavingsInterest() {
       toast(`Could not add interest to ${asset.name}: ${error.message}`, "error");
       continue;
     }
+    if (!written || !written.length) continue; // changed elsewhere; retried next load
 
     for (const pmt of payments) {
       rows.push({
@@ -9848,7 +9960,7 @@ function renderSubscriptions() {
       <div class="exp" data-sub="${s.id}" style="${s.is_active ? "" : "opacity:.5"}">
         <div>
           <div>${esc(s.name)}${s.is_essential ? " · Essential" : ""}${s.is_active ? "" : " · (inactive)"}</div>
-          <div class="meta">${s.category ? esc(s.category) + " · " : ""}${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + (BILLING_CYCLE_LABEL[s.billing_cycle] || cap(s.billing_cycle)) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
+          <div class="meta">${s.pays_liability_id ? "Pays down " + esc(debts.find((d) => d.id === s.pays_liability_id)?.name || "a debt") + " · " : (s.category ? esc(s.category) + " · " : "")}${fmt(monthlyAmount(s))}/mo${s.billing_cycle !== "monthly" ? " (" + (BILLING_CYCLE_LABEL[s.billing_cycle] || cap(s.billing_cycle)) + ")" : ""}${s.next_renewal ? " · renews " + s.next_renewal : ""}</div>
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")
@@ -9877,6 +9989,12 @@ function openSubForm(sub) {
   $("sCycle").value = sub?.billing_cycle ?? "monthly";
   $("sRenewal").value = sub?.next_renewal ?? "";
   $("sAccount").value = sub?.account_id ?? "";
+  // Rebuilt on every open, since debts come and go. Every counted debt is
+  // offered, cards included - paying a card in full each month is a real
+  // autopay - and the blank choice is the ordinary spending bill.
+  $("sPaysDebt").innerHTML = `<option value="">No - this is spending</option>`
+    + countableDebts().map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join("");
+  $("sPaysDebt").value = sub?.pays_liability_id ?? "";
   $("sActive").checked = sub ? !!sub.is_active : true;
   $("sEssential").checked = !!sub?.is_essential;
   $("sNotes").value = sub?.notes ?? "";
@@ -9902,7 +10020,15 @@ $("saveSubBtn").onclick = async () => {
     is_active: $("sActive").checked,
     is_essential: $("sEssential").checked,
     notes: $("sNotes").value.trim() || null,
+    pays_liability_id: $("sPaysDebt").value || null,
   };
+  if (row.pays_liability_id) {
+    const payer = accounts.find((a) => a.id === row.account_id);
+    if (!payer || !payer.linked_asset_id) {
+      flagField("sAccount", "Pick a checking or savings account to pay from.");
+      return toast("A bill that pays down a debt needs a checking or savings account to pay from", "error");
+    }
+  }
   $("saveSubBtn").disabled = true;
   const q = editingSub
     ? sb.from("subscriptions").update(row).eq("id", editingSub.id)
@@ -9929,6 +10055,19 @@ $("markPaidBtn").onclick = async () => {
   if (!account) { flagField("sAccount"); return toast("Linked account not found - pick one, save, then mark as paid."); }
   const amount = Number(sub.amount);
   const paymentType = account.type;
+  if (sub.pays_liability_id) {
+    $("markPaidBtn").disabled = true;
+    const result = await payBillTowardDebt(sub, localDateISO());
+    $("markPaidBtn").disabled = false;
+    if (result.blocked || result.error) { flagField("sAccount"); return toast(result.blocked || result.error, "error"); }
+    const nextRenewal = advanceRenewal(sub.next_renewal, sub.billing_cycle);
+    if (nextRenewal !== sub.next_renewal) {
+      await sb.from("subscriptions").update({ next_renewal: nextRenewal }).eq("id", sub.id);
+    }
+    closeSubForm();
+    await loadAssets(); await loadDebts(); await loadSubscriptions();
+    return toast(result.paid ? `Paid ${fmt(result.paid)} toward ${debts.find((d) => d.id === sub.pays_liability_id)?.name || "the debt"}` : "Nothing is owed on that debt, so nothing was paid");
+  }
   const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
   if (assetErr) { flagField("sAccount"); return toast(assetErr); }
   const limitErr = chargeRefusalReason([{ accountId: sub.account_id, amount, sign: +1 }]);

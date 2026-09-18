@@ -988,6 +988,9 @@
           <div><label for="sRenewal">Next renewal</label><input id="sRenewal" type="date" /></div>
           <div><label for="sAccount">Account</label><select id="sAccount"></select></div>
         </div>
+        <label for="sPaysDebt">Pays down a debt (optional)</label>
+        <select id="sPaysDebt"></select>
+        <p class="muted" style="font-size:var(--fs-sm);margin:4px 0 0">For a loan or mortgage payment. It lowers what you owe instead of counting as spending, and needs a checking or savings account to pay from.</p>
         <label><input type="checkbox" id="sActive" style="width:auto;margin-right:8px" checked />Active</label>
         <!-- Just the flag - no "what could I cut" view reads it yet (the project notes). -->
         <label><input type="checkbox" id="sEssential" style="width:auto;margin-right:8px" />Essential (something you need, not just nice to have)</label>
@@ -1017,6 +1020,9 @@
              past the net worth figure. -->
         <h2 style="font-size:12px;font-weight:400;color:var(--muted)">Net worth</h2>
         <div class="big" id="netWorthTotal" style="font-size:30px">$0</div>
+        <!-- Says how far to trust the figure, in words, and stays empty when
+             there is nothing to say. Never an adjustment to the number. -->
+        <div id="netWorthNote" class="hidden" style="margin-top:6px;font-size:var(--fs-sm);color:var(--muted)"></div>
       </div>
 
       <!-- Accounts = payment methods, used to tag expenses. NOT counted in net
@@ -2865,6 +2871,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-net-worth-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Net worth</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-net-worth-body">
           <p>Assets total minus liabilities total (tracked debts only) - a single number, read-only here. It deliberately does not subtract subscriptions or general spending: a subscription is a recurring future cost, not a debt you owe today, and ordinary spending already reduced an asset's balance directly the moment you logged it. See the Reports page for how this number trends over time.</p>
+          <p>Under the figure, a short note appears when part of it is less current than it looks: a stock price that has stopped updating, a holding with no price yet (it counts at the last value you saved, not what it is worth), or something you typed in that has not been touched for months. The number itself is never adjusted - the note just says how far to trust it. Investment values follow the latest prices on their own, and a loan's interest is added each month, but anything you type in by hand, like a house or a savings balance at another bank, is only as current as your last update. Retirement accounts count at their full balance, before any tax you would owe on withdrawing.</p>
           </div>
         </div>
 

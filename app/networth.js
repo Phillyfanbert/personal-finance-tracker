@@ -38,6 +38,35 @@ export function computeNetWorth(assets, debts) {
   };
 }
 
+/**
+ * Plain-words reasons the headline may not be as current or as complete as it
+ * looks, in the order a reader most needs them. Empty when there is nothing to
+ * say, so a clean net worth stays a clean number.
+ *
+ * Pure: the caller decides what counts as stale or unpriced and passes names in.
+ * The figure itself is never adjusted - a caveat is a statement about how far
+ * to trust it, not a correction of it, because guessing a "fixed" number would
+ * be the same confident-but-wrong failure this exists to prevent.
+ *
+ * @param {{unpriced?: string[], stale?: {name: string, months: number}[],
+ *          priceAge?: {label: string, stale: boolean}|null}} input
+ * @returns {string[]}
+ */
+export function netWorthCaveats({ unpriced = [], stale = [], priceAge = null } = {}) {
+  const list = (names) => names.length <= 3
+    ? names.join(", ")
+    : `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
+  const out = [];
+  if (priceAge && priceAge.stale) out.push(`Stock prices may be out of date - last updated ${priceAge.label}.`);
+  if (unpriced.length) {
+    out.push(`${list(unpriced)} ${unpriced.length === 1 ? "has" : "have"} no price yet, so ${unpriced.length === 1 ? "it counts" : "they count"} at the last value you saved.`);
+  }
+  if (stale.length) {
+    out.push(`Not updated in a while: ${list(stale.map((a) => `${a.name} (${a.months} months)`))}.`);
+  }
+  return out;
+}
+
 // emergencyFundCoverage() was REMOVED here on 2026-08-26, along with the
 // Reports tile that used it. Recorded so it is not simply rebuilt:
 //

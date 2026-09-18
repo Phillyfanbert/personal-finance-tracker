@@ -273,6 +273,10 @@ export function safeToSpend(statuses, subscriptions, fundsMonthly = 0, today = n
 
   const upcoming = subscriptions
     .filter((s) => s.is_active && s.next_renewal && AUTO_LOG_CYCLES.has(s.billing_cycle))
+    // A bill that pays down a debt is a payment, not spending in any budgeted
+    // category, so netting it here would shrink the room by money that no
+    // budget was ever going to cover.
+    .filter((s) => !s.pays_liability_id)
     .filter((s) => s.next_renewal > todayStr && s.next_renewal <= monthEndStr)
     .reduce((sum, s) => sum + Number(s.amount || 0), 0);
 

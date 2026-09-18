@@ -49,6 +49,7 @@ const PATHS = [
   { dir: "out", event: "Everyday spending",                via: "expenses / Quick Add",            marker: '$("saveBtn")' },
   { dir: "out", event: "A bill or subscription falling due", via: "autoLogDueSubscriptions",       marker: "async function autoLogDueSubscriptions" },
   { dir: "out", event: "Paying down a debt",               via: "liability_payment",               marker: '"liability_payment", `Paid' },
+  { dir: "out", event: "A bill that pays down a debt",     via: "payBillTowardDebt",               marker: "async function payBillTowardDebt" },
   { dir: "out", event: "Buying an investment",             via: "holding funding account",         marker: "const costBasisDelta" },
   { dir: "out", event: "Putting new money into an investment", via: "contribution",                marker: '"contribution", `Contributed' },
   { dir: "out", event: "Interest charged on a card",       via: "log interest charge",             marker: "data-log-interest" },

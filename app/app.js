@@ -33,6 +33,7 @@ import {
 import { advanceIncomeDate, annualIncome, hasAnyIncome } from "./income.js";
 import { INTEREST_BEARING_ASSET_TYPES, interestEligible, interestPayments, nextInterestEstimate, roundRate } from "./savingsInterest.js";
 import { loanInterestEligible, loanInterestAccruals } from "./loanInterest.js";
+import { cardInterestEligible, cardInterestCharges, seedCardMarker } from "./cardInterest.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
@@ -836,6 +837,7 @@ async function initInner() {
   await autoLogDueIncome();
   await autoLogSavingsInterest();
   await autoAccrueLoanInterest();
+  await autoAccrueCardInterest();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
   // After loadAssets(), since this reads assets.price_symbol.
@@ -3974,12 +3976,12 @@ async function loadDebts() {
     const s = cycleStatus(d, accountActivity);
     if (s.state === "no_cycle") return "";
     if (s.state === "no_statement") {
-      return `<div class="meta">Statement due ${s.dueDate} - add a statement balance in Edit details to track interest</div>`;
+      return `<div class="meta">Statement due ${s.dueDate} - interest is worked out from your logged charges and payments, or add the statement balance in Edit details for an exact figure</div>`;
     }
+    // Interest for a completed cycle is added automatically (autoAccrueCardInterest),
+    // so this only says so - a button here would double-charge the same cycle.
     const interest = s.interestEstimate != null
-      ? ` Interest so far about ${fmt(s.interestEstimate)}/mo at ${d.interest_rate}% APR.` : "";
-    const logBtn = s.interestEstimate
-      ? `<button type="button" class="link-action muted" data-log-interest="${d.id}" aria-label="Log an interest charge on ${esc(d.name)}">Log interest charge</button>` : "";
+      ? ` About ${fmt(s.interestEstimate)} of interest is added to what you owe automatically, at ${d.interest_rate}% APR.` : "";
     if (s.state === "paid_in_full") {
       return `<div class="meta" style="color:var(--ok)">Statement paid in full - no interest this cycle</div>`;
     }
@@ -3987,9 +3989,9 @@ async function loadDebts() {
       return `<div class="meta">${fmt(s.remaining)} of the ${fmt(s.statementBalance)} statement still unpaid, due ${s.dueDate} (${s.daysUntilDue}d). Pay it all to avoid interest.</div>`;
     }
     if (s.state === "carrying_balance") {
-      return `<div class="meta" style="color:var(--err)">Carrying ${fmt(s.remaining)} past the ${s.dueDate} due date - interest applies even though the minimum was paid.${interest}${logBtn}</div>`;
+      return `<div class="meta" style="color:var(--err)">Carrying ${fmt(s.remaining)} past the ${s.dueDate} due date - interest applies even though the minimum was paid.${interest}</div>`;
     }
-    return `<div class="meta" style="color:var(--err)">Under the ${fmt(s.minimum)} minimum by the ${s.dueDate} due date - interest applies and a late fee is likely.${interest}${logBtn}</div>`;
+    return `<div class="meta" style="color:var(--err)">Under the ${fmt(s.minimum)} minimum by the ${s.dueDate} due date - interest applies and a late fee is likely.${interest}</div>`;
   };
   const rowHtml = (d) => {
     const heloc = helocPhaseInfo(d);
@@ -4055,31 +4057,6 @@ async function loadDebts() {
   // considered and rejected: nothing here runs on a schedule (static PWA, no
   // server), so a "monthly" job would actually fire whenever the app happened
   // to be opened, silently double-charging or skipping months.
-  document.querySelectorAll("[data-log-interest]").forEach((el) => {
-    el.onclick = async (ev) => {
-      ev.stopPropagation();
-      const debt = debts.find((d) => d.id === el.dataset.logInterest);
-      if (!debt) return;
-      const s = cycleStatus(debt, accountActivity);
-      if (!s.interestEstimate) return toast("No interest to log for this cycle");
-      const ok = await confirmModal(
-        `Adds ${fmt(s.interestEstimate)} of interest to ${debt.name}, based on ${fmt(s.remaining)} unpaid at ${debt.interest_rate}% APR. This is an estimate - a real issuer uses your average daily balance, so check your statement for the exact figure.`,
-        { title: "Log this interest charge?", confirmLabel: "Add charge" }
-      );
-      if (!ok) return;
-      const newBalance = Math.round((Number(debt.balance) + s.interestEstimate) * 100) / 100;
-      const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-      if (error) return toast(error.message);
-      const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
-      await logActivity(
-        "owed_adjust", `Interest charge on ${debt.name} (${debt.interest_rate}% APR)`,
-        s.interestEstimate, undefined, debtAccountId, null, debt.id
-      );
-      await loadDebts();
-      renderRecentTransactions();
-      toast("Interest charge logged");
-    };
-  });
   renderNetWorth();
   renderAccountsList(); // a changed liability balance may be a linked account's balance line
 }
@@ -4117,8 +4094,8 @@ function openDebtDetailsForm(debt) {
     capBackwardLookingDates();
     const dates = cycleDates(debt.statement_day, debt.due_day);
     $("debtDetailsCycleInfo").textContent = dates
-      ? `Current cycle closed ${dates.statementDate}, payment due ${dates.dueDate}. Paying the statement balance in full by the due date avoids interest entirely; paying only the minimum does not.`
-      : "Set both days to track whether this card is about to be charged interest.";
+      ? `Current cycle closed ${dates.statementDate}, payment due ${dates.dueDate}. Paying the statement balance in full by the due date avoids interest entirely; paying only the minimum does not. With an interest rate set, the interest is added to what you owe automatically after each due date; it is an estimate, so your statement is the exact figure.`
+      : "Set both days, and an interest rate above, and interest is added to what you owe automatically after each due date.";
   }
   const isHeloc = debt.type === "heloc";
   $("debtDetailsDrawSection").classList.toggle("hidden", !isHeloc);
@@ -4183,6 +4160,12 @@ $("debtDetailsSaveBtn").onclick = async () => {
     patch.due_day = dueDay;
     patch.last_statement_balance = stmtBalance;
     patch.last_statement_date = $("debtDetailsStatementDate").value || null;
+    // The interest clock follows the rate AND both cycle days: cleared when any
+    // is removed, so switching it back on later starts fresh instead of judging
+    // the cycles in between. Left null (not seeded) when newly eligible - the
+    // next load seeds it, never charging for cycles before it was set up.
+    patch.interest_last_accrued = (patch.interest_rate > 0 && statementDay && dueDay)
+      ? (editingDebtDetails.interest_last_accrued || null) : null;
   }
   // A loan's interest clock follows its rate: seeded when a rate first appears
   // (never back-charged), cleared when it is removed so switching it back on
@@ -9700,6 +9683,84 @@ async function autoAccrueLoanInterest() {
   const months = mostMonths === 1 ? "" : ` (${mostMonths} months of catch-up)`;
   const more = anyCapped ? " More is still owed and will be added next time you open the app." : "";
   toast(`Added ${fmt(chargedTotal)} of interest to what you owe${where}${months}.${more}`);
+}
+
+// Interest on credit cards, added to what is owed once each billing cycle closes
+// out - see cardInterest.js for the grace-period rule it applies, where the
+// statement balance comes from, and why this stopped being a manual charge.
+//
+// The same shape as autoAccrueLoanInterest and for the same reasons: ONE write
+// carries the new balance and the marker, conditional on both still being what
+// this device read, so two devices opening together cannot both charge a cycle
+// and a balance changed elsewhere in between is never overwritten. It also
+// advances the marker for a cycle that turned out to owe nothing (paid in full),
+// so that cycle is not judged again on every load.
+async function autoAccrueCardInterest() {
+  const today = localDateISO();
+  const hidden = hiddenLiabilityIds();
+  const rows = [];
+  let chargedTotal = 0;
+  let cardsCharged = 0;
+  let anyCapped = false;
+
+  for (const debt of debts) {
+    if (hidden.has(debt.id) || !cardInterestEligible(debt, GRACE_PERIOD_LIABILITY_TYPES)) continue;
+
+    // First sight of a rate and cycle days: start the clock, charge nothing for
+    // cycles that closed before it was set up.
+    if (!debt.interest_last_accrued) {
+      const { error } = await sb.from("liabilities")
+        .update({ interest_last_accrued: seedCardMarker(debt) }).eq("id", debt.id);
+      if (error) toast(`Could not start interest on ${debt.name}: ${error.message}`, "error");
+      continue;
+    }
+
+    const account = accounts.find((a) => a.linked_liability_id === debt.id) || null;
+    const { charges, lastAccrued, capped } = cardInterestCharges({
+      debt, account, expenses: allExpenses, activity: accountActivity, cardTypes: GRACE_PERIOD_LIABILITY_TYPES,
+    });
+    if (!lastAccrued) continue;
+
+    const total = Math.round(charges.reduce((sum, c) => sum + c.amount, 0) * 100) / 100;
+    const newBalance = Math.round((Number(debt.balance) + total) * 100) / 100;
+    const { data: written, error } = await sb.from("liabilities")
+      .update({ balance: newBalance, interest_last_accrued: lastAccrued })
+      .eq("id", debt.id)
+      .eq("interest_last_accrued", debt.interest_last_accrued)
+      .eq("balance", debt.balance)
+      .select("id");
+    if (error) {
+      toast(`Could not add interest to ${debt.name}: ${error.message}`, "error");
+      continue;
+    }
+    if (!written || !written.length) continue; // changed elsewhere; retried next load
+
+    for (const c of charges) {
+      rows.push({
+        kind: "owed_adjust",
+        description: `Interest on ${debt.name} (${debt.interest_rate}% APR, estimated on ${fmt(c.remaining)} unpaid at the ${c.date} due date)`,
+        amount: c.amount,
+        occurred_at: c.date,
+        account_id: account?.id ?? null,
+        liability_id: debt.id,
+      });
+    }
+    if (charges.length) { cardsCharged++; chargedTotal = Math.round((chargedTotal + total) * 100) / 100; }
+    if (capped) anyCapped = true;
+  }
+
+  if (!rows.length) return;
+
+  const { error } = await sb.from("account_activity").insert(rows);
+  if (error) toast(`Interest was added, but its history could not be saved: ${error.message}`, "error");
+
+  await loadDebts();
+  await loadAccountActivity();
+  renderRecentTransactions();
+
+  const where = cardsCharged === 1 ? "a card" : `${cardsCharged} cards`;
+  const more = anyCapped ? " More is still owed and will be added next time you open the app." : "";
+  toast(`Added ${fmt(chargedTotal)} of interest to ${where}.${more}`);
 }
 
 // ---- RECURRING-EXPENSE DETECTION (README appendix open decision, the project notes

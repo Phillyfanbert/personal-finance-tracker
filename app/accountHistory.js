@@ -62,6 +62,13 @@ export function buildBalanceHistory(account, currentBalance, expenses, accountAc
         if (a.related_account_id === account.id) add(a.occurred_at, Number(a.amount)); // money arrived here
       } else if (a.kind === "income" && a.account_id === account.id) {
         add(a.occurred_at, Number(a.amount));
+      } else if (a.kind === "owed_adjust" && a.account_id === account.id) {
+        // A signed change to what is OWED on a liability account: a manual
+        // correction, a loan's monthly interest, a card's cycle interest.
+        // This kind existed for ages without a branch here, so every one of
+        // them was silently missing from the history and the walk back drifted
+        // by their sum. Card interest needs it to recover a statement balance.
+        add(a.occurred_at, Number(a.amount));
       }
     }
   }

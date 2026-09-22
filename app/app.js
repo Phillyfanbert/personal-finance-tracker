@@ -15,7 +15,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, budgetSplit, budgetYearStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal, WARN_THRESHOLD_PCT } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, portfolioRecapFigures, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
 import {
@@ -36,7 +36,7 @@ import { loanInterestEligible, loanInterestAccruals } from "./loanInterest.js";
 import { cardInterestEligible, cardInterestCharges, seedCardMarker } from "./cardInterest.js";
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
-import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes } from "./gemma.js";
+import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes, buildPortfolioRecapPrompt, knownRecapFigures, generatePortfolioRecap } from "./gemma.js";
 import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures, isAboutOwnMoney, CONTEXT_WINDOW_MONTHS } from "./wiki.js";
 import { computeNetWorth, netWorthCaveats } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
@@ -641,6 +641,7 @@ let dailyPrices = []; // durable per-symbol daily OHLC history (daily_prices, 54
 let symbolFundamentals = []; // P/E, market cap, dividend yield (symbol_fundamentals, 56)
 let watchlistSymbols = []; // the user's own editable movers watchlist (watchlist_symbols, 56)
 let holdingSales = []; // realized gain/loss from actual sales (holding_sales, 57)
+let portfolioRecaps = []; // this user's own end-of-day investment recaps (portfolio_recaps, 75)
 let marketMovers = []; // market-wide biggest movers, Alpha Vantage (market_movers, 58)
 let marketMoverSummary = null; // the optional beginner-friendly paragraph for them
 let agentRunStatus = {}; // { "deal-agent": {...}, "price-agent": {...} } - last-run freshness/health (agent_run_status)
@@ -821,7 +822,7 @@ async function initInner() {
   // liabilities are account-linked (to hide their delete button), so it
   // needs a populated `accounts` to render correctly on first paint.
   await loadAccounts();
-  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadSinkingFunds(), loadInvestmentTargets()]);
+  await Promise.all([loadRules(), loadProfile(), loadCatalog(), loadDealFindings(), loadAssetPriceFindings(), loadMarketIndexFindings(), loadMarketNewsFindings(), loadAgentRunStatus(), loadDailyRecaps(), loadPortfolioRecaps(), loadDailyPrices(), loadMarketMovers(), loadSymbolFundamentals(), loadHoldingSales(), loadAssets(), loadDebts(), loadAccountActivity(), loadBudgets(), loadSinkingFunds(), loadInvestmentTargets()]);
   // Both assets and assetPriceFindings are guaranteed loaded by the
   // Promise.all above (no race) - this is what keeps Net Worth/the Assets
   // card/the net-worth trend chart in sync with live prices on every app
@@ -840,6 +841,10 @@ async function initInner() {
   await autoAccrueCardInterest();
   await snapshotNetWorthIfNeeded();
   await snapshotPortfolioIfNeeded();
+  // After the snapshots and after loadDailyPrices/loadInvestmentTargets in
+  // the Promise.all above, since it reads all of them. Only writes once the
+  // market has closed, and at most once per trading day.
+  await buildPortfolioRecapIfNeeded();
   // After loadAssets(), since this reads assets.price_symbol.
   await syncHoldingsIntoWatchlist();
   // The two findings loaders above already pulled a headline batch, so the
@@ -1002,7 +1007,12 @@ const AGENT_WARNING_MAX_AGE_MS = {
 // ago" (Finnhub, FAST_ONLY) and "Last updated 6 days ago" (indexes,
 // Tavily+Gemini) can both be true on the same card at once, and blending
 // them into one line would misstate one or the other.
-const PRICE_REFRESH_WARN_MINUTES = 30; // 2x the 15-min FAST_ONLY interval
+// 2x the slowest thing that refreshes a price on screen. The in-app overlay
+// ticks every LIVE_REFRESH_MS (5 min) and the server agent every 15 min, so
+// the agent is the one that sets this. Raise it in step with either cadence -
+// a warning that fires on a perfectly healthy tick is how a working card
+// starts reading as broken.
+const PRICE_REFRESH_WARN_MINUTES = 30;
 function renderPricesAsOf(elId, foundAt) {
   const el = $(elId);
   if (!el) return;
@@ -1239,7 +1249,15 @@ async function loadDailyRecaps() {
 // Cheap by construction rather than by luck: a tick asks only for rows
 // newer than the newest already in memory (~25 rows, a few kB), so this
 // never re-runs the full initial 2-day query.
-const LIVE_REFRESH_MS = 60000;
+//
+// FIVE minutes, not the original one. A tick is not just three reads: it ends
+// in syncAllParentAssetValues(), which writes every moved asset row, re-runs
+// the whole loadAssets() SELECT when anything changed, and then upserts the
+// day's net_worth_snapshots row. That is a write path, once per tick, per open
+// tab - and an installed icon left open all day is the normal case here. The
+// server agent only refreshes every 15 minutes anyway, so a 60-second overlay
+// was asking for a number that mostly could not have moved.
+const LIVE_REFRESH_MS = 5 * 60 * 1000;
 // Headlines land on only ~1 of every 4 agent runs and are much heavier per
 // row than a price, so they get their own slower cadence instead of riding
 // every tick.
@@ -1868,6 +1886,13 @@ const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Avera
 // same moves with more detail - so the map had no callers left. The fuller
 // plain-English phrasing still lives in price-agent.js's INDEX_PLAIN_NAMES,
 // where the written summary has room for it.)
+//
+// This is also why daily_recaps.index_moves is stored but never DRAWN, which
+// reads like dead data and is not: it is INPUT TO THE PROMPT, listed in
+// buildRecapSummaryPrompt so the written summary can open with how the wider
+// market did. Re-rendering it on the recap card would restore exactly the
+// duplication deleted above, since Market overview sits directly beneath it
+// on the same sub-tab. Checked and rejected again 2026-09-22.
 // A fixed, curated watchlist of well-known large-cap stocks (not each
 // user's own holdings) so the Investments tab can surface "today's biggest
 // movers" even for a user who holds nothing at all - same "public market
@@ -6653,6 +6678,111 @@ async function snapshotPortfolioIfNeeded() {
   );
 }
 
+// How many days of the user's own recaps to keep in memory. Same shape and
+// the same reasoning as RECAP_HISTORY_DAYS for the market one.
+const PORTFOLIO_RECAP_HISTORY_DAYS = 30;
+
+async function loadPortfolioRecaps() {
+  const { data, error } = await sb.from("portfolio_recaps")
+    .select("trade_date,figures,summary,generated_by")
+    .order("trade_date", { ascending: false })
+    .limit(PORTFOLIO_RECAP_HISTORY_DAYS);
+  // supabase-js RESOLVES on a query error rather than rejecting, so this has
+  // to be checked explicitly - the class of bug that made syncBudgetPeriod()
+  // fail silently and report a month as never budgeted.
+  if (error) { portfolioRecaps = []; renderPortfolioRecap(); return; }
+  portfolioRecaps = data || [];
+  renderPortfolioRecap();
+}
+
+// The latest trading day we actually hold prices for. Keys off daily_prices
+// exactly as buildDailyRecap() does server-side, so market holidays need no
+// special-casing and no holiday list, and a weekend open just re-reads
+// Friday.
+function latestTradeDate() {
+  let latest = null;
+  for (const row of dailyPrices) {
+    const d = row.trade_date;
+    if (d && (!latest || d > latest)) latest = d;
+  }
+  return latest;
+}
+
+// Writes ONE end-of-day recap of the user's own investments, then asks the
+// self-hosted Gemma for a paragraph about it.
+//
+// Client-side because it has to be: the figures name what this person owns
+// and what it is worth, so the narrative can only come from the local model
+// (tools/monthly-report.js is the precedent), and every figure is composed
+// from the same app/investments.js exports the Investments tab renders from
+// rather than recalculated, so the two cannot disagree.
+//
+// ONLY ONCE THE MARKET HAS CLOSED. An intraday figure dated to a trading day
+// would state a settled close that had not happened yet - the same reason
+// the day's candle is only final after the session ends.
+//
+// The honest gap: a day the app is never opened after the close gets no
+// recap, and is never back-filled from a later day's prices. portfolio_
+// snapshots has had exactly this property since migration 35.
+let portfolioRecapBuiltFor = null;
+async function buildPortfolioRecapIfNeeded() {
+  const tradeDate = latestTradeDate();
+  if (!tradeDate || portfolioRecapBuiltFor === tradeDate) return;
+  if (marketStatus().open) return;
+
+  const investmentAssets = countableInvestmentAssets();
+  const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
+  const figures = portfolioRecapFigures({
+    tradeDate,
+    holdings,
+    totals: portfolioTotals(holdings, investmentAssets),
+    allocation: allocationVsTarget(investmentAssets, holdings, investmentTargets),
+    limitUsage: contributionLimitUsage(
+      allInvestmentAssets(),
+      accountActivity.filter((a) => a.kind === "contribution"),
+      CONTRIBUTION_LIMIT_GROUPS
+    ),
+    realized: realizedGainSummary(holdingSales),
+    dailyPrices,
+  });
+  if (!figures) return; // nothing owned yet, so nothing to recap
+
+  const existing = portfolioRecaps.find((r) => r.trade_date === tradeDate);
+  // Never spend a second model call on a day already written, and never
+  // blank a paragraph already generated - the same reuse guard the market
+  // recap uses, and for the same two reasons.
+  if (existing?.summary) { portfolioRecapBuiltFor = tradeDate; return; }
+
+  let summary = null;
+  let skipped = "not_attempted";
+  if (GEMMA_ENDPOINT) {
+    const result = await generatePortfolioRecap(
+      buildPortfolioRecapPrompt(figures),
+      knownRecapFigures(figures),
+      { endpoint: GEMMA_ENDPOINT, model: GEMMA_MODEL, key: GEMMA_AUTH_KEY }
+    );
+    summary = result.summary || null;
+    skipped = result.summary ? null : result.reason;
+  } else {
+    skipped = "not_configured";
+  }
+
+  const { error } = await sb.from("portfolio_recaps").upsert({
+    trade_date: tradeDate,
+    figures,
+    summary,
+    // Only ever claims the model when one actually produced something -
+    // generated_by has to stay an honest record.
+    generated_by: summary ? "rollup+gemma" : "rollup",
+    summary_skipped_reason: skipped,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "user_id,trade_date" });
+  if (error) return; // best effort: the tab is complete without this card
+
+  portfolioRecapBuiltFor = tradeDate;
+  await loadPortfolioRecaps();
+}
+
 // Same portfolio_snapshots query feeds both the full-history "Value over
 // time" chart and the Daily health check card's compact recent-trend
 // sparkline (last HEALTH_SPARKLINE_DAYS points) - one fetch, two renders,
@@ -7002,6 +7132,87 @@ const recapDateLabel = (iso) => {
   if (!y || !m || !d) return "";
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 };
+
+// The user's OWN end-of-day note. Every figure here was computed by
+// portfolioRecapFigures() and stored; nothing is recalculated at render time,
+// so the card states exactly what was written for that day rather than
+// today's prices under a past date.
+function renderPortfolioRecap() {
+  const card = $("portfolioRecapCard");
+  const empty = $("emptyDayRecap");
+  if (!card) return;
+  const row = portfolioRecaps[0];
+  const f = row?.figures;
+  if (!f || !f.positions?.length) {
+    card.classList.add("hidden");
+    empty?.classList.remove("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  empty?.classList.add("hidden");
+
+  $("portfolioRecapDate").textContent = `Market close, ${recapDateLabel(f.tradeDate || row.trade_date)}`;
+
+  // The headline states the direction IN WORDS as well as in colour - the
+  // same never-state-it-in-colour-alone rule the rest of the app holds.
+  const t = f.totals || {};
+  const headline = $("portfolioRecapHeadline");
+  if (t.dayChange == null) {
+    headline.textContent = `${fmt(t.value)}, change on the day not known`;
+    headline.style.color = "var(--text)";
+  } else {
+    const dir = t.dayChange > 0 ? "up" : t.dayChange < 0 ? "down" : "unchanged";
+    headline.textContent = t.dayChange === 0
+      ? `${fmt(t.value)}, unchanged on the day`
+      : `${fmt(t.value)}, ${dir} ${fmt(Math.abs(t.dayChange))}${t.dayChangePct != null ? ` (${signedPct(t.dayChangePct)})` : ""}`;
+    headline.style.color = gainColor(t.dayChange);
+  }
+
+  // Labelled as written rather than measured, the same distinction the daily
+  // recap's byline draws, and named as the LOCAL model so the privacy
+  // position is visible rather than something the user has to take on trust.
+  const summaryEl = $("portfolioRecapSummary");
+  if (row.summary) {
+    summaryEl.innerHTML =
+      `<span class="muted" style="font-size:11px;display:block;margin-bottom:4px">Written on your own machine, from figures this app worked out</span>` +
+      esc(plainDashes(row.summary)).replace(/\n+/g, "<br><br>");
+    summaryEl.classList.remove("hidden");
+  } else {
+    summaryEl.textContent = "";
+    summaryEl.classList.add("hidden");
+  }
+
+  // The per-position figures stand on their own with no model involved,
+  // which is what keeps this card complete on a day the narrative is absent.
+  $("portfolioRecapPositions").innerHTML = f.positions.map((p) => {
+    const day = p.dayChange == null
+      ? `<span class="muted">no price that day</span>`
+      : `<span style="color:${gainColor(p.dayChange)}">${p.dayChange === 0 ? "unchanged" : `${p.dayChange > 0 ? "up" : "down"} ${fmt(Math.abs(p.dayChange))}`}${p.dayChangePct != null && p.dayChange !== 0 ? ` (${signedPct(p.dayChangePct)})` : ""}</span>`;
+    // A holding is very often named after its own ticker ("VOO"), and
+    // printing both reads as a rendering fault rather than as two facts.
+    const who = p.name && p.name.trim().toUpperCase() !== p.symbol
+      ? `<strong>${esc(p.name)}</strong> <span class="muted">${esc(p.symbol)}</span>`
+      : `<strong>${esc(p.symbol)}</strong>`;
+    return `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-top:1px solid var(--border)">
+      <div>${who}</div>
+      <div style="text-align:right"><div>${fmt(p.value)}</div><div style="font-size:12px">${day}</div></div>
+    </div>`;
+  }).join("");
+
+  // Says how far to trust the figure instead of quietly adjusting it, the
+  // same position netWorthCaveats() takes.
+  const caveats = [];
+  if (f.unpriced?.length) {
+    caveats.push(`${f.unpriced.map(esc).join(", ")} had no up-to-date price, so ${f.unpriced.length === 1 ? "it counts" : "they count"} at the last value saved.`);
+  }
+  if (f.drift) {
+    caveats.push(`${esc(f.drift.bucket)} is ${f.drift.currentPct}% of what you own, against the ${f.drift.targetPercent}% you set.`);
+  }
+  if (f.realized) {
+    caveats.push(`You sold ${f.realized.count} time${f.realized.count === 1 ? "" : "s"} in ${f.realized.year}, ${f.realized.gain >= 0 ? "making" : "losing"} ${fmt(Math.abs(f.realized.gain))}.`);
+  }
+  $("portfolioRecapCaveat").innerHTML = caveats.join("<br>");
+}
 
 // Stage 1 recap: real numbers and real linked headlines, no generated text
 // anywhere on this card. Deliberately no bullish/bearish label and no
@@ -10991,9 +11202,10 @@ $("exportInvestBtn").onclick = async () => {
         // stating a retirement account the card treats as gone.
         limits: contributionLimitUsage(allInvestmentAssets(), accountActivity.filter((a) => a.kind === "contribution"), CONTRIBUTION_LIMIT_GROUPS),
         targets: allocationVsTarget(countable, holdings, investmentTargets),
+        dayRecaps: portfolioRecaps,
       });
     },
-    allInvestmentAssets().length || holdingSales.length || investmentTargets.length || snapshots.length,
+    allInvestmentAssets().length || holdingSales.length || investmentTargets.length || snapshots.length || portfolioRecaps.length,
     { page: "Investments" });
 };
 

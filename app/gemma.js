@@ -343,6 +343,163 @@ export function validateQaAnswer(raw) {
   return { answer: text };
 }
 
+/**
+ * The end-of-day portfolio recap's prompt.
+ *
+ * THE ACCURACY INVARIANT holds here the same way it does for the Q&A: every
+ * figure is computed by portfolioRecapFigures() in app/investments.js and
+ * handed over finished. The model is told in as many words that it must not
+ * do arithmetic, and the rule is enforced afterwards rather than trusted -
+ * validateQaAnswer() is the gate, and figuresInAnswerAreKnown() below checks
+ * that every number it wrote traces back to something it was given.
+ *
+ * This runs on the SELF-HOSTED Gemma only. The figures name what someone
+ * owns and what it is worth, which is exactly the personal financial data
+ * this project's privacy boundary keeps away from any cloud model.
+ *
+ * @param {object} figures from portfolioRecapFigures()
+ */
+export function buildPortfolioRecapPrompt(figures) {
+  const money = (n) => (n == null ? null : `$${Math.abs(n).toFixed(2)}`);
+  const signed = (n) => (n == null ? null : `${n > 0 ? "up " : n < 0 ? "down " : ""}${money(n)}`);
+  const t = figures.totals || {};
+  const lines = [];
+
+  lines.push(`Trading day: ${figures.tradeDate || "the latest close"}`);
+  lines.push(`Total value of their investments: ${money(t.value)}`);
+  if (t.dayChange != null) {
+    lines.push(`Change on the day: ${signed(t.dayChange)}${t.dayChangePct != null ? ` (${t.dayChangePct}%)` : ""}`);
+  } else {
+    lines.push("Change on the day: not known, because no up-to-date price was available.");
+  }
+  if (t.gainLoss != null) {
+    lines.push(`Against what they paid (${money(t.costBasis)}): ${signed(t.gainLoss)}${t.gainLossPct != null ? ` (${t.gainLossPct}%)` : ""}`);
+  }
+
+  lines.push("", "Each thing they own:");
+  for (const p of figures.positions || []) {
+    const bits = [`${p.name} (${p.symbol})`, `worth ${money(p.value)}`];
+    if (p.quantity != null) bits.push(`${p.quantity} units`);
+    if (p.dayChange != null) bits.push(`${signed(p.dayChange)} today${p.dayChangePct != null ? ` (${p.dayChangePct}%)` : ""}`);
+    if (p.gainLoss != null) bits.push(`${signed(p.gainLoss)} since they bought it`);
+    if (p.range) {
+      const span = p.range.isFullYear ? "the last year" : `the last ${p.range.tradingDays} trading days recorded`;
+      bits.push(`over ${span} its price ranged from ${money(p.range.low)} to ${money(p.range.high)}`);
+    }
+    lines.push(`- ${bits.join("; ")}`);
+  }
+
+  if (figures.unpriced?.length) {
+    lines.push("", `No current price for: ${figures.unpriced.join(", ")}. These count at the last value saved, so the total above is not fully up to date.`);
+  }
+  if (figures.drift) {
+    const d = figures.drift;
+    lines.push("", `Their own target mix is off in one place: ${d.bucket} is ${d.currentPct}% of the total and they set a target of ${d.targetPercent}%.`);
+  }
+  if (figures.limits?.length) {
+    lines.push("", "How much they have put in this year against the yearly legal limit:");
+    for (const g of figures.limits) {
+      lines.push(`- ${g.label}: ${money(g.contributed)} in, ${g.overLimit ? `OVER the limit by ${money(Math.abs(g.remaining))}` : `${money(g.remaining)} left`}`);
+    }
+  }
+  if (figures.realized) {
+    lines.push("", `They sold ${figures.realized.count} time(s) in ${figures.realized.year}, making ${signed(figures.realized.gain)} in total.`);
+  }
+
+  return [
+    "You write a short, factual end-of-day note about ONE person's own",
+    "investments, based ONLY on the figures listed below.",
+    "",
+    "Your reader is a COMPLETE BEGINNER who has never invested. Write for",
+    "them and nobody else.",
+    "",
+    "THE MOST IMPORTANT RULE: every number has been worked out for you and is",
+    "listed below. Quote those numbers. NEVER calculate a new one, never add",
+    "figures together, never work out a percentage. If a number is not listed",
+    "below, do not state it.",
+    "",
+    ...lines,
+    "",
+    "Rules:",
+    "- Write ONE short paragraph, three or four sentences.",
+    "- Lead with what the whole lot is worth and how it moved today.",
+    "- Then say which holding drove that move, if one clearly did.",
+    "- Everyday words only. Never use a term a beginner would not know",
+    "  without explaining it in the same sentence: no portfolio, allocation,",
+    "  basis, equities, position, exposure, benchmark, diversification.",
+    "  Say 'the things you own' rather than 'your portfolio'.",
+    "- Say 'rose' or 'fell', never 'declined', 'advanced' or 'posted gains'.",
+    "- Address the reader as 'you' and 'your'.",
+    "- Never use an em dash or en dash. Use a plain hyphen.",
+    "- Round to whole dollars where it reads better, and say 'about' when you",
+    "  round.",
+    "- NEVER give advice. Never suggest buying, selling, holding, rebalancing",
+    "  or changing anything. Never say what any price will do next. Never call",
+    "  anything cheap, expensive, undervalued, a good opportunity or a",
+    "  concern. Describe what the numbers show and stop there.",
+    "- If something is flagged above as not having an up-to-date price, say so",
+    "  plainly rather than implying the total is exact.",
+    "- Write the paragraph as plain text. No JSON, no bullet points, no",
+    "  headings, no markdown.",
+  ].join("\n");
+}
+
+// Every money figure a written answer states, for checking against the ones
+// it was actually given. Same shape and the same reasoning as the Reports
+// Q&A's own verifier: asking a model to only restate what it was handed is
+// not the same as it doing so.
+//
+// Scoped to MONEY and PERCENTAGES deliberately. Share counts, years and
+// ordinary counts appear constantly in normal prose, and policing those
+// would reject correct answers without preventing a single wrong figure.
+function moneyFiguresIn(text) {
+  const out = [];
+  // \d+ leads, then optional comma groups - the Q&A's verifier had a real
+  // bug here where the comma alternative came first and "$3362.37" parsed
+  // as 336, turning a wrong figure into a right-looking one.
+  for (const m of text.matchAll(/\$\s?(\d+(?:,\d{3})*(?:\.\d+)?)/g)) {
+    const n = Number(m[1].replace(/,/g, ""));
+    if (Number.isFinite(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * True when every dollar figure in `answer` traces back to one the model was
+ * given, within the rounding the prompt actively asks for ("about $7,000").
+ * A figure it invented means the paragraph is discarded.
+ * @param {string} answer
+ * @param {number[]} allowed every figure from portfolioRecapFigures()
+ */
+export function figuresInAnswerAreKnown(answer, allowed) {
+  const known = allowed.filter((n) => Number.isFinite(n)).map(Math.abs);
+  return moneyFiguresIn(answer).every((stated) =>
+    known.some((k) => {
+      if (Math.abs(k - stated) < 0.005) return true;
+      // The prompt asks for rounding, so accept the rounded forms of a real
+      // figure: to the dollar, ten, hundred or thousand, and a 0.5% band for
+      // "about".
+      for (const step of [1, 10, 100, 1000]) {
+        if (Math.abs(Math.round(k / step) * step - stated) < 0.005) return true;
+      }
+      return k !== 0 && Math.abs((k - stated) / k) <= 0.005;
+    })
+  );
+}
+
+/** Every figure the recap prompt states, flattened, for the check above. */
+export function knownRecapFigures(figures) {
+  const out = [];
+  const t = figures.totals || {};
+  out.push(t.value, t.costBasis, t.gainLoss, t.dayChange);
+  for (const p of figures.positions || []) {
+    out.push(p.value, p.dayChange, p.gainLoss, p.price, p.range?.high, p.range?.low);
+  }
+  for (const g of figures.limits || []) out.push(g.contributed, g.remaining);
+  if (figures.realized) out.push(figures.realized.gain);
+  return out.filter((n) => n != null && Number.isFinite(n));
+}
+
 function countWords(text) {
   const t = text.trim();
   return t ? t.split(/\s+/).length : 0;
@@ -472,6 +629,67 @@ export async function askGemma(question, context, opts = {}) {
  * (caller treats retrieval as best-effort and falls back to no relevant
  * history, same posture as every other Gemma call in this file).
  */
+/**
+ * One narrative paragraph for the end-of-day portfolio recap.
+ *
+ * A sibling of askGemma() rather than a parameter on it: that one answers a
+ * QUESTION and builds buildQaPrompt() around it, while this sends a finished
+ * prompt. Everything that matters is shared - the same streaming reader, the
+ * same inactivity budget, the same deterministic options, the same advice
+ * gate - so the two cannot drift on the parts that are actually load-bearing.
+ *
+ * Returns {summary} or {reason}, matching validateRecapSummary()'s shape in
+ * tools/price-agent.js, so a missing narrative is always explainable.
+ *
+ * Runs against the SELF-HOSTED Gemma only. The prompt names what the user
+ * owns and what it is worth.
+ *
+ * @param {string} prompt from buildPortfolioRecapPrompt()
+ * @param {number[]} knownFigures from knownRecapFigures(), for the figure check
+ */
+export async function generatePortfolioRecap(prompt, knownFigures = [], opts = {}) {
+  const { endpoint, model = "gemma", key, timeoutMs = 45000, maxTotalMs = 180000 } = opts;
+  if (!endpoint) return { reason: "not_configured" };
+
+  const controller = new AbortController();
+  let idleTimer;
+  const armIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), timeoutMs);
+  };
+  const hardTimer = setTimeout(() => controller.abort(), maxTotalMs);
+  armIdle();
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(key ? { "X-Gemma-Key": key } : {}) },
+      body: JSON.stringify({
+        model, prompt, stream: true, think: GEMMA_THINK,
+        keep_alive: GEMMA_KEEP_ALIVE, options: QA_OPTIONS,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return { reason: `http_${res.status}` };
+    const text = (await readStreamedAnswer(res, { onActivity: armIdle })).trim();
+    if (!text) return { reason: "empty" };
+    // Same advice boundary as the Q&A. A recap about securities is exactly
+    // the surface that must never drift into telling someone what to do.
+    const validated = validateQaAnswer(text);
+    if (!validated.answer) return { reason: `rejected:${validated.reason}` };
+    // And the accuracy half: a figure it was not given is a figure it made
+    // up, so the paragraph goes rather than the number being shown.
+    if (!figuresInAnswerAreKnown(validated.answer, knownFigures)) {
+      return { reason: "unverified_figure" };
+    }
+    return { summary: plainDashes(validated.answer) };
+  } catch (err) {
+    return { reason: /abort|timeout/i.test(err.message || "") ? "timeout" : "error" };
+  } finally {
+    clearTimeout(idleTimer);
+    clearTimeout(hardTimer);
+  }
+}
+
 export async function embedText(text, opts = {}) {
   // A separate model from GEMMA_MODEL (nomic-embed-text vs. gemma4:e4b),
   // loaded independently by Ollama - warmUpGemma warming the generation

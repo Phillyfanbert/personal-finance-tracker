@@ -506,6 +506,12 @@ export function latestNewsDigest(findings) {
 //
 // Weekend observation follows the NYSE rule: a holiday falling on Saturday
 // is observed the Friday before, one falling on Sunday the Monday after.
+//
+// HAND-KEPT PAIR: tools/price-agent.js carries an identical copy of these
+// helpers plus marketStatus(), used to gate its FAST_ONLY tick to market
+// hours. There is no shared import between a Node script and a browser
+// module in this repo (the same constraint MARKET_INDEXES lives with), so
+// change one and change the other.
 const nthWeekday = (y, m, weekday, n) => {
   const first = new Date(Date.UTC(y, m, 1));
   const offset = (weekday - first.getUTCDay() + 7) % 7;
@@ -736,5 +742,120 @@ export function realizedGainSummary(sales, year = new Date().getFullYear()) {
     ytdRealizedPct: inYear.length && ytdBasis ? pct(ytdGain, ytdBasis) : null,
     allTimeCount: sales.length,
     allTimeRealized: sum(sales, "realized_gain"),
+  };
+}
+
+/**
+ * Everything the end-of-day portfolio recap states, computed in code.
+ *
+ * THE ACCURACY INVARIANT applies here exactly as it does to the Reports Q&A:
+ * every number the recap shows is computed HERE, and the model is handed the
+ * finished figures to write prose around. It never does arithmetic, so it
+ * cannot get a figure wrong - the same reason wiki.js computes before
+ * answering rather than handing over raw transactions.
+ *
+ * COMPOSED, never recalculated. Each figure comes from the function the
+ * Investments tab itself renders from (portfolioTotals, investmentHoldings,
+ * allocationVsTarget, contributionLimitUsage, realizedGainSummary,
+ * priceRangeStats), so the recap and the tab cannot disagree. A second
+ * definition of "what the portfolio is worth" is the failure that forced
+ * averageMonth() and netWorthAssets() to be unified; do not reimplement any
+ * of this inline.
+ *
+ * A section with nothing behind it is OMITTED rather than reported as zero,
+ * the same rule portfolioHealthSummary() follows. With two holdings this
+ * comes back short, and short is correct.
+ *
+ * Returns null when there is no position to describe at all.
+ */
+export function portfolioRecapFigures({
+  tradeDate,
+  holdings = [],
+  totals = null,
+  allocation = [],
+  limitUsage = [],
+  realized = null,
+  dailyPrices = [],
+  driftWarnPct = ALLOCATION_DRIFT_WARN_PCT,
+} = {}) {
+  const priced = holdings.filter((h) => h.currentValue != null);
+  if (!priced.length || !totals) return null;
+
+  // Per position. `dayChange` is null rather than 0 when there is no prior
+  // price to compare against, so an unpriced holding never reads as flat.
+  const positions = priced
+    .map((h) => {
+      const range = priceRangeStats(dailyPrices, h.symbol);
+      return {
+        symbol: h.symbol,
+        name: h.asset?.name || h.symbol,
+        quantity: h.quantity,
+        price: h.latestPrice,
+        value: h.currentValue,
+        dayChange: h.dayChange,
+        dayChangePct: h.dayChangePct,
+        gainLoss: h.gainLoss,
+        gainLossPct: h.gainLossPct,
+        // Share of the day's total move, so the prose can say which position
+        // actually drove it rather than listing all of them evenly.
+        shareOfDayMove: h.dayChange != null && totals.todayChange
+          ? r2((h.dayChange / totals.todayChange) * 100)
+          : null,
+        range: range && range.tradingDays > 1
+          ? {
+            high: range.high,
+            low: range.low,
+            tradingDays: range.tradingDays,
+            spanDays: range.spanDays,
+            isFullYear: range.isFullYear,
+          }
+          : null,
+      };
+    })
+    .sort((a, b) => Math.abs(b.dayChange ?? 0) - Math.abs(a.dayChange ?? 0));
+
+  const unpriced = holdings
+    .filter((h) => h.latestPrice == null)
+    .map((h) => h.asset?.name || h.symbol);
+
+  // Only the bucket furthest off target, and only once it is genuinely off -
+  // the full per-bucket breakdown has its own card, and repeating it here
+  // would be the same numbers twice.
+  const drifted = allocation
+    .filter((b) => b.targetPercent != null && Math.abs(b.currentPct - b.targetPercent) >= driftWarnPct)
+    .sort((a, b) => Math.abs(b.currentPct - b.targetPercent) - Math.abs(a.currentPct - a.targetPercent))[0] || null;
+
+  const limits = limitUsage
+    .filter((g) => g.contributed > 0 || g.overLimit)
+    .map((g) => ({
+      label: g.label, contributed: g.contributed, remaining: g.remaining, overLimit: g.overLimit,
+    }));
+
+  return {
+    tradeDate: tradeDate || null,
+    totals: {
+      value: totals.totalValue,
+      costBasis: totals.totalCostBasis,
+      gainLoss: totals.totalGainLoss,
+      gainLossPct: totals.totalGainLossPct,
+      dayChange: totals.todayChange,
+      dayChangePct: totals.todayChangePct,
+    },
+    positions,
+    // Stated so the prose can be honest about coverage instead of implying
+    // the figures cover everything.
+    unpriced: unpriced.length ? unpriced : undefined,
+    drift: drifted
+      ? {
+        bucket: drifted.bucket,
+        currentPct: drifted.currentPct,
+        targetPercent: drifted.targetPercent,
+        gapDollars: drifted.gapDollars,
+      }
+      : undefined,
+    limits: limits.length ? limits : undefined,
+    realized: realized && realized.ytdCount
+      ? { count: realized.ytdCount, gain: realized.ytdRealized, year: realized.year }
+      : undefined,
   };
 }

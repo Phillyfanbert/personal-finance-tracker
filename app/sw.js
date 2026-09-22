@@ -20,7 +20,7 @@
 // current here to close that gap too, not because normal offline use depends
 // on it. If it drifts again, that narrow case regresses; ordinary offline use
 // after a successful first run does not.
-const CACHE = "expense-shell-v50";
+const CACHE = "expense-shell-v51";
 const SHELL = [
   "./index.html", "./config.js", "./manifest.json",
   "./icons/icon-32.png", "./icons/icon-180.png",

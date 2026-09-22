@@ -62,8 +62,19 @@
 #   EMBED_EXPENSES_INTERVAL_SECONDS - how often embed-expenses.js runs
 #                           (default 3600 = hourly)
 #   PRICE_AGENT_FAST_INTERVAL_SECONDS - how often price-agent.js's
-#                           FAST_ONLY (Finnhub-only) mode runs (default
-#                           900 = 15 minutes)
+#                           FAST_ONLY (Finnhub-only) mode WAKES UP (default
+#                           900 = 15 minutes). This is the wake interval,
+#                           not the run count: the script itself checks
+#                           whether the US market is open and exits
+#                           immediately when it is not, so a 900s interval
+#                           costs ~28 real runs a weekday and none at all
+#                           at weekends or on a market holiday. The gate
+#                           lives in price-agent.js rather than here
+#                           because launchd cannot express market hours -
+#                           StartInterval has no notion of them and
+#                           StartCalendarInterval would need ~28 dict
+#                           entries per weekday and still could not
+#                           express a holiday.
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -410,6 +421,6 @@ EOF
 install_monthly_agent "com.monthly-report.monthly" "${TOOLS_DIR}/run-monthly-report.sh" "$MONTHLY_REPORT_DAY" "$MONTHLY_REPORT_HOUR" "$MONTHLY_REPORT_MIN"
 
 log "Done"
-echo "Scheduled: deal-agent ${WEEKDAY_NAMES[0]}s ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent (full) ${WEEKDAY_NAMES[$PRICE_AGENT_WEEKDAY]}s ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN") - deliberately different days, see PRICE_AGENT_WEEKDAY's own comment above for why. embed-expenses every ${EMBED_EXPENSES_INTERVAL_SECONDS}s (cheap thanks to content-hash delta detection - most runs do nothing). price-agent (FAST_ONLY, Finnhub-only real ticker prices) every ${PRICE_AGENT_FAST_INTERVAL_SECONDS}s. monthly-report day ${MONTHLY_REPORT_DAY} of each month at ${MONTHLY_REPORT_HOUR}:$(printf '%02d' "$MONTHLY_REPORT_MIN")."
+echo "Scheduled: deal-agent ${WEEKDAY_NAMES[0]}s ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent (full) ${WEEKDAY_NAMES[$PRICE_AGENT_WEEKDAY]}s ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN") - deliberately different days, see PRICE_AGENT_WEEKDAY's own comment above for why. embed-expenses every ${EMBED_EXPENSES_INTERVAL_SECONDS}s (cheap thanks to content-hash delta detection - most runs do nothing). price-agent (FAST_ONLY, Finnhub-only real ticker prices) wakes every ${PRICE_AGENT_FAST_INTERVAL_SECONDS}s and exits at once unless the US market is open (or inside the 30-minute post-close settle window), so it really runs ~28 times a weekday and never at a weekend. monthly-report day ${MONTHLY_REPORT_DAY} of each month at ${MONTHLY_REPORT_HOUR}:$(printf '%02d' "$MONTHLY_REPORT_MIN")."
 echo "Test any agent right now with: DRY_RUN=1 ./run-deal-agent.sh   (or run-price-agent.sh / run-price-agent-fast.sh / run-embed-expenses.sh / run-monthly-report.sh)"
 echo "Remember to flip DEAL_FINDINGS_ENABLED / PRICE_FINDINGS_ENABLED to true in app/config.js and the Cloudflare dashboard once you're ready to surface results in the UI. RAG retrieval for the Q&A needs no such flag - it's best-effort and just silently contributes nothing until embed-expenses.js has actually run once."

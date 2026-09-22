@@ -232,6 +232,22 @@ export const TOUR_STEPS = {
       placement: "bottom",
     },
     {
+      // Lives behind a sub-tab, so it carries `subtab` - visibleSteps() drops
+      // a step whose target has no client rects, and a hidden panel's
+      // children have none.
+      //
+      // Targets the PANEL, not portfolioRecapCard. That card stays hidden
+      // until a recap has actually been written, which is never true for
+      // someone taking a first-run tour - so pointing at it would drop this
+      // step for exactly the reader it is written for. The panel always holds
+      // either the card or its empty state.
+      target: "investSubDayRecap",
+      subtab: "investSubDayRecap",
+      title: "How your own money did today",
+      body: "Once the market has closed, this writes a short note about how the things you own did that day. The figures are worked out by this app from your own holdings; only the wording is written for you, and that happens on your own machine, so nothing about what you own is sent anywhere. It tells you what happened and never what to do about it.",
+      placement: "bottom",
+    },
+    {
       target: "helpInvestBtn",
       title: "More on this page",
       body: "Every card here also has a small \"i\" you can tap for an explanation of that card, and Help covers the whole page.",

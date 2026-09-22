@@ -199,13 +199,30 @@
 // tighten (not the already-fast FAST_ONLY legs), redo this math first -
 // don't just switch the plist.
 //
-// Finnhub call volume, FAST_ONLY run: 1 user asset + 20 movers = up to 21,
-// at a 15-minute cadence (96 runs/day) that's roughly 2,000 Finnhub
-// calls/day worst case - still trivially inside 60/min free with no daily
-// cap, since they're a short burst every 15 minutes, not sustained
-// traffic. No market-hours gating - Finnhub returns the correct last-
-// known/previous-close price off-hours anyway, so an off-hours run isn't
-// wasted, it just doesn't change.
+// Finnhub call volume, FAST_ONLY run: 1 user asset + 20 movers + 4 ETF
+// proxies = up to 25.
+//
+// MARKET-HOURS GATED as of 2026-09-22 (shouldRunFastThisTick). It was not,
+// and the original reasoning here - "Finnhub returns the correct last-known
+// price off-hours anyway, so an off-hours run isn't wasted, it just doesn't
+// change" - was true about the PRICE and wrong about the cost. The market is
+// open 32.5 hours of every 168, so ~81% of the 96 daily wake-ups re-fetched a
+// price that could not have moved and INSERTED it again: measured in
+// production at 4,750 rows / 2,304 kB in market_index_findings holding two
+// days, against 655 rows / 192 kB in daily_prices holding five weeks. The
+// durable archive was a twelfth the size of the churn in front of it.
+//
+// Gated: ~28 runs a weekday, none at weekends or on a holiday. Finnhub drops
+// from ~2,400 calls/day to ~700 a weekday and the row churn falls by the same
+// ~73%. Nothing about the data on screen changes - a closed market has no new
+// price to show, and the client already short-circuits its own refresh on
+// marketStatus().open.
+//
+// The 30-minute post-close grace window is NOT slack. writeDailyCandles()
+// re-upserts the current day's row every run and Finnhub only settles `c` to
+// the real close once the session ends, so stopping dead at 16:00 would leave
+// every daily candle holding the last intraday tick. RECAP_ONLY makes no
+// /quote calls, so nothing else would fix it.
 // ============================================================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -285,8 +302,37 @@ const MOVERS_PER_CATEGORY = 5;
 // single tick is a "+112%" move. Showing those to someone who has never
 // invested is worse than showing nothing - it misrepresents what a big
 // move even means.
-const MIN_MOVER_PRICE = 1;
-const MIN_MOVER_VOLUME = 50000;
+// Raised from $1/50k on 2026-09-22. The warrant filter worked, and the card
+// then filled up with the next tier of the same problem: measured across the
+// stored summaries, the "biggest movers" were IM Cannabis, NUBURU, Delixy
+// Holdings, Biodexa Pharmaceuticals, Future Fintech and Borealis Foods - all
+// real common stock, all sub-$5 microcaps, and the Gemini summary kept having
+// to open with some version of "today's biggest moves happened in smaller,
+// lesser-known companies with no clear news". That sentence is the card
+// admitting it has nothing to say. A stock under $5 moving 90% on 60k shares
+// is not market news; it is the float being thin.
+const MIN_MOVER_PRICE = 5;
+const MIN_MOVER_VOLUME = 500000;
+
+// A MARKET-CAP floor was built here and then REMOVED, measured rather than
+// argued. Do not re-add it without re-running the numbers.
+//
+// The idea was sound - price and volume alone let a $6 stock on 600k shares
+// through at a $40m valuation - but Alpha Vantage's TOP_GAINERS_LOSERS is
+// structurally a microcap list, because the largest percentage moves in the
+// whole market nearly always happen to small companies. Measured over the 192
+// stored movers across 21 trading days:
+//
+//   floor                       kept    days with any mover
+//   $1  / 50k   / no cap        192     21 of 21
+//   $3  / 250k  / no cap         93     21 of 21
+//   $5  / 500k  / no cap         65     21 of 21
+//   $5  / 500k  / $300m cap      22     14 of 21
+//
+// Every cap floor tested cost a THIRD of all days while removing little the
+// price and volume floors had not already removed. An empty card on a third
+// of days is the failure this file already records for the payoff comparison;
+// $5/500k keeps every day populated and still drops two thirds of the noise.
 
 // A 5-character US ticker ending in W, U or R is a warrant, unit or rights
 // issue rather than common stock - a real, standardised suffix convention,
@@ -383,6 +429,115 @@ let finnhubNewsCallCount = 0;
 // depending on the job's exact historical fire times.
 function shouldFetchNewsThisRun(now = new Date()) {
   return now.getMinutes() < 15;
+}
+
+// US market holidays, COMPUTED rather than listed, and the market's own
+// open/closed state. A HAND-KEPT COPY of marketHolidays()/marketStatus() in
+// app/investments.js - there is no shared import between a Node script and a
+// browser module in this repo, the same constraint MARKET_INDEXES already
+// lives with. Change one, change the other.
+const nthWeekday = (y, m, weekday, n) => {
+  const first = new Date(Date.UTC(y, m, 1));
+  const offset = (weekday - first.getUTCDay() + 7) % 7;
+  return new Date(Date.UTC(y, m, 1 + offset + (n - 1) * 7));
+};
+const lastWeekday = (y, m, weekday) => {
+  const last = new Date(Date.UTC(y, m + 1, 0));
+  return new Date(Date.UTC(y, m + 1, 0 - ((last.getUTCDay() - weekday + 7) % 7)));
+};
+// Anonymous Gregorian computus. Good Friday is the Friday before Easter.
+const easter = (y) => {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(y, month - 1, day));
+};
+// Saturday -> the Friday before, Sunday -> the Monday after.
+const observed = (d) => {
+  const wd = d.getUTCDay();
+  if (wd === 6) return new Date(d.getTime() - 86400000);
+  if (wd === 0) return new Date(d.getTime() + 86400000);
+  return d;
+};
+const ymdUtc = (d) => d.toISOString().slice(0, 10);
+
+function marketHolidays(year) {
+  const gf = easter(year);
+  return new Set([
+    observed(new Date(Date.UTC(year, 0, 1))),          // New Year's Day
+    nthWeekday(year, 0, 1, 3),                          // MLK, 3rd Monday Jan
+    nthWeekday(year, 1, 1, 3),                          // Presidents, 3rd Monday Feb
+    new Date(gf.getTime() - 2 * 86400000),              // Good Friday
+    lastWeekday(year, 4, 1),                            // Memorial, last Monday May
+    observed(new Date(Date.UTC(year, 5, 19))),          // Juneteenth
+    observed(new Date(Date.UTC(year, 6, 4))),           // Independence Day
+    nthWeekday(year, 8, 1, 1),                          // Labor, 1st Monday Sep
+    nthWeekday(year, 10, 4, 4),                         // Thanksgiving, 4th Thursday Nov
+    observed(new Date(Date.UTC(year, 11, 25))),         // Christmas
+  ].map(ymdUtc));
+}
+
+function marketStatus(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  const weekday = get("weekday");
+  const minutesEt = Number(get("hour")) * 60 + Number(get("minute"));
+  const isWeekday = weekday !== "Sat" && weekday !== "Sun";
+  // The ET calendar date, not the local or UTC one - a holiday has to be
+  // judged in the market's own timezone or the answer is wrong for anyone
+  // west of it in the evening.
+  const etDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now);
+  const holiday = marketHolidays(Number(etDate.slice(0, 4))).has(etDate);
+  return {
+    open: isWeekday && !holiday && minutesEt >= 9 * 60 + 30 && minutesEt < 16 * 60,
+    holiday,
+    weekday,
+    minutesEt,
+  };
+}
+
+// Minutes after the 16:00 ET close that FAST_ONLY keeps running. This window
+// is LOAD-BEARING, not slack: writeDailyCandles() re-upserts the current
+// day's row on every run and Finnhub only settles `c` to the real closing
+// price once the session has ended, so a gate that stopped dead at 16:00
+// would leave every daily candle holding the last intraday tick instead of
+// the close. RECAP_ONLY makes no /quote calls at all, so it cannot fill the
+// gap - this is the only thing that does.
+const POST_CLOSE_GRACE_MINUTES = 30;
+
+// Whether a FAST_ONLY run has anything to do. The market is open 32.5 hours
+// of every 168, so an ungated 15-minute job spent ~81% of its runs re-pricing
+// a closed market and rewriting an unchanged close - measured at ~2,300 rows
+// a day into market_index_findings against a 2-day TTL.
+//
+// Gated HERE rather than in launchd deliberately: StartInterval cannot
+// express market hours, StartCalendarInterval would need ~28 dict entries per
+// weekday, and neither can express a holiday at all.
+function shouldRunFastThisTick(now = new Date()) {
+  const status = marketStatus(now);
+  if (status.open) return { run: true, reason: "market open" };
+  if (status.weekday === "Sat" || status.weekday === "Sun") {
+    return { run: false, reason: "weekend" };
+  }
+  if (status.holiday) return { run: false, reason: "market holiday" };
+  const closeMin = 16 * 60;
+  if (status.minutesEt >= closeMin && status.minutesEt < closeMin + POST_CLOSE_GRACE_MINUTES) {
+    return { run: true, reason: "post-close settle window" };
+  }
+  return { run: false, reason: status.minutesEt < closeMin ? "before the open" : "after the close" };
 }
 
 function requireEnv() {
@@ -542,6 +697,43 @@ async function writeDailyCandles(results) {
 const MARKET_CONTEXT_QUERY = "stock market today what moved the market";
 const MAX_CONTEXT_HEADLINES = 4;
 
+// This feature produced NOTHING for its first 22 trading days - every stored
+// daily_recaps row has context_headlines empty - and the cause was diagnosed
+// on 2026-09-22 by elimination rather than guessed at.
+//
+// The GATE is not the problem: isMarketWideHeadline was measured against 8
+// real market-wrap headlines and 7 pieces of the junk it exists to reject,
+// and got all 15 right. What was left is the DOMAIN ALLOWLIST.
+// TRUSTED_NEWS_DOMAINS is TRUSTED_PRICE_DOMAINS plus Reuters and CNBC, and
+// TRUSTED_PRICE_DOMAINS is a list of QUOTE-PAGE hosts (Yahoo Finance,
+// MarketWatch, Nasdaq, Morningstar, two crypto price sites and google.com).
+// Those are dashboards, not market wraps - the exact mismatch this file
+// already records for the reverted stock-price search experiment. So a
+// general market-wrap query had to land a top-5 result on one of literally
+// two suitable domains or come back with nothing, and mostly came back with
+// nothing.
+//
+// The fix is a list of publishers that actually WRITE a daily market wrap,
+// used for this one search only. TRUSTED_NEWS_DOMAINS is deliberately left
+// alone: it is also what gates per-symbol explanation sources, and widening
+// it there would change a different feature's behaviour for no reason.
+//
+// STILL TO CONFIRM LIVE: run `DRY_RUN=1 ./tools/run-daily-recap.sh` on the
+// server machine and read what the query actually returns. The diagnosis
+// above is sound but the search half cannot be exercised from a dev box -
+// tools/.env.deal-agent holds the key and lives only on that machine.
+const MARKET_WRAP_DOMAINS = [
+  "reuters.com", "cnbc.com", "apnews.com", "bloomberg.com",
+  "wsj.com", "ft.com", "barrons.com", "fortune.com",
+  "businessinsider.com", "investopedia.com", "axios.com",
+  "forbes.com", "cnn.com", "npr.org", "investors.com",
+  "marketwatch.com", "finance.yahoo.com",
+];
+// A market wrap has to be found among the top results or not at all, and a
+// wider allowlist is only useful if there are enough results for it to match
+// against. Still exactly ONE Tavily search - max_results is free.
+const MARKET_CONTEXT_RESULTS = 15;
+
 // The two previous attempts at market-wide news both failed on RELEVANCE
 // (Finnhub's general feed returned Gaza funding and a cocktail-bar feature;
 // its `related` tagging matched nothing) - see fetchTrackedStockNews's own
@@ -574,18 +766,28 @@ function isMarketWideHeadline(title) {
 // status to degraded - the same treatment findRecapSummary already gets.
 async function findMarketContext() {
   try {
-    const results = await tavilySearch(MARKET_CONTEXT_QUERY);
+    const results = await tavilySearch(MARKET_CONTEXT_QUERY, MARKET_CONTEXT_RESULTS);
     const seen = new Set();
     const picked = [];
+    let blockedByDomain = 0;
+    let blockedByGate = 0;
     for (const r of results) {
-      if (!hostAllowed(r.url, TRUSTED_NEWS_DOMAINS)) continue;
+      if (!hostAllowed(r.url, MARKET_WRAP_DOMAINS)) { blockedByDomain++; continue; }
       const title = (r.title || "").trim();
-      if (!isMarketWideHeadline(title) || seen.has(r.url)) continue;
+      if (seen.has(r.url)) continue;
+      if (!isMarketWideHeadline(title)) { blockedByGate++; continue; }
       seen.add(r.url);
       picked.push({ title, url: r.url, source: hostOf(r.url) });
       if (picked.length >= MAX_CONTEXT_HEADLINES) break;
     }
-    if (!picked.length) console.warn("No market-wide headline passed the relevance gate this run - recap keeps its existing shape.");
+    // Say WHICH filter did the rejecting. The previous version logged one
+    // undifferentiated "nothing passed the gate", which is how a domain-list
+    // problem went 22 days looking like a relevance problem.
+    if (!picked.length) {
+      console.warn(`No market-wide headline survived this run - ${results.length} result(s), ${blockedByDomain} off-allowlist, ${blockedByGate} rejected by the relevance gate. Recap keeps its existing shape.`);
+    } else {
+      console.log(`Market context: kept ${picked.length} of ${results.length} result(s) (${blockedByDomain} off-allowlist, ${blockedByGate} not a market wrap).`);
+    }
     return picked;
   } catch (err) {
     console.warn(`Market context lookup failed (non-fatal, recap unaffected): ${err.message}`);
@@ -815,6 +1017,20 @@ const RECAP_ADVICE_PHRASES = [
   "good time to", "buying opportunity", "opportunity to buy", "bargain",
   "undervalued", "overvalued", "safe bet", "can't go wrong", "cannot go wrong",
   "no-brainer", "too cheap", "looks cheap", "looks expensive",
+  // Added 2026-09-22 with the three-paragraph rewrite, and measured rather
+  // than guessed: the corpus showed this list letting 3 of 8 advisory
+  // summaries through. That gap existed before, but the new paragraph 3
+  // asks the model to describe a multi-day RUN, which is precisely the
+  // territory where "the run will continue" becomes the natural next
+  // sentence - so the prompt change raises the odds of the exact phrasing
+  // the gate was missing.
+  //
+  // DIRECTIONAL forms only, following the 2026-09-02 reasoning above. A bare
+  // "will continue" would reject "the company said the buyback will continue
+  // into next year", which is attributed reporting the prompt explicitly
+  // asks for. "will reach $" rather than "will reach" for the same reason.
+  "will continue to rise", "will continue to fall", "will continue to climb",
+  "will reach $", "consider adding", "consider buying", "consider selling",
 ];
 
 // One batched call covering the whole day, not one per mover - that
@@ -833,7 +1049,38 @@ const INDEX_PLAIN_NAMES = {
   IWM: "the Russell 2000, which tracks around 2,000 smaller US companies",
 };
 
-function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames = {}, newsPool = [], contextHeadlines = []) {
+// `extra` carries the optional context added 2026-09-22 - the recent run from
+// daily_prices and each company's industry from symbol_fundamentals. Bundled
+// rather than added as two more positional parameters: this signature was
+// already seven long, and every one of these is optional context the prompt
+// degrades gracefully without.
+function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames = {}, newsPool = [], contextHeadlines = [], extra = {}) {
+  const { trends = {}, industries = {} } = extra;
+  // The recent run for the index proxies only. A per-company trend would be
+  // twenty more lines for a model asked to write three paragraphs, and the
+  // question a beginner actually has is whether the MARKET has been heading
+  // one way, not whether each holding has.
+  const trendLines = indexMoves
+    .map((i) => {
+      const t = trends[i.symbol];
+      if (!t) return null;
+      const gloss = INDEX_PLAIN_NAMES[i.symbol] || i.symbol;
+      const dir = t.change_pct > 0 ? "up" : t.change_pct < 0 ? "down" : "flat";
+      return `- ${gloss}: ${dir} ${Math.abs(t.change_pct)}% over the last ${t.days} trading days (${t.up_days} up, ${t.down_days} down)`;
+    })
+    .filter(Boolean);
+  // Group the day's movers by industry, so the model has the grouping
+  // already made rather than having to infer it from company names (which
+  // the rules above forbid it using its own knowledge for).
+  const bySector = {};
+  for (const m of movers) {
+    const industry = industries[m.symbol];
+    if (!industry) continue;
+    (bySector[industry] ||= []).push(companyNames[m.symbol] || m.symbol);
+  }
+  const sectorLines = Object.entries(bySector)
+    .filter(([, names]) => names.length > 1)
+    .map(([industry, names]) => `- ${industry}: ${names.join(", ")}`);
   // Company names are passed IN rather than left to the model. The rule
   // below forbids using its own knowledge of these companies, so without
   // this it could only ever write bare tickers - and "WMT fell 9%" is
@@ -868,6 +1115,12 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
       : "",
     indexLines.length ? "How the wider market did:" : "",
     ...indexLines,
+    trendLines.length ? "" : "",
+    trendLines.length ? "How that compares with the last few days:" : "",
+    ...trendLines,
+    sectorLines.length ? "" : "",
+    sectorLines.length ? "Which of today's movers are in the same line of business:" : "",
+    ...sectorLines,
     contextHeadlines.length ? "" : "",
     contextHeadlines.length
       ? "What the financial press reported about the market as a whole today:"
@@ -882,7 +1135,9 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
     ...newsPool.map((h) => `- ${h.who}: "${h.title}" (${h.source || "unknown source"})`),
     "",
     "Rules for summary:",
-    "- Write TWO short paragraphs, separated by one blank line.",
+    trendLines.length
+      ? "- Write THREE short paragraphs, separated by one blank line."
+      : "- Write TWO short paragraphs, separated by one blank line.",
     contextHeadlines.length
       ? "  Paragraph 1: how the market did overall today, using the numbers"
       : "  Paragraph 1: how the market did overall today, using the numbers above.",
@@ -906,6 +1161,27 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
     "  partnership, a big investment in new facilities, a company planning to",
     "  sell shares to the public). Group related stories into a theme instead",
     "  of listing headlines one by one.",
+    sectorLines.length
+      ? "  Where several of today's movers are in the same line of business, say"
+      : "",
+    sectorLines.length
+      ? "  so in plain words ('several of the chip makers moved together'),"
+      : "",
+    sectorLines.length
+      ? "  using ONLY the groupings listed above."
+      : "",
+    trendLines.length
+      ? "  Paragraph 3: put today in the context of the last few days, using the"
+      : "",
+    trendLines.length
+      ? "  run listed above - whether today continued the recent direction or"
+      : "",
+    trendLines.length
+      ? "  broke from it. Describe only what the numbers show. Do NOT say what"
+      : "",
+    trendLines.length
+      ? "  happens next, and do NOT suggest the run will continue or reverse."
+      : "",
     "- Everyday words only.",
     "- Never use an em dash or en dash. Use a plain hyphen instead.",
     "- Write like you are explaining the day to a friend who knows nothing",
@@ -1002,9 +1278,26 @@ async function loadDisplayCompanyNames(fallbackNames) {
   return names;
 }
 
-async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames, newsPool = [], contextHeadlines = []) {
+// Each tracked company's industry, so the summary can say "several of the
+// chip makers" instead of naming four tickers in a row. refreshFundamentals()
+// has been storing this daily since 56_watchlist_and_fundamentals.sql and
+// nothing had ever read it. Costs no API call.
+async function loadIndustries() {
   try {
-    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool, contextHeadlines));
+    const rows = await sbGet("symbol_fundamentals?select=symbol,industry&industry=not.is.null");
+    return Object.fromEntries(
+      rows.map((r) => [(r.symbol || "").trim().toUpperCase(), String(r.industry).trim()])
+        .filter(([symbol, industry]) => symbol && industry)
+    );
+  } catch (err) {
+    console.warn(`Could not read industries for the summary (non-fatal): ${err.message}`);
+    return {};
+  }
+}
+
+async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames, newsPool = [], contextHeadlines = [], extra = {}) {
+  try {
+    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool, contextHeadlines, extra));
     const result = validateRecapSummary(parseJsonLoose(text));
     if (!result.summary) console.warn(`No usable recap summary this run (${result.reason}) - keeping the zero-LLM recap.`);
     return result;
@@ -1225,9 +1518,17 @@ function buildMoverSummaryPrompt(tradeDate, movers) {
 async function findMoverSummary(tradeDate, movers) {
   try {
     const text = await extractWithGemini(buildMoverSummaryPrompt(tradeDate, movers));
-    const summary = validateRecapSummary(parseJsonLoose(text));
-    if (!summary) console.warn("No usable mover summary this run - keeping the numbers and headlines.");
-    return summary;
+    // validateRecapSummary returns {summary} OR {reason}, so it is ALWAYS
+    // truthy - read the field, never the object. Returning the object here
+    // wrote "[object Object]" into a text column and stamped the row
+    // rollup+gemini, which is exactly the dishonest provenance
+    // generated_by exists to prevent.
+    const result = validateRecapSummary(parseJsonLoose(text));
+    if (!result.summary) {
+      console.warn(`No usable mover summary this run (${result.reason}) - keeping the numbers and headlines.`);
+      return null;
+    }
+    return result.summary;
   } catch (err) {
     console.warn(`Mover summary failed (non-fatal, keeping the numbers): ${err.message}`);
     return null;
@@ -1307,6 +1608,47 @@ async function buildMarketMovers(tradeDate) {
 // than off the calendar, so market holidays need no special-casing and no
 // holiday list - the same call marketStatus() already makes. A weekend run
 // simply rebuilds Friday's recap, which is idempotent.
+// How many trading days of context the recap gets beyond today. daily_prices
+// is retained indefinitely and the recap was reading exactly two days of it,
+// so "the market fell today" could never be placed against "and it has now
+// fallen four days running" - which is the difference between a number and
+// something a beginner can actually use. Costs no API call: these rows are
+// already stored, and one extra Supabase read covers every symbol at once.
+const RECAP_TREND_DAYS = 5;
+
+// Direction over the recent run, per symbol, from rows already in hand.
+// Returns null for a symbol without enough history rather than inventing a
+// trend from two points - the same omit-rather-than-assert rule the rest of
+// this file holds.
+function trendForSymbols(rowsByDate, dates, symbols) {
+  const out = {};
+  for (const symbol of symbols) {
+    const series = [];
+    // dates arrives newest-first; walk oldest-first so the maths reads
+    // forwards.
+    for (const d of [...dates].reverse()) {
+      const close = rowsByDate.get(d)?.get(symbol);
+      if (Number.isFinite(close)) series.push({ date: d, close });
+    }
+    if (series.length < 3) continue;
+    const first = series[0].close;
+    const last = series[series.length - 1].close;
+    if (!(first > 0)) continue;
+    let up = 0, down = 0;
+    for (let i = 1; i < series.length; i++) {
+      const diff = series[i].close - series[i - 1].close;
+      if (diff > 0) up++; else if (diff < 0) down++;
+    }
+    out[symbol] = {
+      days: series.length,
+      change_pct: r2(((last - first) / first) * 100),
+      up_days: up,
+      down_days: down,
+    };
+  }
+  return out;
+}
+
 async function buildDailyRecap(contextHeadlines = []) {
   queryAttempts++;
   const dateRows = await sbGet("daily_prices?select=trade_date&order=trade_date.desc&limit=200");
@@ -1335,6 +1677,28 @@ async function buildDailyRecap(contextHeadlines = []) {
     if (!Number.isFinite(close) || !Number.isFinite(prev) || prev <= 0) return null;
     return { close: r2(close), change: r2(close - prev), change_pct: r2(((close - prev) / prev) * 100) };
   };
+
+  // The recent run, for the index proxies and the tracked names alike. One
+  // extra read of rows that are already stored; nothing is fetched.
+  const trendDates = days.slice(0, RECAP_TREND_DAYS);
+  let trends = {};
+  try {
+    const trendRows = trendDates.length > 1
+      ? await sbGet(`daily_prices?select=symbol,close,trade_date&trade_date=in.(${trendDates.join(",")})`)
+      : [];
+    const byDate = new Map();
+    for (const r of trendRows) {
+      const d = r.trade_date;
+      if (!byDate.has(d)) byDate.set(d, new Map());
+      byDate.get(d).set((r.symbol || "").toUpperCase(), Number(r.close));
+    }
+    const allSymbols = [...new Set(trendRows.map((r) => (r.symbol || "").toUpperCase()))];
+    trends = trendForSymbols(byDate, trendDates, allSymbols);
+  } catch (err) {
+    // Optional context on a card that is complete without it, so this must
+    // never fail the recap or flip the run to degraded.
+    console.warn(`Could not build the multi-day trend (non-fatal): ${err.message}`);
+  }
 
   const headlines = await latestHeadlinesBySymbol();
   const etfTickers = new Set(Object.values(MARKET_INDEX_ETF_PROXIES));
@@ -1426,6 +1790,7 @@ async function buildDailyRecap(contextHeadlines = []) {
     skippedReason = "dry_run";
   } else {
     const displayNames = await loadDisplayCompanyNames(companyNames);
+    const industries = await loadIndustries();
     // The wider coverage pool, so the synthesis can write about what the day
     // was ABOUT rather than only which five tickers moved most. Reuses the
     // headlines already fetched above - no extra call. Skips the ETF proxies
@@ -1448,7 +1813,7 @@ async function buildDailyRecap(contextHeadlines = []) {
       }
       if (newsPool.length >= RECAP_NEWS_POOL_MAX) break;
     }
-    const result = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames, newsPool, contextHeadlines);
+    const result = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames, newsPool, contextHeadlines, { trends, industries });
     summary = result.summary || null;
     skippedReason = summary ? null : (result.reason || "error");
     // Only claim Gemini touched this row if it actually produced something
@@ -1644,7 +2009,7 @@ function hostAllowed(urlStr, domains) {
 }
 
 // ---- Tavily: real live web search -----------------------------------------
-async function tavilySearch(query) {
+async function tavilySearch(query, maxResults = RESULTS_PER_QUERY) {
   if (tavilyCallCount >= MAX_TAVILY_CALLS_PER_RUN) {
     throw new Error(`Tavily call budget (${MAX_TAVILY_CALLS_PER_RUN}/run) exceeded - skipping`);
   }
@@ -1652,7 +2017,7 @@ async function tavilySearch(query) {
   const res = await fetchWithRetry(TAVILY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${TAVILY_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, max_results: RESULTS_PER_QUERY, search_depth: "basic" }),
+    body: JSON.stringify({ query, max_results: maxResults, search_depth: "basic" }),
   }, SEARCH_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Tavily HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
@@ -2032,14 +2397,19 @@ async function findNewsDigest() {
       // an advice-phrased reason would have passed straight through.
       // Reusing validateRecapSummary keeps one definition of that boundary
       // rather than a second copy that could drift.
-      const reason = parsed && typeof parsed.sentiment_reason === "string"
+      //
+      // It returns {summary} OR {reason} and is always truthy, so read the
+      // field. Taking the object made the rejection branch below dead and
+      // wrote "[object Object]" into sentiment_reason's text column.
+      const checked = parsed && typeof parsed.sentiment_reason === "string"
         ? validateRecapSummary({ summary: parsed.sentiment_reason })
         : null;
+      const reason = checked?.summary || null;
       if (parsed && NEWS_SENTIMENTS.has(parsed.sentiment) && reason) {
         sentiment = parsed.sentiment;
         sentiment_reason = reason;
       } else if (parsed && !reason) {
-        console.warn("Sentiment reason rejected - keeping the headlines without it.");
+        console.warn(`Sentiment reason rejected (${checked?.reason || "missing"}) - keeping the headlines without it.`);
       }
     } catch (err) {
       console.warn(`News sentiment failed (non-fatal, keeping the headlines): ${err.message}`);
@@ -2546,7 +2916,17 @@ async function main() {
     await writeRunStatus();
     return;
   }
-  if (FAST_ONLY) console.log("FAST_ONLY=1: Finnhub-only run, skipping every Tavily/Gemini step.");
+  if (FAST_ONLY) {
+    // Gated only for the 15-minute tick. The full weekly run is deliberately
+    // NOT gated: it is scheduled at 05:00 Wednesday, before the open, and its
+    // Tavily/Gemini legs are about narrative rather than a live price.
+    const tick = shouldRunFastThisTick();
+    if (!tick.run) {
+      console.log(`FAST_ONLY: market is closed (${tick.reason}) - nothing to price, exiting without an API call.`);
+      return;
+    }
+    console.log(`FAST_ONLY=1: Finnhub-only run (${tick.reason}), skipping every Tavily/Gemini step.`);
+  }
   const fetchNewsThisRun = shouldFetchNewsThisRun();
   if (fetchNewsThisRun) console.log("Also fetching real per-symbol news headlines this run (Finnhub company-news, roughly hourly).");
 

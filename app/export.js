@@ -147,7 +147,7 @@ export function planSections({ safeToSpend = null, budgets = [], split = null, f
 }
 
 /** Investments: holdings, limits and targets, never a recommendation. */
-export function investmentsSections({ totals = null, holdings = [], snapshots = [], realized = [], limits = [], targets = [] }) {
+export function investmentsSections({ totals = null, holdings = [], snapshots = [], realized = [], limits = [], targets = [], dayRecaps = [] }) {
   return ([
     { title: "Totals", header: ["Measure", "Value"],
       rows: totals ? [["Total value", money(totals.totalValue)], ["Total cost basis", money(totals.totalCostBasis)],
@@ -162,6 +162,20 @@ export function investmentsSections({ totals = null, holdings = [], snapshots = 
     // each day's gain checkable.
     { title: "Value over time", header: ["Date", "Total value", "Total cost basis"],
       rows: snapshots.map((s) => [s.snapshot_date || "", money(s.total_value), money(s.total_cost_basis)]) },
+    // The end-of-day notes (portfolio_recaps). Like the snapshots above,
+    // these exist only for days the app was opened after the close, so they
+    // cannot be reconstructed from anything else in the file. The written
+    // paragraph rides along with the figures it was written from, so a
+    // reader can check one against the other.
+    { title: "End of day notes", header: ["Date", "Total value", "Change on the day", "Change percent", "Written note"],
+      rows: dayRecaps.map((r) => {
+        const t = r.figures?.totals || {};
+        return [
+          r.trade_date || "", money(t.value), money(t.dayChange),
+          t.dayChangePct != null ? `${t.dayChangePct}%` : "",
+          r.summary || "",
+        ];
+      }) },
     { title: "What you made on sales", header: ["Date", "Symbol", "Shares sold", "Proceeds", "Realized gain"],
       rows: realized.map((r) => [r.sold_on || r.sold_at || "", r.symbol || "", r.quantity ?? "", money(r.proceeds), money(r.realized_gain)]) },
     { title: "How much more you can put in this year", header: ["Group", "Contributed", "Limit", "Left", "Status"],

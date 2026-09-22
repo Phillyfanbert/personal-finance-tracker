@@ -1991,6 +1991,7 @@
       <div id="investTabPortfolio" class="hidden">
         <div class="subtab-pills" id="investSubTabsPortfolio">
           <button type="button" class="subtab-pill active" data-subtab="investSubHoldings">Holdings</button>
+          <button type="button" class="subtab-pill" data-subtab="investSubDayRecap">Today's note</button>
           <button type="button" class="subtab-pill" data-subtab="investSubValue">Value over time</button>
           <button type="button" class="subtab-pill" data-subtab="investSubRealized">Sales</button>
           <button type="button" class="subtab-pill" data-subtab="investSubLimits">Yearly limits</button>
@@ -2074,6 +2075,32 @@
           </div>
       </div>
 
+        <div id="investSubDayRecap" class="hidden" data-subtab-label="Today's note">
+          <div class="card empty-state" id="emptyDayRecap">Once the market has closed and you open the app, a short note about how the things you own did that day appears here.</div>
+  <!-- The user's OWN end-of-day note (portfolio_recaps, 75). Deliberately
+               separate from the Daily recap card on the Market tab: that one
+               is about the market, which belongs to nobody, and this is about
+               this person's own money. Same split the two top-level tabs draw.
+
+               Written client-side after the close, because the figures name
+               what someone owns - so the paragraph comes from the self-hosted
+               Gemma, never a cloud model. Every number is computed by
+               portfolioRecapFigures() in investments.js, the same functions
+               the Holdings card renders from; the model only writes prose
+               around them and its figures are checked before display. -->
+          <div class="card hidden" id="portfolioRecapCard">
+            <div class="card-head">
+              <h2>Today's note</h2>
+              <span class="info-icon" tabindex="0" role="button" data-info="portfolioRecapExplainer" title="A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app; the wording is written by a model running on your own machine, never sent anywhere. A day you don't open the app after the close simply has no note.">i</span>
+            </div>
+            <p class="muted" style="font-size:12px;margin:4px 0 2px" id="portfolioRecapDate"></p>
+            <p class="muted explainer hidden" id="portfolioRecapExplainer">A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app; the wording is written by a model running on your own machine, never sent anywhere. A day you don't open the app after the close simply has no note.</p>
+            <p style="font-size:22px;line-height:1.3;margin:10px 0 6px;font-weight:800" id="portfolioRecapHeadline"></p>
+            <p style="font-size:15.5px;line-height:1.6;margin:8px 0 10px" id="portfolioRecapSummary"></p>
+            <div id="portfolioRecapPositions"></div>
+            <p class="muted" id="portfolioRecapCaveat" style="font-size:12px;margin:8px 0 0"></p>
+          </div>
+        </div>
         <div id="investSubValue" class="hidden" data-subtab-label="Value">
   <!-- One snapshot per calendar day the app was actually opened
                (snapshotPortfolioIfNeeded, app.js) - same reasoning as the
@@ -3177,7 +3204,7 @@
       </div>
       <div id="helpContentInvest" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramInvest" role="group" aria-label="The Investments page, card by card, in the order they appear" viewBox="0 0 680 548" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramInvest" role="group" aria-label="The Investments page, card by card, in the order they appear" viewBox="0 0 680 592" xmlns="http://www.w3.org/2000/svg">
             <rect x="10" y="10" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="34" fill="var(--text)" font-size="14">Daily health check + totals (always shown)</text>
             <text x="28" y="78" fill="var(--accent)" font-size="13" font-weight="600">Market tab</text>
@@ -3192,13 +3219,15 @@
             <rect x="10" y="318" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="342" fill="var(--text)" font-size="14">Holdings</text>
             <rect x="10" y="362" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="386" fill="var(--text)" font-size="14">Value over time</text>
+            <text x="40" y="386" fill="var(--text)" font-size="14">Today's note</text>
             <rect x="10" y="406" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="430" fill="var(--text)" font-size="14">What you made on sales (only after a sale)</text>
+            <text x="40" y="430" fill="var(--text)" font-size="14">Value over time</text>
             <rect x="10" y="450" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="474" fill="var(--text)" font-size="14">How much more you can put in (only if tracked)</text>
+            <text x="40" y="474" fill="var(--text)" font-size="14">What you made on sales (only after a sale)</text>
             <rect x="10" y="494" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="518" fill="var(--text)" font-size="14">Your target mix</text>
+            <text x="40" y="518" fill="var(--text)" font-size="14">How much more you can put in (only if tracked)</text>
+            <rect x="10" y="538" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="562" fill="var(--text)" font-size="14">Your target mix</text>
           </svg>
         </div>
         <p class="muted" style="font-size:12px;margin:-10px 0 18px">Your daily health check and totals always sit at the top. Everything below is split across two tabs: <strong>Market</strong> for what the wider market did, and <strong>My portfolio</strong> for your own money. Several cards only appear once there is real data for them: the written recap at the top of Overview needs a finished trading day, "Biggest movers" needs the market-wide lookup to be set up, "Price history" needs at least one recorded price, and "Realized gain/loss" needs a sale. The list of companies all of this is built from is edited from the "Choose tracked companies" button just under the Market / My portfolio buttons.</p>
@@ -3293,6 +3322,15 @@
           <div class="help-topic-body hidden" id="helpTopic-daily-health-check-body">
           <p>A short, plain-English compilation of numbers already shown elsewhere on this page - never a made-up score. Up to five lines, each only shown when there's something real to say: today's dollar change (or a note that no live pricing exists yet), total gain or loss since cost basis, the single furthest-off-target allocation bucket (only if you've set targets), a flag if any contribution group is over or close to its annual limit (only if you're tracking one), and how many of your holdings currently have a live price. A small colored dot on each line is green for good, red for something worth a look, gray for "no data yet" - and a compact recent-trend chart sits right below it.</p>
           <p>The four stat tiles under it (Total value, Total gain/loss, Today's change, What you paid) are the same underlying numbers, just as plain totals - Today's change specifically needs at least two days of live price history before it can show anything.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-todays-note">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-todays-note-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Today's note</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-todays-note-body">
+          <p>A short written note about how the things you own did on the last day the market was open. It appears once the market has closed and you open the app; a day you don't open it after the close simply has no note, the same way the value chart below has no point for that day.</p>
+          <p>Every figure in it is worked out by this app from your own holdings, the same numbers the Holdings card shows. The wording around them is written by a model running on your own machine, and nothing about what you own is ever sent to an outside service. If that model is not set up, or it writes something that doesn't match the figures, the note keeps the numbers and drops the wording.</p>
+          <p>It describes what happened and stops there. It will never suggest buying, selling or changing anything, and never says what a price will do next.</p>
           </div>
         </div>
 

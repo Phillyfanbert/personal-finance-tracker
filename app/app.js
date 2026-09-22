@@ -6815,6 +6815,11 @@ async function renderInvestmentsTrend() {
 // used to fall into via `n >= 0`. Caught live: a flat 0.00% mover rendered
 // with a green number, implying a gain that didn't happen.
 const gainColor = (n) => (n == null ? "" : n > 0 ? "var(--ok)" : n < 0 ? "var(--err)" : "var(--text)");
+// The tone CLASS for a .stat-bubble headline, the same three-way split
+// gainColor makes and deliberately the same zero-is-neutral rule: a flat day
+// is not a gain. Shared by the market recap's breadth line and the portfolio
+// note's headline so the two cannot drift.
+const bubbleTone = (n) => (n == null || n === 0 ? "" : n > 0 ? "is-up" : "is-down");
 // Rounded to 2dp, and no "+" on an exact zero. Neither used to happen:
 // Alpha Vantage hands back raw precision, so a market-wide mover rendered
 // as "+113.1547%", and `n >= 0` put a plus sign on a flat 0% - the same
@@ -7157,15 +7162,14 @@ function renderPortfolioRecap() {
   // same never-state-it-in-colour-alone rule the rest of the app holds.
   const t = f.totals || {};
   const headline = $("portfolioRecapHeadline");
+  headline.className = `stat-bubble ${bubbleTone(t.dayChange)}`.trim();
   if (t.dayChange == null) {
     headline.textContent = `${fmt(t.value)}, change on the day not known`;
-    headline.style.color = "var(--text)";
   } else {
     const dir = t.dayChange > 0 ? "up" : t.dayChange < 0 ? "down" : "unchanged";
     headline.textContent = t.dayChange === 0
       ? `${fmt(t.value)}, unchanged on the day`
       : `${fmt(t.value)}, ${dir} ${fmt(Math.abs(t.dayChange))}${t.dayChangePct != null ? ` (${signedPct(t.dayChangePct)})` : ""}`;
-    headline.style.color = gainColor(t.dayChange);
   }
 
   // Labelled as written rather than measured, the same distinction the daily
@@ -7965,10 +7969,12 @@ function renderDailyRecap() {
     // than load-bearing, which is what 6.3 actually asks for.
     breadthEl.textContent =
       `${breadth.up} of the ${breadth.total} companies you track finished the day up, ${breadth.down} down`;
-    breadthEl.style.color = breadth.up > breadth.down ? "var(--ok)"
-      : breadth.down > breadth.up ? "var(--err)" : "var(--text)";
+    breadthEl.className = `stat-bubble ${bubbleTone(breadth.up - breadth.down)}`.trim();
   } else {
     breadthEl.textContent = "";
+    // Not just emptied: an empty bubble is a padded tinted box with nothing
+    // in it, which the unstyled paragraph this replaced could never be.
+    breadthEl.className = "hidden";
   }
 
   // Stage 2 (a single batched Gemini synthesis) is the only thing that

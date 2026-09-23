@@ -231,14 +231,55 @@ export const TICKER_NAMES = {
   XRP: "XRP",
 };
 
-// Ranked matches for the Tracked companies autocomplete. Ticker-prefix
-// matches rank above name matches, so typing "V" leads with V (Visa) rather
-// than burying it under every fund whose name contains a "v".
-export function searchTickers(query, limit = 8) {
+// SEC's own ~10,400-ticker index, loaded ON DEMAND the first time someone
+// types in a ticker field. Deliberately not a static import: the generated
+// module is ~357 KB (108 KB gzipped), which is not something to spend on every
+// first visit for a field most sessions never touch. Same shape as
+// export.js's loadSpreadsheetLib(), and for the same reason.
+//
+// Best-effort by construction. A failure resolves to an empty index rather
+// than rejecting, so the curated 383 below keep answering offline, on a
+// blocked CDN, and before the fetch lands. Callers never need a try/catch.
+let secNames = null;
+let secLoading = null;
+export function loadSecTickers() {
+  if (secNames) return Promise.resolve(secNames);
+  if (!secLoading) {
+    secLoading = import("./secTickers.js")
+      .then((m) => { secNames = m.SEC_TICKER_NAMES || {}; return secNames; })
+      .catch(() => { secLoading = null; return {}; });
+  }
+  return secLoading;
+}
+
+// Ranked matches for a ticker autocomplete. Ticker-prefix matches rank above
+// name matches, so typing "V" leads with V (Visa) rather than burying it under
+// every fund whose name contains a "v".
+//
+// `scope` picks which curated lists are searchable: "crypto" restricts to
+// CRYPTO_SYMBOLS, matching the gate isKnownTicker(symbol, parentType) already
+// applies when a holding's parent account is a crypto account. Offering a
+// stock ticker there would suggest something that save would then refuse.
+//
+// The CURATED names always outrank SEC's, which is not only about quality.
+// SEC's titles are EDGAR conformed names ("NVIDIA CORP") and the curated ones
+// are the short headline form ("Nvidia") that is safe to STORE, so preferring
+// them means the common case picks a name that can be written to
+// watchlist_symbols.company_name unchanged. A pure-SEC hit carries
+// `curated: false` so the caller knows not to store its name.
+export function searchTickers(query, limit = 8, { scope = "all", sec = null } = {}) {
   const q = (query || "").trim().toLowerCase();
   if (!q) return [];
+  const cryptoOnly = scope === "crypto";
+  const allowed = cryptoOnly ? new Set(CRYPTO_SYMBOLS) : null;
   const scored = [];
-  for (const [symbol, name] of Object.entries(TICKER_NAMES)) {
+  const seen = new Set();
+  const curatedEntries = Object.entries(TICKER_NAMES)
+    .filter(([symbol]) => !allowed || allowed.has(symbol));
+  // SEC covers US registrants only - no crypto - so a crypto scope never
+  // consults it, and an absent index simply contributes nothing.
+  const secEntries = cryptoOnly || !sec ? [] : Object.entries(sec);
+  for (const [symbol, name] of curatedEntries) {
     const sym = symbol.toLowerCase();
     const nm = name.toLowerCase();
     let score = null;
@@ -247,7 +288,23 @@ export function searchTickers(query, limit = 8) {
     else if (nm.startsWith(q)) score = 2;
     else if (nm.includes(q)) score = 3;
     else if (sym.includes(q)) score = 4;
-    if (score !== null) scored.push({ symbol, name, score });
+    if (score !== null) { scored.push({ symbol, name, score, curated: true }); seen.add(symbol); }
+  }
+  // SEC's entries are scored the same way but sit in a band BELOW every
+  // curated hit (+10), so "apple" still leads with the curated Apple rather
+  // than an alphabetically luckier registrant. A symbol the curated list
+  // already covers is skipped outright.
+  for (const [symbol, name] of secEntries) {
+    if (seen.has(symbol)) continue;
+    const sym = symbol.toLowerCase();
+    const nm = name.toLowerCase();
+    let score = null;
+    if (sym === q) score = 0;
+    else if (sym.startsWith(q)) score = 1;
+    else if (nm.startsWith(q)) score = 2;
+    else if (nm.includes(q)) score = 3;
+    else if (sym.includes(q)) score = 4;
+    if (score !== null) scored.push({ symbol, name, score: score + 10, curated: false });
   }
   // Within a score band, the shorter name wins before alphabetical order.
   // Without this, searching "bitcoin" put Bitcoin Cash above Bitcoin, and
@@ -258,4 +315,14 @@ export function searchTickers(query, limit = 8) {
     a.name.length - b.name.length ||
     a.symbol.localeCompare(b.symbol));
   return scored.slice(0, limit);
+}
+
+/**
+ * The name that is safe to STORE against a symbol. Only ever the curated short
+ * form, never SEC's legal one - see the TICKER_NAMES header for why a legal
+ * name silently breaks headline matching. Null is a supported stored value and
+ * degrades to ticker-only matching.
+ */
+export function storableName(symbol) {
+  return TICKER_NAMES[(symbol || "").trim().toUpperCase()] ?? null;
 }

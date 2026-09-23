@@ -16,7 +16,7 @@ import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, budgetSplit, budgetYearStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal, WARN_THRESHOLD_PCT } from "./budgets.js";
 import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, portfolioRecapFigures, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
-import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers } from "./tickers.js";
+import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers, loadSecTickers, storableName } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
 import {
   guessColumnMapping, guessSignConvention, normalizeRow, isLikelyDuplicate, detectNumberConvention,
@@ -3030,7 +3030,11 @@ $("saveAssetBtn").onclick = async () => {
     }
   }
   const depreciation_rate = isVehicle && depRateRaw !== "" ? parseFloat(depRateRaw) / 100 : null;
-  const price_symbol = $("assetPriceSymbol").value.trim() || null;
+  // Uppercased, which this field alone did not do. ownedPriceSymbols() already
+  // uppercases on read, so a lowercase save still matched downstream by luck -
+  // but it is the value written to the row, and "aapl" beside "AAPL" reads as
+  // two different holdings in any listing that shows it raw.
+  const price_symbol = $("assetPriceSymbol").value.trim().toUpperCase() || null;
   const quantity = $("assetQuantity").value !== "" ? parseFloat($("assetQuantity").value) : null;
   const investment_bucket = isInvestment ? ($("assetInvestBucket").value.trim() || null) : null;
   const row = { name, type, value, purchase_price, purchase_date, depreciation_rate, price_symbol, quantity, investment_bucket };
@@ -7661,7 +7665,15 @@ function renderPriceHistory() {
     priceHistorySymbol = owned || symbols[0];
   }
   const select = $("priceHistorySymbol");
-  select.innerHTML = symbols.map((s) => `<option value="${esc(s)}"${s === priceHistorySymbol ? " selected" : ""}>${esc(s)}</option>`).join("");
+  // Name beside the ticker, so this list is readable by someone who does not
+  // think in symbols. Deliberately NOT a search box: openPriceHistory() refuses
+  // a symbol with no recorded history, so typing "Nvidia" here could only ever
+  // fail. The curated short name only - an EDGAR legal name would be worse than
+  // the bare ticker it replaced.
+  select.innerHTML = symbols.map((s) => {
+    const name = storableName(s);
+    return `<option value="${esc(s)}"${s === priceHistorySymbol ? " selected" : ""}>${esc(name ? `${s} - ${name}` : s)}</option>`;
+  }).join("");
 
   // aria-pressed and a weight change, not colour alone: which range is showing
   // was previously stated only by a border and text tint.
@@ -7831,83 +7843,137 @@ function renderWatchlistEditor() {
 // untouched, so a real ticker the curated list has never heard of can still
 // be added. Same "comprehensive but not exhaustive" honesty isKnownBank()
 // established for the Bank field.
-let watchlistSuggestions = [];
-let watchlistSuggestIndex = -1;
+// One ticker autocomplete, attachable to any symbol field. This was written
+// for the Tracked companies field alone and held its state in three
+// module-level singletons with the element ids hardcoded, so a second instance
+// was impossible - generalized here rather than copied, because the app
+// already carries three suggestion patterns and index.html:1130 explicitly
+// warns against growing a fourth.
+//
+// Every behaviour below is the original's and each one is deliberate:
+//   - mousedown rather than click, because blur fires first on a click and
+//     would close the list before the selection ever registered
+//   - Enter intercepted ONLY when a row is highlighted, so Enter still submits
+//     normally for a hand-typed ticker
+//   - a lone exact-symbol hit suppressed, since a one-row dropdown covering
+//     the field you just finished typing into helps nobody
+//
+// `source()` returns the already-loaded SEC index or null; the field stays
+// fully usable on the curated 383 while that is still in flight.
+function attachTickerSuggest(inputId, boxId, { onPick, scope = () => "all", source = () => null } = {}) {
+  const input = $(inputId);
+  const box = $(boxId);
+  if (!input || !box) return;
+  let items = [];
+  let active = -1;
 
-function renderWatchlistSuggestions() {
-  const box = $("watchlistSuggest");
-  const input = $("watchlistNewSymbol");
-  if (!box) return;
-  if (!watchlistSuggestions.length) {
-    box.classList.add("hidden");
-    box.innerHTML = "";
-    input.setAttribute("aria-expanded", "false");
-    return;
-  }
-  box.classList.remove("hidden");
-  input.setAttribute("aria-expanded", "true");
-  // esc() on the name too: curated today, but this renders into innerHTML and
-  // the rule here is to escape anything not provably fixed at the call site.
-  box.innerHTML = watchlistSuggestions.map((s, i) => `
-    <div class="suggest-item${i === watchlistSuggestIndex ? " active" : ""}" role="option" data-suggest="${esc(s.symbol)}" data-suggest-name="${esc(s.name)}">
-      <div class="suggest-sym">${esc(s.symbol)}</div>
-      <div class="suggest-name">${esc(s.name)}</div>
-    </div>`).join("");
-}
+  const render = () => {
+    if (!items.length) {
+      box.classList.add("hidden");
+      box.innerHTML = "";
+      input.setAttribute("aria-expanded", "false");
+      return;
+    }
+    box.classList.remove("hidden");
+    input.setAttribute("aria-expanded", "true");
+    // esc() on the name too: curated today, but this renders into innerHTML
+    // and the rule here is to escape anything not provably fixed at the call
+    // site. SEC titles in particular are not ours.
+    box.innerHTML = items.map((s, i) => `
+      <div class="suggest-item${i === active ? " active" : ""}" role="option" data-suggest="${esc(s.symbol)}" data-suggest-name="${esc(s.name)}">
+        <div class="suggest-sym">${esc(s.symbol)}</div>
+        <div class="suggest-name">${esc(s.name)}</div>
+      </div>`).join("");
+  };
+  const close = () => { items = []; active = -1; render(); };
+  const pick = (symbol, name) => { onPick(symbol, name); close(); input.focus(); };
 
-function closeWatchlistSuggestions() {
-  watchlistSuggestions = [];
-  watchlistSuggestIndex = -1;
-  renderWatchlistSuggestions();
-}
-
-function applyWatchlistSuggestion(symbol, name) {
-  $("watchlistNewSymbol").value = symbol;
-  // Only fill the name if the user hasn't typed their own - their wording is
-  // what headline matching will use, so it is never silently overwritten.
-  const nameField = $("watchlistNewName");
-  if (!nameField.value.trim()) nameField.value = name;
-  closeWatchlistSuggestions();
-  $("watchlistNewSymbol").focus();
-}
-
-$("watchlistNewSymbol").addEventListener("input", () => {
-  const q = $("watchlistNewSymbol").value.trim();
-  // An exact ticker match alone is not worth a one-row dropdown covering the
-  // field the user just finished typing into.
-  const hits = searchTickers(q);
-  watchlistSuggestions = (hits.length === 1 && hits[0].symbol.toLowerCase() === q.toLowerCase()) ? [] : hits;
-  watchlistSuggestIndex = -1;
-  renderWatchlistSuggestions();
-});
-
-$("watchlistNewSymbol").addEventListener("keydown", (ev) => {
-  if (!watchlistSuggestions.length) return;
-  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+  input.addEventListener("input", () => {
+    const q = input.value.trim();
+    const hits = searchTickers(q, 8, { scope: scope(), sec: source() });
+    items = (hits.length === 1 && hits[0].symbol.toLowerCase() === q.toLowerCase()) ? [] : hits;
+    active = -1;
+    render();
+  });
+  input.addEventListener("keydown", (ev) => {
+    if (!items.length) return;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      const step = ev.key === "ArrowDown" ? 1 : -1;
+      active = (active + step + items.length) % items.length;
+      render();
+    } else if (ev.key === "Enter" && active >= 0) {
+      ev.preventDefault();
+      pick(items[active].symbol, items[active].name);
+    } else if (ev.key === "Escape") {
+      close();
+    }
+  });
+  box.addEventListener("mousedown", (ev) => {
+    const item = ev.target.closest("[data-suggest]");
+    if (!item) return;
     ev.preventDefault();
-    const step = ev.key === "ArrowDown" ? 1 : -1;
-    watchlistSuggestIndex = (watchlistSuggestIndex + step + watchlistSuggestions.length) % watchlistSuggestions.length;
-    renderWatchlistSuggestions();
-  } else if (ev.key === "Enter" && watchlistSuggestIndex >= 0) {
-    // Only intercept Enter when a suggestion is actually highlighted, so
-    // Enter still submits normally for a hand-typed ticker.
-    ev.preventDefault();
-    const s = watchlistSuggestions[watchlistSuggestIndex];
-    applyWatchlistSuggestion(s.symbol, s.name);
-  } else if (ev.key === "Escape") {
-    closeWatchlistSuggestions();
-  }
+    pick(item.dataset.suggest, item.dataset.suggestName);
+  });
+  input.addEventListener("blur", () => setTimeout(close, 120));
+  // Warming the index on FOCUS rather than on the first keystroke means it is
+  // usually already there by the time a name has been typed, while a session
+  // that never touches a ticker field still pays nothing for it.
+  input.addEventListener("focus", () => { if (scope() !== "crypto") loadSecTickers().then(() => {}); });
+}
+
+// The SEC index once it has arrived. Held here rather than awaited per
+// keystroke so a suggestion list is never blocked on a network round trip.
+let secTickerIndex = null;
+const secIndex = () => secTickerIndex;
+loadSecTickers().then((idx) => { secTickerIndex = idx; });
+
+// The holdings form. SCOPE is gated on the parent account's type, the same
+// gate isKnownTicker(symbol, parentType) already applies at save: a crypto
+// account must not be offered a stock ticker, because picking one would lead
+// straight into a "not recognized" confirm for a suggestion this app made
+// itself. Everything else about the field is untouched - the blur price
+// prefill and the confirm-to-override still run exactly as before, since a
+// suggestion is a convenience and never a gate.
+attachTickerSuggest("holdingSymbol", "holdingSymbolSuggest", {
+  source: secIndex,
+  scope: () => (assets.find((a) => a.id === $("holdingAccount").value)?.type === "crypto" ? "crypto" : "all"),
+  onPick: (symbol) => {
+    $("holdingSymbol").value = symbol;
+    // Setting .value programmatically fires no `input` event, so the two
+    // listeners that field already has have to be called by hand or picking a
+    // suggestion would leave a stale override-confirm and a stale red border.
+    holdingSymbolOverrideConfirmedFor = null;
+    updateHoldingFieldHighlighting();
+    // The price lookup is deliberately NOT triggered here. pick() re-focuses
+    // the input, so the user's next move fires the real blur handler and fills
+    // the price exactly as it would for a hand-typed ticker. Dispatching a
+    // synthetic blur instead would run it twice, which in "Buying now" mode is
+    // two live /api/price calls for one pick.
+  },
 });
 
-// mousedown, not click: blur fires first on click and would close the list
-// before the selection ever registered.
-$("watchlistSuggest").addEventListener("mousedown", (ev) => {
-  const item = ev.target.closest("[data-suggest]");
-  if (!item) return;
-  ev.preventDefault();
-  applyWatchlistSuggestion(item.dataset.suggest, item.dataset.suggestName);
+// The standalone asset form. No scope filter: this one field takes stocks,
+// crypto and mutual funds (its own placeholder says so), and unlike the
+// holdings form there is no parent account to narrow it by.
+attachTickerSuggest("assetPriceSymbol", "assetPriceSymbolSuggest", {
+  source: secIndex,
+  onPick: (symbol) => { $("assetPriceSymbol").value = symbol; },
 });
-$("watchlistNewSymbol").addEventListener("blur", () => setTimeout(closeWatchlistSuggestions, 120));
+
+attachTickerSuggest("watchlistNewSymbol", "watchlistSuggest", {
+  source: secIndex,
+  onPick: (symbol, name) => {
+    $("watchlistNewSymbol").value = symbol;
+    // Only fill the name if the user hasn't typed their own - their wording is
+    // what headline matching will use, so it is never silently overwritten.
+    // storableName(), not the suggestion's own name: a SEC hit carries an
+    // EDGAR legal name, and writing one here would silently stop that symbol
+    // ever matching a headline. Blank is a supported stored value.
+    const nameField = $("watchlistNewName");
+    if (!nameField.value.trim()) nameField.value = storableName(symbol) || "";
+  },
+});
 
 $("watchlistAddBtn").onclick = async () => {
   const symbol = $("watchlistNewSymbol").value.trim().toUpperCase();

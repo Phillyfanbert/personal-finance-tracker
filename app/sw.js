@@ -20,7 +20,13 @@
 // current here to close that gap too, not because normal offline use depends
 // on it. If it drifts again, that narrow case regresses; ordinary offline use
 // after a successful first run does not.
-const CACHE = "expense-shell-v52";
+const CACHE = "expense-shell-v53";
+// app/secTickers.js is deliberately ABSENT. It is ~357 KB (108 KB gzipped) of
+// SEC's full ticker index, loaded on demand by loadSecTickers() only when
+// someone actually types in a symbol field. Precaching it would spend that on
+// every first visit for a field most sessions never touch. The network-first
+// fetch handler below still caches it after the first real use, so it works
+// offline from then on.
 const SHELL = [
   "./index.html", "./config.js", "./manifest.json",
   "./icons/icon-32.png", "./icons/icon-180.png",

@@ -1165,9 +1165,26 @@ async function loadSymbolFundamentals() {
 // first load (ensureWatchlistSymbols) so a new user sees exactly what the
 // old hardcoded list showed.
 async function loadWatchlistSymbols() {
-  const { data } = await sb.from("watchlist_symbols").select("*").order("symbol");
+  // sort_order first, symbol as the tiebreak. Both halves are needed: a row
+  // inserted by a path that never set a position (the holdings sync before
+  // this existed, a hand-written insert) carries null, and nullsFirst:false
+  // sends those to the end rather than the top - the safe direction for a
+  // column whose whole job is "where the user put it". The symbol tiebreak is
+  // what keeps the order deterministic among them, so the list cannot shuffle
+  // between loads.
+  const { data } = await sb.from("watchlist_symbols").select("*")
+    .order("sort_order", { ascending: true, nullsFirst: false })
+    .order("symbol");
   watchlistSymbols = data || [];
   renderWatchlistEditor();
+}
+
+// The position a newly added symbol takes: the end of the list. Appending
+// rather than inserting is deliberate - adding a stock (or having one added
+// for you because you bought it) must never push the order you arranged
+// around underneath you.
+function nextWatchlistOrder() {
+  return watchlistSymbols.reduce((max, w) => Math.max(max, Number(w.sort_order) || 0), 0) + 1;
 }
 
 // Market-wide movers for the most recent day we have any. Deliberately
@@ -1223,8 +1240,12 @@ async function syncHoldingsIntoWatchlist() {
   // company_name left null: the agent backfills it from the company
   // profile, and a null degrades to ticker-only headline matching rather
   // than breaking anything.
+  // Positions continue from the end of the current list rather than being
+  // left null, so a symbol added for you lands somewhere stable instead of
+  // relying on the reader's null-sorts-last fallback every time.
+  let next = nextWatchlistOrder();
   const { error } = await sb.from("watchlist_symbols")
-    .insert(missing.map((symbol) => ({ symbol, company_name: null })));
+    .insert(missing.map((symbol) => ({ symbol, company_name: null, sort_order: next++ })));
   if (error) return; // best-effort - never block app load over this
   await loadWatchlistSymbols();
 }
@@ -7537,7 +7558,13 @@ $("watchlistGearBtn").onclick = () => {
   renderWatchlistEditor();
   openModal("watchlistModal");
 };
-$("watchlistClose").onclick = () => closeModal("watchlistModal");
+// Flushes any reorder still inside its debounce window. Not awaited on
+// purpose: wireBusyButtons tracks a returned promise and would put a spinner
+// on a Close button that has already closed. Escape and a backdrop click do
+// not come through here, and do not need to - closing the sheet never cancels
+// the pending timer, so the write lands either way; this only closes the
+// narrower gap of closing the tab immediately after a move.
+$("watchlistClose").onclick = () => { flushWatchlistOrder(); closeModal("watchlistModal"); };
 
 // ---- MARKET-WIDE MOVERS ----------------------------------------------------
 // The only card here that can see a stock outside the tracked list. Numbers
@@ -7785,14 +7812,27 @@ function renderRealizedGains() {
 }
 
 // ---- TRACKED SYMBOLS (user-editable watchlist) -----------------------------
+// The row the user last moved, so the list can point at where it landed.
+// Consumed and cleared by the next render rather than passed as an argument:
+// renderWatchlistEditor() is called from four places that know nothing about
+// reordering (a load, an add, a delete, a holdings sync).
+let watchJustMovedId = null;
+// Set while a pointer drag is in flight. Also the guard that stops a
+// pointermove on a grip doing anything at all when no drag started.
+let watchDragId = null;
+let watchOrderSaveTimer = null;
+
 function renderWatchlistEditor() {
   if (!$("watchlistList")) return;
   // Held symbols are labelled rather than hidden: removing one only sticks
   // until the next load while you still own it, and seeing why is better
   // than watching it silently reappear.
   const held = new Set(ownedPriceSymbols());
-  $("watchlistList").innerHTML = watchlistSymbols.length
-    ? watchlistSymbols.map((w) => {
+  const total = watchlistSymbols.length;
+  const movedId = watchJustMovedId;
+  watchJustMovedId = null;
+  $("watchlistList").innerHTML = total
+    ? watchlistSymbols.map((w, i) => {
         const symbol = (w.symbol || "").trim().toUpperCase();
         const owned = held.has(symbol);
         // Existing rows were saved lowercased ("apple"). Show the curated
@@ -7807,9 +7847,23 @@ function renderWatchlistEditor() {
           : display
             ? `<div class="meta">${esc(display)}</div>`
             : `<div class="meta muted">no company name - headlines match on ticker only</div>`;
+        // The position is IN the label, not only in the live region: a screen
+        // reader user tabbing through the list needs to know where each row
+        // already sits before deciding to move it. esc() because the symbol is
+        // free text the user typed - an attribute breakout is as exploitable
+        // here as an injected element.
+        const gripLabel = esc(`Reorder ${w.symbol}, position ${i + 1} of ${total}. Use the up and down arrow keys to move it.`);
+        // No handle on a list of one. A control that is visibly there and
+        // cannot do anything is the silent-no-op shape this app keeps finding
+        // in its own history, and it would sit in the tab order promising a
+        // reorder that has nowhere to go.
+        const grip = total > 1
+          ? `<button type="button" class="grip" data-grip="${esc(w.id)}" aria-label="${gripLabel}" aria-describedby="watchlistReorderHint">&#10303;</button>`
+          : "";
         return `
-      <div class="exp" style="cursor:default">
-        <div>
+      <div class="exp drag-row${w.id === movedId ? " just-moved" : ""}" data-watch-row="${esc(w.id)}" style="cursor:default">
+        ${grip}
+        <div class="drag-row-body">
           <div>${esc(w.symbol)}</div>
           ${sub}
         </div>
@@ -7818,6 +7872,10 @@ function renderWatchlistEditor() {
       }).join("")
     : `<p class="muted" style="font-size:13px">No symbols tracked. The market overview and daily recap will be empty until you add some.</p>`;
 
+  // The hint only means something with a list under it to reorder.
+  const hint = $("watchlistReorderHint");
+  if (hint) hint.classList.toggle("hidden", total < 2);
+
   document.querySelectorAll("[data-del-watch]").forEach((el) => {
     el.onclick = async () => {
       const row = watchlistSymbols.find((w) => w.id === el.dataset.delWatch);
@@ -7825,12 +7883,181 @@ function renderWatchlistEditor() {
       if (!(await confirmModal(`${row.symbol} stops being tracked in the market overview, breadth count and daily recap. Prices already recorded are kept.`,
         { title: `Stop tracking ${row.symbol}?` }))) return;
       const { error } = await sb.from("watchlist_symbols").delete().eq("id", row.id);
-      if (error) return toast(error.message);
+      if (error) return toast(error.message, "error");
       await loadWatchlistSymbols();
       renderMarketOverview();
       toast(`${row.symbol} removed`);
     };
   });
+
+  attachWatchlistReorder();
+}
+
+// Reordering the tracked list. Two input methods against one model, because
+// neither covers everyone on its own:
+//
+//   - A POINTER drag, built on pointer events rather than HTML5 drag-and-drop.
+//     HTML5 DnD does not fire on iOS Safari touch at all, and an installed
+//     home-screen icon on iOS is this app's main surface (see index.html's
+//     authView comment for why), so a dragstart/drop implementation would
+//     simply not exist for most of the people using it. Pointer events cover
+//     mouse, touch and pen with one code path.
+//   - The ARROW KEYS on the same focused handle, which is what makes this
+//     reachable from a keyboard and from a screen reader. The alternative was
+//     a Move up / Move down pair per row, which would have put three 44px hit
+//     boxes in a row that previously held one - exactly the density the
+//     Budgets card had to be rebuilt to escape.
+//
+// Known limit, stated rather than hidden: a pointer drag does not auto-scroll
+// the sheet, so moving a row past the visible window means dragging in stages.
+// The arrow keys have no such limit and are the faster way to move something a
+// long distance, which is what the hint above the list says.
+function attachWatchlistReorder() {
+  const list = $("watchlistList");
+  if (!list) return;
+
+  for (const grip of list.querySelectorAll("[data-grip]")) {
+    grip.onpointerdown = (ev) => {
+      if (ev.button != null && ev.button !== 0) return;
+      const row = grip.closest("[data-watch-row]");
+      if (!row) return;
+      // Stops a touch drag scrolling the sheet instead of moving the row.
+      // .grip's touch-action:none does the same job for the browser's own
+      // gesture handling; this covers the rest.
+      ev.preventDefault();
+      // Pointer capture keeps move/up arriving here even once the pointer has
+      // travelled off this handle, which it does immediately in any real drag.
+      try { grip.setPointerCapture(ev.pointerId); } catch { /* capture is a nicety, not a requirement */ }
+      watchDragId = row.dataset.watchRow;
+      row.classList.add("dragging");
+    };
+
+    grip.onpointermove = (ev) => {
+      if (!watchDragId) return;
+      const row = grip.closest("[data-watch-row]");
+      // Belt and braces for the one path where capture did not take: without
+      // it, a move passing over a DIFFERENT handle would run that handle's
+      // listener and drag the wrong row. Capture normally makes this
+      // unreachable, which is exactly why it would not be noticed.
+      if (!row || row.dataset.watchRow !== watchDragId) return;
+      // The dragged row stays where it is rather than following the pointer,
+      // so as soon as the pointer clears its own bounds this finds the
+      // neighbour underneath and the two swap. The row then sits under the
+      // pointer again, which is what stops it oscillating.
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      const target = under && under.closest ? under.closest("[data-watch-row]") : null;
+      if (!target || target === row || target.parentElement !== row.parentElement) return;
+      const rect = target.getBoundingClientRect();
+      const below = ev.clientY > rect.top + rect.height / 2;
+      target.parentElement.insertBefore(row, below ? target.nextSibling : target);
+    };
+
+    const endDrag = () => {
+      if (!watchDragId) return;
+      const id = watchDragId;
+      watchDragId = null;
+      for (const el of list.querySelectorAll(".dragging")) el.classList.remove("dragging");
+      adoptWatchlistOrderFromDom();
+      watchJustMovedId = id;
+      renderWatchlistEditor();
+      announceWatchlistPosition(id);
+      saveWatchlistOrderSoon();
+    };
+    grip.onpointerup = endDrag;
+    // A cancelled pointer (the browser taking the gesture over, a call coming
+    // in) still leaves the DOM wherever the drag got to, so it is committed
+    // rather than reverted - reverting would silently undo a move the user
+    // watched happen.
+    grip.onpointercancel = endDrag;
+
+    grip.onkeydown = (ev) => {
+      if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;
+      ev.preventDefault();
+      const id = grip.dataset.grip;
+      const from = watchlistSymbols.findIndex((w) => w.id === id);
+      const to = from + (ev.key === "ArrowUp" ? -1 : 1);
+      if (from < 0 || to < 0 || to >= watchlistSymbols.length) return;
+      const [moved] = watchlistSymbols.splice(from, 1);
+      watchlistSymbols.splice(to, 0, moved);
+      watchJustMovedId = id;
+      renderWatchlistEditor();
+      // The render replaced the element this handler is bound to, so focus has
+      // to be put back by id or the next arrow key goes nowhere.
+      const again = list.querySelector(`[data-grip="${CSS.escape(id)}"]`);
+      if (again) again.focus();
+      announceWatchlistPosition(id);
+      saveWatchlistOrderSoon();
+    };
+  }
+}
+
+// After a pointer drag the DOM is the truth and the array is stale, so the
+// array is rebuilt from it rather than the move being replayed twice.
+function adoptWatchlistOrderFromDom() {
+  const list = $("watchlistList");
+  if (!list) return;
+  const ids = [...list.querySelectorAll("[data-watch-row]")].map((el) => el.dataset.watchRow);
+  const seen = new Set(ids);
+  const byId = new Map(watchlistSymbols.map((w) => [w.id, w]));
+  const next = ids.map((id) => byId.get(id)).filter(Boolean);
+  // Anything the DOM does not know about - a row inserted by the holdings
+  // sync between the last render and this drop - keeps its place at the end
+  // rather than being dropped out of the list entirely.
+  for (const w of watchlistSymbols) if (!seen.has(w.id)) next.push(w);
+  watchlistSymbols = next;
+}
+
+function announceWatchlistPosition(id) {
+  const el = $("watchlistReorderStatus");
+  if (!el) return;
+  const i = watchlistSymbols.findIndex((w) => w.id === id);
+  if (i < 0) return;
+  el.textContent = `${watchlistSymbols[i].symbol} moved to position ${i + 1} of ${watchlistSymbols.length}`;
+}
+
+// Held briefly, because a repeating arrow key fires far faster than a write
+// completes. Every save recomputes positions from the array as it stands, so
+// a late flush still writes the final order rather than an intermediate one.
+function saveWatchlistOrderSoon() {
+  clearTimeout(watchOrderSaveTimer);
+  watchOrderSaveTimer = setTimeout(() => { persistWatchlistOrder(); }, 400);
+}
+
+// Closing the sheet must not drop a move that is still inside that window.
+async function flushWatchlistOrder() {
+  clearTimeout(watchOrderSaveTimer);
+  watchOrderSaveTimer = null;
+  await persistWatchlistOrder();
+}
+
+// Writes only the rows whose position actually changed. Moving one row a
+// single place is two updates; the whole-list rewrite only happens when the
+// whole list really did move.
+//
+// Deliberately individual updates rather than one upsert: a PostgREST upsert
+// has to carry every NOT NULL column to be a valid INSERT even when it only
+// ever conflicts, which means sending `symbol` back on every row purely to
+// satisfy a path that never runs. At this list's size the round trips are
+// cheaper than that risk.
+async function persistWatchlistOrder() {
+  const changed = [];
+  watchlistSymbols.forEach((w, i) => {
+    const next = i + 1;
+    if (Number(w.sort_order) !== next) { w.sort_order = next; changed.push({ id: w.id, sort_order: next }); }
+  });
+  if (!changed.length) return;
+  // supabase-js RESOLVES on a query error rather than rejecting, so a
+  // try/catch here would catch nothing and a failed reorder would look
+  // exactly like a successful one until the next reload put it back.
+  const results = await Promise.all(changed.map((u) =>
+    sb.from("watchlist_symbols").update({ sort_order: u.sort_order }).eq("id", u.id)));
+  const failed = results.find((r) => r.error);
+  if (!failed) return;
+  toast(failed.error.message, "error");
+  // Resync rather than leave the screen stating an order the database does
+  // not hold. A partial write is the normal failure here, so trusting the
+  // in-memory array would be wrong in a way nothing on screen could show.
+  await loadWatchlistSymbols();
 }
 
 // Ticker autocomplete for the Tracked companies field. Purely local - it
@@ -8002,7 +8229,8 @@ $("watchlistAddBtn").onclick = async () => {
   // ticker-only headline matching for no reason).
   const typed = $("watchlistNewName").value.trim();
   const company = typed || TICKER_NAMES[symbol] || null;
-  const { error } = await sb.from("watchlist_symbols").insert({ symbol, company_name: company });
+  const { error } = await sb.from("watchlist_symbols")
+    .insert({ symbol, company_name: company, sort_order: nextWatchlistOrder() });
   if (error) { flagField("watchlistNewSymbol"); return toast(error.message); }
   $("watchlistNewSymbol").value = "";
   $("watchlistNewName").value = "";
@@ -11062,6 +11290,155 @@ $("helpReplayTour").onclick = () => {
 document.querySelectorAll("[data-help-page]").forEach((el) => {
   el.onclick = () => openHelp(el.dataset.helpPage);
 });
+
+// ---- FEEDBACK AND BUG REPORTS ----------------------------------------------
+// The one route from someone using the app to whoever maintains it. Reached
+// from the Help sheet rather than Profile because Help is on all four pages
+// and Profile is only on Log: "this is broken" should not need navigating
+// somewhere else first.
+//
+// NOTHING FINANCIAL IS SENT, and that is the rule the whole feature is built
+// around rather than a property it happens to have. What leaves the app is the
+// message the user typed, which page they were on, and the browser string -
+// each of them stated in the form before the button is pressed. No balance, no
+// account, no transaction is attached, because a ticket has to be safe for the
+// maintainer to read and quote. If a figure matters to the report, the user
+// types it in themselves.
+//
+// Status and any reply are the MAINTAINER's side and are read-only here: the
+// table has no update policy and no update grant for authenticated, so the
+// app could not write them even by mistake. See supabase/77_feedback_tickets.sql.
+const FEEDBACK_MAX_CHARS = 2000;
+const FEEDBACK_KIND_LABEL = {
+  problem: "Something is broken",
+  idea: "An idea for the app",
+  question: "A question",
+  other: "Something else",
+};
+// Plain words, the same bar every other visible string in this app holds.
+// "new" says what it means to the reader - that nobody has got to it yet -
+// rather than restating the database's own value.
+const FEEDBACK_STATUS_LABEL = {
+  new: "Not looked at yet",
+  planned: "Planned",
+  in_progress: "Being worked on",
+  done: "Done",
+  declined: "Not going ahead",
+};
+// The four view ids are internal; the reader sees the name on the nav button.
+// Never leak an internal identifier into visible text.
+const FEEDBACK_PAGE_LABEL = { log: "Log", plan: "Plan", reports: "Reports", invest: "Investments" };
+const FEEDBACK_STATUS_TONE = {
+  new: "is-open", planned: "is-open", in_progress: "is-open",
+  done: "is-done", declined: "is-closed",
+};
+
+let feedbackTickets = [];
+
+// Loaded when the sheet opens rather than at startup. Most sessions never
+// send feedback, and a round trip on every app load for a card most people
+// never see is the cost SheetJS is lazy-loaded to avoid. The trade is real and
+// worth stating: a reply is seen the next time this sheet is opened, not
+// announced when it arrives.
+async function loadFeedbackTickets() {
+  // supabase-js resolves on a query error rather than rejecting, so .error is
+  // checked explicitly - without it a failed load renders as "you have not
+  // sent anything", which tells the user their history is gone rather than
+  // that the request broke.
+  const { data, error } = await sb.from("feedback_tickets")
+    .select("*").order("created_at", { ascending: false });
+  if (error) { renderLoadError("feedbackList", error, loadFeedbackTickets); return; }
+  feedbackTickets = data || [];
+  renderFeedbackTickets();
+}
+
+function renderFeedbackTickets() {
+  const el = $("feedbackList");
+  if (!el) return;
+  if (!feedbackTickets.length) {
+    el.innerHTML = `<p class="muted text-sm">Nothing sent yet. Anything you send shows up here with how far it has got.</p>`;
+    return;
+  }
+  el.innerHTML = feedbackTickets.map((t) => {
+    const status = FEEDBACK_STATUS_LABEL[t.status] || t.status;
+    const tone = FEEDBACK_STATUS_TONE[t.status] || "is-open";
+    // Every one of these is the user's own free text or a maintainer-written
+    // reply, so all of it is escaped. plainDashes() on the reply for the same
+    // reason every other written-elsewhere string gets it: an em dash has no
+    // business reaching this app's screen.
+    return `
+      <div class="exp" style="cursor:default;flex-direction:column;align-items:stretch;gap:4px">
+        <div style="display:flex;justify-content:space-between;gap:10px">
+          <strong class="text-sm">${esc(FEEDBACK_KIND_LABEL[t.kind] || t.kind)}</strong>
+          <span class="text-xs ticket-status ${tone}">${esc(status)}</span>
+        </div>
+        <div class="meta">Sent ${esc(timeAgo(t.created_at))}${t.page ? " · from " + esc(FEEDBACK_PAGE_LABEL[t.page] || t.page) : ""}</div>
+        <div class="text-sm ticket-message">${esc(t.message)}</div>
+        ${t.response ? `<div class="ticket-reply"><strong class="text-xs">Reply</strong><div class="ticket-message">${esc(plainDashes(t.response))}</div></div>` : ""}
+      </div>`;
+  }).join("");
+}
+
+
+function updateFeedbackCharsLeft() {
+  const el = $("feedbackCharsLeft");
+  if (!el) return;
+  el.textContent = String(Math.max(0, FEEDBACK_MAX_CHARS - $("feedbackMessage").value.length));
+}
+
+function openFeedback() {
+  openModal("feedbackModal");
+  updateFeedbackCharsLeft();
+  $("feedbackList").innerHTML = `<p class="muted text-sm">Loading...</p>`;
+  loadFeedbackTickets();
+}
+
+$("helpFeedbackBtn").onclick = () => openFeedback();
+$("feedbackClose").onclick = () => closeModal("feedbackModal");
+$("feedbackMessage").oninput = updateFeedbackCharsLeft;
+
+$("feedbackSendBtn").onclick = async () => {
+  const message = $("feedbackMessage").value.trim();
+  if (!message) {
+    flagField("feedbackMessage", "Write what happened or what you would like before sending.");
+    return toast("Nothing to send yet", "error");
+  }
+  // maxlength on the input is a browser hint, not a guarantee - it is not
+  // enforced on a pasted value and nothing here calls checkValidity(), so the
+  // real bound is checked again. The table has the same check, and hitting it
+  // there would surface as a raw Postgres constraint message.
+  if (message.length > FEEDBACK_MAX_CHARS) {
+    flagField("feedbackMessage", `That is ${message.length} characters. The limit is ${FEEDBACK_MAX_CHARS}.`);
+    return toast("Message is too long", "error");
+  }
+  const kind = $("feedbackKind").value;
+  if (!FEEDBACK_KIND_LABEL[kind]) {
+    flagField("feedbackKind");
+    return toast("Pick what this is about", "error");
+  }
+  // Once sent it cannot be edited or withdrawn - there is no update or delete
+  // grant, deliberately, so a ticket cannot vanish halfway through being
+  // fixed. That is a real consequence of pressing this button, so it is
+  // confirmed rather than discovered, the same way every other path that puts
+  // data outside the app already asks first.
+  if (!(await confirmModal("This goes to whoever maintains the app, along with the page you were on and your browser version. Nothing about your money is attached. It cannot be edited or taken back afterwards.",
+    { title: "Send this feedback?", confirmLabel: "Send it", danger: false }))) return;
+
+  const { error } = await sb.from("feedback_tickets").insert({
+    kind,
+    message,
+    page: lastView(),
+    // The reporting browser, so a problem that only happens on one device is
+    // traceable. Sliced because a UA string has no real length limit and this
+    // is context, not content.
+    user_agent: (navigator.userAgent || "").slice(0, 400),
+  });
+  if (error) { flagField("feedbackMessage"); return toast(error.message, "error"); }
+  $("feedbackMessage").value = "";
+  updateFeedbackCharsLeft();
+  await loadFeedbackTickets();
+  toast("Sent - thank you");
+};
 
 // parseInt returns NaN on empty/invalid input - toNullableInt keeps that
 // out of the row entirely (null) rather than writing NaN, same

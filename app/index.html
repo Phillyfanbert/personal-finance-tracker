@@ -690,6 +690,47 @@
     /* Written by flagField(ids, message). Not below --fs-sm: this is the only
        statement of what went wrong that stays on screen after the toast. */
     .field-error { color: var(--err); font-size: var(--fs-sm); margin: var(--sp-1) 0 0; }
+    /* Drag handle for a reorderable row (the tracked-companies list).
+       touch-action:none is load-bearing rather than tidy: without it a touch
+       drag on a phone scrolls the sheet instead of moving the row, which is
+       the platform this app is mostly used on. The 44px box comes from the
+       element itself, not padding - box-sizing:border-box folds padding into
+       the declared size, the trap .info-icon and .link-action each work
+       around a different way. */
+    .grip { display: inline-flex; align-items: center; justify-content: center;
+      min-width: var(--target-min); min-height: var(--target-min);
+      width: auto; padding: 0; border: none; background: none;
+      color: var(--muted); font-size: var(--fs-lg); line-height: 1;
+      cursor: grab; touch-action: none; flex: 0 0 auto; }
+    .grip:active { cursor: grabbing; }
+    /* The row being dragged fades; the gap it would land in is drawn by the
+       row itself moving, so there is no separate drop indicator to keep in
+       sync with the DOM. */
+    .drag-row.dragging { opacity: 0.45; }
+    /* .exp is space-between with three children now (grip, body, delete), so
+       the body has to be the one that flexes or the name column collapses to
+       its content and the two controls drift into the middle. min-width:0 is
+       what lets a long company name actually truncate inside it. */
+    .drag-row > .drag-row-body { flex: 1 1 auto; min-width: 0; }
+    .drag-row.dragging .grip { cursor: grabbing; }
+    /* A reorder is a state change with no other visual trace once the row
+       settles, so the row that just moved is marked for a moment. Colour is
+       not the statement here - the live region below the list says what
+       moved and where - this only draws the eye back to it. */
+    .drag-row.just-moved { background: var(--accent-wash); }
+
+    /* A sent ticket's status, stated in a word rather than a colour. Reuses
+       the .pill shape; the tone rules only tint the same pill. */
+    .ticket-status { font-weight: 700; }
+    .ticket-status.is-open { color: var(--accent); }
+    .ticket-status.is-done { color: var(--ok); }
+    .ticket-status.is-closed { color: var(--muted); }
+    /* The maintainer's reply. Indented off the user's own message so the two
+       sides of the conversation are tellable apart without colour. */
+    .ticket-reply { border-left: 3px solid var(--accent); padding-left: var(--sp-3);
+      margin-top: var(--sp-2); color: var(--text); font-size: var(--fs-sm); }
+    /* Model-free user text, so it keeps the line breaks it was typed with. */
+    .ticket-message { white-space: pre-wrap; }
     .stack-1 { margin-top: var(--sp-1); }
     .stack-2 { margin-top: var(--sp-2); }
     .stack-3 { margin-top: var(--sp-3); }
@@ -2401,7 +2442,23 @@
       </div>
       <p class="muted" style="font-size:11px;margin:2px 0 8px">Start typing a ticker or company name to pick from known symbols - the name fills in for you. Any real ticker can still be typed in by hand if it isn't suggested. A company name helps match news headlines to the right stock; left blank, headline matching falls back to the ticker alone.</p>
       <button id="watchlistAddBtn">Add symbol</button>
-      <div id="watchlistList" style="margin-top:10px"></div>
+
+      <!-- Reordering is offered two ways on purpose, not as belt and braces.
+           The drag handle is built on pointer events rather than HTML5
+           drag-and-drop specifically because HTML5 DnD does not fire on iOS
+           Safari touch at all, and an installed home-screen icon on iOS is
+           this app's main surface - a mouse-only reorder would simply not
+           exist for most of the people using it. The same handle takes the
+           arrow keys when focused, which is what makes the feature reachable
+           from a keyboard and from a screen reader; a separate pair of
+           up/down buttons per row was the alternative and would have put
+           three 44px hit boxes in a row that used to hold one. -->
+      <p class="muted text-xs stack-3" id="watchlistReorderHint">Drag a row by its handle to reorder the list, or focus a handle and use the up and down arrow keys. The order is saved as you go.</p>
+      <div id="watchlistList" class="stack-2"></div>
+      <!-- A drag has a visible result; a keyboard move needs saying out loud.
+           Separate from toast(): this fires on every nudge, and an arrow key
+           held down would flood the shared live region. -->
+      <p id="watchlistReorderStatus" class="sr-only" role="status" aria-live="polite"></p>
     </div>
   </div>
 
@@ -2880,6 +2937,17 @@
            only way back to it. -->
       <button class="secondary" id="helpReplayTour" style="width:auto;padding:8px 14px;font-size:13px;margin-bottom:12px">Replay the guided tour for this page</button>
 
+      <!-- Lives here rather than on Profile because Help is the one button on
+           all four pages, and "this is broken" should not need navigating
+           somewhere else first. -->
+      <button class="secondary" id="helpFeedbackBtn" style="width:auto;padding:8px 14px;font-size:13px;margin:0 0 12px 8px">Send feedback or report a problem</button>
+
+      <!-- Explained here rather than as a help topic. A topic lives inside one
+           of the four page blocks below, and this button is shared chrome on
+           all of them - the copy would have had to be repeated four times and
+           would have drifted. The reader is already in the help sheet. -->
+      <p class="muted" style="font-size:12px;margin:0 0 12px">Anything sent that way is read and worked through one at a time, and any reply appears back in that same window. Your message goes with the page you were on and your browser version so a problem can be traced - never with any of your balances, accounts or transactions.</p>
+
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
           <svg id="helpDiagramLog" role="group" aria-label="The Log page, card by card, in the order they appear" viewBox="0 0 680 650" xmlns="http://www.w3.org/2000/svg">
@@ -3344,6 +3412,8 @@
           <p>Reached from the button of that name under the Market / My portfolio buttons. This is the list every Market card is computed from: the written recap, the "X of Y up today" count, today's top movers and the price-history charts. It starts as the same 20 large caps the app previously had built in, and is now yours to change.</p>
           <p>Add a symbol with its ticker. The optional company name is used for one specific job: deciding whether a news headline is genuinely about that company. Left blank, headline matching falls back to the ticker alone, which is a little less reliable but still works - the background job fills the name in automatically where it can.</p>
           <p>Removing a symbol stops it being tracked from then on; prices already recorded for it are kept, so its price history doesn't disappear. New symbols get their first prices on the next background run rather than instantly.</p>
+          <p><strong>The order is yours to set.</strong> The list used to be alphabetical with no way to change it, so the handful of companies you actually care about sat wherever the alphabet put them. Drag a row by the handle on its left to move it, or tap the handle and use the up and down arrow keys - both work, and the arrow keys are the quicker way to move something a long distance. Each move saves on its own, so there is nothing to confirm. Anything newly added, including a stock added automatically because you bought it, goes to the bottom rather than pushing your own order around.</p>
+          <p>The order changes where a symbol appears in this list. It deliberately does <em>not</em> reorder "Today's top movers" on the Market tab - that list is ranked by the size of the day's move, and putting a favourite at the top of it would make the heading untrue.</p>
           </div>
         </div>
 
@@ -3440,6 +3510,54 @@
         <button class="secondary hidden" id="tourBack">Back</button>
         <button id="tourNext">Next</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Feedback and bug reports. Placed AFTER #helpModal in the DOM on
+       purpose: every modal here shares z-index 70 (only #confirmModal is
+       higher, at 72), so at equal z-index the one later in source paints on
+       top - which is what lets this open over the help sheet it is reached
+       from. openModal() keeps a real stack, so the background stays inert
+       until the last of the two closes.
+
+       Reached from Help rather than Profile because the Help button is on all
+       four pages and Profile is only on Log - "something is wrong" should not
+       require navigating somewhere else first.
+
+       NOTHING FINANCIAL IS ATTACHED. The message is whatever the user types,
+       plus which page they were on and their browser string, and the note
+       above the button says exactly that before anything is sent. The table's
+       own header (supabase/77_feedback_tickets.sql) treats that as a rule
+       rather than a default. -->
+  <div id="feedbackModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle">
+    <div class="sheet">
+      <div class="topbar"><strong id="feedbackTitle">Send feedback</strong><button class="secondary" id="feedbackClose" style="width:auto;padding:6px 12px">Close</button></div>
+
+      <p class="muted text-xs" style="margin:4px 0 8px">Tell us what is broken, what is confusing, or what you wish the app did. Everything you send is read and worked through one at a time, and any reply shows up here.</p>
+
+      <label for="feedbackKind">What is this about</label>
+      <select id="feedbackKind">
+        <option value="problem">Something is broken</option>
+        <option value="idea">An idea for the app</option>
+        <option value="question">A question</option>
+        <option value="other">Something else</option>
+      </select>
+
+      <label for="feedbackMessage">What happened, or what would you like</label>
+      <textarea id="feedbackMessage" rows="5" maxlength="2000" placeholder="The more detail the better - what you tapped, what you expected, and what happened instead."></textarea>
+      <p class="muted text-xs stack-1"><span id="feedbackCharsLeft">2000</span> characters left</p>
+
+      <p class="muted text-xs stack-2">Sent with your message: which page you were on, and which browser you are using, so a problem that only happens on one device can be traced. <strong>Nothing about your money is attached</strong> - no balances, accounts or transactions. If a figure matters, type it in yourself.</p>
+      <p class="muted text-xs stack-1">Once sent, a message cannot be edited or taken back, so it does not disappear from the queue halfway through being fixed.</p>
+
+      <button id="feedbackSendBtn" class="stack-2">Send it</button>
+
+      <!-- A real heading, not the muted div the Profile sheet uses for its
+           section labels: this one has a list under it that a screen reader
+           user needs to be able to jump to. Styled down to match those
+           labels so it does not read as a second title for the sheet. -->
+      <h3 class="muted stack-4" style="font-size:var(--fs-xs);font-weight:700;margin:0 0 4px">Everything you have sent</h3>
+      <div id="feedbackList"></div>
     </div>
   </div>
 

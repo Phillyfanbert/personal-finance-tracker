@@ -15,6 +15,11 @@ docs/F6-live-deals-proposal.md
 docs/asset-depreciation-proposal.md
 docs/budgeting-feature-design.md
 
+# Other people's words, consolidated by tools/feedback-report.mjs. Never
+# published from this repo: it is mirrored to the private notes repo by the
+# same PRIVATE_FILES list that protects the working notes above.
+docs/FEEDBACK.md
+
 # Notes-sync tooling. Gitignored because it names the private repo, which
 # publishing would defeat the point of. Hooks live in .git/hooks and are
 # never tracked.

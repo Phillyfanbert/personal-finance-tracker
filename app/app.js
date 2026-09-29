@@ -7925,6 +7925,16 @@ function attachWatchlistReorder() {
       // .grip's touch-action:none does the same job for the browser's own
       // gesture handling; this covers the rest.
       ev.preventDefault();
+      // preventDefault on pointerdown ALSO suppresses focus, which is not
+      // obvious and broke the arrow-key half of this feature outright: tapping
+      // a handle left focus on <body>, so the keys never reached the handler
+      // and the list did not move. Both the help text and the tour tell people
+      // to tap a handle and use the arrow keys, and on a phone there is no Tab
+      // to reach it any other way, so the documented route was unusable on the
+      // surface this app is mostly used on. preventScroll because the handle is
+      // already under the finger - the default focus scroll would jolt the
+      // sheet mid-drag.
+      grip.focus({ preventScroll: true });
       // Pointer capture keeps move/up arriving here even once the pointer has
       // travelled off this handle, which it does immediately in any real drag.
       try { grip.setPointerCapture(ev.pointerId); } catch { /* capture is a nicety, not a requirement */ }
@@ -7957,9 +7967,25 @@ function attachWatchlistReorder() {
       const id = watchDragId;
       watchDragId = null;
       for (const el of list.querySelectorAll(".dragging")) el.classList.remove("dragging");
+      const before = watchlistSymbols.map((w) => w.id).join(",");
       adoptWatchlistOrderFromDom();
+      if (watchlistSymbols.map((w) => w.id).join(",") === before) {
+        // A TAP, not a drag - nothing moved. This is how someone reaches the
+        // handle in order to use the arrow keys, so it has to leave focus on
+        // it. Re-rendering here is what broke that: it replaces the very
+        // element that was just focused, dropping focus to <body>, and the
+        // arrow keys then go nowhere. There is also nothing to announce, save
+        // or redraw when the order is identical.
+        grip.focus({ preventScroll: true });
+        return;
+      }
       watchJustMovedId = id;
       renderWatchlistEditor();
+      // The render replaced the handle, so focus has to be put back by id -
+      // otherwise a drag ends with focus lost and the arrow keys cannot be
+      // used to finish the job precisely, which is the thing a drag is worst at.
+      const again = list.querySelector(`[data-grip="${CSS.escape(id)}"]`);
+      if (again) again.focus({ preventScroll: true });
       announceWatchlistPosition(id);
       saveWatchlistOrderSoon();
     };
@@ -7984,7 +8010,7 @@ function attachWatchlistReorder() {
       // The render replaced the element this handler is bound to, so focus has
       // to be put back by id or the next arrow key goes nowhere.
       const again = list.querySelector(`[data-grip="${CSS.escape(id)}"]`);
-      if (again) again.focus();
+      if (again) again.focus({ preventScroll: true });
       announceWatchlistPosition(id);
       saveWatchlistOrderSoon();
     };

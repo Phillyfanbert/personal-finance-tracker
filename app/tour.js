@@ -222,7 +222,7 @@ export const TOUR_STEPS = {
     {
       target: "watchlistGearBtn",
       title: "Choosing what to follow",
-      body: "Everything on the Market side is built from this list of companies. Add any you want to keep an eye on. Anything you already own is added for you automatically. You can also drag the rows into whatever order you like, so the ones you care about sit at the top.",
+      body: "Everything on the Market side is built from this list of companies. Add any you want to keep an eye on. Anything you already own is added for you automatically. You can also put them in whatever order you like: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys. The ones you care about can sit at the top.",
       placement: "bottom",
     },
     {

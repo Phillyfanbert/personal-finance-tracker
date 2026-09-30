@@ -712,10 +712,15 @@
       color: var(--muted); font-size: var(--fs-lg); line-height: 1;
       cursor: grab; touch-action: none; flex: 0 0 auto; }
     .grip:active { cursor: grabbing; }
-    /* The row being dragged fades; the gap it would land in is drawn by the
-       row itself moving, so there is no separate drop indicator to keep in
-       sync with the DOM. */
-    .drag-row.dragging { opacity: 0.45; }
+    /* The row being dragged follows the pointer and is lifted off the list,
+       so it stays readable while it moves and the gap it will land in is
+       drawn by the other rows shifting - there is no separate drop indicator
+       to keep in sync with the DOM. It used to only fade to 45% and stay put,
+       which on a tall row meant a drag showed nothing whatsoever until the
+       pointer had crossed the whole of the next row. */
+    .drag-row.dragging { background: var(--panel-2); border-radius: var(--r-card);
+      box-shadow: var(--shadow-card), inset 0 0 0 1px var(--border-strong);
+      position: relative; z-index: 2; }
     /* .exp is space-between with three children now (grip, body, delete), so
        the body has to be the one that flexes or the name column collapses to
        its content and the two controls drift into the middle. min-width:0 is

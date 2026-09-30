@@ -8161,7 +8161,7 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
     grip.onpointerdown = (ev) => {
       if (ev.button != null && ev.button !== 0) return;
       const row = grip.closest("[data-reorder-row]");
-      if (!row) return;
+      if (!row || reorderDragId) return;
       // Stops a touch drag scrolling the page instead of moving the row.
       // .grip's touch-action:none does the same job for the browser's own
       // gesture handling; this covers the rest.
@@ -8176,40 +8176,93 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
       // already under the finger - the default focus scroll would jolt the
       // page mid-drag.
       grip.focus({ preventScroll: true });
-      // Pointer capture keeps move/up arriving here even once the pointer has
-      // travelled off this handle, which it does immediately in any real drag.
-      try { grip.setPointerCapture(ev.pointerId); } catch { /* capture is a nicety, not a requirement */ }
       reorderDragId = row.dataset.reorderRow;
       row.classList.add("dragging");
+      // The row FOLLOWS the pointer, and is transparent to hit-testing while
+      // it does. Both halves are needed together: without the transform a
+      // drag shows nothing at all until the pointer has crossed the whole of
+      // the next row, which on the Investments page is over 100px of travel
+      // against a 45% opacity change - people reasonably read that as the
+      // feature not working. Without pointer-events:none the row would then
+      // be what elementFromPoint finds, and the neighbour underneath could
+      // never be seen.
+      row.style.pointerEvents = "none";
+      // Where inside the row it was grabbed, so it does not jump on the first
+      // move. Measured against the row's own natural position rather than the
+      // pointer alone, because the natural position changes every time the
+      // row is reinserted.
+      const grabOffset = ev.clientY - row.getBoundingClientRect().top;
+
+      const follow = (clientY) => {
+        row.style.transform = "";
+        const natural = row.getBoundingClientRect().top;
+        row.style.transform = `translateY(${clientY - grabOffset - natural}px)`;
+      };
+      follow(ev.clientY);
+
+      const onMove = (e) => {
+        follow(e.clientY);
+        const under = document.elementFromPoint(e.clientX, e.clientY);
+        const target = under && under.closest ? under.closest("[data-reorder-row]") : null;
+        // parentElement guards the holdings case specifically: several lists
+        // are on screen at once, one per account, and a row must never cross
+        // from one account's list into another's. target can never be the
+        // dragged row itself, which is why pointerEvents is off.
+        if (!target || target.parentElement !== row.parentElement) {
+          // Past either end of the list, drop at that end rather than doing
+          // nothing. Without this, dragging a row below the last one and
+          // letting go leaves it where it started, which reads as the drag
+          // having failed - and it is the natural way to say "put this last".
+          // Only when the pointer is still over this list horizontally, so a
+          // drag that wandered off sideways is not treated as a drop.
+          const box = row.parentElement.getBoundingClientRect();
+          if (e.clientX < box.left || e.clientX > box.right) return;
+          const rows = [...row.parentElement.children];
+          const first = rows[0], last = rows[rows.length - 1];
+          if (e.clientY > last.getBoundingClientRect().bottom && last !== row) {
+            row.parentElement.appendChild(row);
+          } else if (e.clientY < first.getBoundingClientRect().top && first !== row) {
+            row.parentElement.insertBefore(row, first);
+          } else return;
+          follow(e.clientY);
+          return;
+        }
+        // Past the target's MIDPOINT, not merely inside it. Entering its box
+        // is enough only while both rows are the same height; with a tall row
+        // beside a short one it swaps straight back on the next move and the
+        // list flickers between two orders.
+        const rect = target.getBoundingClientRect();
+        const below = e.clientY > rect.top + rect.height / 2;
+        target.parentElement.insertBefore(row, below ? target.nextSibling : target);
+        follow(e.clientY);
+      };
+
+      const finish = () => {
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", finish, true);
+        document.removeEventListener("pointercancel", finish, true);
+        endDrag(row);
+      };
+      // On the DOCUMENT, not on the handle, and this is the whole reason the
+      // drag used to leave the screen reordered and nothing saved. Moving an
+      // element within the DOM RELEASES its pointer capture, so the first
+      // insertBefore dropped it; the pointer was then released wherever it
+      // happened to be, which after a swap is usually the row rather than a
+      // handle, and the handle's own pointerup never fired. A document
+      // listener cannot miss the release.
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", finish, true);
+      document.addEventListener("pointercancel", finish, true);
     };
 
-    grip.onpointermove = (ev) => {
-      if (!reorderDragId) return;
-      const row = grip.closest("[data-reorder-row]");
-      // Belt and braces for the one path where capture did not take: without
-      // it, a move passing over a DIFFERENT handle would run that handle's
-      // listener and drag the wrong row. Capture normally makes this
-      // unreachable, which is exactly why it would not be noticed.
-      if (!row || row.dataset.reorderRow !== reorderDragId) return;
-      // The dragged row stays where it is rather than following the pointer,
-      // so as soon as the pointer clears its own bounds this finds the
-      // neighbour underneath and the two swap. The row then sits under the
-      // pointer again, which is what stops it oscillating.
-      const under = document.elementFromPoint(ev.clientX, ev.clientY);
-      const target = under && under.closest ? under.closest("[data-reorder-row]") : null;
-      // parentElement guards the holdings case specifically: several lists are
-      // on screen at once, one per account, and a row must never cross from
-      // one account's list into another's.
-      if (!target || target === row || target.parentElement !== row.parentElement) return;
-      const rect = target.getBoundingClientRect();
-      const below = ev.clientY > rect.top + rect.height / 2;
-      target.parentElement.insertBefore(row, below ? target.nextSibling : target);
-    };
-
-    const endDrag = () => {
+    // Takes the row it started on, because after a reinsertion the element
+    // under the pointer is no longer this handle's row.
+    const endDrag = (row) => {
       if (!reorderDragId) return;
       const id = reorderDragId;
       reorderDragId = null;
+      row.style.transform = "";
+      row.style.pointerEvents = "";
       for (const el of list.querySelectorAll(".dragging")) el.classList.remove("dragging");
       const before = ids().join(",");
       const after = [...list.querySelectorAll("[data-reorder-row]")].map((el) => el.dataset.reorderRow);
@@ -8234,12 +8287,6 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
       refocus(id);
       save();
     };
-    grip.onpointerup = endDrag;
-    // A cancelled pointer (the browser taking the gesture over, a call coming
-    // in) still leaves the DOM wherever the drag got to, so it is committed
-    // rather than reverted - reverting would silently undo a move the user
-    // watched happen.
-    grip.onpointercancel = endDrag;
 
     grip.onkeydown = (ev) => {
       if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;

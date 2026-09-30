@@ -551,6 +551,16 @@
        sized itself to the viewport. Measured at 375px: without it the pill
        ends at 400px against a 399px viewport. */
     .topbar-lead { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    /* Help, Export and Feedback move as ONE item. .topbar-lead wraps, so with
+       the three loose in it the page title shared their row and pushed the last
+       pill onto a line of its own - Export and Feedback ended up on separate
+       lines on three of the four pages. Measured at 390px: the three together
+       are 302px against 358px available, so they always fit on one line
+       TOGETHER; it is only the title beside them that does not. Grouping them
+       means the worst case is the title on one row and all three actions on
+       the next, never a split set of buttons. nowrap so the group itself can
+       never break. */
+    .topbar-actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: nowrap; }
     /* Feedback is a peer of Export for the same reason: reaching it must be
        one tap from any page, but it is not what anyone came to the page to
        do. Same quiet pill rather than a third visual weight to learn. */
@@ -963,9 +973,11 @@
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div class="topbar-lead">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0;font-size:17px">Log</h1>
-          <button class="help-btn" id="helpLogBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
-          <button class="help-btn export-btn" id="exportLogBtn" title="Export everything on the Log page as a spreadsheet" aria-label="Export everything on the Log page as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
-          <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
+          <div class="topbar-actions">
+            <button class="help-btn" id="helpLogBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+            <button class="help-btn export-btn" id="exportLogBtn" title="Export everything on the Log page as a spreadsheet" aria-label="Export everything on the Log page as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+            <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
+          </div>
         </div>
         <div style="display:flex;gap:8px">
           <button class="secondary btn-sm" id="profileBtn">Profile</button>
@@ -1671,9 +1683,11 @@
         <div class="topbar-lead">
           <button class="secondary btn-sm" id="backFromReports" aria-label="Back to Log" title="Back to Log">←</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Reports</h1>
-          <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
-          <button class="help-btn export-btn" id="exportReportsBtn" title="Export this month's analysis as a spreadsheet" aria-label="Export this month's analysis as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
-          <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
+          <div class="topbar-actions">
+            <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+            <button class="help-btn export-btn" id="exportReportsBtn" title="Export this month's analysis as a spreadsheet" aria-label="Export this month's analysis as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+            <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
+          </div>
         </div>
         <!-- A toggle rather than years mixed into the dropdown alongside
              months: one list holding "August 2026" and "2026" asks the reader
@@ -1866,9 +1880,11 @@
         <div class="topbar-lead">
           <button class="secondary btn-sm" id="backFromPlan" aria-label="Back to Log" title="Back to Log">&#8592;</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Plan</h1>
-          <button class="help-btn" id="helpPlanBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
-          <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
-          <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
+          <div class="topbar-actions">
+            <button class="help-btn" id="helpPlanBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+            <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+            <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
+          </div>
         </div>
       </div>
       <!-- The headline number for this page, added 2026-08-28 after research
@@ -2007,9 +2023,11 @@
         <div class="topbar-lead">
           <button class="secondary btn-sm" id="backFromInvest" aria-label="Back to Log" title="Back to Log">←</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Investments</h1>
-          <button class="help-btn" id="helpInvestBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
-          <button class="help-btn export-btn" id="exportInvestBtn" title="Export your investments as a spreadsheet" aria-label="Export your investments as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
-          <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
+          <div class="topbar-actions">
+            <button class="help-btn" id="helpInvestBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
+            <button class="help-btn export-btn" id="exportInvestBtn" title="Export your investments as a spreadsheet" aria-label="Export your investments as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+            <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
+          </div>
         </div>
       </div>
 

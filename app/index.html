@@ -991,7 +991,6 @@
              row with the title or wrap onto their own line. -->
         <div class="topbar-account">
           <button class="secondary btn-sm" id="profileBtn">Profile</button>
-          <button class="secondary btn-sm" id="signOutBtn">Sign out</button>
         </div>
       </div>
 
@@ -3000,6 +2999,13 @@
         <button class="secondary" id="openPrivacyBtn">Your data and privacy</button>
         <div class="stack-2"></div>
         <button class="secondary" id="openTermsBtn">Terms of use</button>
+        <!-- Last, which is where a settings sheet puts this. It used to sit in
+             the Log topbar, taking permanent space on every visit next to the
+             button people actually use, for something done rarely. Profile is
+             already the account sheet, and Account security is at the top of
+             it, so this is the one place it belongs. -->
+        <div class="stack-4"></div>
+        <button class="secondary" id="signOutBtn">Sign out</button>
     </div>
   </div>
 

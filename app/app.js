@@ -3622,18 +3622,24 @@ async function loadAccountActivity() {
 // most investment assets are standalone (STANDALONE_ONLY_ASSET_CATEGORIES),
 // no linked account at all, so accountId alone can't say WHICH investment
 // asset a contribution belongs to. See 42_contribution_tracking.sql.
-async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null, assetId = null) {
+async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null, assetId = null, source = null) {
   const rounded = Math.round(Number(amount) * 100) / 100;
   // A zero amount normally means nothing actually changed (a "set" to the
   // same value), so there is nothing worth a history row. account_created is
   // the deliberate exception - it is an audit breadcrumb, not a money
   // movement, so its amount is always 0 and it must still be recorded.
-  if (!rounded && kind !== "account_created") return;
-  const { error } = await sb.from("account_activity").insert({
+  if (!rounded && kind !== "account_created") return { error: null, id: null };
+  const { data, error } = await sb.from("account_activity").insert({
     kind, description, amount: rounded, occurred_at: occurred_at || localDateISO(),
     account_id: accountId, related_account_id: relatedAccountId, liability_id: liabilityId, asset_id: assetId,
-  });
+    source,
+  }).select("id").maybeSingle();
   if (!error) await loadAccountActivity();
+  // Returned so a caller that CANNOT tolerate a silent failure can check it,
+  // and so one that needs to undo its own write has the id. Every existing
+  // caller ignores this and is unaffected - the ones that must not ignore it
+  // are the ones writing a figure something else is then enforced against.
+  return { error, id: data?.id ?? null };
 }
 
 // ---- ADJUST AN ACCOUNT'S LINKED ASSET -----------------------------------
@@ -5327,14 +5333,20 @@ async function undoActivity(row) {
     // straight subtraction, never a sign-dependent one like asset_adjust's.
     const asset = row.asset_id ? assets.find((a) => a.id === row.asset_id) : null;
     if (!asset) return toast("Can't undo - the investment no longer exists.");
-    // A contribution recorded from a PURCHASE sits on an account whose value is
-    // the sum of its holdings, so there is nothing to subtract: the money is in
-    // the holding, not in a balance of its own, and syncParentAssetValue would
-    // overwrite any subtraction on the next load anyway. Removing the row alone
-    // is the whole reversal, and it is also the honest escape for the one case
-    // the app cannot see - money moved in from another retirement account is a
-    // rollover, not a contribution, and should not count against the year.
-    if (parentRollupValue(asset.id) != null) {
+    // A contribution recorded from a PURCHASE never moved the asset's own
+    // value - the money is in the holding, and syncParentAssetValue recomputes
+    // the parent from its holdings regardless - so removing the row is the
+    // whole reversal. It is also the honest escape for the one case the app
+    // cannot see: money moved in from another retirement account is a rollover,
+    // not a contribution, and should not count against the year.
+    //
+    // Read from the row's OWN source column (80_account_activity_source.sql),
+    // not inferred from whether the asset still has holdings. That inference
+    // was a proxy for a past fact and flipped with present state: delete the
+    // holding a contribution paid for and undo would subtract its amount from
+    // the parent's typed-in value, money that had already gone with the
+    // holding.
+    if (row.source === "holding_purchase") {
       const { error: delErr } = await sb.from("account_activity").delete().eq("id", row.id);
       if (delErr) return toast(delErr.message);
       await loadAccountActivity();
@@ -6896,8 +6908,6 @@ function countableInvestmentAssets() {
   return investmentAssets.filter((a) => !parentsWithHoldings.has(a.id));
 }
 
-// The holding the user last moved, so the list can point at where it landed.
-// Consumed by the next render, the same shape the tracked list uses.
 // The saved file lists holdings in the order the card shows them. The rows
 // come back in whatever order the assets were loaded in, so without this a
 // reordered list and its own export disagree about something the user
@@ -6915,6 +6925,8 @@ function exportOrderedHoldings(rows) {
   });
 }
 
+// The holding the user last moved, so the list can point at where it landed.
+// Consumed by the next render, the same shape the tracked list uses.
 let investJustMovedId = null;
 let investOrderSaveTimer = null;
 // Which holdings still need their position written. The tracked list can infer
@@ -6932,11 +6944,17 @@ const investDirtyOrder = new Set();
 // top of an order somebody arranged.
 const holdingOrder = (a, b) => {
   const ao = a.sort_order, bo = b.sort_order;
-  if (ao == null && bo == null) return (a.created_at || "") < (b.created_at || "") ? -1 : 1;
-  if (ao == null) return 1;
-  if (bo == null) return -1;
-  if (Number(ao) !== Number(bo)) return Number(ao) - Number(bo);
-  return (a.created_at || "") < (b.created_at || "") ? -1 : 1;
+  if (ao != null && bo != null && Number(ao) !== Number(bo)) return Number(ao) - Number(bo);
+  if (ao == null && bo != null) return 1;
+  if (bo == null && ao != null) return -1;
+  // Returns 0 when the tiebreak is equal too. A two-way ternary answered 1 for
+  // BOTH compare(a,b) and compare(b,a), which is not a valid comparator: two
+  // rows sharing a sort_order and a created_at - a migration backfill writes
+  // them in the same second, and a row missing created_at compares "" to "" -
+  // could then land in a different order on each render, so a list somebody
+  // arranged by hand appeared to shuffle itself between live-price ticks.
+  const ac = a.created_at || "", bc = b.created_at || "";
+  return ac < bc ? -1 : ac > bc ? 1 : 0;
 };
 
 function announceHoldingPosition(id) {
@@ -7070,8 +7088,13 @@ function renderInvestments() {
         </div>`;
     }
     const company = storableName(h.symbol);
+    // Tone from the SAME field the badge's visibility is gated on. It read
+    // h.dayChange while the gate read h.dayChangePct, so a holding with a
+    // percentage but no absolute figure rendered "+4.33%" in the neutral flat
+    // style - the number and the colour stating different things. Zero is
+    // neutral here, the rule gainColor() already holds.
     const badge = h.dayChangePct != null
-      ? `<span class="chg-badge ${h.dayChange > 0 ? "is-up" : h.dayChange < 0 ? "is-down" : "is-flat"}">${signedPct(h.dayChangePct)}</span>`
+      ? `<span class="chg-badge ${h.dayChangePct > 0 ? "is-up" : h.dayChangePct < 0 ? "is-down" : "is-flat"}">${signedPct(h.dayChangePct)}</span>`
       : `<span class="chg-badge is-none">no change yet</span>`;
     return `
       <div class="exp holding-row drag-row${a.id === investJustMovedId ? " just-moved" : ""}" data-reorder-row="${esc(a.id)}">
@@ -8188,6 +8211,7 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
     if (again) again.focus({ preventScroll: true });
   };
 
+
   for (const grip of list.querySelectorAll("[data-grip]")) {
     grip.onpointerdown = (ev) => {
       if (ev.button != null && ev.button !== 0) return;
@@ -8224,14 +8248,27 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
       // row is reinserted.
       const grabOffset = ev.clientY - row.getBoundingClientRect().top;
 
-      const follow = (clientY) => {
+      // The row's untransformed top. Clearing the transform and re-reading the
+      // rect on EVERY pointermove cost two forced layouts per event, on a
+      // phone, at display rate. It only changes when the row is actually
+      // reinserted, so it is measured once here and re-measured there.
+      let naturalTop = row.getBoundingClientRect().top;
+      const remeasure = () => {
         row.style.transform = "";
-        const natural = row.getBoundingClientRect().top;
-        row.style.transform = `translateY(${clientY - grabOffset - natural}px)`;
+        naturalTop = row.getBoundingClientRect().top;
+      };
+      const follow = (clientY) => {
+        row.style.transform = `translateY(${clientY - grabOffset - naturalTop}px)`;
       };
       follow(ev.clientY);
 
       const onMove = (e) => {
+        // renderInvestments() runs on the live-price tick every few minutes and
+        // rebuilds these rows, so a drag can outlive the element it started on.
+        // Every branch below reads row.parentElement, which is null once that
+        // happens - the end-of-list branch threw outright on it. Abandon the
+        // drag rather than act on a detached node.
+        if (!row.isConnected) return finish();
         follow(e.clientY);
         const under = document.elementFromPoint(e.clientX, e.clientY);
         const target = under && under.closest ? under.closest("[data-reorder-row]") : null;
@@ -8255,6 +8292,7 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
           } else if (e.clientY < first.getBoundingClientRect().top && first !== row) {
             row.parentElement.insertBefore(row, first);
           } else return;
+          remeasure();
           follow(e.clientY);
           return;
         }
@@ -8265,6 +8303,7 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
         const rect = target.getBoundingClientRect();
         const below = e.clientY > rect.top + rect.height / 2;
         target.parentElement.insertBefore(row, below ? target.nextSibling : target);
+        remeasure();
         follow(e.clientY);
       };
 
@@ -8272,6 +8311,7 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
         document.removeEventListener("pointermove", onMove, true);
         document.removeEventListener("pointerup", finish, true);
         document.removeEventListener("pointercancel", finish, true);
+        window.removeEventListener("blur", finish);
         endDrag(row);
       };
       // On the DOCUMENT, not on the handle, and this is the whole reason the
@@ -8284,6 +8324,14 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
       document.addEventListener("pointermove", onMove, true);
       document.addEventListener("pointerup", finish, true);
       document.addEventListener("pointercancel", finish, true);
+      // No pointer capture is taken, because moving the row releases it - that
+      // was the bug this whole shape exists to fix. The cost is that a release
+      // the page never sees leaves the drag open forever, and reorderDragId
+      // then rejects every later pointerdown, so reordering stays dead for the
+      // session. Window blur covers it: switching app or tab, or a release
+      // outside the window that takes focus with it, ends the drag where it
+      // got to rather than stranding it.
+      window.addEventListener("blur", finish);
     };
 
     // Takes the row it started on, because after a reinsertion the element
@@ -8291,10 +8339,18 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
     const endDrag = (row) => {
       if (!reorderDragId) return;
       const id = reorderDragId;
+      // Cleared FIRST, before anything below can bail out. Leaving it set is
+      // what blocks every subsequent drag, so it must not depend on the rest
+      // of this function succeeding.
       reorderDragId = null;
       row.style.transform = "";
       row.style.pointerEvents = "";
       for (const el of list.querySelectorAll(".dragging")) el.classList.remove("dragging");
+      // A render replaced these rows mid-drag, so the list this closure holds
+      // is detached and its order is whatever it was before the redraw.
+      // Committing that would write a stale order over the fresh one. The
+      // redraw already shows the real state, so there is nothing to do.
+      if (!row.isConnected || !list.isConnected) return;
       const before = ids().join(",");
       const after = [...list.querySelectorAll("[data-reorder-row]")].map((el) => el.dataset.reorderRow);
       if (after.join(",") === before) {
@@ -8326,6 +8382,13 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
       const at = ids().indexOf(id);
       if (!reorderTo(id, at + (ev.key === "ArrowUp" ? -1 : 1))) return;
       announce(id);
+      // Redrawn on every keystroke, deliberately. Coalescing this was tried
+      // and reverted: requestAnimationFrame fired ZERO times for three real
+      // keypresses (the data moved, the list never redrew - the silent no-op
+      // this feature keeps being bitten by), and a timer fired once per press
+      // anyway, because deliberate presses arrive far slower than a macrotask.
+      // So the deferred path bought no fewer renders and added a way for the
+      // screen to stop matching the data. Measure before deferring this again.
       render();
       refocus(id);
       save();
@@ -9202,8 +9265,21 @@ $("saveHoldingBtn").onclick = async () => {
   // Captured before any await below: closeHoldingForm() clears editingHolding,
   // and the confirmations in between yield to the event loop.
   const wasEditingHolding = !!editingHolding;
+  // Moving a holding between accounts changes BOTH totals, so the old parent
+  // is resynced too, not just the new one.
+  const previousParentId = editingHolding?.parent_asset_id ?? null;
   const previousCostBasis = editingHolding ? Number(editingHolding.purchase_price) : 0;
   const costBasisDelta = Math.round((totalCostBasis - previousCostBasis) * 100) / 100;
+  // How much money ENTERS this account, which is not the same question as how
+  // much is being SPENT. Re-filing a holding into a different account moves
+  // its whole cost basis in while spending nothing, and the delta is zero when
+  // shares and price are untouched - so a $50,000 brokerage holding switched
+  // to an IRA used to count as no contribution at all and skip the limit
+  // entirely. The old account's history is deliberately left alone: the money
+  // did go in there when it went in, and rewriting a past year's total to
+  // follow a correction would be worse than leaving it.
+  const changedAccount = wasEditingHolding && previousParentId && previousParentId !== parentId;
+  const contributionAmount = changedAccount ? totalCostBasis : costBasisDelta;
   const fundingAccountId = $("holdingFundingAccount").value || null;
   // Checked up front, before the async ticker-confirm dialog below - fail
   // fast on insufficient funds rather than making someone confirm an
@@ -9215,7 +9291,7 @@ $("saveHoldingBtn").onclick = async () => {
   // Buying inside a retirement account IS putting money into it, so the same
   // yearly IRS limit applies. Checked on the DELTA, so editing a holding down
   // is never refused and raising one only has to fit what is left.
-  const limitErr = contributionRefusalReason(parentId, costBasisDelta);
+  const limitErr = contributionRefusalReason(parentId, contributionAmount);
   if (limitErr) { flagField("holdingAccount", limitErr); return toast(limitErr, "error"); }
 
   const parent = assets.find((a) => a.id === parentId);
@@ -9267,13 +9343,51 @@ $("saveHoldingBtn").onclick = async () => {
     investment_bucket: $("holdingBucket").value.trim() || null,
   };
   const wasEditing = wasEditingHolding;
-  // Moving a holding between accounts changes BOTH totals, so the old
-  // parent is resynced too, not just the new one.
-  const previousParentId = editingHolding?.parent_asset_id;
+  // What makes the yearly figure DERIVED rather than self-reported. Written
+  // against the PARENT account, which is what contributionLimitUsage() maps to
+  // a limit group, and only for an account that actually has a limit - a
+  // brokerage purchase is not a contribution to anything. Recorded whether or
+  // not a funding account was picked: within this app an investment account
+  // holds no uninvested cash (its value IS the sum of its holdings), so a
+  // purchase inside one is always new money arriving, and making it
+  // conditional on "Paid from" would leave the limit bypassable by leaving
+  // that field alone.
+  //
+  // Written BEFORE the holding, and its error checked, because of which way a
+  // partial failure should err. This row is what the limit is enforced
+  // against: lose it and the year reads low and the app lets the NEXT
+  // purchase through when it should not, which is the failure that actually
+  // costs someone money. An orphaned contribution errs the other way - it
+  // reads high, refuses too much, and is visible and undoable in Recent
+  // History. logActivity used to swallow the insert error entirely, so this
+  // failed silently and permanently.
+  let contributionId = null;
+  if (contributionAmount > 0 && contributionGroupFor(parent?.type)) {
+    const { error: contribErr, id } = await logActivity(
+      "contribution", `Put ${fmt(contributionAmount)} into ${parent.name} by buying ${symbol}`,
+      contributionAmount, undefined, accounts.find((a) => a.linked_asset_id === parentId)?.id ?? null,
+      null, null, parentId, "holding_purchase"
+    );
+    if (contribErr) {
+      flagField("holdingAccount", contribErr.message);
+      return toast(`Could not record this against your limit for the year, so nothing was saved: ${contribErr.message}`, "error");
+    }
+    contributionId = id;
+  }
   const { error } = editingHolding
     ? await sb.from("assets").update(row).eq("id", editingHolding.id)
     : await sb.from("assets").insert(row);
-  if (error) { flagField("holdingSymbol"); return toast(error.message); }
+  if (error) {
+    // Put the contribution back rather than leave one standing for a holding
+    // that does not exist - the same compensating write payBillTowardDebt()
+    // does when the second of its two tables refuses.
+    if (contributionId) {
+      await sb.from("account_activity").delete().eq("id", contributionId);
+      await loadAccountActivity();
+    }
+    flagField("holdingSymbol");
+    return toast(error.message);
+  }
   // Mirrors exactly where Quick Add calls applyAssetDelta after its own
   // expenses.insert - re-checked against fundingAccountId/costBasisDelta
   // (not just "was a funding account selected") since a decrease must
@@ -9284,23 +9398,6 @@ $("saveHoldingBtn").onclick = async () => {
       "asset_adjust",
       `Bought ${quantity} ${symbol} - funded from ${acctName(fundingAccountId)}`,
       -costBasisDelta, undefined, fundingAccountId
-    );
-  }
-  // What makes the yearly figure DERIVED rather than self-reported. Written
-  // against the PARENT account, which is what contributionLimitUsage() maps to
-  // a limit group, and only for an account that actually has a limit - a
-  // brokerage purchase is not a contribution to anything.
-  //
-  // Recorded whether or not a funding account was picked. Within this app an
-  // investment account holds no uninvested cash (its value IS the sum of its
-  // holdings), so a purchase inside one is always new money arriving, and
-  // making it conditional on "Paid from" would leave the limit bypassable by
-  // leaving that field alone.
-  if (costBasisDelta > 0 && contributionGroupFor(parent?.type)) {
-    await logActivity(
-      "contribution", `Put ${fmt(costBasisDelta)} into ${parent.name} by buying ${symbol}`,
-      costBasisDelta, undefined, accounts.find((a) => a.linked_asset_id === parentId)?.id ?? null,
-      null, null, parentId
     );
   }
   closeHoldingForm();
@@ -9342,7 +9439,14 @@ function contributionRefusalReason(parentAssetId, amount) {
     accountActivity.filter((a) => a.kind === "contribution"),
     { [group.groupId]: group }
   )[0];
-  if (!usage) return null;
+  // FAILS CLOSED. contributionLimitUsage returns nothing for a group with no
+  // qualifying asset in the list it is given, and that list excludes archived
+  // accounts while this function resolves the parent from the unfiltered one.
+  // So an account archived in another tab or on another device - the stale
+  // picker this app is full of warnings about - used to come back with no
+  // usage row and be READ AS NO LIMIT. A limit check that cannot see the
+  // numbers must refuse, not wave it through.
+  if (!usage) return `This account is no longer available, so its limit for the year cannot be checked. Reopen the page and try again.`;
   const left = Math.round((usage.limit - usage.contributed) * 100) / 100;
   if (amount <= left) return null;
   const year = new Date().getFullYear();

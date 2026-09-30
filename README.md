@@ -41,9 +41,13 @@ sinking funds for costs that do not arrive monthly, and a 30-day cash-flow
 projection.
 
 **Follow your investments.** Holdings priced every fifteen minutes while the
-market is open, a daily written recap of what moved and why, the biggest movers
-across the whole market rather than only the stocks you hold, contribution
-limits against real IRS figures, and a target allocation you set yourself.
+market is open, laid out the way a phone's stocks list is and in whatever order
+you drag them into, a daily written recap of what moved and why, the biggest
+movers across the whole market rather than only the stocks you hold, and a
+target allocation you set yourself. For an account with a yearly IRS limit, what
+you spend buying inside it counts towards that limit on its own and a purchase
+that would take you over is refused, so the figure is worked out rather than
+remembered.
 
 **Find cheaper subscriptions.** The app knows which plans you might qualify for
 from what your profile says: a current student, a teacher, someone working in

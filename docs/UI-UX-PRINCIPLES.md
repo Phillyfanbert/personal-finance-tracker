@@ -285,9 +285,29 @@ measures 5.5 and is indistinguishable, which is only visible if you measure.
 The visible ink may be smaller than the target. A 17px "i" glyph is fine as long as
 its tappable box is padded out to 44px.
 
+> **An enlarged tap box must grow around its ink, not out of one edge.** Found
+> live on 2026-09-29: `.link-action::after` was `left: 0; right: 0` with a
+> `min-width` of 44px, so everything the minimum added grew to the RIGHT. A short
+> label like "Sell" therefore carried roughly 23px of invisible hit box lying over
+> whatever came next, and no amount of margin bought its neighbour any clear space
+> - widening the gap only pushed that neighbour further into the same overhang.
+> Measured at 1px between "Sell" and "Dividend", two controls that move real
+> money. Centre it (`left: 50%; transform: translate(-50%, -50%);
+> width: max(100%, 44px)`), then re-measure every caller, because centring also
+> extends the box leftward.
+
 **7.2 Spacing between targets.** Adjacent controls need at least 8px between their
 tap boxes. WCAG 2.5.8 permits sub-24px targets only when spacing compensates; that
 exception is not a licence to make things small.
+
+> **Measure the real box by hit-testing, not by reading rects.** A control whose
+> target comes from a pseudo-element has a `getBoundingClientRect()` the size of
+> its ink, so a gap computed from rects reports clear space that is not there.
+> Walk outward from each control's centre with `elementFromPoint` until a
+> different element answers. Two traps: `elementFromPoint` returns null for
+> anything outside the viewport, so scroll the control into view first, and a
+> synthetic probe with rows stacked tight invents vertical overlap that reads as a
+> real failure - space the probe rows out.
 
 **7.3 Everything reachable by pointer is reachable by keyboard.** A `<div onclick>`
 with no `tabindex` and no key handler is invisible to keyboard and switch users.
@@ -447,7 +467,9 @@ which parts are measured and which are generated.
 For any new or changed screen:
 
 - [ ] One `<h1>`; card titles are real headings; content is inside `<main>`
-- [ ] Every control is at least 44x44 with 8px between neighbours
+- [ ] Every control is at least 44x44 with 8px between neighbours, measured by
+      hit-testing outward from each one rather than from `getBoundingClientRect()`
+      (7.1, 7.2)
 - [ ] Every control reachable and operable by keyboard, with a visible focus ring
 - [ ] Every control has an accessible name that stands alone
 - [ ] Every input has a `<label for=>`

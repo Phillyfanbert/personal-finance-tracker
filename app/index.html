@@ -2282,19 +2282,22 @@
 
         <div id="investSubLimits" class="hidden" data-subtab-label="Limits">
         <div class="card empty-state" id="emptyLimits">None of your accounts are a type with a tracked contribution limit, like a 401(k) or IRA.</div>
-  <!-- Base 2025 IRS limits only (no catch-up, no income phase-outs) -
-               see docs/bank-account-types-research.md §9b.6 for the full
-               per-type reasoning and which types share a limit vs. have their
-               own. A calculator against your own logged contributions, not
-               advice - only ever states the math, same boundary the Target
-               allocation card below already holds for what to buy. Only shows
-               a group the user actually has a qualifying account in. -->
+  <!-- Base 2026 IRS limits only (no catch-up, no income phase-outs) -
+               see docs/bank-account-types-research.md §9b.6 and §9b.7 for the
+               full per-type reasoning, which types share a limit vs. have
+               their own, and every limit deliberately left unenforced. The
+               year's total is DERIVED from purchases inside these accounts,
+               not from anything typed in. A calculator against your own
+               records, not advice - only ever states the math, same boundary
+               the Target allocation card below already holds for what to buy.
+               Only shows a group the user actually has a qualifying account
+               in. -->
           <div class="card" id="contributionLimitsCard" style="display:none">
             <div class="card-head">
               <h2>How much more you can put in (this year)</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="limitsExplainer" title="Base annual limits only - doesn't account for catch-up contributions, income phase-outs, or filing status. Verify against current IRS figures for your situation.">i</span>
+              <span class="info-icon" tabindex="0" role="button" data-info="limitsExplainer" title="Worked out from what you bought inside these accounts this year, not from anything you type. Base annual limits only - no catch-up amounts, income phase-outs or filing status. Check against current IRS figures for your own situation.">i</span>
             </div>
-            <p class="muted explainer hidden" id="limitsExplainer">Base annual limits only - doesn't account for catch-up contributions, income phase-outs, or filing status. Verify against current IRS figures for your situation.</p>
+            <p class="muted explainer hidden" id="limitsExplainer">Worked out from what you bought inside these accounts this year, not from anything you type. Base annual limits only - no catch-up amounts, income phase-outs or filing status. Check against current IRS figures for your own situation.</p>
             <div id="contributionLimitsList"></div>
           </div>
       </div>

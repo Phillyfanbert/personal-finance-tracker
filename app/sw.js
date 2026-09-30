@@ -20,7 +20,7 @@
 // current here to close that gap too, not because normal offline use depends
 // on it. If it drifts again, that narrow case regresses; ordinary offline use
 // after a successful first run does not.
-const CACHE = "expense-shell-v69";
+const CACHE = "expense-shell-v70";
 // app/secTickers.js is deliberately ABSENT. It is ~357 KB (108 KB gzipped) of
 // SEC's full ticker index, loaded on demand by loadSecTickers() only when
 // someone actually types in a symbol field. Precaching it would spend that on

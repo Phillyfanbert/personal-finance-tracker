@@ -561,6 +561,11 @@
        the next, never a split set of buttons. nowrap so the group itself can
        never break. */
     .topbar-actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: nowrap; }
+    .topbar-account { display: flex; gap: var(--sp-2); margin-left: auto; }
+    /* The Reports period switch, given the same rhythm as the Log page's
+       sub-tab pills so a page-level switch looks the same in both places. */
+    .period-bar { display: flex; align-items: center; gap: var(--sp-2);
+      flex-wrap: wrap; margin: 0 0 var(--sp-4); }
     /* Feedback is a peer of Export for the same reason: reaching it must be
        one tap from any page, but it is not what anyone came to the page to
        do. Same quiet pill rather than a third visual weight to learn. */
@@ -979,7 +984,12 @@
             <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
           </div>
         </div>
-        <div style="display:flex;gap:8px">
+        <!-- Account chrome, not page actions, so it sits at the far end of the
+             row rather than centred: centring a pair of buttons in a toolbar
+             reads as "this is the main thing to do here", which it is not.
+             margin-left:auto keeps them right-aligned whether they share the
+             row with the title or wrap onto their own line. -->
+        <div class="topbar-account">
           <button class="secondary btn-sm" id="profileBtn">Profile</button>
           <button class="secondary btn-sm" id="signOutBtn">Sign out</button>
         </div>
@@ -1689,18 +1699,24 @@
             <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
           </div>
         </div>
-        <!-- A toggle rather than years mixed into the dropdown alongside
-             months: one list holding "August 2026" and "2026" asks the reader
-             to notice which kind of thing each option is, and the list grows
-             by a year every year. Two decisions, each with an obvious answer,
-             beat one list with two kinds of entry in it. -->
-        <div class="row" style="width:auto;gap:6px;align-items:center">
-          <div class="row" id="reportScopeTabs" style="width:auto;gap:6px" role="group" aria-label="Show a month or a whole year">
-            <button class="subtab-pill" data-scope="month">Month</button>
-            <button class="subtab-pill" data-scope="year">Year</button>
-          </div>
-          <select id="monthSel" aria-label="Which month or year to show" style="width:auto"></select>
+      </div>
+
+      <!-- A toggle rather than years mixed into the dropdown alongside months:
+           one list holding "August 2026" and "2026" asks the reader to notice
+           which kind of thing each option is, and the list grows by a year
+           every year. Two decisions, each with an obvious answer, beat one
+           list with two kinds of entry in it.
+
+           OUT of .topbar, where it wrapped under Help/Export/Feedback and read
+           as more toolbar chrome. It is not chrome: it decides what every
+           figure on this page shows, so it belongs directly above the totals
+           it governs. -->
+      <div class="period-bar">
+        <div class="row" id="reportScopeTabs" style="width:auto;gap:var(--sp-2)" role="group" aria-label="Show a month or a whole year">
+          <button class="subtab-pill" data-scope="month">Month</button>
+          <button class="subtab-pill" data-scope="year">Year</button>
         </div>
+        <select id="monthSel" aria-label="Which month or year to show" style="width:auto"></select>
       </div>
 
       <div class="totals" id="reportTotals">

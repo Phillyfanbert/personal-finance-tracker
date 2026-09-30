@@ -232,6 +232,16 @@ export const TOUR_STEPS = {
       placement: "bottom",
     },
     {
+      // Same sub-tab treatment as the step below. Targets the PANEL rather
+      // than investHoldingsCard: that card is empty until something is owned,
+      // which is exactly the state a first-run reader is in.
+      target: "investSubHoldings",
+      subtab: "investSubHoldings",
+      title: "What you own",
+      body: "One row per thing you own, under the account holding it: its short name, what it is worth now, a small picture of the last month, and how much it moved today. Tap a row to see what you have made or lost on it. You can put them in whatever order you like too: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys. That only changes the order you see them in, never what anything is worth.",
+      placement: "bottom",
+    },
+    {
       // Lives behind a sub-tab, so it carries `subtab` - visibleSteps() drops
       // a step whose target has no client rects, and a hidden panel's
       // children have none.

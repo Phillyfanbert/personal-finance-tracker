@@ -6539,7 +6539,7 @@ function renderSinkingFunds() {
           <span class="muted text-xs ${s.overdue ? "danger" : ""}">${esc(when)}</span>
           <span style="white-space:nowrap">
             <button type="button" class="link-action" data-add-fund="${esc(s.id)}" aria-label="Set money aside for ${esc(s.name)}">Add money</button>
-            <button type="button" class="link-action" data-edit-fund="${esc(s.id)}" style="margin-left:12px" aria-label="Edit ${esc(s.name)}">Edit</button>
+            <button type="button" class="link-action" data-edit-fund="${esc(s.id)}" style="margin-left:var(--sp-6)" aria-label="Edit ${esc(s.name)}">Edit</button>
           </span>
         </div>
       </div>`;
@@ -6881,6 +6881,135 @@ function countableInvestmentAssets() {
   return investmentAssets.filter((a) => !parentsWithHoldings.has(a.id));
 }
 
+// The holding the user last moved, so the list can point at where it landed.
+// Consumed by the next render, the same shape the tracked list uses.
+// The saved file lists holdings in the order the card shows them. The rows
+// come back in whatever order the assets were loaded in, so without this a
+// reordered list and its own export disagree about something the user
+// arranged by hand - the same file-versus-card drift this repo keeps
+// recording. Accounts keep the order they already appear in; only the rows
+// WITHIN an account are sorted, by the one comparator the card uses.
+function exportOrderedHoldings(rows) {
+  const rank = new Map();
+  const groupOf = (h) => h.asset?.parent_asset_id || `solo:${h.asset?.id ?? ""}`;
+  for (const h of rows) { const g = groupOf(h); if (!rank.has(g)) rank.set(g, rank.size); }
+  return [...rows].sort((a, b) => {
+    const ga = groupOf(a), gb = groupOf(b);
+    if (ga !== gb) return rank.get(ga) - rank.get(gb);
+    return holdingOrder(a.asset || {}, b.asset || {});
+  });
+}
+
+let investJustMovedId = null;
+let investOrderSaveTimer = null;
+// Which holdings still need their position written. The tracked list can infer
+// this by comparing each row's stored sort_order against its array index,
+// because its move() only reorders the array. This one writes the position
+// straight onto the cached row - one source of truth for display order - so by
+// the time a save runs there is nothing left to compare against and the same
+// inference silently found NOTHING to write. Recording the ids at the moment
+// they change is what makes the write happen at all.
+const investDirtyOrder = new Set();
+
+// Null sorts LAST and created_at breaks the tie, matching what
+// 79_asset_sort_order.sql promises the reader. A holding added by any path
+// that does not set a position lands at the end rather than jumping to the
+// top of an order somebody arranged.
+const holdingOrder = (a, b) => {
+  const ao = a.sort_order, bo = b.sort_order;
+  if (ao == null && bo == null) return (a.created_at || "") < (b.created_at || "") ? -1 : 1;
+  if (ao == null) return 1;
+  if (bo == null) return -1;
+  if (Number(ao) !== Number(bo)) return Number(ao) - Number(bo);
+  return (a.created_at || "") < (b.created_at || "") ? -1 : 1;
+};
+
+function announceHoldingPosition(id) {
+  const el = $("investReorderStatus");
+  const row = assets.find((a) => a.id === id);
+  if (!el || !row) return;
+  const siblings = assets.filter((a) => a.parent_asset_id === row.parent_asset_id).sort(holdingOrder);
+  const i = siblings.findIndex((a) => a.id === id);
+  if (i < 0) return;
+  el.textContent = `${row.name} moved to position ${i + 1} of ${siblings.length}`;
+}
+
+function saveHoldingOrderSoon() {
+  clearTimeout(investOrderSaveTimer);
+  investOrderSaveTimer = setTimeout(() => { persistHoldingOrder(); }, 400);
+}
+
+// Writes only the rows whose position actually changed, the same shape
+// persistWatchlistOrder() uses and for the same reason: a repeating arrow key
+// fires far faster than a write completes, so a one-place move must cost two
+// updates rather than the whole list.
+async function persistHoldingOrder() {
+  if (!investDirtyOrder.size) return;
+  const changed = [...investDirtyOrder]
+    .map((id) => assets.find((a) => a.id === id))
+    .filter(Boolean)
+    .map((a) => ({ id: a.id, sort_order: a.sort_order }));
+  // Cleared before the write, not after: a failure resyncs from the database
+  // below, so holding on to stale marks would only re-send positions that
+  // resync has already overwritten.
+  investDirtyOrder.clear();
+  if (!changed.length) return;
+  // supabase-js RESOLVES on a query error rather than rejecting, so a
+  // try/catch here would catch nothing and a failed reorder would look exactly
+  // like a successful one until the next reload put it back.
+  const results = await Promise.all(changed.map((u) =>
+    sb.from("assets").update({ sort_order: u.sort_order }).eq("id", u.id)));
+  const failed = results.find((r) => r.error);
+  if (!failed) return;
+  toast(failed.error.message, "error");
+  // Resync rather than leave the screen stating an order the database does not
+  // hold. A partial write is the normal failure here.
+  await loadAssets();
+  renderInvestments();
+}
+
+// A Stocks-app-style sparkline, drawn as inline SVG rather than a Chart.js
+// instance. Every holding gets one, and a chart object per row would mean N
+// live instances to build, repaint on a theme change and tear down on every
+// render - for a shape with no axes, no labels and no interaction. The data is
+// already on the client (daily_prices, loaded for the price-history card), so
+// this costs no request either.
+//
+// DECORATIVE, and aria-hidden for that reason: the price and the change
+// percentage sit directly beside it and state the same thing in words. It is
+// never the only place a fact appears, which is what keeps it honest under the
+// never-state-it-in-colour-alone rule.
+const SPARK_W = 68, SPARK_H = 26;
+
+function sparklineSvg(series) {
+  // Two points is the minimum that can show a direction. One point is a dot
+  // implying a flat line nobody measured, so it draws nothing at all - the
+  // same omit-rather-than-fake rule the rest of this tab holds.
+  if (!series || series.length < 2) return "";
+  const closes = series.map((p) => p.close).filter((n) => Number.isFinite(n));
+  if (closes.length < 2) return "";
+  const lo = Math.min(...closes), hi = Math.max(...closes);
+  // A dead-flat series has no range to scale against, so it is drawn down the
+  // middle rather than divided by zero.
+  const span = hi - lo || 1;
+  const x = (i) => (i / (closes.length - 1)) * SPARK_W;
+  const y = (v) => SPARK_H - ((v - lo) / span) * (SPARK_H - 2) - 1;
+  const points = closes.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const first = closes[0], last = closes[closes.length - 1];
+  const tone = last > first ? "var(--ok)" : last < first ? "var(--err)" : "var(--muted)";
+  // The dashed line at the opening close is what makes the shape readable as
+  // up or down rather than just a squiggle, which is what the reference does.
+  return `<svg class="spark" viewBox="0 0 ${SPARK_W} ${SPARK_H}" width="${SPARK_W}" height="${SPARK_H}" aria-hidden="true" focusable="false">
+      <line x1="0" y1="${y(first).toFixed(1)}" x2="${SPARK_W}" y2="${y(first).toFixed(1)}" stroke="${tone}" stroke-width="1" stroke-dasharray="2 2" opacity="0.5" />
+      <polyline points="${points}" fill="none" stroke="${tone}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />
+    </svg>`;
+}
+
+// The window the row sparklines use. Deliberately shorter than the price-history
+// card's own ranges: this is a glance at the recent shape beside a figure, not a
+// chart someone is reading, and a year squeezed into 68px is a smear.
+const SPARK_WINDOW_DAYS = 30;
+
 function renderInvestments() {
   const investmentAssets = allInvestmentAssets();          // display: parents + holdings
   const countable = countableInvestmentAssets();           // maths: never both
@@ -6902,35 +7031,61 @@ function renderInvestments() {
   // with no holdings still shows its own blended value, which is what a
   // plain 401(k) with no per-ticker detail actually is.
   const parents = investmentAssets.filter((a) => !a.parent_asset_id);
-  const holdingRow = (a) => {
+  // Modelled on a phone's Stocks list: symbol, company name, the recent shape,
+  // then the figure and a filled change badge. What differs is deliberate -
+  // this is a PORTFOLIO, so the big number on the right is what the position is
+  // worth rather than one share's price, and the badge is the day's move on
+  // that position. The share price and quantity stay on the meta line, because
+  // dropping them would lose the only place this app states them.
+  const holdingRow = (a, i, all) => {
+    const grip = all.length > 1
+      ? `<button type="button" class="grip" data-grip="${esc(a.id)}" aria-label="${esc(`Reorder ${a.name}, position ${i + 1} of ${all.length}. Use the up and down arrow keys to move it.`)}" aria-describedby="investReorderHint">&#10303;</button>`
+      : "";
     const h = holdings.find((x) => x.asset.id === a.id);
     if (!h) {
       return `
-        <div class="exp" data-edit-holding="${a.id}" style="cursor:pointer;padding-left:12px">
-          <div><div>${esc(a.name)}</div><div class="meta">no symbol set</div></div>
-          <span class="amt">${fmt(effectiveAssetValue(a))}<button type="button" class="x" data-del-holding="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(a.name)}">✕</button></span>
+        <div class="exp holding-row drag-row${a.id === investJustMovedId ? " just-moved" : ""}" data-reorder-row="${esc(a.id)}">
+          ${grip}
+          <div class="holding-body" data-edit-holding="${a.id}" style="cursor:pointer">
+            <div class="holding-sym">${esc(a.name)}</div>
+            <div class="meta">no symbol set</div>
+          </div>
+          <span class="amt">${fmt(effectiveAssetValue(a))}</span>
+          <button type="button" class="x" data-del-holding="${a.id}" aria-label="Delete ${esc(a.name)}">✕</button>
         </div>`;
     }
+    const company = storableName(h.symbol);
+    const badge = h.dayChangePct != null
+      ? `<span class="chg-badge ${h.dayChange > 0 ? "is-up" : h.dayChange < 0 ? "is-down" : "is-flat"}">${signedPct(h.dayChangePct)}</span>`
+      : `<span class="chg-badge is-none">no change yet</span>`;
     return `
-      <div class="exp" data-edit-holding="${a.id}" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px;padding-left:12px">
-        <div style="display:flex;justify-content:space-between;gap:10px">
-          <div>
-            <div class="sym-link" data-price-symbol="${esc(h.symbol)}" title="View price history for ${esc(h.symbol)}">${esc(h.symbol)}</div>
-            <div class="meta">${h.quantity ?? "?"} @ ${h.latestPrice != null ? fmt(h.latestPrice) : "no live price yet"}</div>
-          </div>
-          <div style="text-align:right">
-            <div class="amt">${fmt(h.currentValue)}<button type="button" class="x" data-del-holding="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(h.symbol)}">✕</button></div>
-            ${h.quantity ? `<div><button type="button" class="link-action" data-sell-holding="${a.id}" style="color:var(--accent)" aria-label="Sell ${esc(h.symbol)}">Sell</button><button type="button" class="link-action muted" data-dividend-holding="${a.id}" style="margin-left:12px" aria-label="Record a dividend from ${esc(h.symbol)}">Dividend</button></div>` : ""}
-            <div style="font-size:12px;color:${gainColor(h.gainLoss)}">${h.gainLoss != null ? `${fmt(h.gainLoss)} (${signedPct(h.gainLossPct)})` : "no cost basis set"}</div>
-            ${h.dayChange != null ? `<div style="font-size:12px;color:${gainColor(h.dayChange)}">today ${fmt(h.dayChange)} (${signedPct(h.dayChangePct)})</div>` : ""}
-          </div>
+      <div class="exp holding-row drag-row${a.id === investJustMovedId ? " just-moved" : ""}" data-reorder-row="${esc(a.id)}">
+        ${grip}
+        <div class="holding-body">
+          <div class="holding-sym sym-link" data-price-symbol="${esc(h.symbol)}" title="View price history for ${esc(h.symbol)}">${esc(h.symbol)}</div>
+          <div class="meta holding-name">${company ? esc(company) + " · " : ""}${h.quantity ?? "?"} @ ${h.latestPrice != null ? fmt(h.latestPrice) : "no live price yet"}</div>
         </div>
-        ${h.explanation ? `<div class="muted" style="font-size:12px">${esc(plainDashes(h.explanation))}</div>` : ""}
-        ${h.headlines && h.headlines.length ? `<div class="muted" style="font-size:12px"><a href="${esc(h.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(h.headlines[0].title)}</a>${h.headlines[0].source ? " · " + esc(h.headlines[0].source) : ""}</div>` : ""}
+        ${sparklineSvg(priceSeries(dailyPrices, h.symbol, SPARK_WINDOW_DAYS))}
+        <div class="holding-figs" data-edit-holding="${a.id}" style="cursor:pointer">
+          <div class="amt">${fmt(h.currentValue)}</div>
+          ${badge}
+        </div>
+        <button type="button" class="x" data-del-holding="${a.id}" aria-label="Delete ${esc(h.symbol)}">✕</button>
+        <div class="holding-extra">
+          <span style="color:${gainColor(h.gainLoss)}">${h.gainLoss != null ? `${fmt(h.gainLoss)} (${signedPct(h.gainLossPct)}) all time` : "no cost basis set"}</span>
+          ${h.quantity ? `<button type="button" class="link-action" data-sell-holding="${a.id}" style="color:var(--accent);margin-left:12px" aria-label="Sell ${esc(h.symbol)}">Sell</button><button type="button" class="link-action muted" data-dividend-holding="${a.id}" style="margin-left:var(--sp-6)" aria-label="Record a dividend from ${esc(h.symbol)}">Dividend</button>` : ""}
+          ${h.explanation ? `<div class="muted">${esc(plainDashes(h.explanation))}</div>` : ""}
+          ${h.headlines && h.headlines.length ? `<div class="muted"><a href="${esc(h.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(h.headlines[0].title)}</a>${h.headlines[0].source ? " · " + esc(h.headlines[0].source) : ""}</div>` : ""}
+        </div>
       </div>`;
   };
   $("investHoldingsList").innerHTML = parents.length ? parents.map((p) => {
-    const children = investmentAssets.filter((a) => a.parent_asset_id === p.id);
+    // The user's own order, with created_at as the tiebreak - the same
+    // null-sorts-last contract 79 records, applied in memory because
+    // allInvestmentAssets() filters rather than re-queries.
+    const children = investmentAssets
+      .filter((a) => a.parent_asset_id === p.id)
+      .sort(holdingOrder);
     // Log contribution only makes sense for a parent with no holdings under
     // it - it bumps the parent's own .value directly, but a with-holdings
     // parent's value is ONLY ever the sum of its holdings (the project notes: "no
@@ -6953,10 +7108,41 @@ function renderInvestments() {
           <span class="amt">${fmt(effectiveAssetValue(p))}</span>
         </div>
         ${children.length
-          ? children.map(holdingRow).join("")
+          ? `<div class="holding-list" data-holdings-of="${esc(p.id)}">${children.map(holdingRow).join("")}</div>`
           : `<p class="muted" style="font-size:12px;padding-left:12px;margin:6px 0 0">No specific holdings recorded - use "+ Add stock" to enter tickers.</p>`}
       </div>`;
   }).join("") : `<p class="muted" style="font-size:13px">No investments added yet - add one from Things you have on the Log page (Brokerage, IRA, 401(k), crypto, and so on).</p>`;
+  // One reorder list PER ACCOUNT, not one for the page: a holding belongs to
+  // its account, and moving AAPL out of the IRA and into the brokerage by
+  // dragging would be a transfer between two real accounts rather than a
+  // display preference. attachListReorder's parentElement check enforces the
+  // same boundary at drag time.
+  investJustMovedId = null;
+  for (const listEl of document.querySelectorAll("[data-holdings-of]")) {
+    const parentId = listEl.dataset.holdingsOf;
+    attachListReorder({
+      list: listEl,
+      ids: () => assets.filter((a) => a.parent_asset_id === parentId).sort(holdingOrder).map((a) => a.id),
+      move: (order) => {
+        // Positions are written straight onto the cached rows, so the
+        // comparator every reader already goes through is the single place
+        // that decides display order - there is no second ordered array to
+        // drift from it.
+        order.forEach((id, i) => {
+          const row = assets.find((a) => a.id === id);
+          if (!row || Number(row.sort_order) === i + 1) return;
+          row.sort_order = i + 1;
+          investDirtyOrder.add(id);
+        });
+      },
+      render: () => renderInvestments(),
+      announce: (id) => { investJustMovedId = id; announceHoldingPosition(id); },
+      save: saveHoldingOrderSoon,
+    });
+  }
+  const hint = $("investReorderHint");
+  if (hint) hint.classList.toggle("hidden", !document.querySelector("[data-holdings-of] .grip"));
+
   document.querySelectorAll("[data-log-contribution]").forEach((el) => {
     el.onclick = (ev) => { ev.stopPropagation(); openContributionForm(el.dataset.logContribution); };
   });
@@ -7817,9 +8003,6 @@ function renderRealizedGains() {
 // renderWatchlistEditor() is called from four places that know nothing about
 // reordering (a load, an add, a delete, a holdings sync).
 let watchJustMovedId = null;
-// Set while a pointer drag is in flight. Also the guard that stops a
-// pointermove on a grip doing anything at all when no drag started.
-let watchDragId = null;
 let watchOrderSaveTimer = null;
 
 function renderWatchlistEditor() {
@@ -7861,7 +8044,7 @@ function renderWatchlistEditor() {
           ? `<button type="button" class="grip" data-grip="${esc(w.id)}" aria-label="${gripLabel}" aria-describedby="watchlistReorderHint">&#10303;</button>`
           : "";
         return `
-      <div class="exp drag-row${w.id === movedId ? " just-moved" : ""}" data-watch-row="${esc(w.id)}" style="cursor:default">
+      <div class="exp drag-row${w.id === movedId ? " just-moved" : ""}" data-reorder-row="${esc(w.id)}" style="cursor:default">
         ${grip}
         <div class="drag-row-body">
           <div>${esc(w.symbol)}</div>
@@ -7912,16 +8095,74 @@ function renderWatchlistEditor() {
 // the sheet, so moving a row past the visible window means dragging in stages.
 // The arrow keys have no such limit and are the faster way to move something a
 // long distance, which is what the hint above the list says.
-function attachWatchlistReorder() {
-  const list = $("watchlistList");
+// ONE reorder implementation, used by the tracked-companies list and the
+// holdings list. Written for the first and generalized the moment the second
+// arrived, rather than copied - every hard-won detail below was found by
+// testing with real input, and a second copy would be a second place for each
+// of them to rot.
+//
+// Two input methods against one model, because neither covers everyone:
+//
+//   - A POINTER drag, built on pointer events rather than HTML5 drag-and-drop.
+//     HTML5 DnD does not fire on iOS Safari touch at all, and an installed
+//     home-screen icon on iOS is this app's main surface (see index.html's
+//     authView comment for why), so a dragstart/drop implementation would
+//     simply not exist for most of the people using it. Pointer events cover
+//     mouse, touch and pen with one code path.
+//   - The ARROW KEYS on the same focused handle, which is what makes this
+//     reachable from a keyboard and from a screen reader. The alternative was
+//     a Move up / Move down pair per row, which would have put three 44px hit
+//     boxes in a row that previously held one - exactly the density the
+//     Budgets card had to be rebuilt to escape.
+//
+// Known limit, stated rather than hidden: a pointer drag does not auto-scroll,
+// so moving a row past the visible window means dragging in stages. The arrow
+// keys have no such limit and are the faster way to move something a long
+// distance, which is what each list's hint says.
+//
+// @param {object} o
+// @param {HTMLElement} o.list      container holding the [data-reorder-row] rows
+// @param {() => string[]} o.ids    the CURRENT id order, as the data sees it
+// @param {(ids: string[]) => void} o.move  apply a new id order to that data
+// @param {() => void} o.render     redraw the list
+// @param {(id: string) => void} o.announce  say what moved, for a screen reader
+// @param {() => void} o.save       persist (debounced by the caller)
+let reorderDragId = null; // one pointer, so one drag at a time across the app
+
+function attachListReorder({ list, ids, move, render, announce, save }) {
   if (!list) return;
+
+  const reorderTo = (id, toIndex) => {
+    const order = ids();
+    const from = order.indexOf(id);
+    if (from < 0 || toIndex < 0 || toIndex >= order.length) return false;
+    order.splice(toIndex, 0, order.splice(from, 1)[0]);
+    move(order);
+    return true;
+  };
+
+  // After a render the handle is a NEW element, so focus has to be put back by
+  // id - otherwise a move ends with focus on <body> and the arrow keys cannot
+  // be used to finish the job precisely, which is the thing a drag is worst at.
+  //
+  // Searched from DOCUMENT, not from `list`. The tracked-companies list rewrites
+  // the innerHTML of one container that survives, so a query scoped to it works
+  // there; the holdings list is rebuilt WITH its container on every render, so
+  // the captured element is detached by the time this runs and finds nothing.
+  // That cost the arrow keys outright: the first press moved a row and dropped
+  // focus, and every press after it went nowhere. A grip id is an asset or
+  // watchlist row id, so a document-wide lookup is unambiguous.
+  const refocus = (id) => {
+    const again = document.querySelector(`[data-grip="${CSS.escape(id)}"]`);
+    if (again) again.focus({ preventScroll: true });
+  };
 
   for (const grip of list.querySelectorAll("[data-grip]")) {
     grip.onpointerdown = (ev) => {
       if (ev.button != null && ev.button !== 0) return;
-      const row = grip.closest("[data-watch-row]");
+      const row = grip.closest("[data-reorder-row]");
       if (!row) return;
-      // Stops a touch drag scrolling the sheet instead of moving the row.
+      // Stops a touch drag scrolling the page instead of moving the row.
       // .grip's touch-action:none does the same job for the browser's own
       // gesture handling; this covers the rest.
       ev.preventDefault();
@@ -7933,29 +8174,32 @@ function attachWatchlistReorder() {
       // to reach it any other way, so the documented route was unusable on the
       // surface this app is mostly used on. preventScroll because the handle is
       // already under the finger - the default focus scroll would jolt the
-      // sheet mid-drag.
+      // page mid-drag.
       grip.focus({ preventScroll: true });
       // Pointer capture keeps move/up arriving here even once the pointer has
       // travelled off this handle, which it does immediately in any real drag.
       try { grip.setPointerCapture(ev.pointerId); } catch { /* capture is a nicety, not a requirement */ }
-      watchDragId = row.dataset.watchRow;
+      reorderDragId = row.dataset.reorderRow;
       row.classList.add("dragging");
     };
 
     grip.onpointermove = (ev) => {
-      if (!watchDragId) return;
-      const row = grip.closest("[data-watch-row]");
+      if (!reorderDragId) return;
+      const row = grip.closest("[data-reorder-row]");
       // Belt and braces for the one path where capture did not take: without
       // it, a move passing over a DIFFERENT handle would run that handle's
       // listener and drag the wrong row. Capture normally makes this
       // unreachable, which is exactly why it would not be noticed.
-      if (!row || row.dataset.watchRow !== watchDragId) return;
+      if (!row || row.dataset.reorderRow !== reorderDragId) return;
       // The dragged row stays where it is rather than following the pointer,
       // so as soon as the pointer clears its own bounds this finds the
       // neighbour underneath and the two swap. The row then sits under the
       // pointer again, which is what stops it oscillating.
       const under = document.elementFromPoint(ev.clientX, ev.clientY);
-      const target = under && under.closest ? under.closest("[data-watch-row]") : null;
+      const target = under && under.closest ? under.closest("[data-reorder-row]") : null;
+      // parentElement guards the holdings case specifically: several lists are
+      // on screen at once, one per account, and a row must never cross from
+      // one account's list into another's.
       if (!target || target === row || target.parentElement !== row.parentElement) return;
       const rect = target.getBoundingClientRect();
       const below = ev.clientY > rect.top + rect.height / 2;
@@ -7963,13 +8207,13 @@ function attachWatchlistReorder() {
     };
 
     const endDrag = () => {
-      if (!watchDragId) return;
-      const id = watchDragId;
-      watchDragId = null;
+      if (!reorderDragId) return;
+      const id = reorderDragId;
+      reorderDragId = null;
       for (const el of list.querySelectorAll(".dragging")) el.classList.remove("dragging");
-      const before = watchlistSymbols.map((w) => w.id).join(",");
-      adoptWatchlistOrderFromDom();
-      if (watchlistSymbols.map((w) => w.id).join(",") === before) {
+      const before = ids().join(",");
+      const after = [...list.querySelectorAll("[data-reorder-row]")].map((el) => el.dataset.reorderRow);
+      if (after.join(",") === before) {
         // A TAP, not a drag - nothing moved. This is how someone reaches the
         // handle in order to use the arrow keys, so it has to leave focus on
         // it. Re-rendering here is what broke that: it replaces the very
@@ -7979,15 +8223,16 @@ function attachWatchlistReorder() {
         grip.focus({ preventScroll: true });
         return;
       }
-      watchJustMovedId = id;
-      renderWatchlistEditor();
-      // The render replaced the handle, so focus has to be put back by id -
-      // otherwise a drag ends with focus lost and the arrow keys cannot be
-      // used to finish the job precisely, which is the thing a drag is worst at.
-      const again = list.querySelector(`[data-grip="${CSS.escape(id)}"]`);
-      if (again) again.focus({ preventScroll: true });
-      announceWatchlistPosition(id);
-      saveWatchlistOrderSoon();
+      // After a drag the DOM is the truth and the data is stale, so the order
+      // is taken from the DOM rather than the move being replayed twice.
+      move(after);
+      // announce() BEFORE render(): it sets the marker the renderer paints, so
+      // calling it afterwards highlights the row one render late. The position
+      // it reads is already correct, because move() has run.
+      announce(id);
+      render();
+      refocus(id);
+      save();
     };
     grip.onpointerup = endDrag;
     // A cancelled pointer (the browser taking the gesture over, a call coming
@@ -8000,37 +8245,34 @@ function attachWatchlistReorder() {
       if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;
       ev.preventDefault();
       const id = grip.dataset.grip;
-      const from = watchlistSymbols.findIndex((w) => w.id === id);
-      const to = from + (ev.key === "ArrowUp" ? -1 : 1);
-      if (from < 0 || to < 0 || to >= watchlistSymbols.length) return;
-      const [moved] = watchlistSymbols.splice(from, 1);
-      watchlistSymbols.splice(to, 0, moved);
-      watchJustMovedId = id;
-      renderWatchlistEditor();
-      // The render replaced the element this handler is bound to, so focus has
-      // to be put back by id or the next arrow key goes nowhere.
-      const again = list.querySelector(`[data-grip="${CSS.escape(id)}"]`);
-      if (again) again.focus({ preventScroll: true });
-      announceWatchlistPosition(id);
-      saveWatchlistOrderSoon();
+      const at = ids().indexOf(id);
+      if (!reorderTo(id, at + (ev.key === "ArrowUp" ? -1 : 1))) return;
+      announce(id);
+      render();
+      refocus(id);
+      save();
     };
   }
 }
 
-// After a pointer drag the DOM is the truth and the array is stale, so the
-// array is rebuilt from it rather than the move being replayed twice.
-function adoptWatchlistOrderFromDom() {
-  const list = $("watchlistList");
-  if (!list) return;
-  const ids = [...list.querySelectorAll("[data-watch-row]")].map((el) => el.dataset.watchRow);
-  const seen = new Set(ids);
-  const byId = new Map(watchlistSymbols.map((w) => [w.id, w]));
-  const next = ids.map((id) => byId.get(id)).filter(Boolean);
-  // Anything the DOM does not know about - a row inserted by the holdings
-  // sync between the last render and this drop - keeps its place at the end
-  // rather than being dropped out of the list entirely.
-  for (const w of watchlistSymbols) if (!seen.has(w.id)) next.push(w);
-  watchlistSymbols = next;
+function attachWatchlistReorder() {
+  attachListReorder({
+    list: $("watchlistList"),
+    ids: () => watchlistSymbols.map((w) => w.id),
+    move: (order) => {
+      const byId = new Map(watchlistSymbols.map((w) => [w.id, w]));
+      const next = order.map((id) => byId.get(id)).filter(Boolean);
+      // Anything the order does not mention - a row the holdings sync inserted
+      // between the last render and this drop - keeps its place at the end
+      // rather than being dropped out of the list entirely.
+      const seen = new Set(order);
+      for (const w of watchlistSymbols) if (!seen.has(w.id)) next.push(w);
+      watchlistSymbols = next;
+    },
+    render: () => renderWatchlistEditor(),
+    announce: (id) => { watchJustMovedId = id; announceWatchlistPosition(id); },
+    save: saveWatchlistOrderSoon,
+  });
 }
 
 function announceWatchlistPosition(id) {
@@ -11665,7 +11907,7 @@ $("exportInvestBtn").onclick = async () => {
       // Mirrors renderInvestments' own calls, including the countable-vs-display
       // split that stops holdings being counted twice.
       const countable = countableInvestmentAssets();
-      const holdings = investmentHoldings(allInvestmentAssets(), assetPriceFindings);
+      const holdings = exportOrderedHoldings(investmentHoldings(allInvestmentAssets(), assetPriceFindings));
       return investmentsSections({
         totals: portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable),
         holdings,

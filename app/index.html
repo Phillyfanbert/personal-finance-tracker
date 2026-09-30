@@ -685,8 +685,17 @@
        height would push every row apart. The hit box is extended vertically
        instead: the text stays where it is and the tappable area around it
        reaches --target-min. */
-    .link-action::after { content: ""; position: absolute; left: 0; right: 0; top: 50%;
-      transform: translateY(-50%); height: var(--target-min); min-width: var(--target-min); }
+    /* Centred on the text, not anchored to its left edge. With left:0 plus a
+       min-width, everything the min-width added grew to the RIGHT - so a
+       short label like "Sell" carried an invisible 23px of hit box lying over
+       whatever came next, and the neighbouring control had no clear space at
+       all however much margin was put between the two. Measured: Sell and
+       Dividend were 1px apart against the 8px the checklist requires, and
+       widening the gap by hand only moved the neighbour further into the same
+       overhang. */
+    .link-action::after { content: ""; position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      height: var(--target-min); width: max(100%, var(--target-min)); }
     /* Written by flagField(ids, message). Not below --fs-sm: this is the only
        statement of what went wrong that stays on screen after the toast. */
     .field-error { color: var(--err); font-size: var(--fs-sm); margin: var(--sp-1) 0 0; }
@@ -718,6 +727,38 @@
        not the statement here - the live region below the list says what
        moved and where - this only draws the eye back to it. */
     .drag-row.just-moved { background: var(--accent-wash); }
+
+    /* A holdings row, modelled on a phone's Stocks list: handle, symbol and
+       name, the recent shape, then the figure and its change badge. Grid
+       rather than flex because the row has a SECOND line (gain, Sell,
+       Dividend, any headline) that has to span the full width underneath
+       while the four columns above stay aligned down the list. */
+    .holding-row { display: grid; align-items: center; gap: var(--sp-2);
+      grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+      cursor: default; padding: var(--sp-2) 0 var(--sp-2) var(--sp-3); }
+    .holding-body { min-width: 0; }
+    .holding-sym { font-weight: 700; }
+    /* The name column is the only one allowed to give way, so a long company
+       name truncates instead of squeezing the figure or the badge. */
+    .holding-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .holding-figs { text-align: right; display: flex; flex-direction: column;
+      align-items: flex-end; gap: var(--sp-1); }
+    .holding-extra { grid-column: 1 / -1; font-size: var(--fs-xs); color: var(--muted); }
+    .holding-extra a { word-break: break-word; }
+    /* The sparkline is decorative and aria-hidden - the price and the badge
+       beside it state the same direction in numbers. */
+    .spark { display: block; }
+    /* The day's move, as a filled badge. Measured before shipping: --on-solid
+       is 8.56:1 on --ok and 5.95:1 on --err in dark, 5.47:1 and 10.02:1 in
+       light, so the ink clears AA on all four. A flat or unknown day uses the
+       panel fill, because a grey badge saying 0% is a fact and a coloured one
+       would imply a move that did not happen. */
+    .chg-badge { display: inline-block; padding: 2px var(--sp-2); border-radius: var(--r-control);
+      font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; }
+    .chg-badge.is-up { background: var(--ok); color: var(--on-solid); }
+    .chg-badge.is-down { background: var(--err); color: var(--on-solid); }
+    .chg-badge.is-flat { background: var(--panel-2); color: var(--text); border: 1px solid var(--border-strong); }
+    .chg-badge.is-none { background: none; color: var(--muted); font-weight: 400; padding-left: 0; padding-right: 0; }
 
     /* A sent ticket's status, stated in a word rather than a colour. Reuses
        the .pill shape; the tone rules only tint the same pill. */
@@ -2157,7 +2198,16 @@
                 <button class="secondary" id="cancelHoldingBtn">Cancel</button>
               </div>
             </div>
+            <!-- Hidden until an account actually holds more than one ticker:
+                 a hint about reordering means nothing beside a list of one,
+                 and renderInvestments() toggles it from whether any handle
+                 was drawn rather than from a second count of its own. -->
+            <p class="muted text-xs stack-2 hidden" id="investReorderHint">Drag a holding by its handle to reorder it within its account. You can also tap that handle and use the up and down arrow keys. The order is saved as you go and is yours alone - it changes nothing about what anything is worth.</p>
             <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">Nothing here yet. Add an investment account from Things you have, on the Log page.</p></div>
+            <!-- A drag has a visible result; a keyboard move needs saying out
+                 loud. Separate from toast() because an arrow key held down
+                 would flood the shared live region. -->
+            <p id="investReorderStatus" class="sr-only" role="status" aria-live="polite"></p>
           </div>
       </div>
 
@@ -3459,6 +3509,8 @@
         <div class="help-topic" id="helpTopic-holdings">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-holdings-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Holdings</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-holdings-body">
+          <p><strong>Each row reads left to right:</strong> its short name and what you hold, a small picture of how its price has moved over the last month, then what your holding is worth now and how much it moved today. The small coloured tag is the day's move only - not what you have made or lost overall. A holding with no recorded price change yet says so rather than showing a flat 0%, because those are different things. Tap a row to open what you have made or lost on it, and the Sell and Dividend buttons.</p>
+          <p><strong>You can put them in whatever order you like.</strong> Drag a row by the handle on its left, or tap that handle and use the up and down arrow keys. The order is saved as you go and is yours alone - it changes nothing about what anything is worth, and nothing else on this page is ranked by it. Rows stay inside their own account: a holding cannot be dragged from one account into another, because which account holds it is a real fact rather than a display choice. A single holding in an account has no handle, since there is nowhere for it to move.</p>
           <p><strong>Dividends.</strong> Selling at a profit is only one of the two ways shares pay you; the other is a dividend, money a company hands to its shareholders while you still hold it. Tap <em>Dividend</em> on a holding to record one. It is money in, so it shows in Recent History and counts in Money in and out and your savings rate, and it is filed against the holding that paid it.</p>
           <p>The holding itself is deliberately left alone, because a cash dividend does not change how many shares you own or what you paid for them. If yours was automatically reinvested into more shares instead of paid out as cash, nothing arrived in your bank, so record that by adding to the holding rather than here.</p>
           <p>Every investment-type asset, grouped by account: a plain account (like a 401(k) with no per-ticker detail) shows just its own value, while "+ Add stock" lets you record the actual tickers/coins bought inside any eligible account (Brokerage, IRA, crypto, and similar) - modeled after a real trade ticket: ticker, shares, and price per share, with the total cost shown live as you type. A ticker you type is checked against a large built-in list; a genuine miss offers an "add it anyway" confirmation rather than blocking you.</p>

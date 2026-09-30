@@ -209,7 +209,7 @@ for (const [name, t] of themes) {
   // Ink on a solid fill. --on-solid rides --accent-2 and --err, which both go
   // deep in light where dark ink fails; --ink-on-series rides the identity
   // fills, which are light in both themes so its ink never flips.
-  for (const [ink, fill] of [["--on-solid", "--accent-2"], ["--on-solid", "--err"]]) {
+  for (const [ink, fill] of [["--on-solid", "--accent-2"], ["--on-solid", "--err"], ["--on-solid", "--ok"]]) {
     if (!t[ink] || !t[fill]) continue;
     const r = ratio(t[ink], t[fill]);
     ok(r >= 4.5, `${name}: ${ink} on ${fill} is ${r}:1, needs 4.5`);

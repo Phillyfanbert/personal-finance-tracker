@@ -5327,6 +5327,21 @@ async function undoActivity(row) {
     // straight subtraction, never a sign-dependent one like asset_adjust's.
     const asset = row.asset_id ? assets.find((a) => a.id === row.asset_id) : null;
     if (!asset) return toast("Can't undo - the investment no longer exists.");
+    // A contribution recorded from a PURCHASE sits on an account whose value is
+    // the sum of its holdings, so there is nothing to subtract: the money is in
+    // the holding, not in a balance of its own, and syncParentAssetValue would
+    // overwrite any subtraction on the next load anyway. Removing the row alone
+    // is the whole reversal, and it is also the honest escape for the one case
+    // the app cannot see - money moved in from another retirement account is a
+    // rollover, not a contribution, and should not count against the year.
+    if (parentRollupValue(asset.id) != null) {
+      const { error: delErr } = await sb.from("account_activity").delete().eq("id", row.id);
+      if (delErr) return toast(delErr.message);
+      await loadAccountActivity();
+      renderRecentTransactions();
+      renderInvestments();
+      return toast("Removed from this year's total");
+    }
     const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
     if (newValue < 0) return toast(`Can't undo - would take ${asset.name} below $0.`);
     const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
@@ -7094,7 +7109,11 @@ function renderInvestments() {
     // next time it runs for that parent - real "new money in" for a
     // with-holdings account already has its own path, the Holdings form's
     // funding-account field.
-    const contributionAffordance = children.length
+    // Typed in by hand only where nothing is measured against it. For an
+    // account with a yearly IRS limit the figure has to be DERIVED from real
+    // purchases, or the limit is only ever as accurate as someone's memory -
+    // and a self-reported number is not something to refuse a purchase over.
+    const contributionAffordance = children.length || contributionGroupFor(p.type)
       ? ""
       : `<button type="button" class="link-action muted" data-log-contribution="${p.id}" aria-label="Log a contribution to ${esc(p.name)}">Log contribution</button>`;
     return `
@@ -7193,17 +7212,29 @@ function renderInvestments() {
   const limitUsage = contributionLimitUsage(allInvestmentAssets(), contributions, CONTRIBUTION_LIMIT_GROUPS);
   $("contributionLimitsCard").style.display = limitUsage.length ? "" : "none";
   $("emptyLimits").classList.toggle("hidden", limitUsage.length > 0);
+  const limitYear = new Date().getFullYear();
   $("contributionLimitsList").innerHTML = limitUsage.map((u) => {
     const pctClamped = Math.min(100, (u.contributed / u.limit) * 100);
+    const left = Math.round((u.limit - u.contributed) * 100) / 100;
+    // Says what is LEFT, not just what has gone in. That is the number
+    // someone is actually deciding against before they buy, and it is the
+    // same one contributionRefusalReason() quotes when it turns a buy down,
+    // so the bar and the refusal can never appear to disagree.
+    const note = u.overLimit
+      ? `${fmt(Math.abs(left))} over the ${limitYear} limit`
+      : left === 0
+        ? `nothing left for ${limitYear}`
+        : `${fmt(left)} can still go in this year`;
     return `
       <div style="margin-bottom:10px">
         <div class="row" style="justify-content:space-between;font-size:13px">
           <span>${esc(u.label)}</span>
-          <span style="${u.overLimit ? "color:var(--err)" : ""}">${fmt(u.contributed)} / ${fmt(u.limit)}${u.overLimit ? " - over limit" : ""}</span>
+          <span style="${u.overLimit ? "color:var(--err)" : ""}">${fmt(u.contributed)} of ${fmt(u.limit)}</span>
         </div>
         <div style="background:var(--panel-2);border-radius:6px;height:6px;margin-top:4px;overflow:hidden">
           <div style="background:${u.overLimit ? "var(--err)" : "var(--ok)"};width:${pctClamped}%;height:100%"></div>
         </div>
+        <div class="muted text-xs" style="margin-top:3px;${u.overLimit ? "color:var(--err)" : ""}">${esc(note)}</div>
       </div>`;
   }).join("");
 
@@ -8827,12 +8858,20 @@ const TICKER_ELIGIBLE_ASSET_TYPES = new Set(
 // not tax advice, and a stale limit would be worse than showing none.
 const CONTRIBUTION_LIMIT_GROUPS = {
   elective_deferral: {
-    types: ["traditional_401k", "roth_401k", "plan_403b", "tsp", "solo_401k"],
+    // retirement_employer is the coarse LEGACY bucket traditional_401k and the
+    // rest replaced. An account still stored against it is a real workplace
+    // plan and shares the same one limit, so leaving it out did not make the
+    // limit "untracked", it made it INVISIBLE for exactly the people who have
+    // never re-picked their account type.
+    types: ["traditional_401k", "roth_401k", "plan_403b", "tsp", "solo_401k", "retirement_employer"],
     limit: 24500,
     label: "401(k) / 403(b) / TSP",
   },
   plan_457b: { types: ["plan_457b"], limit: 24500, label: "457(b)" },
-  ira: { types: ["traditional_ira", "roth_ira"], limit: 7500, label: "IRA (Traditional + Roth combined)" },
+  // "ira" is the legacy coarse bucket, included for the same reason
+  // retirement_employer is above: it is still an IRA and still shares the one
+  // IRA limit. It was the type on the live account that prompted this.
+  ira: { types: ["traditional_ira", "roth_ira", "ira"], limit: 7500, label: "IRA (Traditional + Roth combined)" },
   simple_ira: { types: ["simple_ira"], limit: 17000, label: "SIMPLE IRA" },
   // Unlike the four groups above, $25,000 is a flat statutory cap under
   // IRC Section 423(b)(8), not COLA-adjusted - verified live it has been
@@ -9160,6 +9199,9 @@ $("saveHoldingBtn").onclick = async () => {
   // skips funding entirely below - there's no reliable way to tell a
   // correction apart from a real partial sale, so guessing would be worse
   // than doing nothing.
+  // Captured before any await below: closeHoldingForm() clears editingHolding,
+  // and the confirmations in between yield to the event loop.
+  const wasEditingHolding = !!editingHolding;
   const previousCostBasis = editingHolding ? Number(editingHolding.purchase_price) : 0;
   const costBasisDelta = Math.round((totalCostBasis - previousCostBasis) * 100) / 100;
   const fundingAccountId = $("holdingFundingAccount").value || null;
@@ -9170,6 +9212,11 @@ $("saveHoldingBtn").onclick = async () => {
     const fundingErr = assetDeltaError([{ accountId: fundingAccountId, amount: costBasisDelta, sign: -1 }]);
     if (fundingErr) { flagField("holdingFundingAccount"); return toast(fundingErr); }
   }
+  // Buying inside a retirement account IS putting money into it, so the same
+  // yearly IRS limit applies. Checked on the DELTA, so editing a holding down
+  // is never refused and raising one only has to fit what is left.
+  const limitErr = contributionRefusalReason(parentId, costBasisDelta);
+  if (limitErr) { flagField("holdingAccount", limitErr); return toast(limitErr, "error"); }
 
   const parent = assets.find((a) => a.id === parentId);
   // isKnownTicker() checks a hand-curated, necessarily incomplete list
@@ -9185,6 +9232,21 @@ $("saveHoldingBtn").onclick = async () => {
     );
     if (!ok) { updateHoldingSymbolTickerHighlight(); return; }
     holdingSymbolOverrideConfirmedFor = symbol;
+  }
+
+  // An account with no holdings keeps its own typed-in balance; once it has
+  // one, its value IS the sum of its holdings (syncParentAssetValue). So the
+  // first holding REPLACES that balance, which is silent money disappearing
+  // unless it is said out loud - and this change makes people meet it, because
+  // buying is now the way money goes into a retirement account. Only asked
+  // when the balance would actually drop.
+  if (!wasEditingHolding && parent && Number(parent.value) > totalCostBasis
+      && !assets.some((a) => a.parent_asset_id === parentId)) {
+    const ok = await confirmModal(
+      `${parent.name} is recorded as worth ${fmt(parent.value)} with nothing listed inside it. Once you list something, the account is worth what is inside it, so it would show ${fmt(totalCostBasis)}. Add the rest of what it holds to bring it back up.`,
+      { title: "This replaces the account balance", confirmLabel: "Add it" }
+    );
+    if (!ok) return;
   }
 
   const row = {
@@ -9204,8 +9266,7 @@ $("saveHoldingBtn").onclick = async () => {
     value: totalCostBasis,
     investment_bucket: $("holdingBucket").value.trim() || null,
   };
-  // Captured before closeHoldingForm() clears editingHolding below.
-  const wasEditing = !!editingHolding;
+  const wasEditing = wasEditingHolding;
   // Moving a holding between accounts changes BOTH totals, so the old
   // parent is resynced too, not just the new one.
   const previousParentId = editingHolding?.parent_asset_id;
@@ -9225,6 +9286,23 @@ $("saveHoldingBtn").onclick = async () => {
       -costBasisDelta, undefined, fundingAccountId
     );
   }
+  // What makes the yearly figure DERIVED rather than self-reported. Written
+  // against the PARENT account, which is what contributionLimitUsage() maps to
+  // a limit group, and only for an account that actually has a limit - a
+  // brokerage purchase is not a contribution to anything.
+  //
+  // Recorded whether or not a funding account was picked. Within this app an
+  // investment account holds no uninvested cash (its value IS the sum of its
+  // holdings), so a purchase inside one is always new money arriving, and
+  // making it conditional on "Paid from" would leave the limit bypassable by
+  // leaving that field alone.
+  if (costBasisDelta > 0 && contributionGroupFor(parent?.type)) {
+    await logActivity(
+      "contribution", `Put ${fmt(costBasisDelta)} into ${parent.name} by buying ${symbol}`,
+      costBasisDelta, undefined, accounts.find((a) => a.linked_asset_id === parentId)?.id ?? null,
+      null, null, parentId
+    );
+  }
   closeHoldingForm();
   await loadAssets();
   await syncParentAssetValue(parentId);
@@ -9234,6 +9312,44 @@ $("saveHoldingBtn").onclick = async () => {
   renderNetWorth();
   toast(wasEditing ? "Holding updated" : "Holding added");
 };
+
+// Which limit group an account type falls in, or null for a type with no IRS
+// annual limit (a brokerage, crypto). One lookup so the card, the refusal and
+// the "is this account limit-bearing" question cannot disagree about it.
+function contributionGroupFor(type) {
+  for (const [groupId, group] of Object.entries(CONTRIBUTION_LIMIT_GROUPS)) {
+    if (group.types.includes(type)) return { groupId, ...group };
+  }
+  return null;
+}
+
+// Refuses a purchase that would take a limit-bearing account past its yearly
+// IRS limit. The credit-side mirror of this is chargeRefusalReason(): a real
+// custodian rejects an over-limit contribution, so the app should too.
+//
+// Deliberately goes through contributionLimitUsage() - the SAME function the
+// Contribution limits card renders from - rather than re-deriving the year's
+// total here. Two definitions of "how much has gone in this year" would drift
+// the first time either was tuned, and the refusal has to state the figure the
+// bar is showing or the message reads as a mistake.
+function contributionRefusalReason(parentAssetId, amount) {
+  if (!(amount > 0)) return null;
+  const parent = assets.find((a) => a.id === parentAssetId);
+  const group = parent && contributionGroupFor(parent.type);
+  if (!group) return null;
+  const usage = contributionLimitUsage(
+    allInvestmentAssets(),
+    accountActivity.filter((a) => a.kind === "contribution"),
+    { [group.groupId]: group }
+  )[0];
+  if (!usage) return null;
+  const left = Math.round((usage.limit - usage.contributed) * 100) / 100;
+  if (amount <= left) return null;
+  const year = new Date().getFullYear();
+  return left <= 0
+    ? `You have already put in the ${fmt(usage.limit)} allowed for ${group.label} in ${year}. You cannot add more this year.`
+    : `Only ${fmt(left)} can still go into ${group.label} in ${year} - you have put in ${fmt(usage.contributed)} of ${fmt(usage.limit)}. This costs ${fmt(amount)}.`;
+}
 
 // ---- CONTRIBUTIONS (Investments tab) -------------------------------------
 // One shared panel, retargeted per account - same pattern assetAdjustForm
@@ -9276,6 +9392,11 @@ $("saveContributionBtn").onclick = async () => {
   if (contribFutureErr) { flagField("contributionDate", contribFutureErr); return toast(contribFutureErr, "error"); }
   const amount = parseFloat($("contributionAmount").value);
   if (!Number.isFinite(amount) || amount <= 0) { flagField("contributionAmount"); return toast("Enter a positive amount"); }
+  // A no-op for the accounts this form is still offered on (nothing measures a
+  // brokerage contribution), and a real refusal if any path ever reaches a
+  // limit-bearing account - the button for those is gone, not the handler.
+  const contribLimitErr = contributionRefusalReason(asset.id, amount);
+  if (contribLimitErr) { flagField("contributionAmount", contribLimitErr); return toast(contribLimitErr, "error"); }
   const occurred_at = $("contributionDate").value || localDateISO();
   const newValue = Math.round((Number(asset.value) + amount) * 100) / 100;
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);

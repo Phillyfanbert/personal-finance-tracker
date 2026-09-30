@@ -909,10 +909,10 @@ be worse than showing none at all.
 | 457(b) | Pre-tax (or Roth 457(b), post-tax) now, taxed/tax-free on withdrawal to match | Yes | $24,500/yr, its **own separate** bucket by law - not shared with the 401(k)/403(b)/TSP group even though the dollar figure happens to match for 2026 |
 | Traditional IRA | Pre-tax (if deductible) now, ordinary income tax on withdrawal | Yes | $7,500/yr, **shared** with Roth IRA |
 | Roth IRA | Post-tax now, tax-free qualified withdrawal; income limits can reduce or eliminate eligibility entirely (not tracked here - filing status is unknown) | Yes | Same $7,500/yr group as Traditional IRA |
-| SEP IRA | Pre-tax now, ordinary income tax on withdrawal | Yes | Greater of 25% of compensation or $70,000 - **not tracked**, this app has no income field, and for most people the 25%-of-compensation test is the actual binding constraint, not the flat dollar cap, so showing just the cap would overstate what is really allowed |
+| SEP IRA | Pre-tax now, ordinary income tax on withdrawal | Yes | **Lesser** of 25% of compensation or $72,000 for 2026 - **not tracked**, this app has no income field, and for most people the 25%-of-compensation test is the actual binding constraint, not the flat dollar cap, so showing just the cap would overstate what is really allowed. (A previous version of this row said *greater* of, and quoted the 2025 cap of $70,000. Both were wrong: *greater of* would have described a limit far larger than the law allows.) |
 | SIMPLE IRA | Pre-tax now, ordinary income tax on withdrawal | Yes | $17,000/yr, its own bucket |
 | Brokerage | Ordinary taxable account - capital gains/dividends taxed as earned/realized | Yes | No limit - not tracked |
-| 529 plan | After-tax in, tax-free growth for qualified education expenses | Yes | No single federal limit - governed by the annual gift-tax exclusion (~$19,000/beneficiary for 2025, doubled if a couple splits the gift) plus a per-state aggregate lifetime cap that varies enormously (some states $235,000+, others $500,000+) - **not tracked**, no clean single number exists to check against |
+| 529 plan | After-tax in, tax-free growth for qualified education expenses | Yes | No single federal limit - governed by the annual gift-tax exclusion ($19,000/beneficiary for 2026, unchanged from 2025, doubled if a couple splits the gift) plus a per-state aggregate lifetime cap that varies enormously (some states $235,000+, others $500,000+) - **not tracked**, no clean single number exists to check against |
 | TSP | Same as 401(k) - pre-tax (Traditional) or post-tax (Roth TSP) | Yes | Part of the $24,500/yr elective-deferral group above |
 | Solo 401(k) | Same as 401(k) for the employee-deferral portion; the *employer*/profit-sharing portion depends on net self-employment income | Yes | Employee-deferral portion only tracked, in the $24,500/yr group above - the employer/profit-sharing component is **not tracked** (needs self-employment income data this app doesn't have) |
 | Rollover / inherited IRA | Matches whatever the money's original tax treatment was (pre-tax stays pre-tax, Roth stays Roth) | Yes | **Not tracked** - a rollover is a transfer of existing money, not a new contribution, and an inherited IRA generally cannot receive new contributions at all |
@@ -952,9 +952,88 @@ and a Roth 401(k) look different but **do**):
   statutory figure that does not change year to year (see its table row
   above).
 - **Not tracked at all**: `sep_ira`, `plan_529`, `rollover_inherited_ira`,
-  `annuity`, `custodial_utma`, `brokerage`, `crypto`, `pension`, and the
-  legacy `ira`/`retirement_employer` buckets - each for the specific reason
-  given in its own table row above, not by omission.
+  `annuity`, `custodial_utma`, `brokerage`, `crypto` and `pension` - each for
+  the specific reason given in its own table row above, not by omission.
+- **The legacy `ira` and `retirement_employer` buckets ARE tracked**, as of
+  2026-09-29, and were the one real omission in this list rather than a
+  decision. `ira` joins the IRA group and `retirement_employer` the elective
+  deferral group. They are the coarse types the finer ones replaced, so an
+  account still stored against one is a real IRA or a real workplace plan
+  subject to exactly the same limit. Leaving them out did not make the limit
+  "untracked", it made it invisible for precisely the people who have never
+  gone back and re-picked their account type. Found on a live account showing
+  "IRA (unspecified)" with no limit anywhere on the card.
+
+### 9b.7 Every 2026 contribution limit, and how this app uses them
+
+*Researched and confirmed live against IRS sources on 2026-09-29, when
+contribution tracking stopped being a number someone typed in and started
+being derived from real purchases. Sources are listed under the table. The
+COLA-adjusted figures need the same January refresh 9b.6 already records.*
+
+**Every figure here is a BASE limit.** Catch-up amounts are listed separately
+below and are deliberately not applied by the app, which holds only
+`profiles.birth_year` and no per-account catch-up election.
+
+| Account type | 2026 limit | Shape of the limit | Enforced by the app? |
+|---|---|---|---|
+| 401(k), 403(b), governmental 457(b), TSP, solo 401(k) employee deferral | $24,500 | One shared limit across 401(k)/403(b)/TSP/solo 401(k); 457(b) gets its own separate $24,500 | Yes, two groups |
+| Traditional + Roth IRA combined | $7,500 | One limit across both, per person, not per account | Yes |
+| SIMPLE IRA | $17,000 | Its own bucket | Yes |
+| ESPP (qualified, IRC 423) | $25,000 | Fair market value at grant. Flat statutory cap, never COLA-adjusted | Yes |
+| SEP IRA | Lesser of 25% of compensation or $72,000 | Needs compensation, which this app does not hold | No |
+| Overall defined contribution cap (IRC 415(c)) | $72,000 | Employee plus employer across one employer's plans | No |
+| HSA | $4,400 self-only, $8,750 family | Depends on the coverage tier, which this app does not hold | No |
+| Health FSA | $3,400 salary reduction ($680 carryover) | Employer salary reduction, elected once a year | No |
+| Coverdell ESA | $2,000 per beneficiary | Flat statutory cap, not COLA-adjusted. Also income-phased-out | No |
+| ABLE account | $19,000, plus an ABLE to Work amount for an employed beneficiary | Tracks the annual gift tax exclusion | No |
+| 529 plan | No federal annual limit | Gift tax exclusion plus a per-state aggregate cap | No |
+| Custodial UTMA/UGMA | No federal annual limit | Same gift tax shape as a 529 | No |
+| Brokerage, crypto, annuity, pension, rollover/inherited IRA | None | See their rows in 9b.6 | No |
+
+**Catch-up amounts for 2026, for reference only.** The app applies none of
+these, and the limits above are what it enforces:
+
+- 401(k)/403(b)/457(b)/TSP, age 50 and over: $8,000.
+- The same plans, ages 60 to 63 (SECURE 2.0): $11,250 instead of $8,000.
+- IRA, age 50 and over: $1,100, so $8,600 in total.
+- SIMPLE IRA, age 50 and over: $4,000.
+- HSA, age 55 and over: $1,000, a flat statutory figure.
+
+**Why several real limits are deliberately left unenforced.** The rule is the
+one the rest of this app holds: state a fact or say nothing, never a figure
+that looks exact and is not. A SEP IRA's real ceiling is usually the
+25%-of-compensation test rather than the dollar cap, and showing only the cap
+would tell someone they have room they do not have. An HSA has two different
+limits and the app does not know which coverage a person has. A Coverdell and
+a Roth IRA both phase out on income, which needs a filing status this app
+never collects. Each of those would be confidently wrong rather than merely
+incomplete.
+
+**How the app now counts a contribution.** For an account type in the
+enforced list, the year's total is DERIVED from purchases: buying inside the
+account records what it cost as a contribution for that year, and a purchase
+that would take the group past its limit is refused outright rather than
+warned about, because a real custodian rejects it too. Manual entry was
+removed for those accounts in the same change. It remains for accounts with
+no limit, where nothing is measured against it.
+
+**The one case the app cannot see is a rollover.** Money moved in from
+another retirement account is not a contribution and does not count against
+the year, but inside this app it looks exactly like a purchase. There is no
+"this was a rollover" flag, deliberately, since that would be a self-reported
+override on the one figure this change exists to stop being self-reported.
+The escape is the history row: the contribution appears in Recent History and
+undoing it takes the money back out of the year's total while leaving the
+holding alone.
+
+Sources, all fetched 2026-09-29:
+[IRS IR-2025-111, 401(k) limit increases to $24,500 for 2026](https://www.irs.gov/newsroom/401k-limit-increases-to-24500-for-2026-ira-limit-increases-to-7500),
+[IRS Retirement topics - IRA contribution limits](https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-ira-contribution-limits),
+[IRS Retirement topics - 401(k) and profit-sharing plan contribution limits](https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-401k-and-profit-sharing-plan-contribution-limits),
+[IRS Notice 2025-67 (2026 amounts relating to retirement plans and IRAs)](https://www.irs.gov/pub/irs-drop/n-25-67.pdf),
+[IRS Revenue Procedure 2025-19 (2026 HSA amounts)](https://www.irs.gov/pub/irs-drop/rp-25-19.pdf),
+[IRS tax inflation adjustments for tax year 2026](https://www.irs.gov/newsroom/irs-releases-tax-inflation-adjustments-for-tax-year-2026-including-amendments-from-the-one-big-beautiful-bill).
 
 ## 9c. Age and income requirements per type
 

@@ -219,16 +219,16 @@
        per card so a new card inherits it with no markup, and it is why the app
        reads as four coloured sections instead of one grey one. */
     .card::before { content: ""; position: absolute; left: 0; right: 0; top: 0;
-      height: 3px; background: var(--card-rule, transparent); }
+      height: 3px; background: var(--page-rule, transparent); }
     /* Four hues that stay distinct from EACH OTHER and from --accent in both
        themes. Gold and lime are deliberately not used for a page: to clear
        4.5:1 as heading text they have to darken to an olive-brown in light
        mode, which reads as murky rather than as a colour. They still appear on
        the totals tiles, where a 3px rule only needs 3:1 and can stay bright. */
-    #logView { --card-rule: var(--rule-8); }
-    #planView { --card-rule: var(--rule-7); }
-    #reportsView { --card-rule: var(--rule-5); }
-    #investView { --card-rule: var(--rule-4); }
+    body[data-view="log"] { --page-rule: var(--rule-8); }
+    body[data-view="plan"] { --page-rule: var(--rule-7); }
+    body[data-view="reports"] { --page-rule: var(--rule-5); }
+    body[data-view="invest"] { --page-rule: var(--rule-4); }
     .card.empty-state { border-style: dashed; text-align: center; color: var(--muted); font-size: var(--fs-sm); }
     input, select, button, textarea {
       font: inherit; width: 100%; padding: 13px 14px; border-radius: 10px;
@@ -453,7 +453,7 @@
       display: flex; background: var(--panel); border-bottom: 1px solid var(--border);
       padding-top: env(safe-area-inset-top); }
     .nav button { flex: 1; background: transparent; border: none; color: var(--muted);
-      font-weight: 600; padding: 16px 0; border-radius: 0;
+      font-weight: 600; padding: 16px 0; border-radius: 0; position: relative;
       transition: background-color .15s, color .15s, text-shadow .15s; }
     /* Adjacent-sibling selector so only the borders BETWEEN buttons show -
        a plain border on every button would double up at each shared edge
@@ -461,8 +461,17 @@
        rgba rather than --border - --border reads almost invisibly close
        to --panel's own background at this small a swatch. */
     .nav button + button { border-left: 1.5px solid var(--border-strong); }
-    .nav button.active { color: var(--accent); background: var(--accent-wash);
-      text-shadow: 0 0 12px var(--accent-glow); }
+    /* The active tab wears the page's own colour, so the nav says which page
+       you are on in the same hue the page itself uses.
+       The blue wash and glow are gone rather than recoloured. A per-page wash
+       would need four more colours in each theme, and measured against
+       --panel-2 these hues fall to 4.0-4.1:1, under the 4.5 a label needs -
+       so the background stays the nav's own and a 3px bar carries the state
+       instead. Never colour alone: aria-current="page" is set in showView, the
+       weight differs, and the bar is a shape. */
+    .nav button.active { color: var(--page-rule, var(--accent)); }
+    .nav button.active::after { content: ""; position: absolute; left: 0; right: 0;
+      bottom: 0; height: 3px; background: var(--page-rule, var(--accent)); }
     /* Modal */
     .modal { position: fixed; inset: 0; background: var(--scrim); z-index: 70;
       display: flex; align-items: flex-end; justify-content: center; }
@@ -602,7 +611,7 @@
        to a button, and scoping to the first two left 15 of 26 titles plain
        black - which reads as a bug rather than a design. h3 stays plain on
        purpose, so a subsection inside a card is still visibly one level down. */
-    main .card h2 { color: var(--card-rule, var(--text)); }
+    main .card h2 { color: var(--page-rule, var(--text)); }
     .card-head h2, .card-head h3, .topbar h2, .topbar h3 { display: block; }
     /* Ticker autocomplete, shared by every symbol field (Tracked companies,
        the holdings form, the standalone asset form) via attachTickerSuggest().

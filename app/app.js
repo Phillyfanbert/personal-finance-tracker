@@ -772,6 +772,10 @@ $("backFromReports").onclick = () => showView("log");
 $("backFromInvest").onclick = () => showView("log");
 function showView(v) {
   prefSet("lastView", v);
+  // Drives the page's signature colour, which the cards AND the nav read from
+  // one place. It has to live on <body> because the nav is a sibling of the
+  // views, not inside them, and two mappings would drift.
+  document.body.dataset.view = v;
   $("logView").classList.toggle("hidden", v !== "log");
   $("planView").classList.toggle("hidden", v !== "plan");
   $("reportsView").classList.toggle("hidden", v !== "reports");

@@ -674,6 +674,16 @@
        buttons carried their own inline padding instead, giving the app eight
        different button heights. nowrap because a label breaking onto a second
        line makes one button taller than the one beside it. */
+    /* The Recent History filter row. These were four inline recipes giving
+       28, 29 and 30px tall controls - the smallest hit boxes in the app, on
+       the page where a mis-tap costs the most. The padding and 12px type stay
+       compact so seven controls still fit on a phone; the 44px floor comes
+       from min-height instead, which is the shape bulkCategorySelect already
+       used. Costs about 90px of height on the Log page, and is worth it. */
+    .filter-control { width: 100%; min-height: var(--target-min);
+      padding: var(--sp-1) var(--sp-2); font-size: var(--fs-xs);
+      text-overflow: ellipsis; }
+
     .btn-sm { width: auto; padding: var(--sp-2) var(--sp-3); min-height: var(--target-min); font-size: var(--fs-sm); white-space: nowrap; }
     .btn-xs { width: auto; padding: 6px var(--sp-2); min-height: var(--target-min); font-size: var(--fs-xs); white-space: nowrap; }
     .checkbox { width: auto; min-width: 24px; min-height: 24px; margin-right: var(--sp-2); }
@@ -991,30 +1001,30 @@
              picked there. -->
         <div style="margin-top:8px">
           <label style="margin:0 0 4px" for="txnSearch">Search</label>
-          <input id="txnSearch" placeholder="Search merchant or description..." style="width:100%;font-size:13px;padding:6px 8px" autocomplete="off" />
+          <input class="filter-control" id="txnSearch" placeholder="Search merchant or description..."  autocomplete="off" />
         </div>
         <div class="row" style="flex-wrap:wrap;gap:6px 10px;margin-top:8px;align-items:flex-end">
           <div style="flex:1;min-width:110px">
             <label style="margin:0 0 4px" for="txnTypeFilter">Type</label>
-            <select id="txnTypeFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+            <select class="filter-control" id="txnTypeFilter">
               <option value="">All</option>
             </select>
           </div>
           <div style="flex:1;min-width:110px">
             <label style="margin:0 0 4px" for="txnAccountFilter">Account</label>
-            <select id="txnAccountFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+            <select class="filter-control" id="txnAccountFilter">
               <option value="">All</option>
             </select>
           </div>
           <div style="flex:1;min-width:110px">
             <label style="margin:0 0 4px" for="txnCategoryFilter">Category</label>
-            <select id="txnCategoryFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+            <select class="filter-control" id="txnCategoryFilter">
               <option value="">All</option>
             </select>
           </div>
           <div style="flex:1;min-width:110px">
             <label style="margin:0 0 4px" for="txnKindFilter">Kind</label>
-            <select id="txnKindFilter" style="width:100%;font-size:12px;padding:6px 8px;text-overflow:ellipsis">
+            <select class="filter-control" id="txnKindFilter">
               <option value="">All</option>
               <option value="expense">Expenses only</option>
               <option value="activity">Activity only</option>
@@ -1022,11 +1032,11 @@
           </div>
           <div style="flex:1;min-width:80px">
             <label style="margin:0 0 4px" for="txnMinAmount">Min $</label>
-            <input id="txnMinAmount" type="number" step="0.01" inputmode="decimal" placeholder="0" style="width:100%;font-size:12px;padding:6px 8px" />
+            <input class="filter-control" id="txnMinAmount" type="number" step="0.01" inputmode="decimal" placeholder="0"  />
           </div>
           <div style="flex:1;min-width:80px">
             <label style="margin:0 0 4px" for="txnMaxAmount">Max $</label>
-            <input id="txnMaxAmount" type="number" step="0.01" inputmode="decimal" placeholder="Any" style="width:100%;font-size:12px;padding:6px 8px" />
+            <input class="filter-control" id="txnMaxAmount" type="number" step="0.01" inputmode="decimal" placeholder="Any"  />
           </div>
         </div>
         <p class="muted" style="font-size:12px;margin:8px 0 0">Tap anything to change it, or tick a few to change them together. Payments and balance changes are listed too, but those cannot be ticked.</p>

@@ -104,6 +104,15 @@
          vision deficiency by tools/check-palette.mjs - do not edit by eye. */
       --series-1: #77AADD; --series-2: #EEDD88; --series-3: #FFAABB; --series-4: #99DDFF;
       --series-5: #CC79A7; --series-6: #BBCC33; --series-7: #EE8866; --series-8: #44BB99;
+      /* The same eight hues as LINES rather than fills. --series-* is tuned to
+         be a fill under --ink-on-series, so it stays light in both themes and
+         measures 1.37-3.06:1 against a white card - a rule drawn in it simply
+         does not appear in light mode. These carry the colour instead, and so
+         they are the one palette that genuinely differs per theme: light here,
+         deep in light mode, same hue either way. Derived by walking each hue's
+         lightness until it cleared 4.5:1 on white, not picked by eye. */
+      --rule-1: #77AADD; --rule-2: #EEDD88; --rule-3: #FFAABB; --rule-4: #99DDFF;
+      --rule-5: #CC79A7; --rule-6: #BBCC33; --rule-7: #EE8866; --rule-8: #44BB99;
       /* The translucent area under a line chart. Per theme, because 15% of a
          light accent on a dark panel and 15% of a dark accent on white are not
          interchangeable. */
@@ -164,6 +173,16 @@
          14.4:1 and 14.0:1. */
       --ok-wash: #d8ebe6;
       --err-wash: #f6dede;
+      /* The one palette that genuinely differs per theme. The identity fills
+         above stay light in both, which is right for a fill under dark ink and
+         useless for a LINE: measured, --series-2 is 1.37:1 against a white card,
+         so a rule drawn in it is invisible. Each of these is its --series-*
+         hue walked down in lightness until it cleared 4.5:1 on white, so the
+         colour is the same one either way and only its depth changes. rule-3
+         is the one hand-picked value: darkening that pink by hue lands on
+         #ED002F, a pure red that would read as an error rather than a colour. */
+      --rule-1: #3079C2; --rule-2: #887513; --rule-3: #C0476E; --rule-4: #007DBC;
+      --rule-5: #BC508C; --rule-6: #727C1F; --rule-7: #D34617; --rule-8: #30846C;
       /* A glow is a dark-mode device. Transparent keeps the rule one line. */
       --accent-glow: transparent;
       /* Still dark, just less so. A white veil would put a white sheet on white
@@ -192,7 +211,24 @@
     .wrap { max-width: 560px; margin: 0 auto; padding: 16px; }
     h1 { font-size: 20px; margin: 8px 0 16px; }
     .muted { color: var(--muted); }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: var(--sp-4); }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: var(--sp-4);
+      position: relative; overflow: hidden; }
+    /* A page's signature colour, as a rule across the top of each of its cards.
+       Purely decorative: every card already says what it is in its heading, so
+       nothing here is stated in colour alone. It is set on the VIEW rather than
+       per card so a new card inherits it with no markup, and it is why the app
+       reads as four coloured sections instead of one grey one. */
+    .card::before { content: ""; position: absolute; left: 0; right: 0; top: 0;
+      height: 3px; background: var(--card-rule, transparent); }
+    /* Four hues that stay distinct from EACH OTHER and from --accent in both
+       themes. Gold and lime are deliberately not used for a page: to clear
+       4.5:1 as heading text they have to darken to an olive-brown in light
+       mode, which reads as murky rather than as a colour. They still appear on
+       the totals tiles, where a 3px rule only needs 3:1 and can stay bright. */
+    #logView { --card-rule: var(--rule-8); }
+    #planView { --card-rule: var(--rule-7); }
+    #reportsView { --card-rule: var(--rule-5); }
+    #investView { --card-rule: var(--rule-4); }
     .card.empty-state { border-style: dashed; text-align: center; color: var(--muted); font-size: var(--fs-sm); }
     input, select, button, textarea {
       font: inherit; width: 100%; padding: 13px 14px; border-radius: 10px;
@@ -403,12 +439,10 @@
        number still says which is which, so the colour carries nothing on its
        own (WCAG 1.4.1). The identity palette is not held to a 3:1 contrast
        floor, which is fine here for the same reason - it states nothing. */
-    .totals .card { position: relative; overflow: hidden; }
-    .totals .card::before { content: ""; position: absolute; left: 0; right: 0;
-      top: 0; height: 3px; background: var(--series-1); }
-    .totals .card:nth-child(2)::before { background: var(--series-8); }
-    .totals .card:nth-child(3)::before { background: var(--series-2); }
-    .totals .card:nth-child(4)::before { background: var(--series-7); }
+    .totals .card::before { background: var(--rule-1); }
+    .totals .card:nth-child(2)::before { background: var(--rule-8); }
+    .totals .card:nth-child(3)::before { background: var(--rule-2); }
+    .totals .card:nth-child(4)::before { background: var(--rule-7); }
     .totals .card { flex: 1 1 150px; min-width: 0; text-align: center; margin: 0; }
     .totals .big { font-size: 22px; font-weight: 800; }
     .chartbox { position: relative; height: 240px; }
@@ -555,6 +589,20 @@
        <strong> they replaced did: browsers give h2/h3 a large size and big
        margins by default, and this is a visual no-op by design. */
     main h2, main h3 { font-size: var(--fs-base); font-weight: 700; margin: 0; display: inline; }
+    /* A card's title in its page's colour. This is where the colour actually
+       reads - a 3px rule alone still left the app looking grey. Every one of
+       the eight rule colours clears 4.5:1 on --panel in BOTH themes, which is
+       the bar for 16px bold text, so this is a real colour rather than a tint
+       that has to be hunted for. Nothing is said in colour alone: the heading
+       is the same words either way, and interactive things stay --accent
+       everywhere so "blue means you can tap it" survives the page hues.
+
+       Any h2 inside a card, at any depth: a card title sits directly in the
+       card, inside a .card-head next to its "i" icon, OR inside a .topbar next
+       to a button, and scoping to the first two left 15 of 26 titles plain
+       black - which reads as a bug rather than a design. h3 stays plain on
+       purpose, so a subsection inside a card is still visibly one level down. */
+    main .card h2 { color: var(--card-rule, var(--text)); }
     .card-head h2, .card-head h3, .topbar h2, .topbar h3 { display: block; }
     /* Ticker autocomplete, shared by every symbol field (Tracked companies,
        the holdings form, the standalone asset form) via attachTickerSuggest().

@@ -358,6 +358,26 @@ for (const expr of barFills) {
 console.log(`  ${barFills.length} budget bar fill(s) come from status tones, not the identity palette`);
 
 // ---- D: drift guards --------------------------------------------------------
+section("F. Page rule palette is actually visible (3:1 on the card)");
+// The identity palette is exempt from a contrast floor because it is only ever
+// painted as segments of a stacked bar that covers its own track. --rule-* is
+// the opposite case: a 3px line drawn ON a card, with the card showing on both
+// sides, so it has to clear 3:1 or the colour simply is not there. This is the
+// check that would have caught shipping the identity palette as a card rule,
+// where light mode measured 1.37:1 and the rule was invisible.
+const RULE_FLOOR = 3.0;
+for (const [name, T] of themes) {
+  const weak = [];
+  for (let i = 1; i <= 8; i++) {
+    const tok = `--rule-${i}`;
+    if (!T[tok]) { weak.push(`${tok} missing`); continue; }
+    const r = ratio(T[tok], T["--panel"]);
+    if (r < RULE_FLOOR) weak.push(`${tok} ${r.toFixed(2)}:1`);
+  }
+  ok(weak.length === 0, `${name}: rule colours below ${RULE_FLOOR}:1 on --panel: ${weak.join(", ")}`);
+  if (!weak.length) console.log(`  ${name.padEnd(5)} all 8 rule colours clear ${RULE_FLOOR}:1 on --panel`);
+}
+
 section("D. Drift guards");
 const appJs = read("app/app.js");
 

@@ -8248,10 +8248,14 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
       // row is reinserted.
       const grabOffset = ev.clientY - row.getBoundingClientRect().top;
 
-      // The row's untransformed top. Clearing the transform and re-reading the
-      // rect on EVERY pointermove cost two forced layouts per event, on a
-      // phone, at display rate. It only changes when the row is actually
-      // reinserted, so it is measured once here and re-measured there.
+      // The row's untransformed top, in VIEWPORT coordinates. Clearing the
+      // transform and re-reading the rect on EVERY pointermove cost two forced
+      // layouts per event, on a phone, at display rate, so it is cached - but
+      // being viewport-relative it goes stale on anything that moves the row
+      // without this code doing it. Two things do: a reinsertion, and a
+      // SCROLL. Measured: dragging the last row (where no swap can happen to
+      // refresh it) while the page scrolled 100px left the row displaced by
+      // exactly 100px for the rest of the gesture.
       let naturalTop = row.getBoundingClientRect().top;
       const remeasure = () => {
         row.style.transform = "";
@@ -8260,9 +8264,18 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
       const follow = (clientY) => {
         row.style.transform = `translateY(${clientY - grabOffset - naturalTop}px)`;
       };
+      // Kept so a scroll can re-place the row without waiting for the pointer
+      // to move again - during a wheel scroll it often does not.
+      let lastClientY = ev.clientY;
       follow(ev.clientY);
 
+      // Scroll fires far less often than pointermove, so re-measuring here
+      // keeps the saving and fixes the drift. Passive: it only reads.
+      const onScroll = () => { if (row.isConnected) { remeasure(); follow(lastClientY); } };
+      window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+
       const onMove = (e) => {
+        lastClientY = e.clientY;
         // renderInvestments() runs on the live-price tick every few minutes and
         // rebuilds these rows, so a drag can outlive the element it started on.
         // Every branch below reads row.parentElement, which is null once that
@@ -8311,6 +8324,7 @@ function attachListReorder({ list, ids, move, render, announce, save }) {
         document.removeEventListener("pointermove", onMove, true);
         document.removeEventListener("pointerup", finish, true);
         document.removeEventListener("pointercancel", finish, true);
+        window.removeEventListener("scroll", onScroll, { capture: true });
         window.removeEventListener("blur", finish);
         endDrag(row);
       };
@@ -9278,8 +9292,16 @@ $("saveHoldingBtn").onclick = async () => {
   // entirely. The old account's history is deliberately left alone: the money
   // did go in there when it went in, and rewriting a past year's total to
   // follow a correction would be worse than leaving it.
-  const changedAccount = wasEditingHolding && previousParentId && previousParentId !== parentId;
-  const contributionAmount = changedAccount ? totalCostBasis : costBasisDelta;
+  // Compared by LIMIT GROUP, not by account id. A Traditional and a Roth IRA
+  // are different accounts sharing ONE limit, so moving a holding between them
+  // moves no money into the group and must not count again - comparing ids
+  // would have recorded the whole basis a second time and eaten someone's
+  // remaining allowance for the year. Moving from a 401(k) to an IRA, or in
+  // from an untracked brokerage, does cross groups and does count.
+  const groupIdOf = (assetId) => contributionGroupFor(assets.find((a) => a.id === assetId)?.type)?.groupId ?? null;
+  const changedGroup = wasEditingHolding && previousParentId && previousParentId !== parentId
+    && groupIdOf(previousParentId) !== groupIdOf(parentId);
+  const contributionAmount = changedGroup ? totalCostBasis : costBasisDelta;
   const fundingAccountId = $("holdingFundingAccount").value || null;
   // Checked up front, before the async ticker-confirm dialog below - fail
   // fast on insufficient funds rather than making someone confirm an
@@ -9289,8 +9311,10 @@ $("saveHoldingBtn").onclick = async () => {
     if (fundingErr) { flagField("holdingFundingAccount"); return toast(fundingErr); }
   }
   // Buying inside a retirement account IS putting money into it, so the same
-  // yearly IRS limit applies. Checked on the DELTA, so editing a holding down
-  // is never refused and raising one only has to fit what is left.
+  // yearly IRS limit applies. Checked on the amount ENTERING the account
+  // (contributionAmount above), not the cost-basis delta: editing a holding
+  // down is still never refused, raising one only has to fit what is left,
+  // and re-filing one in from outside the group has to fit its whole basis.
   const limitErr = contributionRefusalReason(parentId, contributionAmount);
   if (limitErr) { flagField("holdingAccount", limitErr); return toast(limitErr, "error"); }
 
@@ -9407,6 +9431,13 @@ $("saveHoldingBtn").onclick = async () => {
   await loadAssets();
   renderInvestments();
   renderNetWorth();
+  // This handler can write TWO history rows - the funding deduction and the
+  // contribution - and neither appeared until something else happened to
+  // redraw the Log page, because switching to it only reloads subscriptions.
+  // That matters most for the contribution: undoing it in Recent History is
+  // the documented escape for a rollover, and an escape you cannot see is not
+  // one. saveContributionBtn has always done this; this path had not.
+  renderRecentTransactions();
   toast(wasEditing ? "Holding updated" : "Holding added");
 };
 

@@ -285,6 +285,15 @@ measures 5.5 and is indistinguishable, which is only visible if you measure.
 The visible ink may be smaller than the target. A 17px "i" glyph is fine as long as
 its tappable box is padded out to 44px.
 
+> **Inline `style="padding:..."` on a button is how the 44px rule gets broken.**
+> Found 2026-09-30: `.btn-sm` and `.btn-xs` both carry `min-height: var(--target-min)`
+> precisely so a control cannot be under-sized, and **28 buttons carried their own
+> inline padding instead**, in 13 different recipes. The app had eight distinct
+> button heights (28, 29, 30, 34, 36, 37, 40, 44) and the smallest were well under
+> the minimum. There are two button sizes; a new button picks one, and neither
+> takes a padding override. Both also set `white-space: nowrap`, because a label
+> wrapping to a second line makes one button taller than the one beside it.
+
 > **An enlarged tap box must grow around its ink, not out of one edge.** Found
 > live on 2026-09-29: `.link-action::after` was `left: 0; right: 0` with a
 > `min-width` of 44px, so everything the minimum added grew to the RIGHT. A short

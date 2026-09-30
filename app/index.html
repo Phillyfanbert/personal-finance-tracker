@@ -192,7 +192,7 @@
     .wrap { max-width: 560px; margin: 0 auto; padding: 16px; }
     h1 { font-size: 20px; margin: 8px 0 16px; }
     .muted { color: var(--muted); }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: var(--sp-4); }
     .card.empty-state { border-style: dashed; text-align: center; color: var(--muted); font-size: var(--fs-sm); }
     input, select, button, textarea {
       font: inherit; width: 100%; padding: 13px 14px; border-radius: 10px;
@@ -222,10 +222,10 @@
        field, not a submitted-and-rejected one, so this reflects current
        state rather than only flashing after a failed Save. */
     input.field-required, select.field-required { border-color: var(--err); }
-    label { display: block; font-size: var(--fs-sm); color: var(--muted); margin: 10px 0 4px; }
+    label { display: block; font-size: var(--fs-sm); color: var(--muted); margin: var(--sp-3) 0 4px; }
     button { background: var(--accent-2); border: none; color: var(--on-solid); font-weight: 700; cursor: pointer; }
     button.secondary { background: transparent; border: 1px solid var(--border-strong); color: var(--text); font-weight: 500; }
-    .row { display: flex; gap: 10px; }
+    .row { display: flex; gap: var(--sp-3); }
     .row > * { flex: 1; }
     .hidden { display: none !important; }
     .quickadd input { font-size: 18px; padding: 16px; }
@@ -238,19 +238,19 @@
        being invisible - and now that a toast can hold an Undo button, it
        would be an invisible button that un-archives an account. */
     .toast { position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%);
-      background: var(--panel-2); border: 1px solid var(--border); padding: 12px 18px;
+      background: var(--panel-2); border: 1px solid var(--border); padding: 12px var(--sp-4);
       border-radius: 10px; opacity: 0; pointer-events: none; transition: opacity .2s;
       z-index: 80; max-width: 90%; display: flex; align-items: center; gap: 0; }
     .toast.show { opacity: 1; pointer-events: auto; }
     .exp { display: flex; justify-content: space-between; align-items: center;
-      padding: 12px 0; border-bottom: 1px solid var(--border); gap: 10px; cursor: pointer; }
+      padding: 12px 0; border-bottom: 1px solid var(--border); gap: var(--sp-3); cursor: pointer; }
     .exp:last-child { border-bottom: none; }
     /* Caps a long expense list instead of letting it push everything below
        it down the page - Recent History (Log) and the Reports month log. */
     .scroll-list { max-height: 360px; overflow-y: auto; }
     .exp .meta { font-size: 13px; color: var(--muted); }
     .exp .amt { font-weight: 700; white-space: nowrap; }
-    .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); margin: 2px 0; }
+    .pill { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: 12px; padding: var(--sp-1) var(--sp-3); border-radius: 999px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); margin: 2px 0; }
     /* Bare `.x`, not just the two descendant rules below it. Six delete
        glyphs rendered by app.js sit inside neither a .pill nor an
        .acct-circle-item, so they matched no rule at all: no colour, no
@@ -262,7 +262,7 @@
     .pill .x { color: var(--err); cursor: pointer; font-weight: 700;
       min-width: var(--target-min); min-height: var(--target-min); }
     /* Accounts: bigger circular badges so every payment method is visible at a glance */
-    .acct-circles { display: flex; flex-wrap: wrap; gap: 18px; }
+    .acct-circles { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
     .acct-circle-item { position: relative; display: flex; flex-direction: column; align-items: center; width: 76px; text-align: center; }
     /* The fill cannot carry its own boundary. A fill that takes dark ink at
        4.5:1 needs luminance >= 0.2372, and 3:1 against a white panel caps it at
@@ -275,7 +275,7 @@
     .acct-circle { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
       font-weight: 800; font-size: var(--fs-xl); color: var(--ink-on-series);
       box-shadow: inset 0 0 0 1px var(--border-strong); }
-    .acct-circle-item .name { font-size: 12px; margin-top: 6px; color: var(--text); word-break: break-word; }
+    .acct-circle-item .name { font-size: 12px; margin-top: var(--sp-2); color: var(--text); word-break: break-word; }
     .acct-circle-item .type { font-size: 11px; color: var(--muted); }
     .acct-circle-item .balance { font-size: 12px; font-weight: 700; color: var(--text); margin-top: 2px; }
     /* The visible badge stays 20px so it does not swamp the 64px circle it
@@ -396,7 +396,7 @@
     .brand-mark.lg i:nth-child(2) { width: 20px; height: 20px; margin-bottom: 11px; }
     .brand-mark.lg i:nth-child(3) { width: 29px; height: 29px; }
 
-    .totals { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+    .totals { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: var(--sp-4); }
     /* Three identical grey boxes held the three most important numbers on the
        page, so nothing told them apart at a glance. A 3px rule in the identity
        palette gives each its own colour. Decorative only: the label above each
@@ -433,7 +433,7 @@
     .modal { position: fixed; inset: 0; background: var(--scrim); z-index: 70;
       display: flex; align-items: flex-end; justify-content: center; }
     .modal .sheet { background: var(--panel); width: 100%; max-width: 560px;
-      border-radius: 16px 16px 0 0; border: 1px solid var(--border); padding: 18px;
+      border-radius: 16px 16px 0 0; border: 1px solid var(--border); padding: var(--sp-4);
       max-height: 90vh; overflow-y: auto; }
     /* First-run guided tour (app/tour.js + startTour() in app.js).
        Above .modal's 70 so the tour can point at a modal's own controls
@@ -456,7 +456,7 @@
       transition: top .25s, left .25s, width .25s, height .25s; }
     .tour-card { position: absolute; width: min(420px, calc(100vw - 24px));
       background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-      padding: 18px; box-shadow: var(--shadow-card); }
+      padding: var(--sp-4); box-shadow: var(--shadow-card); }
     /* The arrow. Rotated square rather than a border triangle so it can
        carry the same border and background as the card and read as one
        shape; the clip hides the two edges that would show through. */
@@ -477,7 +477,7 @@
        so it stays correct at any card width. */
     .tour-diagram svg text { font-size: 24px; }
     .tour-actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
-    .tour-actions button { width: auto; padding: 9px 16px; min-height: var(--target-min); font-size: var(--fs-sm); }
+    .tour-actions button { width: auto; padding: var(--sp-2) 16px; min-height: var(--target-min); font-size: var(--fs-sm); }
     .tour-step-count { font-size: 13px; color: var(--muted); margin-right: auto; }
 
     /* Help ("?") button, one per view topbar - small and circular so it
@@ -490,8 +490,8 @@
        it should read as an offer of help, not as page furniture. The "?" is
        kept as a glyph beside the word because it is the near-universal help
        affordance and carries the meaning faster than the word alone. */
-    .help-btn { display: inline-flex; align-items: center; gap: 6px;
-      width: auto; flex: none; padding: 6px 12px 6px 8px; border-radius: 999px;
+    .help-btn { display: inline-flex; align-items: center; gap: var(--sp-2);
+      width: auto; flex: none; padding: var(--sp-2) 12px var(--sp-2) 8px; border-radius: 999px;
       background: var(--accent-wash); border: 1px solid var(--accent);
       color: var(--accent); font-weight: 600; font-size: var(--fs-sm); cursor: pointer;
       min-height: var(--target-min); transition: background-color .15s; }
@@ -507,7 +507,7 @@
        scrollable, because the overflow was inside a flex row that had already
        sized itself to the viewport. Measured at 375px: without it the pill
        ends at 400px against a 399px viewport. */
-    .topbar-lead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .topbar-lead { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
     /* Feedback is a peer of Export for the same reason: reaching it must be
        one tap from any page, but it is not what anyone came to the page to
        do. Same quiet pill rather than a third visual weight to learn. */
@@ -521,7 +521,7 @@
       background: var(--accent); color: var(--bg); font-size: 12px; font-weight: 800; }
     /* Shared by every card that pairs a title with an "i" explainer, so a new
        card is markup-only - see wireInfoIcons() in app.js. */
-    .card-head { display: flex; align-items: center; gap: 6px; }
+    .card-head { display: flex; align-items: center; gap: var(--sp-2); }
     /* ONE headline fact, held in a tinted block. Both the market recap's
        breadth line and the portfolio note's own headline use this, so the two
        cannot drift apart - they are the same kind of sentence on two cards.
@@ -563,7 +563,7 @@
     .suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
       background: var(--panel-2); border: 1px solid var(--border);
       border-radius: 10px; margin-top: 4px; max-height: 240px; overflow-y: auto; }
-    .suggest-item { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border); }
+    .suggest-item { padding: 8px var(--sp-3); cursor: pointer; border-bottom: 1px solid var(--border); }
     .suggest-item:last-child { border-bottom: none; }
     .suggest-item:hover, .suggest-item.active { background: var(--panel); }
     .suggest-sym { font-weight: 600; font-size: 14px; }
@@ -599,12 +599,12 @@
        stretch confirmModal/archivedAcctModal/csvImportModal beyond what
        their own short content needs. */
     .help-sheet { max-width: 720px; max-height: 92vh; }
-    .help-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 16px; }
-    .help-pill { width: auto; padding: 6px 12px; min-height: var(--target-min); font-size: var(--fs-xs); border-radius: var(--r-pill);
+    .help-pills { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 16px; }
+    .help-pill { width: auto; padding: var(--sp-2) 12px; min-height: var(--target-min); font-size: var(--fs-xs); border-radius: var(--r-pill);
       background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); cursor: pointer; }
     .help-pill.active { color: var(--text); border-color: var(--accent); }
-    .subtab-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
-    .subtab-pill { width: auto; padding: 7px 14px; min-height: var(--target-min); font-size: var(--fs-sm); border-radius: var(--r-pill);
+    .subtab-pills { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: 0 0 var(--sp-4); }
+    .subtab-pill { width: auto; padding: var(--sp-2) var(--sp-4); min-height: var(--target-min); font-size: var(--fs-sm); border-radius: var(--r-pill);
       background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); cursor: pointer; }
     .subtab-pill.active { color: var(--text); border-color: var(--accent); font-weight: 600; }
     /* The Investments Market / My portfolio pair are oversized .secondary
@@ -617,20 +617,20 @@
        Clicking a row in the page diagram opens its matching topic (see
        wireHelpTopics in app.js), which is what makes the diagram a table of
        contents rather than just a picture. */
-    .help-topic { margin-bottom: 18px; }
+    .help-topic { margin-bottom: var(--sp-4); }
     /* A real heading wrapping a real button. role="button" on the heading used
        to REPLACE the heading role, so all 36 headings were missing from the
        outline - and the help sheet is this app's entire documentation. */
     .help-topic-h { margin: 0; font-size: var(--fs-base); font-weight: 600; }
     .help-topic-head { display: flex; align-items: baseline; gap: 8px; cursor: pointer;
-      user-select: none; padding: 8px 10px; min-height: var(--target-min); border-radius: var(--r-control);
+      user-select: none; padding: 8px var(--sp-3); min-height: var(--target-min); border-radius: var(--r-control);
       background: var(--panel-2); border: 1px solid var(--border-strong);
       width: 100%; text-align: left; font: inherit; color: var(--text); }
     .help-topic-head:hover, .help-topic-head:focus-visible { border-color: var(--accent); }
     .help-chevron { display: inline-block; font-size: 11px; color: var(--muted);
       transition: transform .15s; flex: none; }
     .help-topic-head[aria-expanded="true"] .help-chevron { transform: rotate(90deg); }
-    .help-topic-body { padding: 10px 10px 0; }
+    .help-topic-body { padding: var(--sp-3) var(--sp-3) 0; }
     /* Marks the topic just opened from a diagram row, so it is obvious which
        one the click landed on after the sheet scrolls to it. */
     .help-topic.flash > .help-topic-head { border-color: var(--accent); }
@@ -643,7 +643,7 @@
     .help-diagram rect { stroke: var(--border-strong); }
     .help-diagram .diagram-row:hover rect { stroke: var(--accent); }
     .help-topic:last-child { margin-bottom: 0; }
-    .help-topic h3 { font-size: var(--fs-base); margin: 0 0 6px; }
+    .help-topic h3 { font-size: var(--fs-base); margin: 0 0 var(--sp-2); }
     /* This is the app's entire written documentation, 38 topics of long-form
        prose. It sat at 13px muted while the guided tour's prose was
        deliberately raised to 15px --text for exactly this reason. Body text
@@ -651,10 +651,10 @@
     .help-topic p { font-size: 15px; color: var(--text); margin: 0 0 8px; line-height: 1.55; }
     .help-topic p:last-child { margin-bottom: 0; }
     .help-diagram { background: var(--panel-2); border: 1px solid var(--border);
-      border-radius: 10px; padding: 10px; margin: 4px 0 18px; }
+      border-radius: 10px; padding: var(--sp-3); margin: 4px 0 var(--sp-4); }
     /* A file input's button is a separate shadow control that inherits none
        of the styling above, so it rendered as the grey OS default. */
-    input[type="file"] { padding: 10px; cursor: pointer; }
+    input[type="file"] { padding: var(--sp-3); cursor: pointer; }
     input[type="file"]::file-selector-button {
       font: inherit; font-size: var(--fs-sm); font-weight: 700;
       margin-right: var(--sp-3); padding: 0 var(--sp-3); min-height: var(--target-min);
@@ -669,8 +669,13 @@
        least three times across index.html - a repeated inline style is a
        missing class. All three button sizes carry --target-min, so using one
        cannot accidentally produce an under-sized control. */
-    .btn-sm { width: auto; padding: var(--sp-2) var(--sp-3); min-height: var(--target-min); font-size: var(--fs-sm); }
-    .btn-xs { width: auto; padding: 6px var(--sp-2); min-height: var(--target-min); font-size: var(--fs-xs); }
+    /* The two button sizes. Both carry the 44px floor so a control cannot be
+       accidentally under-sized - which is exactly what happened while 28
+       buttons carried their own inline padding instead, giving the app eight
+       different button heights. nowrap because a label breaking onto a second
+       line makes one button taller than the one beside it. */
+    .btn-sm { width: auto; padding: var(--sp-2) var(--sp-3); min-height: var(--target-min); font-size: var(--fs-sm); white-space: nowrap; }
+    .btn-xs { width: auto; padding: 6px var(--sp-2); min-height: var(--target-min); font-size: var(--fs-xs); white-space: nowrap; }
     .checkbox { width: auto; min-width: 24px; min-height: 24px; margin-right: var(--sp-2); }
     .text-xs { font-size: var(--fs-xs); }
     .text-sm { font-size: var(--fs-sm); }
@@ -802,7 +807,7 @@
        The bar sits at z-index 41, directly above the nav's 40 and well below
        modal 70 - it must stay visible while a modal is open, since a save
        inside one is exactly when you want to know something is happening. */
-    .spinner { display: inline-block; width: 13px; height: 13px; margin-right: 7px;
+    .spinner { display: inline-block; width: 13px; height: 13px; margin-right: var(--sp-2);
       vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent;
       border-radius: 50%; animation: spin .7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -896,8 +901,8 @@
           <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="secondary" id="profileBtn" style="width:auto;padding:8px 12px">Profile</button>
-          <button class="secondary" id="signOutBtn" style="width:auto;padding:8px 12px">Sign out</button>
+          <button class="secondary btn-sm" id="profileBtn">Profile</button>
+          <button class="secondary btn-sm" id="signOutBtn">Sign out</button>
         </div>
       </div>
 
@@ -1043,7 +1048,7 @@
       <div id="logSubBills" class="hidden">
         <div class="topbar" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">
           <h2 style="font-size:15px">Subscriptions and bills</h2>
-          <button class="secondary" id="addSubBtn" aria-label="Add a subscription or bill" style="width:auto;padding:8px 12px">+ Add</button>
+          <button class="secondary btn-sm" id="addSubBtn" aria-label="Add a subscription or bill">+ Add</button>
         </div>
 
       <div class="totals" id="subsTotals">
@@ -1103,7 +1108,7 @@
         <h2>All subscriptions/bills</h2>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap one to edit.</p>
         <div id="subList" style="margin-top:8px"><p class="muted">Loading…</p></div>
-        <button class="secondary" id="addSubBtnBottom" aria-label="Add a subscription or bill" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
+        <button class="secondary btn-xs" id="addSubBtnBottom" aria-label="Add a subscription or bill" style="margin-top:var(--sp-3)">+ Add</button>
       </div>
 
 
@@ -1178,8 +1183,8 @@
         <div class="topbar" style="margin-bottom:4px">
           <h2>Accounts</h2>
           <div>
-            <button class="secondary" id="transferBtn" style="width:auto;padding:6px 10px;font-size:12px;margin-right:6px">Transfer</button>
-            <button class="secondary" id="addAcctBtn" aria-label="Add an account" style="width:auto;padding:6px 10px;font-size:12px">+ Add</button>
+            <button class="secondary btn-xs" id="transferBtn" style="margin-right:var(--sp-2)">Transfer</button>
+            <button class="secondary btn-xs" id="addAcctBtn" aria-label="Add an account">+ Add</button>
           </div>
         </div>
         <p class="muted" style="font-size:12px;margin:0 0 10px">How you pay for things. These are not counted in net worth - what you own is in Things you have, below.</p>
@@ -1349,7 +1354,7 @@
         <!-- Only shown for a manually-valued asset not touched in 6+
              months - see staleAssets() (app.js). -->
         <div id="assetStaleNotice" class="hidden muted" style="font-size:12px;margin-top:6px"></div>
-        <button class="secondary" id="addAssetBtn" aria-label="Add something you have" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
+        <button class="secondary btn-xs" id="addAssetBtn" aria-label="Add something you have" style="margin-top:var(--sp-3)">+ Add</button>
         <div id="assetForm" class="hidden" style="margin-top:10px">
           <div class="row">
             <input id="assetName" aria-label="Asset name" placeholder="Vanguard Brokerage" />
@@ -1444,7 +1449,7 @@
              only kind you can add directly below. -->
         <div class="muted" style="font-size:12px;margin:14px 0 4px">Loans and everything else</div>
         <div id="debtsList" class="muted" style="font-size:13px">Nothing else owed.</div>
-        <button class="secondary" id="addDebtBtn" aria-label="Add something you owe" style="width:auto;padding:6px 10px;font-size:12px;margin-top:10px">+ Add</button>
+        <button class="secondary btn-xs" id="addDebtBtn" aria-label="Add something you owe" style="margin-top:var(--sp-3)">+ Add</button>
         <div id="debtForm" class="hidden" style="margin-top:10px">
           <div class="row">
             <input id="debtName" aria-label="Name of what you owe" placeholder="Chase Sapphire" />
@@ -1597,7 +1602,7 @@
     <div id="reportsView" class="hidden">
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div class="topbar-lead">
-          <button class="secondary" id="backFromReports" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">←</button>
+          <button class="secondary btn-sm" id="backFromReports" aria-label="Back to Log" title="Back to Log">←</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Reports</h1>
           <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportReportsBtn" title="Export this month's analysis as a spreadsheet" aria-label="Export this month's analysis as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
@@ -1681,8 +1686,8 @@
         <div class="topbar" style="margin-bottom:4px">
           <h2 id="rptExpListTitle">Expense log</h2>
           <div class="row" style="width:auto;gap:6px">
-            <button class="secondary" id="exportCsvBtn" style="width:auto;padding:5px 10px;font-size:12px">CSV</button>
-            <button class="secondary" id="exportPdfBtn" style="width:auto;padding:5px 10px;font-size:12px">Print / PDF</button>
+            <button class="secondary btn-xs" id="exportCsvBtn">CSV</button>
+            <button class="secondary btn-xs" id="exportPdfBtn">Print / PDF</button>
           </div>
         </div>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Tap an expense to edit or recategorize.</p>
@@ -1792,7 +1797,7 @@
     <div id="planView" class="hidden">
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div class="topbar-lead">
-          <button class="secondary" id="backFromPlan" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">&#8592;</button>
+          <button class="secondary btn-sm" id="backFromPlan" aria-label="Back to Log" title="Back to Log">&#8592;</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Plan</h1>
           <button class="help-btn" id="helpPlanBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
@@ -1905,7 +1910,7 @@
             <option value="want">Want</option>
             <option value="savings">Savings</option>
           </select>
-          <button id="saveBudgetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
+          <button class="btn-xs" id="saveBudgetBtn">Set</button>
         </div>
       </div>
 
@@ -1933,7 +1938,7 @@
     <div id="investView" class="hidden">
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
         <div class="topbar-lead">
-          <button class="secondary" id="backFromInvest" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">←</button>
+          <button class="secondary btn-sm" id="backFromInvest" aria-label="Back to Log" title="Back to Log">←</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Investments</h1>
           <button class="help-btn" id="helpInvestBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportInvestBtn" title="Export your investments as a spreadsheet" aria-label="Export your investments as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
@@ -1986,7 +1991,7 @@
            from, so it says so in words. Deliberately smaller and right-aligned
            so it doesn't read as a third tab. -->
       <div style="display:flex;justify-content:flex-end;margin:-12px 0 14px">
-        <button class="secondary" id="watchlistGearBtn" style="width:auto;padding:8px 14px;font-size:13px">&#9881; Choose tracked companies</button>
+        <button class="secondary btn-sm" id="watchlistGearBtn">&#9881; Choose tracked companies</button>
       </div>
 
       <div id="investTabMarket">
@@ -2157,7 +2162,7 @@
                 <h2>Holdings</h2>
                 <span class="info-icon" tabindex="0" role="button" data-info="holdingsExplainer" title="Record the specific stocks, funds or coins you bought. An account's value is the total of its holdings.">i</span>
               </div>
-              <button class="secondary" id="addHoldingBtn" style="width:auto;padding:6px 10px;font-size:12px">+ Add stock</button>
+              <button class="secondary btn-xs" id="addHoldingBtn">+ Add stock</button>
             </div>
             <p class="muted explainer hidden" id="holdingsExplainer">Record the specific stocks, funds or coins you bought. An account's value is the total of its holdings.</p>
             <!-- A holding is an `assets` row pointing at its account's asset via
@@ -2344,7 +2349,7 @@
             <div class="row" style="margin-top:10px">
               <select id="investTargetBucket" aria-label="Investment type" style="flex:1"></select>
               <input id="investTargetPercent" aria-label="Target percentage" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />
-              <button id="saveInvestTargetBtn" style="width:auto;padding:6px 12px;font-size:12px">Set</button>
+              <button class="btn-xs" id="saveInvestTargetBtn">Set</button>
             </div>
           </div>
       </div>
@@ -2427,7 +2432,7 @@
        balance here rather than reading as a deleted account. -->
   <div id="archivedAcctModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="archivedAcctTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="archivedAcctTitle">Archived accounts</strong><button class="secondary" id="archivedAcctClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="archivedAcctTitle">Archived accounts</strong><button class="secondary btn-sm" id="archivedAcctClose">Close</button></div>
       <p class="muted" style="font-size:12px;margin:6px 0 10px">Accounts you have closed. They stay out of your lists, but what is in them still counts toward what you own.</p>
       <div id="archivedAcctList"></div>
     </div>
@@ -2436,7 +2441,7 @@
   <!-- ============ EDIT MODAL ============ -->
   <div id="editModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="editModalTitle">Edit expense</strong><button class="secondary" id="editClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="editModalTitle">Edit expense</strong><button class="secondary btn-sm" id="editClose">Close</button></div>
       <!-- No separate Payment field - same as quick-add, payment type is
            derived from whichever account is selected below (app.js). -->
       <label for="eAmount">Amount</label>
@@ -2504,7 +2509,7 @@
        already own. -->
   <div id="watchlistModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="watchlistTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="watchlistTitle">Tracked companies</strong><button class="secondary" id="watchlistClose" style="width:auto;padding:6px 12px">&#10005;</button></div>
+      <div class="topbar"><strong id="watchlistTitle">Tracked companies</strong><button class="secondary btn-sm" id="watchlistClose">&#10005;</button></div>
 
       <p class="muted" style="font-size:12px;margin:4px 0 8px">Everything on the Market tab is built from this list - the written recap, the up/down count, today's top movers and the price-history charts. Changes take effect on the next background price run.</p>
       <div class="row">
@@ -2539,7 +2544,7 @@
 
   <div id="sellHoldingModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sellModalTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="sellModalTitle">Sell <span id="sellSymbol"></span></strong><button class="secondary" id="sellClose" style="width:auto;padding:6px 12px">✕</button></div>
+      <div class="topbar"><strong id="sellModalTitle">Sell <span id="sellSymbol"></span></strong><button class="secondary btn-sm" id="sellClose">✕</button></div>
       <p class="muted" style="font-size:12px;margin:0 0 8px">You hold <strong id="sellHeldQty">0</strong> shares, average cost <strong id="sellAvgCost">$0</strong> each.</p>
       <label for="sellQuantity">Shares to sell</label>
       <input id="sellQuantity" type="number" step="any" inputmode="decimal" />
@@ -2639,7 +2644,7 @@
 
   <div id="fundContributeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fundContributeTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="fundContributeTitle">Set money aside</strong><button class="secondary" id="fundContributeClose" style="width:auto;padding:6px 12px" aria-label="Close">✕</button></div>
+      <div class="topbar"><strong id="fundContributeTitle">Set money aside</strong><button class="secondary btn-sm" id="fundContributeClose"  aria-label="Close">✕</button></div>
       <p class="muted" style="font-size:12px;margin:0 0 8px" id="fundContributeSub"></p>
       <label for="fundContributeAmount">How much are you setting aside</label>
       <input id="fundContributeAmount" type="number" step="0.01" min="0" inputmode="decimal" />
@@ -2650,11 +2655,11 @@
 
   <div id="debtBalanceForm" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="debtBalanceTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="debtBalanceTitle"><span id="debtBalanceLabel"></span></strong><button class="secondary" id="debtBalanceClose" style="width:auto;padding:6px 12px">✕</button></div>
+      <div class="topbar"><strong id="debtBalanceTitle"><span id="debtBalanceLabel"></span></strong><button class="secondary btn-sm" id="debtBalanceClose">✕</button></div>
       <p class="muted" style="font-size:12px;margin:0 0 8px">Owes <strong id="debtBalanceCurrent">$0</strong></p>
       <div class="row hidden" id="debtTabRow" style="margin-bottom:12px">
-        <button class="secondary" id="debtTabOwed" style="padding:8px 0;font-size:13px">Owed</button>
-        <button class="secondary" id="debtTabPaying" style="padding:8px 0;font-size:13px">Paying balance</button>
+        <button class="secondary" id="debtTabOwed" style="padding:var(--sp-2) 0;font-size:13px;min-height:var(--target-min)">Owed</button>
+        <button class="secondary" id="debtTabPaying" style="padding:var(--sp-2) 0;font-size:13px;min-height:var(--target-min)">Paying balance</button>
       </div>
       <div id="debtOwedMode" class="hidden">
         <!-- Direct set, for fixing a wrong balance (typo, missed charge) -
@@ -2698,7 +2703,7 @@
        double-subtract and corrupt it. -->
   <div id="csvImportModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="csvImportTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="csvImportTitle">Import CSV</strong><button class="secondary" id="csvImportClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="csvImportTitle">Import CSV</strong><button class="secondary btn-sm" id="csvImportClose">Close</button></div>
 
       <div id="csvStep1">
         <p class="muted" style="font-size:13px">Bring in what you have spent and what you have been paid, from a bank export or another app. The file stays on your device - it is never uploaded anywhere.</p>
@@ -2778,7 +2783,7 @@
   <!-- ============ PROFILE MODAL ============ -->
   <div id="profileModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="profileTitle">Your profile</strong><button class="secondary" id="profileClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="profileTitle">Your profile</strong><button class="secondary btn-sm" id="profileClose">Close</button></div>
 
       <!-- Surfaced first, above the deal/financial-context fields below -
            this is account-level, not profile data, and password sign-in
@@ -2997,7 +3002,7 @@
        structure the same way every other view's markup does. -->
   <div id="helpModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
     <div class="sheet help-sheet">
-      <div class="topbar"><strong id="helpModalTitle">Help</strong><button class="secondary" id="helpClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="helpModalTitle">Help</strong><button class="secondary btn-sm" id="helpClose">Close</button></div>
       <div class="help-pills">
         <button class="help-pill" data-help-page="log">Log</button>
         <button class="help-pill" data-help-page="plan">Plan</button>
@@ -3005,18 +3010,13 @@
         <button class="help-pill" data-help-page="invest">Investments</button>
       </div>
 
-      <p class="muted" style="font-size:12px;margin:0 0 10px">A short guided tour runs automatically the first time you open each page, pointing at each part in turn. It only runs once per page per device, and finishing or skipping it counts as done - use the button below to see it again.</p>
+      <p class="muted" style="font-size:12px;margin:0 0 10px">A short tour runs the first time you open each page. Replay it any time:</p>
 
       <!-- Replays the guided tour for whichever page's help is open. The
            tour marks itself seen once finished or skipped, so this is the
            only way back to it. -->
-      <button class="secondary" id="helpReplayTour" style="width:auto;padding:8px 14px;font-size:13px;margin-bottom:12px">Replay the guided tour for this page</button>
+      <button class="secondary btn-sm" id="helpReplayTour" style="margin-bottom:var(--sp-3)">Replay the guided tour for this page</button>
 
-      <!-- Explained here rather than as a help topic. A topic lives inside one
-           of the four page blocks below, and Feedback is shared chrome on all
-           of them - the copy would have had to be repeated four times and
-           would have drifted. The reader is already in the help sheet. -->
-      <p class="muted" style="font-size:12px;margin:0 0 12px">The Feedback button next to Help sends a message that is read and worked through one at a time, and any reply appears back in that same window. Your message goes with the page you were on and your browser version so a problem can be traced - never with any of your balances, accounts or transactions.</p>
 
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
@@ -3049,30 +3049,24 @@
             <text x="40" y="626" fill="var(--text)" font-size="14">Income sources</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">This page has three tabs, and the three totals at the top stay on screen whichever one you are looking at. Spending is where you write things down, Bills is anything that charges you on a schedule, and Money is what you have, what you owe, and what comes in. A budget-warning banner can appear above the tabs when a category is close to or over its limit. Tap any row above to jump to what it does.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 var(--sp-4)">Three tabs, with the totals always on top. Spending is what you write down, Bills is what charges you on a schedule, Money is what you have and owe. Tap any row above to jump to it.</p>
 
         <div class="help-topic" id="helpTopic-expenses-quick-add">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-expenses-quick-add-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Quick Add</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-expenses-quick-add-body">
-          <p>Type a whole expense as free text, e.g. "$14 lunch chipotle debit" - amount, merchant, and a matching account (if you name a payment type like "debit" or a bank name) are detected automatically as you type. This always works with no setup (a built-in keyword parser). If this household's optional Gemma server is set up, a second pass runs a moment later and can fill in fields the keyword parser missed or got less precisely - you'll see "Asking Gemma..." then "Parsed by Gemma" in small text under the field. Nothing is saved until you tap Save.</p>
-          <p>Four fields are required before Save will go through: Amount, Account, Category, Date. Any of the four that's still empty gets a live red border the whole time, not just after a rejected Save - it clears the instant you fill it in. Description/merchant is the only optional field.</p>
-          <p>If the account it guessed is wrong (or it couldn't guess), just pick the right one from the Account dropdown yourself - it never blocks you, it just doesn't guess when it isn't confident (for example, two Chase accounts and the text only says "chase").</p>
-          <p><strong>Money received</strong> (next to Import CSV) is for money coming IN that is not a regular paycheck: a side job, a gift, something you sold. Money back on something you bought is different and has its own place: open that purchase in Recent History and use "Got money back on this?", so it comes off what you spent instead of counting as money earned. It asks for four things and adds the money to the account straight away. It is not the same as an income source: a source is something that repeats, which the app logs for you each time it comes due, and this is a one-off that has already happened. Both show up in Recent History, both can be undone there, and both count in Money in and out on the Reports page.</p>
-          <p><strong>Import CSV</strong> (the small button under the box) brings in a file from your bank or another app, in four steps: pick the file, check the columns, look over what it found, then confirm. The file never leaves your device.</p>
-          <p>It reads the column names and fills the settings in for you, so usually there is nothing to change. It handles both shapes of bank file: one where a single amount column goes negative for money spent, and one with separate money-out and money-in columns. When it spots the second kind it uses those two columns and stops asking about signs, because the column already says which direction the money went.</p>
-          <p><strong>One file can bring in both what you spent and what you were paid.</strong> "What is in this file?" is set to read both by default, which is right for a normal bank statement. Change it to one or the other if your file only holds one kind, and anything pointing the other way is skipped instead of being brought in backwards. Money you received is shown in green with a plus sign so you can tell the two apart before confirming.</p>
-          <p>Everything imported is treated as history that has already happened, so <strong>it never changes an account balance</strong> - your balance in real life already includes it, and counting it again would double it. If you picked the wrong file or the wrong columns, "Undo this import" takes the whole lot back out, both the spending and the income.</p>
+          <p>Type an expense the way you would say it, like "$14 lunch chipotle debit". The app fills in the rest for you to check.</p>
+          <p>Amount, Account, Category and Date are needed before it will save. Anything still missing turns red.</p>
+          <p><strong>Import CSV</strong> brings in a file from your bank. Imported rows are history that already happened, so they never change a balance.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-recent-history">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-recent-history-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Recent History</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-recent-history-body">
-          <p><strong>Got money back on something.</strong> Tap the purchase, then "Got money back on this?". A return, a partial refund, a reimbursement from a friend, or a credit from the shop all go here. It is recorded against what you spent rather than as money coming in, so the category it came out of goes back down and your budget is right again. Booking it as income instead would count the same event twice: once as money earned and once as money still spent.</p>
-          <p>You can enter less than you paid if only part came back. You cannot enter more than the purchase itself, because that is not a refund. If the money came back onto a credit card, it can only take off what is still owed on that card: anything beyond that would need the card to hold a credit balance, which this app does not track. The original purchase stays in your history right next to the money back, so you can still see what happened.</p>
-          <p>A combined feed of every expense and every non-expense money movement (a manual balance correction, a liability payment, a transfer between your own accounts, income received, an investment contribution, a logged interest charge, even an account being opened) - not just expenses. Search by merchant/description text, or narrow with the Type/Account/Category/Kind dropdowns and a min/max dollar range - all filters combine (AND, not OR). "Kind" is the one that separates plain expenses from everything else (account activity has no category or payment type of its own, so it drops out of those two filters automatically unless you pick "Activity only").</p>
-          <p>Tap an expense row to open it for editing or recategorizing. Account-activity rows (anything that isn't a plain expense) can't be edited that way since most of them have no separate edit form - instead every row, expense or activity, has a small undo icon that reverses exactly what it did (restores the old balance, removes the row) and can't be used twice.</p>
-          <p>Check the box on several expense rows at once to recategorize all of them together in one Apply - your checked selection survives changing the filters above it, so you can search, check a few, search again, and check more before applying.</p>
+          <p>Everything that moved money, in one list: purchases, payments, transfers, income and balance corrections.</p>
+          <p>Tap a purchase to edit it, or to record money you got back on it. Tap the undo arrow on any row to reverse it.</p>
+          
           </div>
         </div>
 
@@ -3080,121 +3074,116 @@
         <div class="help-topic" id="helpTopic-net-worth">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-net-worth-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Net worth</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-net-worth-body">
-          <p>Assets total minus liabilities total (tracked debts only) - a single number, read-only here. It deliberately does not subtract subscriptions or general spending: a subscription is a recurring future cost, not a debt you owe today, and ordinary spending already reduced an asset's balance directly the moment you logged it. See the Reports page for how this number trends over time.</p>
-          <p>Under the figure, a short note appears when part of it is less current than it looks: a stock price that has stopped updating, a holding with no price yet (it counts at the last value you saved, not what it is worth), or something you typed in that has not been touched for months. The number itself is never adjusted - the note just says how far to trust it. Investment values follow the latest prices on their own, and a loan's interest is added each month, but anything you type in by hand, like a house or a savings balance at another bank, is only as current as your last update. Retirement accounts count at their full balance, before any tax you would owe on withdrawing.</p>
+          <p>What you own minus what you owe. Subscriptions and everyday spending are not debts, so they are not subtracted here.</p>
+          <p>A short note appears underneath if part of the figure is less current than it looks, for example a price that has stopped updating.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-accounts">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-accounts-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Accounts</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-accounts-body">
-          <p>Payment methods only - which card, bank, or wallet you paid with. Accounts are <strong>not</strong> counted in net worth by themselves; every account automatically gets its own linked Asset (a debit/deposit-style account) or Liability (a credit-style account) behind the scenes, and that linked balance is what actually counts. "+ Add" walks you through picking a type (this decides the account's name, like Checking or Credit Card) and typing the bank or institution name - for a real bank/credit union this is checked against a large built-in list as you type, and if it's genuinely not on the list you're offered an "add it anyway" option rather than being blocked outright.</p>
-          <p>Tap any account circle to adjust its balance directly: type the new total, or use +/- if you only know the change. A credit-type account instead shows Pay/adjust-owed controls from Things you owe, below, plus a credit-utilization line and (once you've filled in its statement-cycle details there) a paid-in-full / carrying-a-balance / missed-minimum status. Archiving an account (the small "Archive" link under a circle) removes it from every list and total while keeping its full history intact. It asks first, because the account and its balance drop out of your net worth straight away, and it offers an Undo right afterwards; either way it stays fully reversible from "View archived" - unlike the ✕ delete, which is permanent and unassigns its past expenses.</p>
-          <p><strong>Interest on savings.</strong> If an account pays interest, put the yearly rate in the same panel where you adjust the balance. From then on the app adds one month of interest each month and records it as money in, so it shows up in Recent History, in Money in and out, and in your savings rate, just like any other money arriving. Without it a savings balance quietly falls behind the real one, a little more every month.</p>
-          <p>The figure is an estimate and will not match your statement to the penny: a bank works from your average balance across the whole month and compounds on its own schedule, while the app only knows the balance it has been told about. It is the right size and the right direction, not a figure to reconcile against. Nothing is ever added for months before you set the rate, because the app has no record of what the balance was back then. Each month added is an ordinary row you can undo, and if you would rather record interest by hand, leave the rate blank. Only accounts that really pay a stated rate offer this, so you will not see it on an investment or retirement account, where growth comes from the market rather than a rate, or on a certificate of deposit, where the term sets the interest.</p>
-          <p><strong>Overdrafts.</strong> By default a balance cannot go below zero: spending more than an account holds is refused. Real current accounts do go negative though, so if yours has an overdraft you can say how big it is, in the same panel where you adjust the balance. After that the account is allowed to go that far below zero and shows as <em>Overdrawn</em> in red, exactly as your real statement would. Going past the overdraft is still refused, the way a bank declines.</p>
-          <p>Setting an allowance does not create money or add anything to your balance - it only changes how far down the balance is allowed to go. Nothing charges you an overdraft fee automatically either; if your bank charges one, record it yourself like any other expense. Being overdrawn lowers your net worth, because it is money you owe. Only accounts that really have overdrafts offer this: you will not see it on cash, a certificate of deposit, a prepaid card or an investment account, because none of those can go below zero in real life.</p>
-          <p>Each account type shows its real-world <strong>opening requirement</strong> under the type picker - most need you to be 18, but plenty don't, and a few work differently than people expect. An IRA has no minimum age at all (it needs earned income instead, so a teenager with a job can hold one); a custodial UTMA/UGMA works the other way around, where the <em>beneficiary</em> has to be a minor; and 401(k)-style minimums are set by the employer's plan rather than by law. If your profile's birth year suggests you'd be under the usual age, the app asks you to confirm rather than refusing - it records accounts you already have, so a custodial account, a joint account, or one opened years ago all need to go in. With no birth year saved, it never asks at all.</p>
-          <p><strong>Transfer</strong> (button next to "+ Add") moves money between two of your own accounts - Checking to Savings, for example. Only accounts with a real balance behind them can be picked (not a credit card or loan - moving money onto a card is paying it down, which stays on the Pay flow in Things you owe, below). Shows up in Recent History as a single undoable entry, and reduces the "from" account's balance the moment it's confirmed the same way any other spending does.</p>
+          <p>Your payment methods. Accounts are not counted in net worth themselves; the balance behind each one is, under Things you have.</p>
+          <p>Tap any circle to correct its balance, set a savings interest rate, or allow an overdraft. Interest added this way is an estimate and will not match your statement exactly.</p>
+          <p><strong>Transfer</strong> moves money between two of your own accounts.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-assets">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-assets-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Things you have</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-assets-body">
-          <p>Everything you own that counts toward net worth - not just accounts. "+ Add" under it covers standalone things with no linked account: an Investment, Property, Vehicle, a retirement account you're tracking on its own, or any of roughly fifty specific types (brokerage, 401(k)/Roth/Traditional variants, HSA, crypto, and more). A Vehicle gets an optional estimate of what it loses each year (purchase price, date, and a yearly percentage) instead of you updating its value by hand. An investment-flavored asset gets an optional record of what you paid and which group it belongs to, both used on the Investments page; adding a ticker/symbol and quantity here also lets the app price it automatically from the live market feed, so you never update that value by hand. That symbol box takes a company name too - type "costco" and pick the match rather than remembering it is COST.</p>
-          <p><strong>Investments appear here as a single "Investments" line</strong>, not one row per account, and its figure is the same total the Investments page shows at the top - the two are calculated the same way and cannot drift apart. Tap the line to go straight to that page, where the per-account and per-ticker detail lives. Keeping it to one line here is deliberate: investments have a whole page of their own, and listing every brokerage and retirement account again on this page split the same information across two places.</p>
-          <p>A CD's maturity date shows an upcoming-renewal reminder here once it's within 30 days. Any manually-priced asset (no live feed) that hasn't been touched in 6+ months gets a gentle "this might be stale" notice, just as a reminder to check it's still accurate - nothing changes automatically.</p>
+          <p>Everything you own that counts toward net worth. Use "+ Add" for things with no account behind them, like a car or a house.</p>
+          <p>Investments appear as one combined line. The Investments page breaks them down.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-liabilities">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-liabilities-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Things you owe</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-liabilities-body">
-          <p>Tracked debt only, split into two groups: <strong>Cards and credit</strong> are the automatic ones tied to a credit-type Account above (their balance moves only through real charges/payments, or a manual correction - see below); <strong>Loans and everything else</strong> are standalone ones you add directly here (Loan, Mortgage, or a specific type like a HELOC or student loan) with no linked account.</p>
-          <p>"Pay" on any liability moves money from a linked asset/account you pick straight to paying it down. The balance can also be corrected directly - set it to an exact figure, or add a specific charge - which is useful when the real statement doesn't quite match what got logged (a fee, a late-arriving charge, a refund); every one of these corrections is written to Recent History as an undoable entry, so nothing changes the amount owed silently. A payment larger than the balance is refused rather than accepted and floored at zero, the same way a real card rejects an overpayment - the app has no concept of a credit balance to hold the difference in, so the extra would simply vanish from the funding account.</p>
-          <p>"Edit details" (small link under any liability) opens interest rate, minimum payment, and due date for any liability, plus type-specific fields: a credit limit for a card/HELOC/line of credit; statement-cycle fields (which day the statement closes, which day payment is due, the last statement balance and date) for a real revolving card, which power a paid-in-full / carrying-a-balance / missed-minimum indicator - paying the statement balance in full by the due date means no interest at all, carrying any of it accrues interest even if every payment was on time, and paying only the minimum avoids a late fee but not the interest. For a card with a rate and both statement days set, interest is added to what you owe automatically once each due date passes: nothing if the statement balance was paid in full by then, otherwise the unpaid part times the rate divided by 12. The statement balance is worked out from the charges and payments you have logged, or taken from the one you type in if it is for that statement. It is an estimate, because a real card works from your average daily balance, so your statement is the exact figure. It only starts from the day you set it up and never charges for earlier cycles. For a loan (a mortgage, car, student or personal loan, or a HELOC) with a rate set, a month of interest is added to what you owe automatically each month and shows in Recent History as an undoable entry. It is an estimate, so your lender's statement is the exact figure, and it starts from the day you set the rate rather than charging for earlier months. A HELOC additionally gets a draw-period-end date.</p>
-          <p><strong>Setting a credit limit does two things.</strong> It adds a plain utilization line ("$X of $Y used") to the liability, deliberately with no "aim for under 30%" advice attached - just the math. And it becomes a real ceiling: once a limit is set, a new expense, subscription renewal or edit that would push the balance past it is refused with a message telling you how much room is left, the same way a real card declines. Pay the balance down and the room comes back.</p>
-          <p>One deliberate exception: correcting the amount owed by hand is never blocked, because a real balance genuinely can exceed its limit through an over-limit fee, interest, or the bank lowering your limit - if that happens you still need to be able to record the truth. If no limit is set, nothing is enforced, since a blank field means "unknown", not "zero".</p>
-          <p>A charge card and a buy-now-pay-later plan get this too, just under their own name: a charge card's field is called "Approved spending power" and a BNPL plan's is "Approved amount", since that is what the issuer actually calls the ceiling it enforces. Both stay optional - leave it blank and nothing changes.</p>
-          <p>A HELOC or line of credit stops accepting new charges once its draw period ends, the same way a real one does - only paying it down still works. This is separate from the credit-limit ceiling above and applies even with room left under the limit.</p>
+          <p>What you owe. Card balances move on their own as you spend; loans and other debts you set yourself.</p>
+          <p><strong>Pay</strong> moves money from an account straight onto a debt. <strong>Edit details</strong> holds the interest rate, minimum payment and due date.</p>
+          <p>Setting a credit limit starts refusing charges that would go over it. Correcting a balance by hand is never blocked, because a real balance can genuinely exceed its limit.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-income-sources">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-income-sources-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Income sources</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-income-sources-body">
-          <p><strong>Source</strong> and <strong>Amount</strong> are required, and so are the two pay days if you pick semimonthly. Anything still needed is outlined in red while you fill the form in, and clears as soon as you type. <strong>Next expected</strong> and <strong>Deposited into</strong> are not required, but the app can only add money for you if it knows when and where - leave either blank and the source still counts toward your yearly income, it just never records a deposit. The form says so underneath those two fields rather than letting it fail quietly.</p>
-          <p>Recurring money coming in - a paycheck, and similar. Each source records its amount, how often it arrives, which account it's deposited into, when the next one's expected, and an Active checkbox, then logs itself automatically once it comes due, the same way a bill charge does. You can pick every week, every 2 weeks, twice a month (two fixed pay days, like the 1st and 15th - not just "every ~15 days," which would slowly drift off your real payday), every month, once a year, or just once. A one-time source turns itself inactive right after it's logged, so it never logs twice.</p>
-          <p>Only accounts with a real balance behind them can be picked as the deposit account - not a credit card or loan, the same restriction Transfer uses above and for the same reason. Each deposit shows up in Recent History as "Income received," undoable like any other entry there.</p>
-          <p>The <strong>Income / yr</strong> tile at the top of this page annualizes every active recurring source. It reads <strong>$0</strong> until you add one, with a line underneath saying whether that's because nothing is recorded yet or because your only source is one-time - a one-time deposit isn't a yearly rate, so it deliberately isn't counted toward the total. This figure is also what the app checks against the two account types where income is a real legal requirement (see Accounts above).</p>
+          <p>Money coming in regularly, like a paycheck. Each source records how much, how often, and which account it lands in.</p>
+          <p>The app adds it for you when it is due. Source and Amount are needed; anything still missing turns red.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-monthly-total-yearly">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-monthly-total-yearly-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Monthly total / Yearly</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-monthly-total-yearly-body">
-          <p>The sum of every <em>active</em> subscription/bill's amount, normalized to a month and a year regardless of each one's own billing cycle (a $120/year plan counts as $10/month here). This is a forecast based on what you've entered, not a count of real charges - a charge only becomes real, dated spending once you use Mark as paid (see below) or it shows up through Quick Add/CSV import like any other expense.</p>
+          <p>What all your active subscriptions and bills add up to, shown per month and per year whatever each one is billed at.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-recurring-expenses-found">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-recurring-expenses-found-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Recurring expenses found</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-recurring-expenses-found-body">
-          <p>Only shown when your expense history has a pattern that looks like a bill (the same merchant, a similar amount, roughly the same interval). Tap one to start tracking it here as a real subscription/bill instead of just a repeating expense - nothing is created automatically without you tapping it.</p>
+          <p>Shown when your spending has a pattern that looks like a bill you have not added yet. Tap one to add it, already filled in.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-savings-found">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-savings-found-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Savings found</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-savings-found-body">
-          <p>Compares what you're paying against a small built-in catalog of plan types (student, military, family-plan, and similar eligible pricing) using your Profile's deal-eligibility fields (military/student/first-responder status, and so on) - fill those in on the Log page's Profile modal to get real matches here. The total next to the card title is what these checked plans would save you over a year.</p>
-          <p><strong>Found online, not verified</strong> is a second part inside this same card, kept visually separate because it is a different level of trust. Everything above it comes from that checked list; everything in it was found automatically by a background search and nobody has confirmed it. It appears only when there is actually something to show, and its savings are deliberately left out of the total at the top of the card, which only ever counts plans the app can stand behind.</p>
-          <p>An optional feature: a background weekly search looks for live subscription pricing and writes candidate findings there, clearly labeled unverified with a link to check the source before you trust it - nothing is ever applied automatically.</p>
-          <p>You see <strong>at most one row per subscription</strong>: the cheapest thing found, and only when it genuinely costs less than what you already pay. The search often turns up the same plan several times from different pages, and it also finds prices that are the same as or higher than yours - none of that is a saving, so none of it is shown. Each row states the new monthly price against what you pay now and what that adds up to over a year.</p>
-          <p>If the source page advertises a <strong>free trial</strong>, that is called out on its own line ("3 months free first, then $6.99/mo"), because the headline price on those pages is what you pay <em>after</em> the trial ends, not now. Below it, "From the page" quotes the actual text the price was read out of, so every number here can be traced to something you can go and read yourself using the source link. A trial can only be shown when the page text was captured, which is not the case for every finding - so treat a row with no trial line as "not stated here" rather than "no trial exists", and check the source.</p>
-          <p>A small "Last updated" line shows how recently the search last ran. If that run only partly finished, a short grey note underneath says so, so a thin-looking list has an explanation rather than leaving you guessing. It is deliberately quiet: these background searches are best-effort and a partial run is ordinary, not a fault.</p>
+          <p>Cheaper plans you might qualify for, based on what your Profile says about you.</p>
+          <p><strong>Found online, not verified</strong> underneath is different: a background search found it, nobody has checked it. You get at most one row per subscription, and only when it beats what you pay now.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-add-edit-a-subscription-or-bill">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-add-edit-a-subscription-or-bill-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Add / edit a subscription or bill</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-add-edit-a-subscription-or-bill-body">
-          <p>"+ Add" (top right, or at the bottom of the full list) opens a form: service name, a free-typed category (with suggestions from common ones, but you can type your own), amount, how often you are charged (every month, every 3 months, every 6 months, once a year, or something else), next renewal date, which account it's paid from, an Active checkbox (inactive ones drop out of the Monthly/Yearly totals and upcoming renewals), an Essential checkbox (something you need, versus something that is just nice to have - recorded for your own reference), and notes.</p>
-          <p><strong>Mark as paid</strong> (only shown once the subscription has an account linked and has been saved) logs today's date as a real, dated expense against that account - the exact same effect on your balances as typing it into Quick Add - and automatically rolls the next-renewal date forward by one billing cycle. Use it the day you're actually charged, not when you first set the subscription up.</p>
+          <p>Records something that bills you regularly: the amount, how often, and when it renews next.</p>
+          <p><strong>Mark as paid</strong> logs it as a real expense today and moves the renewal on.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-upcoming-renewals-all-subscriptions">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-upcoming-renewals-all-subscriptions-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Upcoming renewals / All subscriptions</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-upcoming-renewals-all-subscriptions-body">
-          <p>Upcoming renewals lists anything due in the next 30 days, for a quick glance - it's read-only here, tap the full list below to actually edit one. All subscriptions/bills is the complete list, active and inactive both; tap any row to open it back in the edit form above.</p>
+          <p>What is due in the next 30 days, for a glance. Tap the full list below to change anything.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-profile-top-right">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-profile-top-right-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Profile (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-profile-top-right-body">
-          <p>Account security is at the top: your sign-in email (read-only) and a place to set or change your password - this is what actually keeps an installed home-screen icon signed in (a magic-link email always opens in regular Safari, which an installed icon can't reach). Appearance sits below that: two choices, Dark or Light. The app opens in Dark, and whichever you pick is remembered on this device only, so choosing Light on your phone does not change it on a computer. Below that, two optional groups: deal-eligibility details (military/student/first-responder status, and so on) used to match you against real subscription discounts on the Log page's Bills tab, and financial-context details (housing, employment, household size, goals) used only to give the Reports page's "Ask about your spending" feature something real to reason about - neither group is used anywhere else.</p>
-          <p><strong>Getting your history in and out.</strong> Two buttons at the bottom save a copy to your device, and both ask you to confirm first, because the file they write is readable by anyone who can open it - only do it on a device you trust. <strong>Download a copy of my data</strong> writes everything as one file: balances, every transaction, and this profile. <strong>Download all my spending as a spreadsheet</strong> writes just your transactions, in the same format the app's own Import CSV reads back, so you can move a long history between devices without retyping it.</p>
-          <p>To bring history in, use <strong>Import CSV</strong> under Quick Add on the Log page. It reads a spreadsheet exported from a bank or another app: <strong>.csv</strong>, tab-separated <strong>.tsv</strong> or <strong>.txt</strong>, and Excel <strong>.xlsx</strong> and <strong>.xls</strong> files directly, with no need to convert them first. It works out which columns are which, and lets you check everything before anything is saved. It handles money going out and money coming in from the same file. If an Excel workbook has more than one tab, it asks which one holds your transactions rather than guessing - bank exports often put a summary or a disclosures page first, and reading that as if it were your history would produce nonsense.</p>
+          <p>Your sign-in email and password, a few details that unlock cheaper plans, and some optional context the Q&A can use.</p>
+          <p>The two buttons at the bottom save a copy of your data to your device. Both ask first, because the file is readable by anyone who opens it.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-using-this-app-without-a-mouse">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-using-this-app-without-a-mouse-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Getting around, and what happens when something goes wrong</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-using-this-app-without-a-mouse-body">
-          <p>Everything here works without a mouse. Tab moves between things, Enter or Space activates whatever is focused, and the thing you are on always has a visible outline so you can see where you are. That includes the small delete crosses, which used to be reachable only by tapping.</p>
-          <p>Any box that opens over the page - a confirmation, Profile, Import CSV, Help - can be closed three ways: its Close button, the Escape key, or tapping the dimmed area outside it. While one is open the page behind it is inactive, so you cannot lose your place in it, and closing it puts you back exactly where you were.</p>
-          <p>If a list fails to load, you get a red box saying so with a <strong>Try again</strong> button, rather than an empty space. That matters because an empty space looks the same as having no data, which would send you looking for the wrong problem. Anything the app tells you in the small message at the bottom of the screen is also read out by screen readers, and a rejected field is outlined in red with the reason written next to it.</p>
+          <p>Everything works without a mouse. Tab moves, Enter or Space activates, and whatever you are on has a visible outline.</p>
+          <p>Anything that opens over the page closes with its Close button, the Escape key, or a tap outside it.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-export-log">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-log-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-log-body">
-          <p>Saves everything on this page as a spreadsheet: every purchase you have written down, every other money movement, your subscriptions and bills, your income sources, your net worth with the two totals behind it, and your accounts with what you own and owe. It is written in the same format Import CSV reads back, so you can move a whole history onto another device without retyping it.</p>
-          <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
+          <p>Saves this page as a spreadsheet: your purchases, other money movements, subscriptions, income, accounts and net worth.</p>
+          <p>It asks which file type first. Spreadsheet (.csv) opens anywhere.</p>
+          
           </div>
         </div>
       </div>
@@ -3211,7 +3200,7 @@
             <text x="40" y="166" fill="var(--text)" font-size="14">Cash flow forecast</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Everything on this page is about what happens <em>next</em>, which is what separates it from Reports: a limit you are setting, an order you are weighing up, and a balance projected forward. Nothing here changes any of your balances on its own. Subscriptions and bills used to be this tab and now live under Log, with the rest of your spending.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 var(--sp-4)">This page is about what happens <em>next</em>, where Reports is about what already happened. Nothing here changes a balance on its own.</p>
 
 
 
@@ -3221,49 +3210,46 @@
         <div class="help-topic" id="helpTopic-safe-to-spend">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-safe-to-spend-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Safe to spend</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-safe-to-spend-body">
-          <p>What's left in the categories you've set a monthly limit for below, minus two things you've already committed to: any subscription or bill due before the month ends that hasn't been charged yet, and whatever you still need to set aside this month for the things you're saving up for. It's a narrower number on purpose - a category with no limit set isn't part of it at all.</p>
-          <p>Going over on one category <em>does</em> make this number smaller, and the card says so in words underneath. If you've budgeted $300 in total and spent $290, what's left is $10, not $60 - pretending the overspend didn't happen would tell you it's safe to spend money you no longer have.</p>
-          <p>If it shows a negative number, that means what's already coming due this month adds up to more than you have left. It's shown as a real number, not hidden, because it's telling you something worth knowing.</p>
-          <p>This card doesn't appear until you've set at least one budget below.</p>
+          <p>What is left across the categories you have set a limit for, after taking off bills due before month end and anything you are setting aside.</p>
+          <p>Going over on one category makes this smaller, and the card says so. A negative number is real, not an error.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-saving-up-for-something">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-saving-up-for-something-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Saving up for something</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-saving-up-for-something-body">
-          <p>Some costs don't arrive every month, so a monthly budget never sees them coming: car registration once a year, an insurance premium, a holiday season, a trip. When one lands it can look like a disastrous month even though you always knew it was coming.</p>
-          <p>Add it here with the total you'll need and the date you'll need it by, and the app divides one by the other: "$150 a month to be ready by 2026-11-01". Set aside a bit each month and the bill is already covered when it turns up. If you don't give it a date, the app just tracks your progress and doesn't invent a monthly amount, because without a deadline there's nothing to divide by.</p>
-          <p><strong>This never moves your money.</strong> "Add money" only records that you set some aside - no account is debited and nothing appears in your spending. If you genuinely moved cash into a separate savings account, record that as a transfer on the Log page as well. Deleting a goal removes the goal only; your accounts are untouched.</p>
-          <p>Whatever you still need to set aside this month is subtracted from Safe to spend above, because money you've committed to putting away isn't free to spend.</p>
+          <p>For costs that do not arrive every month, like car registration. Give the total and the date, and the app works out the monthly amount.</p>
+          <p><strong>This never moves your money.</strong> "Add money" only records that you set some aside. If you really moved it, use Transfer as well.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-budgets">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-budgets-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Budgets</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-budgets-body">
-          <p>A monthly spending limit per category. Unlike the charts on the Reports page, a budget always applies to the <em>current</em> real-world month - it doesn't follow any month picker. Once you're at 90% of a limit the bar turns amber and the figure beside it says "close to the limit"; over it, the bar turns red and it says "over". The words matter as much as the colour, so it still reads correctly if colours are hard to tell apart, and a "Budget warning" banner appears at the very top of this page (and a toast fires right at the moment a save actually crosses the line). Set a category's limit again to change it; tap the ✕ to remove it entirely.</p>
-          <p><strong>Needs, wants and savings.</strong> When you set a limit you can also tag that category as one of three things. A <em>need</em> is something with a real consequence if you don't pay it: rent, the electricity bill, medicine, the smallest payment a card or loan requires. A <em>want</em> is spending that makes life better but could stop tomorrow without anything going wrong. <em>Savings</em> is money you are deliberately putting aside, or paying off a debt with beyond the smallest payment required. Once at least one category is tagged, a small bar above the list shows how your tagged budgets divide between the three. Anything you are setting aside under "Saving up for something" is counted into savings too, since that is what it is.</p>
-          <p><strong>Underneath the bar, each of the three says how it is actually going</strong> - what you have spent so far against what you set aside for it, with a bar that fills up the same way the per-category ones below do. That is the part that tells you whether the plan is worth keeping: a bucket you go over every month is either the wrong limit or the wrong tag, and either way it is telling you something. It compares against the limit you set, never against how far through the month you are. Spending does not arrive evenly - rent lands on the first - so an "ahead of schedule" figure would be alarming and wrong for most of every month.</p>
-          <p><strong>Savings is the one that shows no spent figure</strong>, and that is deliberate rather than missing. Money you set aside under "Saving up for something" is kept as a running total rather than as dated entries, so there is no way to say how much of it went in this particular month. Printing zero would be plainly wrong for someone who did put money aside, so it says there is no figure instead. A category you tag as savings yourself does show a spent figure as normal.</p>
-          <p><strong>Leaving a category untagged is a real answer, not a blank you need to fill.</strong> Some categories honestly hold both kinds of spending at once. "Shopping" might be a winter coat or a treat; "Other" could be anything. A category with no tag is left out of the bar and its total is stated separately underneath, so the split never quietly claims to cover more of your budget than it does.</p>
-          <p><strong>The bar is a share of what you have budgeted, not of what you earn.</strong> There is a widely known rule of thumb for this called 50/30/20 - 50% needs, 30% wants, 20% savings - and there are other versions of it that assume higher fixed costs. This app will not work out a target from your income or tell you what your own split should be: what is realistic depends on where you live, what you earn and what you are already committed to, none of which it can judge for you. It shows you your own numbers and leaves the reading to you.</p>
+          <p>A monthly spending limit per category, always for the month you are in.</p>
+          <p>You can tag a category as a need, a want or savings. Untagged is a fine answer: some categories honestly hold both kinds of spending.</p>
+          <p>The bar is a share of what you budgeted, not of what you earn.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-cash-flow-forecast">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-cash-flow-forecast-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Cash flow forecast</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-cash-flow-forecast-body">
-          <p>Pick any account to see it projected forward 30 days, built only from what's actually known and scheduled: that account's active subscriptions/bills and active income sources. It deliberately does not blend in an average-spending estimate - a forecast built only from real scheduled items is honest about what it knows, rather than looking more predictive than this app can actually claim to be. A bill or paycheck due today isn't shown as a separate point (it's already reflected in the starting balance); one due tomorrow or later shows up as a change in the line on the day it's expected.</p>
-          <p><strong>Pick a credit card or a loan and the line means the opposite thing</strong>, so the sentence under the chart changes with it. For an account holding money, a bill pushes the line down. For an account you owe on, a bill charged to it pushes the line <em>up</em>, because you now owe more. The wording always says which of the two you are looking at rather than leaving you to work it out from the account name.</p>
-          <p>If nothing is scheduled on the account in the next 30 days, the line is just today's figure and it says so, rather than leaving a flat line looking like a fault.</p>
+          <p>Any account projected 30 days ahead, built only from what is actually scheduled: its bills and any income landing in it.</p>
+          <p>For a card or a loan the line means what you would owe, so a rising line is the opposite of good. The caption under the chart says which you are looking at.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-export-plan">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-plan-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-plan-body">
-          <p>Saves this page as a spreadsheet: each budget with what you have spent against it, everything you are saving up for with how much is still needed, the two payoff approaches with how long each takes and what each costs in interest, and the projected balance for whichever account the forecast is showing.</p>
-          <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
+          <p>Saves this page as a spreadsheet: your budgets and what you have spent against them, what you are saving up for, and the forecast.</p>
+          <p>It asks which file type first. Spreadsheet (.csv) opens anywhere.</p>
+          
           </div>
         </div>
       </div>
@@ -3288,84 +3274,76 @@
             <text x="40" y="342" fill="var(--text)" font-size="14">Net worth trend</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Cards appear in this order, top to bottom. The Month / Year buttons and the dropdown beside them (top right) set what most of this page shows, along with the first two of the three totals beneath it. The third total, and the last three cards, always cover your whole history instead - see below for which.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 var(--sp-4)">The Month / Year buttons at the top right set what most of this page shows. The third total and the last three cards always cover your whole history instead.</p>
 
         <div class="help-topic" id="helpTopic-month-selector-and-totals">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-month-selector-and-totals-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Month or year, and the totals</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-month-selector-and-totals-body">
-          <p>Most of this page shows whichever stretch of time you pick at the top right. Choose Month to look at one month, or Year to see a whole year at once - the dropdown then lists years instead of months, and every figure and chart covers the year. The bottom three cards are the exception, because they always cover your whole history rather than the period you picked.</p>
-          <p>Switching keeps you roughly where you were: going from a month to Year shows that month's year, and going back shows a month inside the year you were reading. Only years you actually have spending in are offered.</p>
-          <p>The three totals, each labelled with what it is: what you spent in the month you picked, how much of that was subscriptions, and a third that changes depending on what you have recorded.</p>
-          <p><strong>"Of that, subscriptions"</strong> counts only spending you have written down and filed under Subscriptions in that month. It is not the same as the total on the Log page's Bills tab, which is what those plans cost you per month whether or not a charge has been logged. If you have subscriptions set up but none of their charges recorded yet, this reads $0.00 and says so underneath, rather than looking like the two pages disagree.</p>
-          <p>Before you have added any income, that third one reads <strong>Spent in a typical month</strong> - roughly what a normal month costs you. Once the app knows about any money coming in, it switches to <strong>Left over in a typical month</strong>: what you were paid, minus what you spent. A plus means you ended the month ahead, a minus means you spent more than came in. The label always changes with it, so it is never unclear which one you are looking at.</p>
-          <p>It waits for income before showing the left-over figure on purpose. With nothing recorded on the income side, that sum would read as a loss every month and tell you something untrue - so it shows the spending figure until it can answer the better question honestly.</p>
-          <p>That tile always describes now, not the month you picked, and it averages only over months that actually have something in them. If you have one month of history, it shows that month rather than quietly dividing by more months than you have data for. The small line underneath always says what it is based on, so a figure resting on very little is obvious rather than passing as settled.</p>
-          <p>It is worth knowing this can only count what you have actually written down. If you log some purchases and not others, it will read low - the fix is logging more, or importing a file from your bank.</p>
+          <p>Pick a month or a whole year at the top right. Most of this page follows that choice.</p>
+          <p>The three totals are what you spent, how much of that was subscriptions, and either a typical month or what you have left over once the app knows about your income.</p>
+          <p>It can only count what you have written down. Log some purchases and not others and these read low.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-ask-about-your-spending">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-ask-about-your-spending-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Ask about your spending</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-ask-about-your-spending-body">
-          <p>Ask in plain English - "how much did I spend on groceries last month", "how much did I earn in July", "what was my biggest purchase", "did I spend more in July or August". You do not need special wording, and you can use your own words for a category ("eating out", "petrol", "rent") rather than the name the app uses.</p>
-          <p><strong>Most questions are answered instantly by the app itself, with no AI involved at all.</strong> Those are labelled "Exact - counted from your own records". The figure is simply counted from what you logged, so it is exactly right, and it appears the moment you press Ask.</p>
-          <p>A harder or more open-ended question is written up by the AI assistant on your household's own machine, which takes about a minute and is labelled "AI-written from figures this app calculated". Even then <strong>the AI is never allowed to do the arithmetic</strong>: it is handed figures the app worked out, and every amount and percentage in its reply is checked back against them. If it states a number the app did not calculate, the answer is thrown away rather than shown to you. That is why an answer occasionally comes back saying it cannot answer exactly - it would rather decline than show you a figure it cannot stand behind.</p>
-          <p>It also answers only questions about <strong>your own money</strong>. Anything else gets a short note saying so, and nothing about your records is sent anywhere.</p>
-          <p>Questions can reach further back than the months held on your device: a background search looks through your older transactions for whatever relates to your question (e.g. "what did I spend on my trip in 2019") and adds just those. A line under the answer says how many older transactions were found when that happens.</p>
-          <p>If you have filled in the financial-context part of your Profile (housing, employment, household size, goals), the AI-written answers can take it into account for something like "should I pay down debt or save?". It reasons about the numbers you have entered and never recommends buying or selling an investment.</p>
-          <p>If the AI assistant is not set up, the instant answers all still work; only the longer written ones are unavailable, and it says so plainly rather than guessing.</p>
+          <p>Ask in plain English, like "how much did I spend on groceries last month".</p>
+          <p>Most answers are counted straight from your records and labelled <strong>Exact</strong>. Harder ones are written by an assistant on your own machine, take about a minute, and are labelled <strong>AI-written</strong>.</p>
+          <p>It only answers questions about your own money, and nothing about your records leaves the app.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-monthly-report">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-monthly-report-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Monthly report</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-monthly-report-body">
-          <p>A written summary generated on a schedule by a separate household server, not something you trigger from here - shows "No monthly reports yet" until that optional service has actually run at least once. The app is fully usable without it.</p>
-          <p>The three figures above the paragraph are counted directly from your records, so they are exact. The paragraph itself is AI-written from those same figures and is labelled as such, so you can always tell which is which.</p>
-          <p>Underneath, "What stood out" may list one or two things the app noticed that no chart shows: a month that came in well above your usual, or a shop whose price actually moved between charges. These are counted, never written by AI. If you added a note to a transaction explaining an unusual month ("car repair, one-off"), your own words appear here alongside it - that is the one thing the app cannot work out for itself and will not guess at. Nothing appears when nothing stood out, which is the normal case for a quiet month.</p>
+          <p>A written summary of a past month, produced on a schedule rather than when you ask.</p>
+          <p>The figures above the paragraph are counted from your records. The paragraph itself is AI-written from those same figures.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-monthly-expense-log">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-monthly-expense-log-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Expense log</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-monthly-expense-log-body">
-          <p>Every plain expense in the period you picked, whether that is a month or a whole year (not account activity like balance corrections - this list is about spending specifically). Tap one to edit or recategorize it, same as Recent History on the Log page. CSV exports the visible rows to a spreadsheet file; Print / PDF opens a clean, separate printable page you can save as a PDF from your browser's own print dialog. Both ask you to confirm first: either one puts a readable copy of your spending somewhere outside the app, which matters on a shared or borrowed device.</p>
+          <p>Every purchase in the period you picked, with its own button to save just this list.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-by-category-by-account-by-payment-type">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-by-category-by-account-by-payment-type-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Where your money went</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-by-category-by-account-by-payment-type-body">
-          <p>The selected month's spending, split three ways. The buttons switch between them: <strong>What on</strong> groups by category (food, housing, and so on), <strong>Which account</strong> groups by the card or account it came out of, and <strong>How paid</strong> groups by debit, credit or cash. Each bar has its dollar amount written on the label, so nothing needs hovering over.</p>
-          <p>These used to be three separate cards down the page. They answer the same question sliced differently, so they share one chart now and the buttons pick the slice. Whichever one you last looked at is the one you come back to.</p>
+          <p>Your spending split three ways. The buttons switch between what you bought, which account paid, and how you paid.</p>
+          
           </div>
         </div>
 
                 <div class="help-topic" id="helpTopic-budget-vs-actual">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-budget-vs-actual-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>How the month went against your budget</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-budget-vs-actual-body">
-          <p>The Budgets card on the Plan page always shows the month you are in, because a limit is something you are spending against right now. This card answers the other question: how did a month that has already finished actually turn out.</p>
-          <p><strong>It uses the limits you had at the time, not the ones you have now.</strong> The app writes down what each budget was every month, so raising a limit today never quietly makes last month look better than it was. The line under the figures says which month's limits were used.</p>
-          <p>A month with no record says so instead of guessing. That happens for any month before you started setting budgets, and for a month you never opened the app in, since the record is written when the app runs. It is left blank rather than filled in with today's limits, because that would be measuring a month against a number that did not exist yet.</p>
-          <p><strong>A whole year works too, by adding up the months that were recorded.</strong> If you only started budgeting in September, a year adds up September onward rather than pretending the earlier months had limits, and the note underneath says how many months went in. Each category is added up over its own months, so a category you started budgeting later is not charged for the months before it existed. Spending from months or categories with no budget recorded is stated separately rather than counted as going over.</p>
-          <p>One thing to keep in mind on the current year: it includes the month you are in, which is not finished. A full month's limit against a part month's spending will always look comfortable, and the note says when that is happening.</p>
-          <p>Savings shows no set-aside figure here. Money you put into "Saving up for something" is kept as a running total rather than dated, so there is no way to say how much of it went in during one particular past month.</p>
+          <p>How a past month or year actually went against the limits you had <em>at the time</em>, so raising a limit today never rewrites the past.</p>
+          <p>A month with no record says so rather than guessing. The current year includes the month you are in, which is not finished yet.</p>
+          
           </div>
         </div>
 
 <div class="help-topic" id="helpTopic-income-vs-expense">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-income-vs-expense-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Money in and out</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-income-vs-expense-body">
-          <p>Two bars for each of the last six months: green for money that came in, blue for money that went out. Income comes from whatever you have added under Income sources on the Log page, whether the app logged it automatically when it was due or you entered a deposit yourself.</p>
-          <p>Underneath, "Of what you earned this month, you kept" is the share of that month's income left after everything you spent. If you spent more than you earned it shows a negative figure, which is shown honestly rather than hidden. It stays blank for a month with no income recorded, because there is nothing to take a share of.</p>
-          <p>This card absorbed an older "Last 6 months" chart that drew only spending over exactly the same six months - the same bars without the income to compare them against, so it was strictly less useful.</p>
+          <p>Money in and money out for each of the last six months.</p>
+          <p>Underneath, the share of what you earned that you kept. It shows a minus if you spent more than came in.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-account-balance-history">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-account-balance-history-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Account balance history</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-account-balance-history-body">
-          <p>Pick any account from the dropdown to see its balance over time, reconstructed from its actual expense and activity history - not scoped to the month selector, since a balance's history spans the account's whole lifetime, not one month.</p>
+          <p>Any account&#39;s balance over time, rebuilt from its own history. Not limited to the period picked above.</p>
+          
           </div>
         </div>
 
@@ -3373,15 +3351,17 @@
         <div class="help-topic" id="helpTopic-net-worth-trend">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-net-worth-trend-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Net worth trend</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-net-worth-trend-body">
-          <p>One point per calendar day you actually had the app open (net worth is snapshotted automatically on load, at most once a day) - a day you never opened the app simply has no point, rather than a guessed value filling the gap. Also not scoped to the month selector, for the same whole-lifetime reason as the account history chart above. Needs at least two days of history before a line can be drawn at all.</p>
+          <p>One point for each day you opened the app. A day you never opened it has no point, so gaps are normal.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-export-reports">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-reports-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-reports-body">
-          <p>Saves the analysis rather than the raw list: the totals for whichever month or year you picked, the same spending split three ways (by what you bought, which account paid, and how you paid), and money in against money out across that period with how much you kept. For the underlying transactions instead, use CSV on the expense log below.</p>
-          <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
+          <p>Saves the analysis rather than the list: the totals, the three splits, and six months of money in and out.</p>
+          <p>It asks which file type first. Spreadsheet (.csv) opens anywhere.</p>
+          
           </div>
         </div>
       </div>
@@ -3413,157 +3393,134 @@
             <text x="40" y="562" fill="var(--text)" font-size="14">Your target mix</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:-10px 0 18px">Your daily health check and totals always sit at the top. Everything below is split across two tabs: <strong>Market</strong> for what the wider market did, and <strong>My portfolio</strong> for your own money. Several cards only appear once there is real data for them: the written recap at the top of Overview needs a finished trading day, "Biggest movers" needs the market-wide lookup to be set up, "Price history" needs at least one recorded price, and "Realized gain/loss" needs a sale. The list of companies all of this is built from is edited from the "Choose tracked companies" button just under the Market / My portfolio buttons.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 var(--sp-4)">Your health check and totals sit at the top. Below them, <strong>Market</strong> is the wider market and <strong>My portfolio</strong> is your own money. Some cards only appear once there is real data for them.</p>
 
         <div class="help-topic" id="helpTopic-two-tabs-and-what-s-on-each">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-two-tabs-and-what-s-on-each-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Two tabs, and what's on each</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-two-tabs-and-what-s-on-each-body">
-          <p>The page opens on <strong>Market</strong>, which is everything about the wider stock market - none of it depends on what you own. <strong>My portfolio</strong> is the opposite: only your own holdings, gains, limits and targets. The page remembers whichever tab you used last.</p>
-          <p>Above both tabs, and always visible, is your <strong>daily health check</strong> and the four totals. That's deliberate - it's the short answer to "how am I doing?", and the tabs underneath hold the detail behind it.</p>
-          <p>Within each tab, a row of smaller pill buttons switches between its individual sections - Overview, Biggest movers and Price history under Market; Holdings, Value, Realized, Limits and Target under My portfolio. Only one section shows at a time instead of a long scroll, and the page remembers the last section you had open in each tab too.</p>
-          <p><strong>Overview and Daily recap used to be two separate sections</strong> and were merged, because they answered the same question twice - each showed a count of how many tracked companies finished up, how the indexes moved, and headlines about your stocks. Overview now reads top to bottom as one piece: the day in words first, then the specific numbers behind it.</p>
-          <p>A section with nothing to show yet displays a dashed rectangle explaining why, rather than sitting blank - "No recap yet, check back after the market closes", "You haven't recorded a sale yet", and so on. Once there is something real to show, that message is replaced by the section itself.</p>
-          <p>Switching between tabs or sections <strong>never moves the page under you</strong> - whatever you were looking at stays exactly where it was on screen, even when the section you switch to is much shorter or much taller than the one you left.</p>
-          <p>Every card title has a small <strong>"i"</strong> beside it. Hovering it on a computer, or tapping it on a phone, shows a one-line explanation of what that card is and where its numbers come from. The explanations used to sit permanently under each title; they're behind the icon now so the cards lead with the actual numbers, and nothing was shortened in the move.</p>
-          <p><strong>"Choose tracked companies"</strong>, directly under the Market / My portfolio buttons, opens the list of stocks every card on the Market tab is built from. It used to be an unlabelled cog in the top corner, which gave no hint of what it did or how much depended on it.</p>
-          <p><strong>Any ticker or company name on this page can be tapped</strong> to jump straight to that symbol's own price chart and company details. That works from the recap's sources, the index list, both movers lists and your own holdings. Tapping a company from the market-wide "Biggest movers" list usually says there's no history recorded for it - that is expected, since it isn't one of your tracked companies; add it from "Choose tracked companies" and history starts building from the next background run.</p>
+          <p><strong>Market</strong> is the wider stock market and does not depend on what you own. <strong>My portfolio</strong> is only your money. The health check and totals above them stay visible on both.</p>
+          <p>Smaller buttons switch between sections within each tab. Every card has an "i" beside its title for a one-line explanation.</p>
+          <p>Tapping any ticker anywhere opens that company&#39;s price chart.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-biggest-movers-today">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-biggest-movers-today-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Biggest movers today</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-biggest-movers-today-body">
-          <p>The largest single-day moves in the <em>entire</em> US market - not just among the stocks you track. This is the one card here that can show you a company you've never heard of and don't own.</p>
-          <p>That distinction matters, because everything else on the Market tab is limited to your tracked list. The service used for prices can only answer "what is this stock worth?" for a symbol you name, never "what moved most today?" - so a separate service is used just to get that list, and then each of those tickers is looked up for its company name and any recent news.</p>
-          <p><strong>These are usually very small companies.</strong> A stock doubling or halving in a day is far more common among tiny companies than large well-known ones, and such moves often reverse just as fast. The card says so, and the summary is instructed to say so too, because a list of huge percentage gains with no context would be misleading.</p>
-          <p>Like everywhere else here, a headline is what was being <em>reported</em> around that company, not a claim about why the price moved - and a mover with no relevant news shows nothing rather than an unrelated article.</p>
+          <p>The biggest single-day moves in the whole US market, not just companies you track. This is the one card that can show you something new.</p>
+          <p>They are usually very small companies, where a big percentage move is far more common. A headline is what was being reported, not why the price moved.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-overview-part-one-the-day-in-words">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-overview-part-one-the-day-in-words-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Overview, part one: the day in words</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-overview-part-one-the-day-in-words-body">
-          <p>The top of the Overview section is a once-a-day look back at the session that just finished, written as words rather than a table of numbers. It opens with how many of the companies you track finished up, then a short written recap of the day, then the real headlines that recap was written from. Written once per trading day after the close, so it describes a completed day rather than a moving number.</p>
-          <p><strong>"What was being reported about the market today"</strong> is the part that explains the day as a whole rather than one company. Everything else here is drawn from news about the specific companies you track, which can tell you why one share price moved but never why the market moved. These are market-wide stories from the financial press, each one a real link you can open and read. They are picked by searching the day's coverage and keeping only headlines that are genuinely about the market rather than, say, a company announcement that happened to appear alongside it.</p>
-          <p>They appear whether or not the written recap below them was produced, because they need no AI at all. On a day the recap is missing, these headlines are still there. As everywhere else on this page, they are what was <em>reported</em>, not a claim about what caused any price to move.</p>
-          <p>The numbers behind it - each index's level, the day's biggest movers, the news list - sit directly underneath in the same section, so you read the plain-English version first and the specifics second without switching anywhere.</p>
-          <p>The written recap covers two things: how the market did overall, and what was actually being <em>reported</em> that day - the two or three biggest themes running through the coverage of the companies you track, rather than a headline-by-headline list. It reads far more of the day's news than just the five biggest movers' own headlines, which is what lets it describe what the day was about instead of only which stocks moved most.</p>
-          <p>Per-stock closing prices and percentages are deliberately <em>not</em> repeated on this card - they are one tap away under Biggest movers and Overview, and repeating them here would turn a written recap back into a table. What stays alongside the words are the real, clickable sources it was written from. <strong>A headline is what was being reported about that company around that day, not a statement of why the price moved.</strong> The app deliberately does not claim to know the cause of a move.</p>
-          <p>A mover with no headline shows nothing rather than something unrelated. That is on purpose: the news source often returns generic market round-ups that merely mention a ticker ("which stocks are making waves today"), and putting one of those under a specific stock's move would imply a link that isn't there. Only a headline that actually names the company is used, and the same article is never shown under two different stocks.</p>
-          <p>The numbers and headlines on this card need no AI and no live search of any kind - every figure comes from prices already recorded and every headline from news already fetched. That means they can't be affected by a daily usage limit the way the AI-written pieces elsewhere on this page can, so they should be there every trading day. A "Last updated" line shows when the recap was last built, with a warning if that run had a problem.</p>
-          <p>The recap itself is clearly labelled <strong>"AI-written"</strong>, because it is: it reads the real prices and real headlines listed on the same card and writes them up. Everything else on the card is a measured number or a real link, and you should never have to guess which is which. It is written for someone who has never invested - no jargon, plain words, rounded percentages - and that is the only mode there is.</p>
-          <p>It never recommends buying or selling, never predicts what a price will do next, and never calls anything cheap, expensive or a good opportunity. That is enforced twice: the model is told not to, and the finished text is then checked for that kind of language and thrown away if it slips through. Where a headline reports what a company itself says it plans or expects, the recap says who said it rather than repeating it as fact.</p>
-          <p>If the daily AI limit is used up, or the text is rejected for straying into advice, the card falls back to a plain sentence built from the same numbers with no AI involved - so there is always a recap to read, even on a day the AI produced nothing.</p>
+          <p>A once-a-day look back at the session that just finished, in words rather than numbers.</p>
+          <p>The recap is labelled <strong>AI-written</strong>. It never suggests buying or selling and never says what a price will do next. If it cannot be written, a plain sentence built from the same numbers takes its place.</p>
+          <p>Headlines are what was being reported that day, never a claim about why a price moved.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-price-history">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-price-history-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Price history</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-price-history-body">
-          <p>A price chart for any symbol the app has recorded, with 1M/3M/6M/1Y/Max ranges. Pick a symbol from the dropdown - it defaults to one you actually own where possible, otherwise the first tracked symbol alphabetically.</p>
-          <p><strong>The history starts short and grows.</strong> There is no free source of years of past daily prices, so rather than pretend otherwise the app records one row per symbol per trading day from the day this feature was switched on and builds the chart from that. A range button longer than the history you have simply shows everything available; it isn't broken, there just isn't more yet.</p>
-          <p>Underneath, the high and low across that recorded history. It is labelled by the real span it covers - "Range so far (5 trading days)" and so on - and only ever called a <em>52-week range</em> once a genuine year of history actually exists. Calling five days of data a 52-week high would just be untrue.</p>
-          <p>Where available, a company's name, industry, market cap, P/E and dividend yield appear below that. These come from the same market-data provider as prices; whether they're included on the free plan isn't guaranteed, so if nothing appears there, that's why - everything else on the card works regardless.</p>
+          <p>A price chart for any symbol the app has recorded, with the high and low underneath.</p>
+          <p>The history starts short and grows, because it is built from the day this was switched on. It is only called a 52-week range once there is really a year of it.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-realized-gain-loss">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-realized-gain-loss-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>What you made on sales</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-realized-gain-loss-body">
-          <p>What you actually made or lost on holdings you've <em>sold</em> - genuinely different from the gain/loss shown on the Holdings card, which is what your current positions are worth versus what you paid ("unrealized"). Shows this year and all time, and only appears once you've recorded at least one sale.</p>
-          <p>To record one, tap "Sell" on any holding with a share count. Enter the shares and price, optionally pick an account for the proceeds to land in, and the app shows exactly what will be recorded before you confirm. Selling your whole position closes it out; the holding stays in the list at zero shares so you can still see it, and you can delete it whenever you like.</p>
-          <p><strong>This uses average cost basis, and it is not a tax document.</strong> The app stores one blended cost for a whole position rather than tracking each purchase separately, so a sale removes a proportional slice of that cost. That's a real, recognised method, but it is <em>not</em> how a broker reports individual shares to you or to the tax authorities - use your broker's own figures for anything official.</p>
+          <p>What you made or lost on holdings you have <em>sold</em>, which is different from the gain shown on Holdings for what you still own.</p>
+          <p>To record one, tap <strong>Sell</strong> on a holding. This uses an average cost and is not a tax document.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-choose-tracked-companies">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-choose-tracked-companies-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Choose tracked companies</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-choose-tracked-companies-body">
-          <p>Reached from the button of that name under the Market / My portfolio buttons. This is the list every Market card is computed from: the written recap, the "X of Y up today" count, today's top movers and the price-history charts. It starts as the same 20 large caps the app previously had built in, and is now yours to change.</p>
-          <p>Add a symbol with its ticker. The optional company name is used for one specific job: deciding whether a news headline is genuinely about that company. Left blank, headline matching falls back to the ticker alone, which is a little less reliable but still works - the background job fills the name in automatically where it can.</p>
-          <p>Removing a symbol stops it being tracked from then on; prices already recorded for it are kept, so its price history doesn't disappear. New symbols get their first prices on the next background run rather than instantly.</p>
-          <p><strong>The order is yours to set.</strong> The list used to be alphabetical with no way to change it, so the handful of companies you actually care about sat wherever the alphabet put them. Drag a row by the handle on its left to move it, or tap that handle and use the up and down arrow keys - both work, and the arrow keys are the quicker way to move something a long distance. After a drag the handle keeps the keyboard focus, so you can drag roughly and then nudge it into place. Each move saves on its own, so there is nothing to confirm. Anything newly added, including a stock added automatically because you bought it, goes to the bottom rather than pushing your own order around.</p>
-          <p>The order changes where a symbol appears in this list. It deliberately does <em>not</em> reorder "Today's top movers" on the Market tab - that list is ranked by the size of the day's move, and putting a favourite at the top of it would make the heading untrue.</p>
+          <p>The list every Market card is built from. Add a symbol by its ticker or company name.</p>
+          <p>Drag a row by its handle to reorder it, or tap the handle and use the arrow keys. Anything you own is added for you.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-overview-part-two-the-numbers-behind-it">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-overview-part-two-the-numbers-behind-it-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Overview, part two: the numbers behind it</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-overview-part-two-the-numbers-behind-it-body">
-          <p>Directly below the written recap, in the same section: today's level and day-over-day change for a handful of major US indexes (S&P 500, Dow Jones, NASDAQ Composite, Russell 2000) - genuinely separate from your own holdings below, this is broad market context, not anything you own. Hidden entirely until an index has actually been found once; even then, an individual index's own exact level can show "not available yet" until its slower weekly search has landed - see below for the "Live via" line that fills the gap in the meantime.</p>
-          <p>Below the indexes, "Today's top movers" ranks the biggest day-over-day price swings (up or down) among the companies you track, each with a short plain-English explanation of why it moved when one's been found. That list starts as 20 well-known large caps and is yours to edit from "Choose tracked companies" - anything you own is added to it automatically. This is informational only, and only ever covers symbols on that list - it is not a scan of the whole market (the "Biggest movers" section is the one that does that), and never a suggestion of what to buy or sell. It appears independently of the indexes above it, so it's possible to see one without the other depending on what's been found so far.</p>
-          <p>A live count of how many tracked companies are up ("Right now: 14 of 20 tracked large-caps up") appears here <em>while the market is open</em>, when it genuinely differs from the recap's own count at the last close. Once the market closes, that line disappears rather than repeating the headline a few centimetres above it - if there's no recap yet, it stays on, since then it's the only count there is.</p>
-          <p>Two different refresh speeds feed this card, and separate lines tell you apart which is which. Real stock prices (your own tracked tickers below, and the movers list here) come straight from a live market-data API with no search step involved, refreshed every 15 minutes - "Prices as of" reflects that directly, both under the movers list and here under the indexes. While this page is open it goes and gets fresh prices itself, about once a minute, straight from the market-data API rather than waiting on the background job - so a window (or an installed home-screen icon) left open all day keeps showing current numbers without you reloading anything, and prices keep updating even when the machine that runs the background searches is switched off. Today's change is measured against the official previous close that comes back with each price, not against whatever the background job last recorded. Outside regular US market hours that same line reads "Market closed" instead and stops flagging the age as a problem, because the last close genuinely is the latest price there is until the next open. Each index also gets a "Live via [ticker]" line the same way - a closely-tracking, highly liquid ETF (SPY for the S&P 500, DIA for the Dow, QQQ for the NASDAQ-100 specifically rather than the full Composite, IWM for the Russell 2000) priced on that same fast, no-search pipeline, since a live feed for the exact raw index point isn't freely available. The index's own exact level shown above that line, mover explanations, and today's market news below all go through a slower, genuinely web-searched pipeline that only runs weekly instead - the separate "Last updated" line reflects that pipeline specifically. If that weekly run only partly finished, a short grey note underneath says so, so a missing index level has an explanation. It stays quiet on purpose - a partial run is the ordinary state of a best-effort background job, and the live prices above it are unaffected. The signal worth watching is the "Prices as of" line, which colours itself only when the real prices actually go stale.</p>
-          <p>A real, clickable recent headline (with its source) can also appear under a tracked stock or mover - genuine news, not an AI summary, refreshed roughly hourly on the same fast pipeline as prices. The separate explanation line above it (when present) is still the slower weekly AI-written "why it moved" read - the two can disagree slightly in timing since one refreshes far more often than the other, and that's expected, not a bug.</p>
-          <p>The bold line at the top ("X of Y tracked large-caps up today") is a plain count, not an AI's read of the market's mood - it's tallying the same real, already-shown prices below it, so it updates every 15 minutes with no dependency on anything that can run out for the day. Colored green or red only when there's a genuine majority one way or the other, gray when it's roughly split.</p>
-          <p>Below the movers, "News from your tracked stocks" shows up to 5 recent headlines about the companies on your tracked list, each tappable through to the original source, one per company so several are represented rather than five about the same stock.</p>
-          <p>It is deliberately scoped to <em>your tracked companies</em> rather than the market at large. A general market-news feed was tried and didn't work: the available free feed mixes finance in with world news and lifestyle, and neither filtering by news outlet nor by the provider's own tagging separated them reliably - it returned things like a royal photo feature and a basketball team sale alongside genuine market stories. Headlines about a specific company you track are something the data can actually guarantee, so that is what the card claims.</p>
-          <p>An overall sentiment (Bullish/Neutral/Bearish) with a one-line reason may appear above the headlines. That part is AI-written and optional - if the daily limit is used up it simply says "Today's headlines" with a neutral marker instead, and the headlines themselves are unaffected. It is a summary of coverage, never a prediction and never a recommendation to buy or sell.</p>
+          <p>The numbers behind the recap: today&#39;s level for the major indexes, the biggest moves among companies you track, and recent headlines about them.</p>
+          <p>Prices refresh every few minutes while the market is open; the index figures and any written explanation refresh far less often. A line on each says how fresh it is.</p>
+          <p>The count at the top is a plain tally, not an AI&#39;s read of the mood.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-daily-health-check">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-daily-health-check-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Daily health check</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-daily-health-check-body">
-          <p>A short, plain-English compilation of numbers already shown elsewhere on this page - never a made-up score. Up to five lines, each only shown when there's something real to say: today's dollar change (or a note that no live pricing exists yet), total gain or loss since cost basis, the single furthest-off-target allocation bucket (only if you've set targets), a flag if any contribution group is over or close to its annual limit (only if you're tracking one), and how many of your holdings currently have a live price. A small colored dot on each line is green for good, red for something worth a look, gray for "no data yet" - and a compact recent-trend chart sits right below it.</p>
-          <p>The four stat tiles under it (Total value, Total gain/loss, Today's change, What you paid) are the same underlying numbers, just as plain totals - Today's change specifically needs at least two days of live price history before it can show anything.</p>
+          <p>A few plain sentences pulling together numbers already shown further down. Never a made-up score, and a line is left out if there is nothing real behind it.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-todays-note">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-todays-note-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Today's note</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-todays-note-body">
-          <p>A short written note about how the things you own did on the last day the market was open. It appears once the market has closed and you open the app; a day you don't open it after the close simply has no note, the same way the value chart below has no point for that day.</p>
-          <p>Every figure in it is worked out by this app from your own holdings, the same numbers the Holdings card shows. The wording around them is written by a model running on your own machine, and nothing about what you own is ever sent to an outside service. If that model is not set up, or it writes something that doesn't match the figures, the note keeps the numbers and drops the wording.</p>
-          <p>It describes what happened and stops there. It will never suggest buying, selling or changing anything, and never says what a price will do next.</p>
+          <p>A short note on how the things you own did on the last day the market was open.</p>
+          <p>Every figure is worked out by this app; only the wording is written for you, on your own machine. It never suggests buying or selling.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-value-over-time">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-value-over-time-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Value over time</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-value-over-time-body">
-          <p>One point per calendar day you had the app open, same snapshot approach as the Reports page's net worth trend - needs at least two days of history before a line appears.</p>
+          <p>One point for each day you opened the app. It needs two days before a line appears.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-holdings">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-holdings-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Holdings</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-holdings-body">
-          <p><strong>Each row reads left to right:</strong> its short name and what you hold, a small picture of how its price has moved over the last month, then what your holding is worth now and how much it moved today. The small coloured tag is the day's move only - not what you have made or lost overall. A holding with no recorded price change yet says so rather than showing a flat 0%, because those are different things. Tap a row to open what you have made or lost on it, and the Sell and Dividend buttons.</p>
-          <p><strong>You can put them in whatever order you like.</strong> Drag a row by the handle on its left, or tap that handle and use the up and down arrow keys. The order is saved as you go and is yours alone - it changes nothing about what anything is worth, and nothing else on this page is ranked by it. Rows stay inside their own account: a holding cannot be dragged from one account into another, because which account holds it is a real fact rather than a display choice. A single holding in an account has no handle, since there is nowhere for it to move.</p>
-          <p><strong>Dividends.</strong> Selling at a profit is only one of the two ways shares pay you; the other is a dividend, money a company hands to its shareholders while you still hold it. Tap <em>Dividend</em> on a holding to record one. It is money in, so it shows in Recent History and counts in Money in and out and your savings rate, and it is filed against the holding that paid it.</p>
-          <p>The holding itself is deliberately left alone, because a cash dividend does not change how many shares you own or what you paid for them. If yours was automatically reinvested into more shares instead of paid out as cash, nothing arrived in your bank, so record that by adding to the holding rather than here.</p>
-          <p>Every investment-type asset, grouped by account: a plain account (like a 401(k) with no per-ticker detail) shows just its own value, while "+ Add stock" lets you record the actual tickers/coins bought inside any eligible account (Brokerage, IRA, crypto, and similar) - modeled after a real trade ticket: ticker, shares, and price per share, with the total cost shown live as you type. A ticker you type is checked against a large built-in list; a genuine miss offers an "add it anyway" confirmation rather than blocking you.</p>
-          <p><strong>You can type a company's name instead of its ticker.</strong> Start typing "costco" or "deckers" and matching companies appear underneath with their symbol; pick one with the mouse or with the arrow keys and Enter. Around four hundred well-known names are built in and answer instantly even offline, and the full list of every company registered with the SEC (about ten thousand) loads in the background the first time you use one of these fields. It is only ever a shortcut: any real ticker can still be typed in by hand, whether or not it is suggested.</p>
-          <p>Two entry modes, a toggle at the top of the form. "Already own this" (the default) is for recording an existing position: type shares and the price you actually paid, and price per share fills in as a courtesy default once a recent price is known for the ticker (edit it if you paid something else - this isn't a live quote). "Buying now" is for a purchase happening right now: it looks up a genuinely real-time price for the ticker, then lets you enter either the number of shares to buy or a dollar amount to invest, computing the other one for you at that live price - a dollar amount can land on a fractional number of shares, the same way a real dollar-based brokerage order can. If no live price is available for a ticker (unrecognized symbol, a lookup problem), the form falls back to the same manual price-per-share entry "Already own this" uses, so it's never a dead end. Either way, once a symbol has a price, shares x price is what actually shows as the holding's value, gain/loss, a day-change figure, and sometimes a short note on why the price moved.</p>
-          <p>"Paid from (optional)" lets you fund the purchase from a real account (Checking, Savings, Cash, and similar) - if you pick one, the amount is checked against and deducted from that account's actual balance, the same way any other spending is, and shows up in Recent History as an undoable entry. It only ever applies to money actually being added (a brand new holding, or increasing shares/price on one you already have) - editing a holding down never touches a funding account, since there's no way to tell a correction apart from a real partial sale. Leave it on "None" to record a holding without tracking where the money came from.</p>
-          <p><strong>Buying inside a retirement account counts as putting money into it.</strong> For an account with a yearly limit (an IRA, a 401(k) and the like), what you spend on a holding is added to that year's total on its own, and a purchase that would take you past the limit is refused with a message saying how much is actually left. There is nothing to type in and nothing to remember, which is the point: a figure you have to keep updating yourself is only ever as accurate as your memory, and it is not something to turn a purchase down over.</p>
-          <p>Money moved in from another retirement account is a <em>rollover</em>, not a new contribution, and does not count against your year. The app cannot tell one from the other, so it counts it. If that happens, open Recent History on the Log page and undo the contribution line: it comes back out of the year's total and the holding stays exactly where it is.</p>
-          <p>"Log contribution" is still offered on accounts with <em>no</em> yearly limit, like a plain brokerage account, where nothing is measured against it.</p>
+          <p>Everything you own, grouped by account. Each row shows what you hold, its recent shape, what it is worth and today&#39;s move.</p>
+          <p>Drag a row by its handle to reorder it, or tap the handle and use the arrow keys. That only changes the order you see.</p>
+          <p><strong>+ Add stock</strong> records a holding. You can type a company name instead of a ticker, and optionally pay for it from a real account.</p>
+          <p>Buying inside an account with a yearly limit counts towards that limit on its own, and a purchase that would go over is refused. Money moved in from another retirement account is a rollover and should not count: undo that line in Recent History if it happens.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-contribution-limits">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-contribution-limits-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>How much more you can put in</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-contribution-limits-body">
-          <p>Only appears if you have at least one account type this app tracks a clean annual IRS limit for (like a 401(k) or an IRA). A bar per group shows what has gone in this year against the limit, and underneath it, how much can still go in. It turns red once you are over.</p>
-          <p>The total is worked out from what you have actually bought inside those accounts this year, not from anything you type. A Traditional and a Roth IRA share one limit between them; a 401(k) and a 457(b) look similar but each get their own.</p>
-          <p>These are base figures only: no catch-up amounts for being older, no income phase-outs, no filing status. Treat them as a reference, not a substitute for checking your real numbers with whoever holds the account.</p>
+          <p>How much you have put into each kind of retirement account this year, and how much can still go in.</p>
+          <p>The total comes from what you actually bought inside those accounts. A Traditional and a Roth IRA share one limit; a 401(k) and a 457(b) each get their own.</p>
+          <p>These are base figures only, for reference. Check your real numbers with whoever holds the account.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-target-allocation">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-target-allocation-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Your target mix</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-target-allocation-body">
-          <p>A calculator, not advice: set a risk label for your own reference (it isn't used in any calculation) and a target percentage for each bucket (Stocks, Bonds, Cash, Crypto, Real Estate, Other) that you've tagged your assets/holdings with. It only ever shows your current percentage against that target and the dollar gap between them - it never tells you what to actually buy or sell, and never will.</p>
+          <p>A calculator, not advice. Set a target percentage for each kind of investment and it shows how far off you are, in dollars and percent. It never says what to buy.</p>
+          
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-export-invest">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-invest-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-invest-body">
-          <p>Saves your investments as a spreadsheet: the totals, every holding with its cost and current value, what the whole lot was worth on each day you opened the app, anything you have sold and what you made on it, contribution limits for the year, and how your mix compares with your target. It never contains a suggestion about what to buy or sell, because this app does not make them.</p>
-          <p>It asks which file type you want first, like everything here that puts a copy of your money outside the app. <strong>Spreadsheet (.csv)</strong> opens anywhere. <strong>Excel workbook (.xlsx)</strong> puts each part of the page on its own tab, which is easier to read when a page has several tables. <strong>Data file (.json)</strong> is for feeding into another program.</p>
+          <p>Saves your investments as a spreadsheet: the totals, every holding, what you have sold, and your target mix.</p>
+          <p>It asks which file type first. Spreadsheet (.csv) opens anywhere.</p>
+          
           </div>
         </div>
       </div>
@@ -3608,9 +3565,9 @@
        rather than a default. -->
   <div id="feedbackModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle">
     <div class="sheet">
-      <div class="topbar"><strong id="feedbackTitle">Send feedback</strong><button class="secondary" id="feedbackClose" style="width:auto;padding:6px 12px">Close</button></div>
+      <div class="topbar"><strong id="feedbackTitle">Send feedback</strong><button class="secondary btn-sm" id="feedbackClose">Close</button></div>
 
-      <p class="muted text-xs" style="margin:4px 0 8px">Tell us what is broken, what is confusing, or what you wish the app did. Everything you send is read and worked through one at a time, and any reply shows up here.</p>
+      <p class="muted text-xs" style="margin:4px 0 8px">Tell us what is broken or what you wish the app did. Every message is read, and replies show up here.</p>
 
       <label for="feedbackKind">What is this about</label>
       <select id="feedbackKind">
@@ -3621,11 +3578,10 @@
       </select>
 
       <label for="feedbackMessage">What happened, or what would you like</label>
-      <textarea id="feedbackMessage" rows="5" maxlength="2000" placeholder="The more detail the better - what you tapped, what you expected, and what happened instead."></textarea>
+      <textarea id="feedbackMessage" rows="5" maxlength="2000" placeholder="What you tapped, what you expected, and what happened instead."></textarea>
       <p class="muted text-xs stack-1"><span id="feedbackCharsLeft">2000</span> characters left</p>
 
-      <p class="muted text-xs stack-2">Sent with your message: which page you were on, and which browser you are using, so a problem that only happens on one device can be traced. <strong>Nothing about your money is attached</strong> - no balances, accounts or transactions. If a figure matters, type it in yourself.</p>
-      <p class="muted text-xs stack-1">Once sent, a message cannot be edited or taken back, so it does not disappear from the queue halfway through being fixed.</p>
+      <p class="muted text-xs stack-2">Sent with it: the page you were on and your browser. <strong>Nothing about your money</strong> - no balances, accounts or transactions, so type in any figure that matters. A message cannot be taken back once sent.</p>
 
       <button id="feedbackSendBtn" class="stack-2">Send it</button>
 

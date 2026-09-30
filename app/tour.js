@@ -102,7 +102,7 @@ export const TOUR_STEPS = {
     {
       target: "helpLogBtn",
       title: "If you get stuck",
-      body: "Every page has this Help button. It explains each part of that page in more detail, and you can replay this walkthrough from there any time. It is also where you tell us something is broken or suggest a change - we read every one. You will not lose anything by clicking around - have a look.",
+      body: "Every page has this Help button. It explains each part of that page in more detail, and you can replay this walkthrough from there any time. Next to it is Feedback, for telling us something is broken or suggesting a change - we read every one. You will not lose anything by clicking around - have a look.",
       placement: "bottom",
     },
   ],

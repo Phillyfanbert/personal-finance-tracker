@@ -501,6 +501,19 @@
     .export-btn { background: transparent; border-color: var(--border-strong); color: var(--text); }
     .export-btn:hover, .export-btn:focus-visible { background: var(--panel-2); border-color: var(--accent); }
     .export-btn .help-glyph { background: var(--border-strong); color: var(--text); }
+    /* The title and its three pills. flex-wrap is load-bearing, not tidiness:
+       the outer .topbar wraps but this inner row did not, so adding a third
+       pill pushed Feedback off the right edge at 375px - clipped, not
+       scrollable, because the overflow was inside a flex row that had already
+       sized itself to the viewport. Measured at 375px: without it the pill
+       ends at 400px against a 399px viewport. */
+    .topbar-lead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    /* Feedback is a peer of Export for the same reason: reaching it must be
+       one tap from any page, but it is not what anyone came to the page to
+       do. Same quiet pill rather than a third visual weight to learn. */
+    .feedback-btn { background: transparent; border-color: var(--border-strong); color: var(--text); }
+    .feedback-btn:hover, .feedback-btn:focus-visible { background: var(--panel-2); border-color: var(--accent); }
+    .feedback-btn .help-glyph { background: var(--border-strong); color: var(--text); }
     /* The glyph keeps its own circle so the pill still reads as "? = help"
        at a glance, without the word having to carry it alone. */
     .help-btn .help-glyph { display: inline-flex; align-items: center; justify-content: center;
@@ -876,10 +889,11 @@
            the buttons on narrow screens rather than fighting them for
            space in a single row. -->
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
-        <div style="display:flex;align-items:center;gap:10px">
+        <div class="topbar-lead">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0;font-size:17px">Log</h1>
           <button class="help-btn" id="helpLogBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportLogBtn" title="Export everything on the Log page as a spreadsheet" aria-label="Export everything on the Log page as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+          <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
         </div>
         <div style="display:flex;gap:8px">
           <button class="secondary" id="profileBtn" style="width:auto;padding:8px 12px">Profile</button>
@@ -1582,11 +1596,12 @@
     <!-- ============ APP: REPORTS VIEW ============ -->
     <div id="reportsView" class="hidden">
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
-        <div style="display:flex;align-items:center;gap:10px">
+        <div class="topbar-lead">
           <button class="secondary" id="backFromReports" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">←</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Reports</h1>
           <button class="help-btn" id="helpReportsBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportReportsBtn" title="Export this month's analysis as a spreadsheet" aria-label="Export this month's analysis as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+          <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
         </div>
         <!-- A toggle rather than years mixed into the dropdown alongside
              months: one list holding "August 2026" and "2026" asks the reader
@@ -1776,11 +1791,12 @@
          line between this page and Reports. -->
     <div id="planView" class="hidden">
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
-        <div style="display:flex;align-items:center;gap:10px">
+        <div class="topbar-lead">
           <button class="secondary" id="backFromPlan" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">&#8592;</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Plan</h1>
           <button class="help-btn" id="helpPlanBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportPlanBtn" title="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet" aria-label="Export your budgets, saving goals, payoff comparison and forecast as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+          <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
         </div>
       </div>
       <!-- The headline number for this page, added 2026-08-28 after research
@@ -1916,11 +1932,12 @@
     <!-- ============ APP: INVESTMENTS VIEW ============ -->
     <div id="investView" class="hidden">
       <div class="topbar" style="flex-wrap:wrap;gap:8px">
-        <div style="display:flex;align-items:center;gap:10px">
+        <div class="topbar-lead">
           <button class="secondary" id="backFromInvest" aria-label="Back to Log" title="Back to Log" style="width:auto;padding:8px 10px">←</button>
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><h1 style="margin:0">Investments</h1>
           <button class="help-btn" id="helpInvestBtn" title="Help and guided tour" aria-label="Help and guided tour"><span class="help-glyph" aria-hidden="true">?</span>Help</button>
           <button class="help-btn export-btn" id="exportInvestBtn" title="Export your investments as a spreadsheet" aria-label="Export your investments as a spreadsheet"><span class="help-glyph" aria-hidden="true">&#8595;</span>Export</button>
+          <button class="help-btn feedback-btn" title="Send feedback or report a problem" aria-label="Send feedback or report a problem"><span class="help-glyph" aria-hidden="true">&#9998;</span>Feedback</button>
         </div>
       </div>
 
@@ -2995,16 +3012,11 @@
            only way back to it. -->
       <button class="secondary" id="helpReplayTour" style="width:auto;padding:8px 14px;font-size:13px;margin-bottom:12px">Replay the guided tour for this page</button>
 
-      <!-- Lives here rather than on Profile because Help is the one button on
-           all four pages, and "this is broken" should not need navigating
-           somewhere else first. -->
-      <button class="secondary" id="helpFeedbackBtn" style="width:auto;padding:8px 14px;font-size:13px;margin:0 0 12px 8px">Send feedback or report a problem</button>
-
       <!-- Explained here rather than as a help topic. A topic lives inside one
-           of the four page blocks below, and this button is shared chrome on
-           all of them - the copy would have had to be repeated four times and
+           of the four page blocks below, and Feedback is shared chrome on all
+           of them - the copy would have had to be repeated four times and
            would have drifted. The reader is already in the help sheet. -->
-      <p class="muted" style="font-size:12px;margin:0 0 12px">Anything sent that way is read and worked through one at a time, and any reply appears back in that same window. Your message goes with the page you were on and your browser version so a problem can be traced - never with any of your balances, accounts or transactions.</p>
+      <p class="muted" style="font-size:12px;margin:0 0 12px">The Feedback button next to Help sends a message that is read and worked through one at a time, and any reply appears back in that same window. Your message goes with the page you were on and your browser version so a problem can be traced - never with any of your balances, accounts or transactions.</p>
 
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
@@ -3577,16 +3589,17 @@
     </div>
   </div>
 
-  <!-- Feedback and bug reports. Placed AFTER #helpModal in the DOM on
-       purpose: every modal here shares z-index 70 (only #confirmModal is
-       higher, at 72), so at equal z-index the one later in source paints on
-       top - which is what lets this open over the help sheet it is reached
-       from. openModal() keeps a real stack, so the background stays inert
-       until the last of the two closes.
+  <!-- Feedback and bug reports. Reached from its OWN button in every page's
+       topbar, beside Help. It used to live inside the help sheet, on the
+       reasoning that Help was the one button present on all four pages - true,
+       but it made "this is broken" a two-step detour through a sheet about
+       something else. Its own pill is one tap from anywhere.
 
-       Reached from Help rather than Profile because the Help button is on all
-       four pages and Profile is only on Log - "something is wrong" should not
-       require navigating somewhere else first.
+       Still placed AFTER #helpModal in the DOM: every modal here shares
+       z-index 70 (only #confirmModal is higher, at 72), so at equal z-index
+       the one later in source paints on top. Nothing opens it from inside the
+       help sheet any more, but the ordering costs nothing and openModal()
+       keeps a real stack regardless.
 
        NOTHING FINANCIAL IS ATTACHED. The message is whatever the user types,
        plus which page they were on and their browser string, and the note

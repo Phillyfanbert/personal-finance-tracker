@@ -11829,7 +11829,11 @@ function openFeedback() {
   loadFeedbackTickets();
 }
 
-$("helpFeedbackBtn").onclick = () => openFeedback();
+// Wired by CLASS, not four ids: the button is identical on every page and
+// opens the same sheet, unlike Help and Export which each need to know which
+// page they are on. Markup-driven the same way wireInfoIcons() is, so adding
+// it to a fifth page is markup only.
+for (const btn of document.querySelectorAll(".feedback-btn")) btn.onclick = () => openFeedback();
 $("feedbackClose").onclick = () => closeModal("feedbackModal");
 $("feedbackMessage").oninput = updateFeedbackCharsLeft;
 

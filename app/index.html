@@ -2158,12 +2158,10 @@
           <div class="card hidden" id="marketOverviewCard">
             <div class="card-head">
               <h2>Market overview</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="marketOverviewExplainer" title="Major US indexes, a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.">i</span>
+              <span class="info-icon" tabindex="0" role="button" data-info="marketOverviewExplainer" title="Each index is followed through a fund that tracks it closely, because the index levels themselves need a paid data feed. The figure is that fund's move for the day, refreshed every 15 minutes while the market is open.">i</span>
             </div>
-            <p class="muted explainer hidden" id="marketOverviewExplainer">Major US indexes, a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.</p>
-            <p class="muted" id="marketOverviewFreshness" style="font-size:11px;margin:0 0 2px"></p>
+            <p class="muted explainer hidden" id="marketOverviewExplainer">Each index is followed through a fund that tracks it closely, because the index levels themselves need a paid data feed. The figure is that fund's move for the day, refreshed every 15 minutes while the market is open.</p>
             <p class="muted" id="marketOverviewLiveFreshness" style="font-size:11px;margin:0 0 6px"></p>
-            <p id="marketOverviewWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
             <div id="marketOverviewList"></div>
           </div>
   <!-- Market-wide movers, the one card here that can see a stock outside the
@@ -2245,6 +2243,8 @@
               <h2>Latest on the companies you track</h2>
               <span class="info-icon" tabindex="0" role="button" data-info="trackedTodayExplainer" title="The companies on your own tracked list, not the market as a whole. Their latest moves and the stories published about them today. Coverage is what was reported, not why a price moved.">i</span>
             </div>
+            <p class="muted" id="trackedAgentFreshness" style="font-size:11px;margin:0 0 2px"></p>
+            <p id="trackedAgentWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
             <p class="muted explainer hidden" id="trackedTodayExplainer">The companies on your own tracked list, not the market as a whole. Their latest moves and the stories published about them today. Coverage is what was reported, not why a price moved.</p>
             <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
             <div id="marketMoversSection" class="hidden" style="margin-top:14px">
@@ -3611,9 +3611,10 @@
         <div class="help-topic" id="helpTopic-overview">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-overview-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Overview</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-overview-body">
-          <p>The market as a whole, whether or not you own any of it. The major indexes first, each with a live price from an exchange-traded fund that closely tracks it, then the biggest single-day moves anywhere in the US market.</p>
+          <p>The market as a whole, whether or not you own any of it. The major indexes first, then the biggest single-day moves anywhere in the US market.</p>
+          <p>Each index is followed through a fund built to track it, named on its row, because the index levels themselves need a paid data feed this app does not have. The percentage is that fund's move for the day, which is the part a tracking fund reproduces closely. The price beside it is one share of the fund, not the level of the index.</p>
           <p>Those movers are usually very small companies, where a big percentage move is far more common and often reverses. A headline is what was being reported, not why a price moved.</p>
-          <p>Prices refresh every few minutes while the market is open; the exact index figures refresh far less often, and a line on each says how fresh it is.</p>
+          <p>Prices refresh every 15 minutes while the market is open, and a line on the card says how fresh they are.</p>
           
           </div>
         </div>

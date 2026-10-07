@@ -48,7 +48,7 @@ const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, GEMMA_EMBE
 // /api/generate URL) rather than a second config field for a value that's
 // mechanically the same host/port - kept in sync with tools/embed-
 // expenses.js's identical derivation by hand, same category as
-// MARKET_INDEXES. Used only by retrieveRelevantHistory() below.
+// MARKET_INDEX_ETF_PROXIES. Used only by retrieveRelevantHistory() below.
 const GEMMA_EMBED_ENDPOINT = (GEMMA_ENDPOINT || "").replace(/\/api\/generate$/, "/api/embeddings");
 if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR-PROJECT")) {
   alert("Set your Supabase URL and anon key in config.js (see SETUP.md §4).");
@@ -1885,30 +1885,30 @@ const INVESTMENT_ASSET_TYPES = new Set([
 // deliberate catch-all for anything not covered by the rest, rather than
 // leaving no option for it.
 const INVESTMENT_BUCKETS = ["Stocks", "Bonds", "Cash", "Crypto", "Real Estate", "Other"];
-// A fixed list of major US indexes for the Investments tab's Market
-// overview card - genuinely NOT derived from anything a user owns, unlike
-// every other Investments config above. Must match tools/price-agent.js's
-// own MARKET_INDEXES constant exactly (same strings, same order isn't
-// required but the strings are what ties a market_index_findings row back
-// to a row here) - that file has no import/export machinery to share this
-// list from a single source, so the two are kept in sync by hand.
-const MARKET_INDEXES = ["S&P 500", "Dow Jones Industrial Average", "NASDAQ Composite", "Russell 2000"];
-// A live, Gemini-free stand-in for the exact index-point number above -
-// added 2026-08-16 after confirming live that raw index tickers
-// (^GSPC/^DJI/^IXIC/^RUT) require a paid Finnhub subscription ("Market
-// data subscription required for CFD indices" - a real API response, not
-// an assumption), but these four highly liquid, widely-tracked ETFs work
-// on the free tier and closely track the same four indexes. Written to
-// market_index_findings under the ETF's OWN ticker as `symbol`
-// (tools/price-agent.js), deliberately never under the index's plain-
-// English label - mixing an ETF's dollar price into the same day-series
-// as the index's own point value would corrupt day-change math (a real,
-// ~10x scale difference, not a rounding nuance). QQQ tracks the
-// NASDAQ-100 specifically, not the full NASDAQ Composite - the closest
-// free, liquid option, labeled honestly as such rather than implied to
-// be an exact match. Must match tools/price-agent.js's own copy, kept in
-// sync by hand for the same reason MARKET_INDEXES already is.
-const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Average": "DIA", "NASDAQ Composite": "QQQ", "Russell 2000": "IWM" };
+// The four major US indexes, each followed through a widely-held fund that
+// tracks it. Genuinely not derived from anything a user owns, unlike every
+// other Investments config above. Confirmed live 2026-08-16 that the raw
+// index tickers (^GSPC/^DJI/^IXIC/^RUT) require a paid Finnhub subscription
+// ("Market data subscription required for CFD indices", a real API response
+// rather than an assumption), while these four work on the free tier.
+//
+// THE FUND IS THE CARD NOW, not a stand-in underneath an index level. There
+// used to be a separate MARKET_INDEXES list searched by Tavily and read by
+// Gemini for the exact index point value, and it is retired: measured against
+// production 2026-10-06, market_index_findings had never held a single row
+// written by anything but Finnhub, so in its whole existence that pipeline
+// produced nothing while the card announced "index level not available yet"
+// directly above a correct live number.
+//
+// The label is the INDEX and the figure is the FUND's, which is why the row
+// states the ticker and leads with the percentage: a fund's share price and
+// its index's point value differ by roughly 10x, so a bare dollar figure
+// under "S&P 500" would be read as the index. The percentage is the honest
+// part, since tracking a fund to its index is the fund's entire job.
+// "NASDAQ 100" rather than Composite because QQQ tracks the 100; naming the
+// Composite while pricing QQQ was a mismatch the help text had to excuse.
+// Must match tools/price-agent.js's own copy, kept in sync by hand.
+const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Average": "DIA", "NASDAQ 100": "QQQ", "Russell 2000": "IWM" };
 // (An INDEX_SHORT_NAMES map used to live here, for the recap's own one-line
 // "The wider market: ..." summary. That line was removed when Daily recap
 // merged into Overview - the full index list it now sits above states the
@@ -1925,7 +1925,8 @@ const MARKET_INDEX_ETF_PROXIES = { "S&P 500": "SPY", "Dow Jones Industrial Avera
 // A fixed, curated watchlist of well-known large-cap stocks (not each
 // user's own holdings) so the Investments tab can surface "today's biggest
 // movers" even for a user who holds nothing at all - same "public market
-// data, not tied to any user" category as MARKET_INDEXES above, and
+// data, not tied to any user" category as MARKET_INDEX_ETF_PROXIES above,
+// and
 // deliberately written to the SAME market_index_findings table rather than
 // a new one, since that table's real meaning was always "public market
 // data," not literally "indexes only." Must match tools/price-agent.js's
@@ -8880,12 +8881,12 @@ function renderMarketOverview() {
   }
   card.classList.remove("hidden");
   $("emptyOverview").classList.add("hidden");
-  renderAgentFreshness("price-agent", "marketOverviewFreshness", "marketOverviewWarning");
-  const indexes = marketIndexSummary(MARKET_INDEXES, marketIndexFindings);
-  // Live ETF-proxy prices - marketIndexSummary() works unchanged against
-  // any label list, so this reuses it directly with the ETF tickers
-  // instead of the index names (see MARKET_INDEX_ETF_PROXIES's own
-  // comment for why the two are stored as separate symbols, never mixed).
+  // No renderAgentFreshness("price-agent", ...) here any more. That line
+  // reports the WEEKLY Tavily+Gemini run, which wrote the index level and
+  // nothing else on this card - so with the index level retired it would say
+  // "Last updated 6 days ago" above four numbers that are fifteen minutes
+  // old. It moved to the tracked card, where that agent's remaining output
+  // (the news digest, the per-symbol explanations) actually lands.
   const etfTickers = Object.values(MARKET_INDEX_ETF_PROXIES);
   const etfByTicker = new Map(marketIndexSummary(etfTickers, marketIndexFindings).map((e) => [e.label, e]));
   renderPricesAsOf("marketOverviewLiveFreshness", latestFinnhubRefresh(marketIndexFindings));
@@ -8930,22 +8931,25 @@ function renderMarketOverview() {
       pulseEl.textContent = `${when}: ${pulse.up} of ${pulse.total} tracked large-caps up, ${pulse.down} down${avgText}`;
     }
   }
-  $("marketOverviewList").innerHTML = indexes.map((idx) => {
-    const etfTicker = MARKET_INDEX_ETF_PROXIES[idx.label];
-    const live = etfTicker ? etfByTicker.get(etfTicker) : null;
+  // The day's move leads, because that is the question this card answers and
+  // it is the figure a tracking fund reproduces faithfully. The share price
+  // sits in the meta line behind its own ticker, where it cannot be read as
+  // the index's level.
+  $("marketOverviewList").innerHTML = Object.entries(MARKET_INDEX_ETF_PROXIES).map(([label, ticker]) => {
+    const live = etfByTicker.get(ticker);
+    const priced = live && live.price != null;
+    // A real flat day is 0%, in neutral ink; no reading at all is a different
+    // fact and says so, the same split gainColor() and the holdings badge make.
+    const figure = live && live.changePct != null
+      ? `<span style="color:${gainColor(live.change)}">${signedPct(live.changePct)}</span>`
+      : `<span class="muted" style="font-size:12px">${priced ? "no change yet" : "not available yet"}</span>`;
     return `
-    <div class="exp" style="cursor:default;flex-direction:column;align-items:stretch;gap:2px">
-      <div style="display:flex;justify-content:space-between;gap:10px">
-        <div>
-          <div${etfTicker ? ` class="sym-link" data-price-symbol="${esc(etfTicker)}" title="View price history for ${esc(etfTicker)}"` : ""}>${esc(idx.label)}</div>
-          ${idx.explanation ? `<div class="meta">${esc(plainDashes(idx.explanation))}</div>` : ""}
-        </div>
-        <span class="amt" style="text-align:right">
-          ${idx.price != null ? fmtNum(idx.price) : `<span class="muted" style="font-size:12px">index level not available yet</span>`}
-          ${idx.change != null ? `<div style="font-size:12px;color:${gainColor(idx.change)}">${signedPct(idx.changePct)}</div>` : ""}
-        </span>
+    <div class="exp" style="cursor:default">
+      <div>
+        <div class="sym-link" data-price-symbol="${esc(ticker)}" title="View price history for ${esc(ticker)}">${esc(label)}</div>
+        <div class="meta">Followed through ${esc(ticker)}${priced ? `, ${fmt(live.price)}` : ""}</div>
       </div>
-      ${live && live.price != null ? `<div class="meta" style="font-size:12px">Live via ${esc(etfTicker)}: ${fmt(live.price)}${live.changePct != null ? ` <span style="color:${gainColor(live.change)}">${signedPct(live.changePct)}</span>` : ""}</div>` : ""}
+      <span class="amt" style="text-align:right">${figure}</span>
     </div>`;
   }).join("");
 
@@ -8966,6 +8970,7 @@ function renderMarketOverview() {
       </span>
     </div>`).join("");
 
+  renderAgentFreshness("price-agent", "trackedAgentFreshness", "trackedAgentWarning");
   const digest = latestNewsDigest(marketNewsFindings);
   const newsSection = $("marketNewsSection");
   if (newsSection) newsSection.classList.toggle("hidden", !digest);
@@ -9040,7 +9045,8 @@ const TICKER_ELIGIBLE_ASSET_TYPES = new Set(
 // **The four COLA-adjusted figures below (elective deferral, 457(b), IRA,
 // SIMPLE IRA) need a manual refresh every January**, when the IRS
 // typically announces the next year's numbers in early November - same
-// "will go stale, needs a manual refresh" category as MARKET_INDEXES or a
+// "will go stale, needs a manual refresh" category as
+// MARKET_INDEX_ETF_PROXIES or a
 // rotating GEMINI_MODEL alias. Caught live 2026-08-25 running the whole
 // 2026 tax year on 2025 figures: contributionLimitUsage() derives the
 // COMPARISON YEAR from the real clock but the LIMIT ITSELF was a stale

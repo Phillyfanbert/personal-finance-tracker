@@ -157,6 +157,13 @@ function plainDashes(text) {
     // A comma, not a spaced hyphen: the hyphen version read as machine
     // output in a real shipped report.
     .replace(/\s*[\u2013\u2014\u2015]\s*/g, ", ")
+    // A plain spaced HYPHEN does the same job and was not covered, so a model
+    // writing "spending - like groceries" put the very punctuation this
+    // function exists to remove straight into a stored, displayed string.
+    // Spaces and tabs only, never \s: that class includes the newline, which
+    // collapsed "- first\n- second" into one line and ate the second marker.
+    // Letters on both sides, so a range and a money span are left alone.
+    .replace(/([A-Za-z])[ \t]+-[ \t]+(?=[A-Za-z])/g, "$1, ")
     .replace(/,[\s,]*,/g, ",")
     .replace(/\s+,/g, ",");
 }

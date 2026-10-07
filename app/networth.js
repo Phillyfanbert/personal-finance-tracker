@@ -57,7 +57,7 @@ export function netWorthCaveats({ unpriced = [], stale = [], priceAge = null } =
     ? names.join(", ")
     : `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
   const out = [];
-  if (priceAge && priceAge.stale) out.push(`Stock prices may be out of date - last updated ${priceAge.label}.`);
+  if (priceAge && priceAge.stale) out.push(`Stock prices may be out of date, last updated ${priceAge.label}.`);
   if (unpriced.length) {
     out.push(`${list(unpriced)} ${unpriced.length === 1 ? "has" : "have"} no price yet, so ${unpriced.length === 1 ? "it counts" : "they count"} at the last value you saved.`);
   }

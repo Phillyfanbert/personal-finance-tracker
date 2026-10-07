@@ -11,8 +11,35 @@ import { localDateISO } from "./dates.js";
 const r2 = (n) => Math.round(n * 100) / 100;
 const pct = (num, denom) => (denom ? r2((num / denom) * 100) : null);
 
-// found_at is a timestamptz; the date part is what groups "a day's price."
-const dateKey = (iso) => (iso || "").slice(0, 10);
+// found_at is a timestamptz, and which TRADING DAY it belongs to is what
+// groups "a day's price" - the market's own calendar, never UTC. Slicing the
+// ISO string took the UTC date, which rolls over at 20:00 ET, four hours
+// before the trading day it describes has ended. The agent keeps writing the
+// frozen last close after the bell, so every evening from 20:00 a fresh UTC
+// bucket opened holding the SAME close as the bucket before it, and every
+// day-change on this tab collapsed to exactly 0%. Measured against production
+// for 2026-10-06: by UTC, AAPL read 333.63 against 333.63; by ET, 333.63
+// against 332.89 (+0.22%), which is what the server-built recap already said.
+// Same reasoning marketStatus() states for judging a holiday in ET.
+const ET_DAY_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+});
+// Keyed on the UTC HOUR, which is exact rather than approximate: ET is a whole
+// number of hours from UTC (-5/-4) and its DST switch lands on the hour, so the
+// ET date cannot change inside one UTC hour. Two days of 15-minute findings is
+// ~5,000 rows re-bucketed on every render, and this turns thousands of
+// Intl.format calls into about fifty.
+const etDayCache = new Map();
+const dateKey = (iso) => {
+  if (!iso) return "";
+  const hourKey = iso.slice(0, 13);
+  const hit = etDayCache.get(hourKey);
+  if (hit !== undefined) return hit;
+  const t = Date.parse(iso);
+  const day = Number.isFinite(t) ? ET_DAY_FMT.format(t) : "";
+  etDayCache.set(hourKey, day);
+  return day;
+};
 
 // Findings for one symbol, grouped by day, each day represented by its
 // latest (most recently found) finding that day - a stand-in for "that
@@ -391,6 +418,69 @@ export function marketBreadth(watchlist, etfTickers, findings) {
 }
 
 /**
+ * WHICH tracked companies finished the recap's trading day up, and which
+ * finished down - the detail behind the two counts on the Daily recap card.
+ *
+ * Read from daily_prices rather than the findings stream, and deliberately
+ * from the same trade_date, the same previous_close-then-prior-day fallback
+ * and the same round-before-classifying order that
+ * tools/price-agent.js's buildDailyRecap() counts from. That is the whole
+ * point: a list and a count of the same thing must not be free to disagree,
+ * and the only way to guarantee that across the Node/browser split this repo
+ * has no shared import for is to read the same rows the same way. Verified
+ * against production for 2026-10-06, where this reproduces the stored
+ * breadth exactly (18 up, 6 down, 0 flat, 24 total).
+ *
+ * marketBreadth() above answers a different question and stays as it is: it
+ * is the LIVE pulse, recomputed every 15 minutes from the findings stream
+ * while the market is open. This one is fixed at a past close.
+ *
+ * Returns null when daily_prices holds nothing usable for that date, so the
+ * caller can fall back to the stored counts rather than render an empty list.
+ * @param {object[]} dailyPrices rows from daily_prices (needs previous_close)
+ * @param {string[]} symbols the tracked companies, app.js's moverSymbols()
+ * @param {string} tradeDate the recap's own trade_date, YYYY-MM-DD
+ */
+export function recapBreadthDetail(dailyPrices, symbols, tradeDate) {
+  if (!tradeDate || !symbols.length) return null;
+  const want = new Set(symbols.map((s) => (s || "").trim().toUpperCase()));
+  const onDate = new Map();
+  const priorDate = new Map();
+  const priorClose = new Map();
+  for (const row of dailyPrices) {
+    const symbol = (row.symbol || "").trim().toUpperCase();
+    const date = row.trade_date;
+    if (!date || !want.has(symbol)) continue;
+    if (date === tradeDate) { onDate.set(symbol, row); continue; }
+    if (date > tradeDate) continue;
+    const seen = priorDate.get(symbol);
+    if (!seen || date > seen) { priorDate.set(symbol, date); priorClose.set(symbol, Number(row.close)); }
+  }
+
+  const up = [], down = [], flat = [];
+  for (const [symbol, row] of onDate) {
+    const close = Number(row.close);
+    const prev = row.previous_close != null ? Number(row.previous_close) : priorClose.get(symbol);
+    if (!Number.isFinite(close) || !Number.isFinite(prev) || prev <= 0) continue;
+    // Rounded BEFORE it is classified, because the recap's own counts are: a
+    // move of 0.004% is stored as 0.00 and belongs in the same bucket on both
+    // sides of the split, or one list comes back a company short of its count.
+    const changePct = r2(((close - prev) / prev) * 100);
+    (changePct > 0 ? up : changePct < 0 ? down : flat).push({ symbol, close: r2(close), changePct });
+  }
+  const total = up.length + down.length + flat.length;
+  if (!total) return null;
+
+  const bySize = (a, b) => Math.abs(b.changePct) - Math.abs(a.changePct);
+  up.sort(bySize);
+  down.sort(bySize);
+  // Nothing to rank a flat row by, so it reads alphabetically instead of in
+  // whatever order the rows happened to arrive.
+  flat.sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0));
+  return { up, down, flat, total };
+}
+
+/**
  * Freshest found_at among Finnhub-sourced findings (real ticker prices,
  * refreshed on a much tighter cadence - see tools/price-agent.js's
  * FAST_ONLY mode) - deliberately separate from a row's Gemini-sourced
@@ -493,7 +583,7 @@ export function latestNewsDigest(findings) {
  * reports open, no new price ever arrives, and app.js's existing
  * PRICE_REFRESH_WARN_MINUTES coloring flags the data as stale on its
  * own. That's why the caller only ever states the CLOSED case out loud
- * ("Market closed - prices as of X") and says nothing while open - a
+ * ("Market closed, prices as of X") and says nothing while open - a
  * wrong "closed" would be a false claim, a missing one is just silence.
  * @param {Date} now
  */

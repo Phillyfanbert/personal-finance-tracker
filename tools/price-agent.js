@@ -1225,6 +1225,13 @@ function plainDashes(text) {
     // A comma, not a spaced hyphen: the hyphen version read as machine
     // output in a real shipped report.
     .replace(/\s*[\u2013\u2014\u2015]\s*/g, ", ")
+    // A plain spaced HYPHEN does the same job and was not covered, so a model
+    // writing "spending - like groceries" put the very punctuation this
+    // function exists to remove straight into a stored, displayed string.
+    // Spaces and tabs only, never \s: that class includes the newline, which
+    // collapsed "- first\n- second" into one line and ate the second marker.
+    // Letters on both sides, so a range and a money span are left alone.
+    .replace(/([A-Za-z])[ \t]+-[ \t]+(?=[A-Za-z])/g, "$1, ")
     .replace(/,[\s,]*,/g, ",")
     .replace(/\s+,/g, ",");
 }
@@ -1735,7 +1742,7 @@ async function buildDailyRecap(contextHeadlines = []) {
         ...m,
         // A headline is a SOURCE, not a causal claim - the UI states it as
         // "the day's coverage," never as the reason the price moved.
-        headline: top ? { title: top.title, url: top.url, source: top.source || null } : null,
+        headline: top ? { title: top.title, url: top.url, source: top.source || null, summary: top.summary || null } : null,
       };
     });
 
@@ -2523,6 +2530,14 @@ function validateFinnhubQuote(raw) {
 // so no TRUSTED_NEWS_DOMAINS filter is needed here the way findExplanation()
 // needs one for a raw Tavily search.
 const MAX_COMPANY_NEWS_HEADLINES = 3; // distinct from MAX_NEWS_HEADLINES below (unrelated market-wide digest)
+// The publisher's own one-or-two-line description of its article, which
+// Finnhub already returns on every company-news call and this script used to
+// throw away. It is the only "why did this move" the daily recap can carry
+// EVERY day: a real, attributable, already-paid-for sentence, where a written
+// one needs a Gemini call against a 20-a-day quota that production shows is
+// absent on most days. Capped because an article lede runs to any length and
+// these are stored per symbol on a table that grows every 15 minutes.
+const MAX_NEWS_SUMMARY_CHARS = 400;
 async function fetchFinnhubCompanyNews(symbol) {
   if (finnhubNewsCallCount >= MAX_FINNHUB_NEWS_CALLS_PER_RUN) {
     throw new Error(`Finnhub company-news call budget (${MAX_FINNHUB_NEWS_CALLS_PER_RUN}/run) exceeded - skipping`);
@@ -2537,6 +2552,21 @@ async function fetchFinnhubCompanyNews(symbol) {
   return res.json(); // [{ headline, url, source, datetime, summary, category, id }, ...]
 }
 
+// Null rather than a string that says nothing new: a lede that merely repeats
+// the headline would render a second, identical line under it, and one too
+// short to be a sentence is a stub. Stated as what was reported, never as the
+// cause of the move - the same line the headline itself is held to.
+function newsSummary(raw, title) {
+  if (typeof raw !== "string") return null;
+  const text = raw.replace(/\s+/g, " ").trim();
+  if (text.length < 40) return null;
+  const head = (title || "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (head && text.toLowerCase().startsWith(head)) return null;
+  return text.length > MAX_NEWS_SUMMARY_CHARS
+    ? text.slice(0, MAX_NEWS_SUMMARY_CHARS).replace(/\s+\S*$/, "") + "..."
+    : text;
+}
+
 function validateFinnhubNews(raw) {
   if (!Array.isArray(raw)) return null;
   const headlines = raw
@@ -2547,6 +2577,7 @@ function validateFinnhubNews(raw) {
       title: a.headline.trim(),
       url: a.url.trim(),
       source: typeof a.source === "string" && a.source.trim() ? a.source.trim() : null,
+      summary: newsSummary(a.summary, a.headline),
     }));
   return headlines.length ? headlines : null;
 }

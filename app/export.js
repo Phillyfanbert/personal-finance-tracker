@@ -141,7 +141,7 @@ export function planSections({ safeToSpend = null, budgets = [], split = null, f
     // no deadline to divide by, and a 0 would read as "nothing more to save".
     { title: "Saving up for something", header: ["Goal", "Target", "Set aside", "Still needed", "Needed by", "Needed each month"],
       rows: funds.map((f) => [f.name, money(f.target), money(f.saved), money(f.remaining), f.targetDate || "", f.monthlyNeeded != null ? money(f.monthlyNeeded) : ""]) },
-    { title: `Cash flow forecast${forecastAccount ? " - " + forecastAccount : ""}`, header: ["Date", "Projected balance"],
+    { title: `Cash flow forecast${forecastAccount ? ", " + forecastAccount : ""}`, header: ["Date", "Projected balance"],
       rows: forecast.map((p) => [p.date, money(p.balance)]) },
   ]);
 }
@@ -189,10 +189,10 @@ export function investmentsSections({ totals = null, holdings = [], snapshots = 
 export function reportsSections({ monthLabel = "", totals = [], byCategory = [], byAccount = [], byPaymentType = [], budgetVsActual = [], incomeVsExpense = [] }) {
   const pct = (v) => (v == null ? "" : `${Math.round(v * 1000) / 10}%`);
   return ([
-    { title: `Summary - ${monthLabel}`, header: ["Measure", "Value"], rows: totals },
-    { title: "Where your money went - by category", header: ["Category", "Amount"], rows: byCategory.map((d) => [d.label, money(d.value)]) },
-    { title: "Where your money went - by account", header: ["Account", "Amount"], rows: byAccount.map((d) => [d.label, money(d.value)]) },
-    { title: "Where your money went - by how you paid", header: ["Payment type", "Amount"], rows: byPaymentType.map((d) => [d.label, money(d.value)]) },
+    { title: `Summary, ${monthLabel}`, header: ["Measure", "Value"], rows: totals },
+    { title: "Where your money went, by category", header: ["Category", "Amount"], rows: byCategory.map((d) => [d.label, money(d.value)]) },
+    { title: "Where your money went, by account", header: ["Account", "Amount"], rows: byAccount.map((d) => [d.label, money(d.value)]) },
+    { title: "Where your money went, by how you paid", header: ["Payment type", "Amount"], rows: byPaymentType.map((d) => [d.label, money(d.value)]) },
     // The limits are the ones RECORDED for that month, not today's, which is
     // the whole reason budget_periods exists - a file saying August was within
     // budget because the limit was raised in September would be worse than no

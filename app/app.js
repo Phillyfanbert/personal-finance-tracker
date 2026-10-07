@@ -15,7 +15,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, budgetSplit, budgetYearStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal, WARN_THRESHOLD_PCT } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, portfolioRecapFigures, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, recapBreadthDetail, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, portfolioRecapFigures, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers, loadSecTickers, storableName } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
 import {
@@ -972,8 +972,8 @@ function renderAgentFreshness(agent, freshnessId, warningId) {
   // That is the one worth making visible, so this one stays quiet.
   warningEl.style.color = "var(--muted)";
   warningEl.textContent = status.status === "failed"
-    ? "Could not refresh last time - showing the most recent data saved."
-    : "Some of this may be incomplete - the last refresh only partly finished.";
+    ? "Could not refresh last time, showing the most recent data saved."
+    : "Some of this may be incomplete, the last refresh only partly finished.";
 }
 
 // How long a failed/degraded run stays worth warning about.
@@ -1034,8 +1034,8 @@ function renderPricesAsOf(elId, foundAt) {
   // identically in both states and only changed tint, so with colour removed
   // the fact disappeared entirely (WCAG 1.4.1).
   el.textContent = open
-    ? (stale ? `Prices may be out of date - last updated ${timeAgo(foundAt)}` : `Prices as of ${timeAgo(foundAt)}`)
-    : `Market closed - prices as of ${timeAgo(foundAt)}`;
+    ? (stale ? `Prices may be out of date, last updated ${timeAgo(foundAt)}` : `Prices as of ${timeAgo(foundAt)}`)
+    : `Market closed, prices as of ${timeAgo(foundAt)}`;
   el.style.color = stale ? "var(--warn)" : "";
 }
 
@@ -1152,7 +1152,11 @@ const RECAP_HISTORY_DAYS = 30;
 // will eventually want a date window; at a few hundred rows it does not yet.
 async function loadDailyPrices() {
   const { data } = await sb.from("daily_prices")
-    .select("symbol,trade_date,open,high,low,close")
+    // previous_close is what makes recapBreadthDetail() agree with the
+    // recap's stored counts exactly: it is the first thing buildDailyRecap()
+    // compares against, and deriving a prior close here instead would be a
+    // second definition of the day's move.
+    .select("symbol,trade_date,open,high,low,close,previous_close")
     .order("trade_date", { ascending: true });
   dailyPrices = data || [];
   renderPriceHistory();
@@ -1706,14 +1710,14 @@ const ACCOUNT_AGE_RULES = {
   retirement_plan_loan:   { minAge: null, note: "No age rule of its own. It depends entirely on being in a retirement plan that allows loans." },
 
   // Retirement and investment. Several of these are widely misunderstood.
-  traditional_401k:       { minAge: null, planSet: true, note: "No legal minimum age. Federal law only caps how much a plan can REQUIRE - at most 21 and one year of service - many employers set a lower bar or none at all." },
+  traditional_401k:       { minAge: null, planSet: true, note: "No legal minimum age. Federal law only caps how much a plan can REQUIRE, at most 21 and one year of service. Many employers set a lower bar or none at all." },
   roth_401k:              { minAge: null, planSet: true, note: "Same rule as a traditional 401(k): no legal minimum age. The law only caps what a plan can require, at most 21 and one year of service." },
-  plan_403b:              { minAge: null, planSet: true, note: "No age minimum - and it usually cannot have one. The IRS's universal availability rule requires most employers to let every employee join immediately, with only narrow exceptions (nonresident aliens, certain students, under 20 hours/week)." },
+  plan_403b:              { minAge: null, planSet: true, note: "No age minimum, and it usually cannot have one. The IRS's universal availability rule requires most employers to let every employee join immediately, with only narrow exceptions (nonresident aliens, certain students, under 20 hours/week)." },
   plan_457b:              { minAge: null, planSet: true, note: "No legal age minimum. Your employer's plan sets who can join." },
   // NOT 18. This is the most commonly assumed-wrong rule in the whole table.
-  traditional_ira:        { minAge: null, earnedIncome: true, note: "There is no minimum age for an IRA. What it actually requires is earned income - you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial IRA." },
-  roth_ira:               { minAge: null, earnedIncome: true, note: "There is no minimum age for a Roth IRA. It requires earned income instead - you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial Roth IRA." },
-  sep_ira:                { minAge: 21, earnedIncome: true, planSet: true, note: "The IRS lets an employer require at most age 21, 3 of the last 5 years worked there, and a small minimum compensation - an employer can be more generous than all three, never stricter." },
+  traditional_ira:        { minAge: null, earnedIncome: true, note: "There is no minimum age for an IRA. What it actually requires is earned income, you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial IRA." },
+  roth_ira:               { minAge: null, earnedIncome: true, note: "There is no minimum age for a Roth IRA. It requires earned income instead, you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial Roth IRA." },
+  sep_ira:                { minAge: 21, earnedIncome: true, planSet: true, note: "The IRS lets an employer require at most age 21, 3 of the last 5 years worked there, and a small minimum compensation, an employer can be more generous than all three, never stricter." },
   simple_ira:             { minAge: null, earnedIncome: true, planSet: true, note: "No age minimum in law. It is an employer plan, so eligibility follows the employer's rules and your earnings there." },
   brokerage:              { minAge: 18, note: "18 in most states to open one in your own name - 19 in Alabama and Nebraska, 21 in Mississippi, since it follows each state's legal age of majority. Under that age, the equivalent is a custodial account an adult controls." },
   espp:                   { minAge: null, planSet: true, note: "No age rule. It depends on being employed somewhere that offers the plan." },
@@ -2377,14 +2381,14 @@ $("saveAcctBtn").onclick = async () => {
       .select().single();
     if (debtErr) { flagField("acctBank"); return toast(debtErr.message); }
     linked_liability_id = newDebt.id;
-    autoMsg = "Account added - linked to a new $0 balance liability";
+    autoMsg = "Account added, linked to a new $0 balance liability";
   } else if (AUTO_ASSET_TYPE[type]) {
     const { data: newAsset, error: assetErr } = await sb.from("assets")
       .insert({ name: bank_name, type: AUTO_ASSET_TYPE[type], value: 0 })
       .select().single();
     if (assetErr) { flagField("acctBank"); return toast(assetErr.message); }
     linked_asset_id = newAsset.id;
-    autoMsg = "Account added - linked to a new $0 asset, edit its value below";
+    autoMsg = "Account added, linked to a new $0 asset, edit its value below";
   }
 
   const { data: newAccount, error } = await sb.from("accounts")
@@ -2417,7 +2421,7 @@ const LARGE_AMOUNT_CONFIRM_THRESHOLD = 100000;
 async function confirmLargeAmount(amount, what = "this") {
   if (!Number.isFinite(amount) || amount < LARGE_AMOUNT_CONFIRM_THRESHOLD) return true;
   return confirmModal(
-    `${fmt(amount)} is a lot larger than usual. If that is right, carry on - this is only here to catch an extra zero.`,
+    `${fmt(amount)} is a lot larger than usual. If that is right, carry on, this is only here to catch an extra zero.`,
     { title: `Check the amount for ${what}`, confirmLabel: "Yes, that is correct" }
   );
 }
@@ -3013,7 +3017,7 @@ function updateAssetDepPreview() {
     return;
   }
   const est = estimateValue(price, date, ratePct / 100);
-  $("assetDepPreview").textContent = est !== null ? `Estimated current value: ${fmt(est)} - used instead of Value above` : "";
+  $("assetDepPreview").textContent = est !== null ? `Estimated current value: ${fmt(est)}, used instead of Value above` : "";
 }
 $("assetPurchasePrice").oninput = updateAssetDepPreview;
 $("assetPurchaseDate").oninput = updateAssetDepPreview;
@@ -3025,8 +3029,8 @@ $("saveAssetBtn").onclick = async () => {
   const value = parseFloat($("assetValue").value);
   if (!name) { flagField("assetName"); return toast("Give it a name first"); }
   if (!Number.isFinite(value)) { flagField("assetValue"); return toast("Enter a value"); }
-  if (type === "cash") { flagField("assetType"); return toast("Cash is automatic - use the Cash account's +/- panel instead."); }
-  if (type === "bank") { flagField("assetType"); return toast("Bank assets come from a Checking account - add one in the Accounts card instead."); }
+  if (type === "cash") { flagField("assetType"); return toast("Cash is automatic, use the Cash account's +/- panel instead."); }
+  if (type === "bank") { flagField("assetType"); return toast("Bank assets come from a Checking account, add one in the Accounts card instead."); }
 
   const isVehicle = type === "vehicle";
   const isInvestment = INVESTMENT_ASSET_TYPES.has(type);
@@ -3294,7 +3298,7 @@ async function loadAssets() {
     const overdrawn = v < 0;
     return `
       <div class="exp" ${linkedAssetIds.has(a.id) ? "" : `data-edit-asset="${a.id}" style="cursor:pointer"`}>
-        <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}${overdrawn ? " - overdrawn" : ""}</div>`}${esc(a.name)}</div>
+        <div>${a.type === "cash" ? "" : `<div class="meta">${assetTypeLabel(a.type)}${overdrawn ? ", overdrawn" : ""}</div>`}${esc(a.name)}</div>
         <span class="amt"${overdrawn ? ` style="color:var(--err)"` : ""}>${fmt(v)}${linkedAssetIds.has(a.id) ? "" : `<button type="button" class="x" data-del-asset="${a.id}" style="margin-left:8px" aria-label="Delete ${esc(a.name)}">✕</button>`}</span>
       </div>`;
   };
@@ -3557,7 +3561,7 @@ function helocDrawPeriodError(deltas) {
     // same omit-rather-than-assert rule the rest of this app holds.
     if (!debt || debt.type !== "heloc" || !debt.draw_period_end) continue;
     if (debt.draw_period_end < todayStr) {
-      return `${debt.name}'s draw period ended ${debt.draw_period_end}, so it can't be borrowed against any more - only paid down. Interest and a correction to what's owed still go through.`;
+      return `${debt.name}'s draw period ended ${debt.draw_period_end}, so it can't be borrowed against any more, only paid down. Interest and a correction to what's owed still go through.`;
     }
   }
   return null;
@@ -3835,7 +3839,7 @@ $("adjustSubtractBtn").onclick = async () => {
     flagField("adjustAmount");
     return toast(subAllowance > 0
       ? `${asset.name} only has ${fmt(Number(asset.value) + subAllowance)} available, including its ${fmt(subAllowance)} overdraft.`
-      : "Balance can't go negative - not enough in " + asset.name);
+      : "Balance can't go negative, not enough in " + asset.name);
   }
   const newValue = Math.round((Number(asset.value) - amount) * 100) / 100;
   const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
@@ -4036,22 +4040,22 @@ async function loadDebts() {
     const s = cycleStatus(d, accountActivity);
     if (s.state === "no_cycle") return "";
     if (s.state === "no_statement") {
-      return `<div class="meta">Statement due ${s.dueDate} - interest is worked out from your logged charges and payments, or add the statement balance in Edit details for an exact figure</div>`;
+      return `<div class="meta">Statement due ${s.dueDate}, interest is worked out from your logged charges and payments, or add the statement balance in Edit details for an exact figure</div>`;
     }
     // Interest for a completed cycle is added automatically (autoAccrueCardInterest),
     // so this only says so - a button here would double-charge the same cycle.
     const interest = s.interestEstimate != null
       ? ` About ${fmt(s.interestEstimate)} of interest is added to what you owe automatically, at ${d.interest_rate}% APR.` : "";
     if (s.state === "paid_in_full") {
-      return `<div class="meta" style="color:var(--ok)">Statement paid in full - no interest this cycle</div>`;
+      return `<div class="meta" style="color:var(--ok)">Statement paid in full, no interest this cycle</div>`;
     }
     if (s.state === "due_soon") {
       return `<div class="meta">${fmt(s.remaining)} of the ${fmt(s.statementBalance)} statement still unpaid, due ${s.dueDate} (${s.daysUntilDue}d). Pay it all to avoid interest.</div>`;
     }
     if (s.state === "carrying_balance") {
-      return `<div class="meta" style="color:var(--err)">Carrying ${fmt(s.remaining)} past the ${s.dueDate} due date - interest applies even though the minimum was paid.${interest}</div>`;
+      return `<div class="meta" style="color:var(--err)">Carrying ${fmt(s.remaining)} past the ${s.dueDate} due date, interest applies even though the minimum was paid.${interest}</div>`;
     }
-    return `<div class="meta" style="color:var(--err)">Under the ${fmt(s.minimum)} minimum by the ${s.dueDate} due date - interest applies and a late fee is likely.${interest}</div>`;
+    return `<div class="meta" style="color:var(--err)">Under the ${fmt(s.minimum)} minimum by the ${s.dueDate} due date, interest applies and a late fee is likely.${interest}</div>`;
   };
   const rowHtml = (d) => {
     const heloc = helocPhaseInfo(d);
@@ -4359,7 +4363,7 @@ $("payConfirmBtn").onclick = async () => {
   const amount = parseFloat($("payAmount").value);
   if (!amount || amount <= 0) { flagField("payAmount"); return toast("Enter a valid amount"); }
   const assetId = $("payFromAsset").value;
-  if (!assetId) { flagField("payFromAsset"); return toast("Choose an account to pay from - add one in the Accounts card if none are listed."); }
+  if (!assetId) { flagField("payFromAsset"); return toast("Choose an account to pay from, add one in the Accounts card if none are listed."); }
   const debt = debts.find((d) => d.id === activeDebtId);
   const asset = assets.find((a) => a.id === assetId);
   if (!debt || !asset) { flagField("payFromAsset"); return toast("Pick what you are paying off, and the account to pay from"); }
@@ -4372,7 +4376,7 @@ $("payConfirmBtn").onclick = async () => {
   // concept of a negative liability (a credit balance) to put it in.
   if (amount > Number(debt.balance)) {
     flagField("payAmount");
-    return toast(`${debt.name} only owes ${fmt(debt.balance)} - paying more than that isn't possible here.`);
+    return toast(`${debt.name} only owes ${fmt(debt.balance)}, paying more than that isn't possible here.`);
   }
 
   const newAssetValue = Math.round((Number(asset.value) - amount) * 100) / 100;
@@ -4614,11 +4618,11 @@ function scheduleGemma(raw) {
       if (g.category) $("fCategory").value = g.category;
       if (g.occurred_at) $("fDate").value = g.occurred_at;
       entrySource = "parsed";
-      $("parseStatus").textContent = "Parsed by Gemma - confirm & save";
+      $("parseStatus").textContent = "Parsed by Gemma, confirm & save";
       updateRequiredFieldHighlighting();
     } catch (err) {
       // Home machine asleep / unreachable - keep the keyword guess.
-      $("parseStatus").textContent = "Gemma unavailable - using quick parse";
+      $("parseStatus").textContent = "Gemma unavailable, using quick parse";
     }
   }, 650);
 }
@@ -4783,7 +4787,7 @@ function proceedWithRows(rows) {
     return;
   }
   if (rows.length - 1 > CSV_MAX_ROWS) {
-    $("csvFileError").textContent = `This file has more than ${CSV_MAX_ROWS.toLocaleString()} rows - split it into smaller files.`;
+    $("csvFileError").textContent = `This file has more than ${CSV_MAX_ROWS.toLocaleString()} rows, split it into smaller files.`;
     $("csvFileInput").value = "";
     return;
   }
@@ -4829,7 +4833,7 @@ function proceedWithRows(rows) {
   const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at);
   $("csvAccount").innerHTML = spendable.length
     ? spendable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("")
-    : `<option value="">No account available - add one first</option>`;
+    : `<option value="">No account available, add one first</option>`;
   $("csvSheetPicker").classList.add("hidden");
   $("csvStep1").classList.add("hidden");
   $("csvStep2").classList.remove("hidden");
@@ -4948,11 +4952,11 @@ $("csvStep2Next").onclick = () => {
   $("csvPreviewSummary").textContent =
     (parts.length ? `Found ${parts.join(" and ")}.` : "Nothing usable found in this file.") +
     (dupCount ? ` ${dupCount} look${dupCount === 1 ? "s" : ""} like something you already have.` : "") +
-    (csvSkippedCount ? ` ${csvSkippedCount} row${csvSkippedCount === 1 ? " was" : "s were"} skipped - no readable date or amount, or pointing the other way.` : "") +
+    (csvSkippedCount ? ` ${csvSkippedCount} row${csvSkippedCount === 1 ? " was" : "s were"} skipped, no readable date or amount, or pointing the other way.` : "") +
     // Stated up front because the fix is cheap BEFORE importing (tick fewer
     // rows, or add a keyword first) and tedious after: finding the
     // uncategorized ones among hundreds of new rows is its own chore.
-    (uncategorized ? ` ${uncategorized} ${uncategorized === 1 ? "has" : "have"} no category yet - you can set ${uncategorized === 1 ? "it" : "them"} in bulk from Recent History after importing.` : "");
+    (uncategorized ? ` ${uncategorized} ${uncategorized === 1 ? "has" : "have"} no category yet, you can set ${uncategorized === 1 ? "it" : "them"} in bulk from Recent History after importing.` : "");
 
   $("csvPreviewList").innerHTML = csvPreviewRows.length
     ? csvPreviewRows.map((r, i) => `
@@ -5302,9 +5306,9 @@ async function undoActivity(row) {
   if (row.kind === "asset_adjust") {
     const account = accounts.find((a) => a.id === row.account_id);
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
-    if (!asset) return toast("Can't undo - the linked account no longer exists.");
+    if (!asset) return toast("Can't undo, the linked account no longer exists.");
     const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
-    if (newValue < 0) return toast(`Can't undo - would take ${asset.name} below $0.`);
+    if (newValue < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
     const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
     if (error) return toast(error.message);
   } else if (row.kind === "owed_adjust") {
@@ -5312,16 +5316,16 @@ async function undoActivity(row) {
     // "subtract what was applied," correct whether the original correction
     // raised the balance (a missed charge, an interest charge) or lowered it.
     const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
-    if (!debt) return toast("Cannot undo this - what you owed is no longer there.");
+    if (!debt) return toast("Cannot undo this, what you owed is no longer there.");
     const newBalance = Math.round((Number(debt.balance) - Number(row.amount)) * 100) / 100;
-    if (newBalance < 0) return toast(`Can't undo - would take ${debt.name} below $0 owed.`);
+    if (newBalance < 0) return toast(`Can't undo, would take ${debt.name} below $0 owed.`);
     const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
     if (error) return toast(error.message);
   } else if (row.kind === "liability_payment") {
     const account = accounts.find((a) => a.id === row.account_id);
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
     const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
-    if (!asset || !debt) return toast("Cannot undo this - the account or debt it belonged to is no longer there.");
+    if (!asset || !debt) return toast("Cannot undo this, the account or debt it belonged to is no longer there.");
     const newAssetValue = Math.round((Number(asset.value) + Number(row.amount)) * 100) / 100;
     const newBalance = Math.round((Number(debt.balance) + Number(row.amount)) * 100) / 100;
     const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
@@ -5336,7 +5340,7 @@ async function undoActivity(row) {
     // contribution only ever adds money in), so undoing is always a
     // straight subtraction, never a sign-dependent one like asset_adjust's.
     const asset = row.asset_id ? assets.find((a) => a.id === row.asset_id) : null;
-    if (!asset) return toast("Can't undo - the investment no longer exists.");
+    if (!asset) return toast("Can't undo, the investment no longer exists.");
     // A contribution recorded from a PURCHASE never moved the asset's own
     // value - the money is in the holding, and syncParentAssetValue recomputes
     // the parent from its holdings regardless - so removing the row is the
@@ -5359,7 +5363,7 @@ async function undoActivity(row) {
       return toast("Removed from this year's total");
     }
     const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
-    if (newValue < 0) return toast(`Can't undo - would take ${asset.name} below $0.`);
+    if (newValue < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
     const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
     if (error) return toast(error.message);
     await syncParentAssetValue(asset.parent_asset_id); // no-op unless asset is itself a holding
@@ -5371,9 +5375,9 @@ async function undoActivity(row) {
     const toAccount = accounts.find((a) => a.id === row.related_account_id);
     const fromAsset = fromAccount ? assets.find((a) => a.id === fromAccount.linked_asset_id) : null;
     const toAsset = toAccount ? assets.find((a) => a.id === toAccount.linked_asset_id) : null;
-    if (!fromAsset || !toAsset) return toast("Can't undo - one of the accounts no longer exists.");
+    if (!fromAsset || !toAsset) return toast("Can't undo, one of the accounts no longer exists.");
     const newToValue = Math.round((Number(toAsset.value) - Number(row.amount)) * 100) / 100;
-    if (newToValue < 0) return toast(`Can't undo - would take ${toAsset.name} below $0.`);
+    if (newToValue < 0) return toast(`Can't undo, would take ${toAsset.name} below $0.`);
     const { error: toErr } = await sb.from("assets").update({ value: newToValue }).eq("id", toAsset.id);
     if (toErr) return toast(toErr.message);
     const newFromValue = Math.round((Number(fromAsset.value) + Number(row.amount)) * 100) / 100;
@@ -5399,19 +5403,19 @@ async function undoActivity(row) {
     // ambiguous, and reversing the wrong one silently is worse than saying so.
     if (sales.length !== 1) {
       return toast(sales.length
-        ? "Can't undo automatically - there is more than one identical sale that day. Adjust the holding by hand."
-        : "Can't undo - the record of this sale is no longer there.");
+        ? "Can't undo automatically, there is more than one identical sale that day. Adjust the holding by hand."
+        : "Can't undo, the record of this sale is no longer there.");
     }
     const sale = sales[0];
     const holding = assets.find((a) => a.id === row.asset_id);
-    if (!holding) return toast("Can't undo - that holding no longer exists.");
+    if (!holding) return toast("Can't undo, that holding no longer exists.");
 
     // A sale with no account moved no money, so there is no balance to put
     // back and no account to resolve - only the shares and the realized gain.
     // Its history row exists precisely so that case is still undoable.
     const account = row.account_id ? accounts.find((a) => a.id === row.account_id) : null;
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
-    if (row.account_id && !asset) return toast("Can't undo - the account the money went into no longer exists.");
+    if (row.account_id && !asset) return toast("Can't undo, the account the money went into no longer exists.");
     let newValue = null;
     if (asset) {
       // Putting the shares back means taking the proceeds back out, and that
@@ -5420,7 +5424,7 @@ async function undoActivity(row) {
       // destroying the difference.
       newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
       if (newValue < -overdraftAllowance(asset)) {
-        return toast(`Can't undo - ${asset.name} no longer holds the ${fmt(row.amount)} this sale paid in.`);
+        return toast(`Can't undo, ${asset.name} no longer holds the ${fmt(row.amount)} this sale paid in.`);
       }
     }
 
@@ -5451,9 +5455,9 @@ async function undoActivity(row) {
     // undo is.
     const account = accounts.find((a) => a.id === row.account_id);
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
-    if (!asset) return toast("Can't undo - the linked account no longer exists.");
+    if (!asset) return toast("Can't undo, the linked account no longer exists.");
     const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
-    if (newValue < 0) return toast(`Can't undo - would take ${asset.name} below $0.`);
+    if (newValue < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
     const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
     if (error) return toast(error.message);
   }
@@ -5518,7 +5522,7 @@ function renderRecentTransactions() {
   const anyFilterActive = Object.values(filters).some((v) => v !== "" && v !== null);
   const emptyMsg = anyFilterActive
     ? "No history matches these filters."
-    : "No history yet - add an expense above.";
+    : "No history yet, add an expense above.";
   renderExpenseList("expList", recentTransactions(50, filters), emptyMsg, { selectable: true });
   updateBulkActionBar();
 }
@@ -5907,7 +5911,7 @@ $("editSave").onclick = async () => {
   // A note is written precisely so it shows up under the monthly report, and
   // loadInsights() derives the standouts fresh, so this reflects it at once.
   await loadInsights();
-  toast((categoryChanged ? "Saved - I'll remember that" : "Saved ✓") + budgetWarningToastSuffix(newCategory));
+  toast((categoryChanged ? "Saved, I'll remember that" : "Saved ✓") + budgetWarningToastSuffix(newCategory));
 };
 
 // An expense is structurally a leaf (only expense_embeddings references one,
@@ -6664,7 +6668,7 @@ $("saveFundBtn").onclick = async () => {
 
 $("deleteFundBtn").onclick = async () => {
   if (!editingFund) return;
-  if (!(await confirmModal(`Stop saving for ${editingFund.name}? This only removes the goal - it does not touch any of your accounts.`, { title: "Remove this goal", confirmLabel: "Remove" }))) return;
+  if (!(await confirmModal(`Stop saving for ${editingFund.name}? This only removes the goal, it does not touch any of your accounts.`, { title: "Remove this goal", confirmLabel: "Remove" }))) return;
   const row = editingFund;
   closeFundForm();
   await deleteLeafRowWithUndo({
@@ -6881,6 +6885,29 @@ const bubbleTone = (n) => (n == null || n === 0 ? "" : n > 0 ? "is-up" : "is-dow
 // as "+113.1547%", and `n >= 0` put a plus sign on a flat 0% - the same
 // "zero is not a gain" mistake gainColor() had. A percentage with four
 // decimal places is noise at every call site here.
+// The stored watchlist name, read back the way it should be SHOWN. Existing
+// rows were saved lowercased ("apple"), so the curated proper-case name wins
+// when the stored one is only a case variant of it - never overriding a name
+// the user actually wrote differently, and never inventing one that was never
+// stored (renderWatchlistEditor has to be able to say a row has no name at
+// all). Shared because two surfaces printing one company's name two different
+// ways is exactly the drift this repo keeps recording: the daily recap read
+// "amd (AMD) rose 2.8%" while the Tracked companies list beside it read "AMD".
+function storedCompanyName(stored, symbol) {
+  const curated = TICKER_NAMES[(symbol || "").trim().toUpperCase()];
+  const name = (stored || "").trim();
+  return curated && name.toLowerCase() === curated.toLowerCase() ? curated : name;
+}
+
+// What to CALL a tracked company on screen: its stored name, else the curated
+// one, else nothing (ticker only). Deliberately a different question from
+// storedCompanyName above, which reports what is actually on the row.
+const trackedCompanyName = (symbol) => {
+  const sym = (symbol || "").trim().toUpperCase();
+  const row = watchlistSymbols.find((w) => (w.symbol || "").trim().toUpperCase() === sym);
+  return storedCompanyName(row && row.company_name, sym) || TICKER_NAMES[sym] || null;
+};
+
 const signedPct = (n) => {
   if (!Number.isFinite(n)) return "-";
   const r = Math.round(n * 100) / 100;
@@ -7155,9 +7182,9 @@ function renderInvestments() {
         </div>
         ${children.length
           ? `<div class="holding-list" data-holdings-of="${esc(p.id)}">${children.map(holdingRow).join("")}</div>`
-          : `<p class="muted" style="font-size:12px;padding-left:12px;margin:6px 0 0">No specific holdings recorded - use "+ Add stock" to enter tickers.</p>`}
+          : `<p class="muted" style="font-size:12px;padding-left:12px;margin:6px 0 0">No specific holdings recorded, use "+ Add stock" to enter tickers.</p>`}
       </div>`;
-  }).join("") : `<p class="muted" style="font-size:13px">No investments added yet - add one from Things you have on the Log page (Brokerage, IRA, 401(k), crypto, and so on).</p>`;
+  }).join("") : `<p class="muted" style="font-size:13px">No investments added yet, add one from Things you have on the Log page (Brokerage, IRA, 401(k), crypto, and so on).</p>`;
   // One reorder list PER ACCOUNT, not one for the page: a holding belongs to
   // its account, and moving AAPL out of the IRA and into the brokerage by
   // dragging would be a transfer between two real accounts rather than a
@@ -7349,12 +7376,12 @@ function healthLineText(l) {
   switch (l.kind) {
     case "today":
       return l.change != null
-        ? `Today ${fmt(l.change)} (${signedPct(l.changePct)}) - portfolio at ${fmt(l.value)}`
-        : `Portfolio at ${fmt(l.value)} - no live price data yet for today's change`;
+        ? `Today ${fmt(l.change)} (${signedPct(l.changePct)}), portfolio at ${fmt(l.value)}`
+        : `Portfolio at ${fmt(l.value)}, no live price data yet for today's change`;
     case "gainLoss":
       return l.gainLoss != null
         ? `${fmt(l.gainLoss)} (${signedPct(l.gainLossPct)}) since cost basis`
-        : `No cost basis on file yet - gain/loss can't be calculated`;
+        : `No cost basis on file yet, gain/loss can't be calculated`;
     case "allocation":
       return l.tone === "ok"
         ? "Allocation is within target"
@@ -7613,7 +7640,7 @@ $("sellConfirmBtn").onclick = async () => {
   renderInvestments();
   renderRealizedGains();
   renderNetWorth();
-  toast(`Sale recorded: ${fmt(realized)} realized${remainingQty === 0 ? " - position closed" : ""}`);
+  toast(`Sale recorded: ${fmt(realized)} realized${remainingQty === 0 ? ", position closed" : ""}`);
 };
 
 // ---- INFO ICONS (declutters a card's explainer paragraph into a tap/hover
@@ -7819,7 +7846,17 @@ $("watchlistClose").onclick = () => { flushWatchlistOrder(); closeModal("watchli
 function renderMarketMovers() {
   const card = $("marketMoversCard");
   if (!card) return;
-  if (!marketMovers.length) { card.classList.add("hidden"); $("emptyMovers").classList.remove("hidden"); return; }
+  // Both placeholders now sit in the Overview panel. With the whole live-pricing
+  // pipeline off they would stack, two dashed boxes saying nothing is here; the
+  // broader message wins. They can still legitimately appear together in the
+  // other direction, because market_movers is a SEPARATE pipeline (Alpha
+  // Vantage) that is not gated by that flag - which is why emptyOverview is
+  // scoped to "live index prices" rather than claiming the whole tab is off.
+  if (!marketMovers.length) {
+    card.classList.add("hidden");
+    $("emptyMovers").classList.toggle("hidden", !PRICE_FINDINGS_ENABLED);
+    return;
+  }
   card.classList.remove("hidden");
   $("emptyMovers").classList.add("hidden");
 
@@ -7943,7 +7980,7 @@ function renderPriceHistory() {
   // the bare ticker it replaced.
   select.innerHTML = symbols.map((s) => {
     const name = storableName(s);
-    return `<option value="${esc(s)}"${s === priceHistorySymbol ? " selected" : ""}>${esc(name ? `${s} - ${name}` : s)}</option>`;
+    return `<option value="${esc(s)}"${s === priceHistorySymbol ? " selected" : ""}>${esc(name ? `${s}, ${name}` : s)}</option>`;
   }).join("");
 
   // aria-pressed and a weight change, not colour alone: which range is showing
@@ -7968,7 +8005,7 @@ function renderPriceHistory() {
   if (series.length < 2) {
     canvas.style.display = "none";
     empty.textContent = series.length === 1
-      ? "Only one day of history for this symbol so far - a line needs at least two."
+      ? "Only one day of history for this symbol so far, a line needs at least two."
       : "No price history for this symbol in this range.";
   } else {
     canvas.style.display = "";
@@ -8019,7 +8056,7 @@ function renderFundamentals() {
     // shown, so a company with no dividend doesn't get a dividend lesson.
     const glossary = [];
     if (f.market_cap != null) glossary.push("Market cap is what the whole company is worth on the stock market.");
-    if (f.pe_ratio != null) glossary.push("P/E compares the share price to the company's yearly profit - a higher number means you pay more for each dollar it earns.");
+    if (f.pe_ratio != null) glossary.push("P/E compares the share price to the company's yearly profit, a higher number means you pay more for each dollar it earns.");
     if (f.dividend_yield != null) glossary.push("Dividend yield is how much cash it pays out to shareholders each year, as a percent of the share price.");
     bits.push(`<div class="muted" style="font-size:11px;margin-top:4px">${glossary.map(esc).join(" ")}</div>`);
   }
@@ -8080,14 +8117,12 @@ function renderWatchlistEditor() {
         // proper-case name when the stored one is only a case variant of it,
         // so those read properly without migrating any data - but never
         // override a name the user actually wrote differently.
-        const curated = TICKER_NAMES[symbol];
-        const stored = (w.company_name || "").trim();
-        const display = curated && stored.toLowerCase() === curated.toLowerCase() ? curated : stored;
+        const display = storedCompanyName(w.company_name, symbol);
         const sub = owned
-          ? `<div class="meta">${display ? esc(display) + " · " : ""}you own this - added automatically</div>`
+          ? `<div class="meta">${display ? esc(display) + " · " : ""}you own this, added automatically</div>`
           : display
             ? `<div class="meta">${esc(display)}</div>`
-            : `<div class="meta muted">no company name - headlines match on ticker only</div>`;
+            : `<div class="meta muted">no company name, headlines match on ticker only</div>`;
         // The position is IN the label, not only in the live region: a screen
         // reader user tabbing through the list needs to know where each row
         // already sits before deciding to move it. esc() because the symbol is
@@ -8644,7 +8679,7 @@ $("watchlistAddBtn").onclick = async () => {
   // curated list is comprehensive but not exhaustive, so an unrecognized
   // symbol warns rather than blocks.
   if (!isKnownTicker(symbol) && !CRYPTO_SYMBOLS.includes(symbol)) {
-    if (!(await confirmModal(`"${symbol}" isn't in the app's reference list of known tickers. It may still be valid - the list isn't exhaustive.`,
+    if (!(await confirmModal(`"${symbol}" isn't in the app's reference list of known tickers. It may still be valid, the list isn't exhaustive.`,
       { title: "Track this symbol anyway?", confirmLabel: "Track it" }))) return;
   }
   // Kept as typed rather than lowercased. price-agent.js's
@@ -8663,8 +8698,13 @@ $("watchlistAddBtn").onclick = async () => {
   $("watchlistNewName").value = "";
   await loadWatchlistSymbols();
   renderMarketOverview();
-  toast(`${symbol} added - prices arrive on the next background run`);
+  toast(`${symbol} added, prices arrive on the next background run`);
 };
+
+// Which breadth list is open, kept across renders so a live-price tick does
+// not close a list the reader just opened. Per-session only, like the other
+// open/closed UI state on this page.
+let recapBreadthOpen = null;
 
 function renderDailyRecap() {
   const card = $("dailyRecapCard");
@@ -8673,44 +8713,83 @@ function renderDailyRecap() {
   // No manual-entry fallback exists for a market recap, so an empty card
   // would be clutter rather than a fact worth stating - hidden entirely
   // until a real one exists, same convention as Market overview.
-  if (!recap) { card.classList.add("hidden"); return; }
+  if (!recap) { card.classList.add("hidden"); syncTrackedEmptyState(); return; }
   card.classList.remove("hidden");
+  syncTrackedEmptyState();
   renderAgentFreshness("daily-recap", "dailyRecapFreshness", "dailyRecapWarning");
 
   $("dailyRecapDate").textContent = `Market close, ${recapDateLabel(recap.tradeDate)}`;
 
-  const breadth = recap.breadth;
-  const breadthEl = $("dailyRecapBreadth");
-  if (breadth) {
-    // Says what the colour says. The tint compares up against DOWN, and the
-    // sentence used to state only up and total - but `flat` is a real third
-    // bucket (marketBreadth counts it separately), so down is NOT total minus
-    // up, and the same sentence could render green or red on a comparison the
-    // reader was never shown. Naming `down` makes the colour redundant rather
-    // than load-bearing, which is what 6.3 actually asks for.
-    breadthEl.textContent =
-      `${breadth.up} of the ${breadth.total} companies you track finished the day up, ${breadth.down} down`;
-    breadthEl.className = `stat-bubble ${bubbleTone(breadth.up - breadth.down)}`.trim();
+  // Which companies, not just how many. Computed from daily_prices for the
+  // recap's own trade_date using the same comparison buildDailyRecap() counts
+  // from, so a list can never come back a company short of the count above it.
+  // It also counts THIS user's tracked list, which is what the label says,
+  // where the stored figure counts the union across every user - the same for
+  // one household, not the same question.
+  const detail = recapBreadthDetail(dailyPrices, moverSymbols(), recap.tradeDate);
+  const breadth = detail
+    ? { up: detail.up.length, down: detail.down.length, flat: detail.flat.length, total: detail.total }
+    : recap.breadth;
+  const tilesEl = $("dailyRecapBreadth");
+  const noteEl = $("dailyRecapBreadthNote");
+  const listEl = $("dailyRecapBreadthList");
+
+  if (!breadth) {
+    // The class goes too, not just the children: .breadth-tiles carries its own
+    // margin, so an emptied-but-still-classed div leaves 20px of dead space.
+    tilesEl.className = "";
+    tilesEl.innerHTML = "";
+    noteEl.textContent = "";
+    listEl.classList.add("hidden");
   } else {
-    breadthEl.textContent = "";
-    // Not just emptied: an empty bubble is a padded tinted box with nothing
-    // in it, which the unstyled paragraph this replaced could never be.
-    breadthEl.className = "hidden";
+    // A count with no list behind it renders as plain text, never as a button
+    // that does nothing when pressed. The title attribute is the desktop hover
+    // answer; the button is what makes the same answer reachable on a phone,
+    // where hover does not exist - the same pairing wireInfoIcons() uses.
+    const tile = (dir, count, label, rows) => {
+      const names = rows ? rows.map((r) => r.symbol).join(", ") : "";
+      const open = recapBreadthOpen === dir;
+      const body = `<span class="figure"><span class="arrow" aria-hidden="true">${dir === "up" ? "&#9650;" : "&#9660;"}</span>${count}</span><span class="label">${label}</span>`;
+      return rows && rows.length
+        ? `<button type="button" class="breadth-tile is-${dir}" data-breadth="${dir}" aria-expanded="${open}" aria-controls="dailyRecapBreadthList" title="${esc(names)}">${body}</button>`
+        : `<div class="breadth-tile is-${dir}">${body}</div>`;
+    };
+    tilesEl.className = "breadth-tiles";
+    tilesEl.innerHTML =
+      tile("up", breadth.up, "finished up", detail && detail.up) +
+      tile("down", breadth.down, "finished down", detail && detail.down);
+
+    // `flat` is a real third bucket, so down is NOT total minus up - naming it
+    // is what stops the two tiles reading as the whole story when it isn't.
+    const flat = Number(breadth.flat) || 0;
+    noteEl.textContent =
+      `Of the ${breadth.total} companies you track` +
+      (flat ? `, ${flat} finished unchanged` : "") + "." +
+      (detail ? " Tap a box to see which." : "");
   }
 
-  // Stage 2 (a single batched Gemini synthesis) is the only thing that
-  // ever fills this - stays hidden on a rollup-only recap rather than
-  // showing a placeholder for something that may never be generated.
-  // Explicitly labelled as written rather than measured: every other line
-  // on this card is a real number or a real link, and the reader should
-  // never have to guess which is which. Same distinction marketBreadth()
-  // draws when it calls itself "a plain count, not an AI's read."
-  // esc() because this is model output, the exact provenance that rule
-  // exists for.
-  // Paragraph breaks are preserved: the recap is now a written piece rather
-  // than the two-sentence caption it started as, so it can legitimately run
-  // to more than one paragraph. esc() first, then turn the surviving newlines
-  // into real breaks - never the other way round.
+  const chips = (rows) => `<div class="breadth-list">` + rows.map((r) => {
+    const name = trackedCompanyName(r.symbol);
+    return `<span class="pill"${name ? ` title="${esc(name)}"` : ""}>${esc(r.symbol)} ${signedPct(r.changePct)}</span>`;
+  }).join("") + `</div>`;
+
+  // Toggled in place rather than by re-rendering the card: a re-render
+  // replaces the button that was just pressed, which drops keyboard focus -
+  // the same trap the holdings reorder had to be fixed for.
+  const showBreadth = (dir) => {
+    recapBreadthOpen = dir;
+    const rows = dir && detail ? detail[dir] : null;
+    listEl.classList.toggle("hidden", !rows || !rows.length);
+    if (rows && rows.length) listEl.innerHTML = chips(rows);
+    for (const btn of tilesEl.querySelectorAll("[data-breadth]")) {
+      btn.setAttribute("aria-expanded", String(btn.dataset.breadth === dir));
+    }
+  };
+  for (const btn of tilesEl.querySelectorAll("[data-breadth]")) {
+    btn.onclick = () => showBreadth(recapBreadthOpen === btn.dataset.breadth ? null : btn.dataset.breadth);
+  }
+  showBreadth(detail && recapBreadthOpen && detail[recapBreadthOpen] ? recapBreadthOpen : null);
+
   // Market-wide coverage. Deliberately rendered independently of the AI
   // summary: these are real linked articles that explain what the day was
   // about, and they are the only market-wide "why" this card has on the
@@ -8721,53 +8800,84 @@ function renderDailyRecap() {
     $("dailyRecapContextList").innerHTML = ctx.map((h) => `
       <div style="margin-bottom:6px">
         <a href="${esc(h.url)}" target="_blank" rel="noopener noreferrer" style="font-size:13px">${esc(h.title)}</a>
-        ${h.source ? `<span class="muted" style="font-size:11px"> - ${esc(h.source)}</span>` : ""}
+        ${h.source ? `<span class="muted" style="font-size:11px">, ${esc(h.source)}</span>` : ""}
       </div>`).join("");
   }
 
+  // Stage 2 (a single batched Gemini synthesis) is the only thing that ever
+  // fills this, and it is absent on most days, so the card has to be complete
+  // without it - it stays hidden rather than showing a placeholder for
+  // something that may never be generated. Explicitly labelled as written
+  // rather than measured: every other line on this card is a real number or a
+  // real link, and the reader should never have to guess which is which.
+  // esc() because this is model output, the exact provenance that rule exists
+  // for; paragraph breaks are preserved because the recap is a written piece
+  // rather than the two-sentence caption it started as. esc() first, then turn
+  // the surviving newlines into breaks - never the other way round.
+  //
+  // There is no zero-LLM prose fallback any more. It restated the biggest
+  // moves in a sentence, and the moves now have their own section below
+  // carrying the same symbols and percentages with the day's coverage
+  // attached, so the fallback was the same facts twice - the worse copy.
   const summaryEl = $("dailyRecapSummary");
-  if (recap.summary) {
-    summaryEl.innerHTML = `<span class="muted" style="font-size:11px">AI-written from the day's real prices and headlines</span><br>${esc(plainDashes(recap.summary)).replace(/\n+/g, "<br><br>")}`;
-  } else {
-    // Zero-LLM fallback. The summary is genuinely optional and absent
-    // whenever Gemini fails, which production has shown is common - and now
-    // that the per-mover price table has been dropped, its absence would
-    // otherwise leave this card with almost nothing on it. Says the same
-    // thing the table did, in words, from the same numbers.
-    const nameFor = (sym) => {
-      const w = watchlistSymbols.find((r) => (r.symbol || "").trim().toUpperCase() === sym);
-      return w && w.company_name ? `${w.company_name} (${sym})` : sym;
-    };
-    const moved = recap.movers
-      .filter((m) => Number.isFinite(m.change_pct) && m.change_pct !== 0)
-      .slice(0, 3)
-      .map((m) => `${nameFor(m.symbol)} ${m.change_pct > 0 ? "rose" : "fell"} ${Math.abs(Math.round(m.change_pct * 10) / 10)}%`);
-    summaryEl.textContent = moved.length
-      ? `The biggest moves among the companies you track: ${moved.join(", ")}.`
-      : "";
-  }
+  summaryEl.innerHTML = recap.summary
+    ? `<span class="muted" style="font-size:11px">AI-written from the day's real prices and headlines</span><br>${esc(plainDashes(recap.summary)).replace(/\n+/g, "<br><br>")}`
+    : "";
   summaryEl.classList.toggle("hidden", !summaryEl.innerHTML);
 
-  // The per-mover price table moved out of this card deliberately: the recap
-  // is meant to read as words, and the same closes and percentages are one
-  // tap away on the Biggest movers and Overview sub-tabs. What stays is the part the
-  // prose can't replace - the real, clickable sources it was written from,
-  // still labelled as the day's coverage rather than as a cause.
-  const sourced = recap.movers.filter((m) => m.headline);
-  $("dailyRecapMovers").innerHTML = sourced.length
-    ? `<div class="muted" style="font-size:12px;font-weight:700;margin:14px 0 6px">What was being reported</div>` +
-      sourced.map((m) => `
-        <div style="margin:0 0 10px">
-          <a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px;line-height:1.45">${esc(m.headline.title)}</a>
-          <div class="muted" style="font-size:12px;margin-top:2px"><span class="sym-link" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.symbol)}</span>${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>
-        </div>`).join("")
+  // The biggest moves, each with what was published about that company that
+  // day. A mover with no coverage still appears: it is one of the day's
+  // biggest moves either way, and dropping it made the section quietly
+  // disagree with the "biggest movers" it claims to list.
+  //
+  // `summary` is the PUBLISHER's own description of its article, carried
+  // through from Finnhub's company-news response - a real, linked, grounded
+  // couple of lines that costs no model call and no quota, which is the only
+  // kind of "why" this card can offer every day. It is still coverage, not a
+  // stated cause, and the card says so.
+  $("dailyRecapMovers").innerHTML = recap.movers.length
+    ? `<div class="muted" style="font-size:12px;font-weight:700;margin:14px 0 8px">The biggest moves, and what was reported</div>` +
+      recap.movers.map((m) => {
+        const name = trackedCompanyName(m.symbol);
+        const h = m.headline;
+        return `
+        <div style="margin:0 0 12px">
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+            <span class="sym-link" style="font-weight:700" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.symbol)}</span>
+            <span style="font-weight:700;font-size:13px;color:${gainColor(m.change_pct)}">${signedPct(m.change_pct)}</span>
+            ${name ? `<span class="muted" style="font-size:12px">${esc(name)}</span>` : ""}
+          </div>
+          ${h ? `<a href="${esc(h.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px;line-height:1.45">${esc(h.title)}</a>` : `<div class="muted" style="font-size:12px">Nothing was published about this one today.</div>`}
+          ${h && h.summary ? `<p class="recap-why">${esc(plainDashes(h.summary))}</p>` : ""}
+          ${h && h.source ? `<div class="muted" style="font-size:12px;margin-top:2px">${esc(h.source)}</div>` : ""}
+        </div>`;
+      }).join("")
     : "";
+}
+
+// The tracked-companies sub-tab holds two independently-hidden cards written
+// by two different render functions, so neither can decide on its own whether
+// the panel is empty. Reading the DOM is the cheap, honest answer: it cannot
+// drift from what is actually on screen the way a second copy of both
+// conditions would.
+function syncTrackedEmptyState() {
+  const recap = $("dailyRecapCard"), today = $("trackedTodayCard"), empty = $("emptyTracked");
+  if (!empty) return;
+  const anything = (recap && !recap.classList.contains("hidden")) || (today && !today.classList.contains("hidden"));
+  empty.classList.toggle("hidden", anything);
 }
 
 function renderMarketOverview() {
   const card = $("marketOverviewCard");
+  const trackedCard = $("trackedTodayCard");
   if (!card) return;
-  if (!PRICE_FINDINGS_ENABLED) { card.classList.add("hidden"); $("emptyOverview").classList.remove("hidden"); return; }
+  if (!PRICE_FINDINGS_ENABLED) {
+    card.classList.add("hidden");
+    if (trackedCard) trackedCard.classList.add("hidden");
+    $("emptyOverview").classList.remove("hidden");
+    syncTrackedEmptyState();
+    return;
+  }
   card.classList.remove("hidden");
   $("emptyOverview").classList.add("hidden");
   renderAgentFreshness("price-agent", "marketOverviewFreshness", "marketOverviewWarning");
@@ -8878,6 +8988,12 @@ function renderMarketOverview() {
         </a>
       </div>`).join("");
   }
+
+  // The card is three independently-hidden sections; with all three empty it
+  // would otherwise render as a title and a rule over nothing.
+  const pulseShown = pulseEl && !pulseEl.classList.contains("hidden") && pulseEl.textContent;
+  if (trackedCard) trackedCard.classList.toggle("hidden", !(pulseShown || movers.length || digest));
+  syncTrackedEmptyState();
 }
 
 // ---- HOLDINGS (specific tickers inside an investment account) -----------
@@ -9100,7 +9216,7 @@ $("holdingSymbol").addEventListener("blur", () => {
   $("holdingCostBasis").value = price;
   updateHoldingTotalCost();
   updateHoldingFieldHighlighting();
-  toast(`Filled with today's live price (${fmt(price)}) - edit if you paid differently`);
+  toast(`Filled with today's live price (${fmt(price)}), edit if you paid differently`);
 });
 
 // State for the "Buying now" mode's shares<->dollar-amount conversion -
@@ -9124,7 +9240,7 @@ async function refreshHoldingLivePrice(symbol) {
   if (price == null) {
     // No live price - degrade to the same manual price-per-share entry
     // "Already own this" mode already uses, rather than dead-ending the form.
-    $("holdingLivePriceStatus").textContent = "No live price available for this ticker right now - enter the price you're paying manually.";
+    $("holdingLivePriceStatus").textContent = "No live price available for this ticker right now, enter the price you're paying manually.";
     $("holdingCostBasis").readOnly = false;
     setHoldingBuyBasis("shares");
   } else {
@@ -9424,7 +9540,7 @@ $("saveHoldingBtn").onclick = async () => {
     await applyAssetDelta(fundingAccountId, null, costBasisDelta, -1);
     await logActivity(
       "asset_adjust",
-      `Bought ${quantity} ${symbol} - funded from ${acctName(fundingAccountId)}`,
+      `Bought ${quantity} ${symbol}, funded from ${acctName(fundingAccountId)}`,
       -costBasisDelta, undefined, fundingAccountId
     );
   }
@@ -9487,7 +9603,7 @@ function contributionRefusalReason(parentAssetId, amount) {
   const year = new Date().getFullYear();
   return left <= 0
     ? `You have already put in the ${fmt(usage.limit)} allowed for ${group.label} in ${year}. You cannot add more this year.`
-    : `Only ${fmt(left)} can still go into ${group.label} in ${year} - you have put in ${fmt(usage.contributed)} of ${fmt(usage.limit)}. This costs ${fmt(amount)}.`;
+    : `Only ${fmt(left)} can still go into ${group.label} in ${year}, you have put in ${fmt(usage.contributed)} of ${fmt(usage.limit)}. This costs ${fmt(amount)}.`;
 }
 
 // ---- CONTRIBUTIONS (Investments tab) -------------------------------------
@@ -9819,7 +9935,7 @@ async function retrieveRelevantHistory(question, sinceDate) {
 // have to guess which they are looking at.
 function showQaAnswer(answer, kind, note = "") {
   const label = kind === "computed"
-    ? '<span class="muted" style="font-size:11px">Exact - counted from your own records, no AI involved</span><br>'
+    ? '<span class="muted" style="font-size:11px">Exact, counted from your own records, no AI involved</span><br>'
     : '<span class="muted" style="font-size:11px">AI-written from figures this app calculated</span><br>';
   $("qaAnswer").innerHTML = label + esc(answer);
   $("qaAnswer").classList.remove("hidden");
@@ -9919,7 +10035,7 @@ $("qaAskBtn").onclick = async () => {
     // displaying something plausible.
     const check = verifyAnswerFigures(answer, allowed);
     if (!check.ok) {
-      $("qaStatus").textContent = "That answer worked out its own figures, which this app will not show without checking them - so it has been discarded. Try asking about one category or one month, which can be answered exactly.";
+      $("qaStatus").textContent = "That answer worked out its own figures, which this app will not show without checking them, so it has been discarded. Try asking about one category or one month, which can be answered exactly.";
       return;
     }
 
@@ -9934,7 +10050,7 @@ $("qaAskBtn").onclick = async () => {
     // which would be actively misleading here.
     $("qaStatus").textContent = err instanceof QaAdviceRejectedError
       ? err.message
-      : "Couldn't get an answer - is Gemma reachable? (" + err.message + ")";
+      : "Couldn't get an answer, is Gemma reachable? (" + err.message + ")";
   } finally {
     $("qaAskBtn").disabled = false;
     $("qaProgress").textContent = "";
@@ -10408,7 +10524,7 @@ async function payBillTowardDebt(sub, occurredAt) {
   const account = accounts.find((a) => a.id === sub.account_id);
   const asset = account?.linked_asset_id ? assets.find((a) => a.id === account.linked_asset_id) : null;
   if (!debt) return { error: "The debt this bill pays down is no longer there." };
-  if (!asset) return { error: "Pick a checking or savings account to pay from - a credit card cannot pay a debt." };
+  if (!asset) return { error: "Pick a checking or savings account to pay from, a credit card cannot pay a debt." };
   const owed = Number(debt.balance);
   if (!(owed > 0)) return { paid: 0 };
   const pay = Math.min(Number(sub.amount), owed);
@@ -10498,7 +10614,7 @@ async function autoLogDueSubscriptions() {
 
   if (loggedCount) { await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions(); }
   if (blockedNames.size) {
-    toast(`Logged ${loggedCount} charge${loggedCount === 1 ? "" : "s"} - couldn't cover ${[...blockedNames].join(", ")}`);
+    toast(`Logged ${loggedCount} charge${loggedCount === 1 ? "" : "s"}, couldn't cover ${[...blockedNames].join(", ")}`);
   } else if (loggedCount) {
     toast(`Logged ${loggedCount} subscription/bill charge${loggedCount === 1 ? "" : "s"} automatically`);
   }
@@ -11111,7 +11227,7 @@ function renderSubscriptions() {
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")
-    : `<p class="muted">No subscriptions or bills yet - add one above.</p>`;
+    : `<p class="muted">No subscriptions or bills yet, add one above.</p>`;
 
   // Scoped to #subList only - the upcoming-renewals block above is display-only.
   document.querySelectorAll("#subList [data-sub]").forEach((el) => {
@@ -11139,7 +11255,7 @@ function openSubForm(sub) {
   // Rebuilt on every open, since debts come and go. Every counted debt is
   // offered, cards included - paying a card in full each month is a real
   // autopay - and the blank choice is the ordinary spending bill.
-  $("sPaysDebt").innerHTML = `<option value="">No - this is spending</option>`
+  $("sPaysDebt").innerHTML = `<option value="">No, this is spending</option>`
     + countableDebts().map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join("");
   $("sPaysDebt").value = sub?.pays_liability_id ?? "";
   $("sActive").checked = sub ? !!sub.is_active : true;
@@ -11199,7 +11315,7 @@ $("markPaidBtn").onclick = async () => {
   const sub = editingSub;
   if (!sub.account_id) { flagField("sAccount"); return toast("Link an account to this subscription/bill first, then save, then mark as paid."); }
   const account = accounts.find((a) => a.id === sub.account_id);
-  if (!account) { flagField("sAccount"); return toast("Linked account not found - pick one, save, then mark as paid."); }
+  if (!account) { flagField("sAccount"); return toast("Linked account not found, pick one, save, then mark as paid."); }
   const amount = Number(sub.amount);
   const paymentType = account.type;
   if (sub.pays_liability_id) {
@@ -11239,7 +11355,7 @@ $("markPaidBtn").onclick = async () => {
   $("markPaidBtn").disabled = false;
   closeSubForm();
   await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions();
-  toast(nextRenewal && nextRenewal !== sub.next_renewal ? `Logged - renews ${nextRenewal}` : "Logged");
+  toast(nextRenewal && nextRenewal !== sub.next_renewal ? `Logged, renews ${nextRenewal}` : "Logged");
 };
 
 $("deleteSubBtn").onclick = async () => {
@@ -11290,7 +11406,7 @@ function renderIncomeList() {
         </div>
         <span class="amt">${fmt(s.amount)}</span>
       </div>`).join("")
-    : `<p class="muted">No income sources yet - add one above.</p>`;
+    : `<p class="muted">No income sources yet, add one above.</p>`;
 
   document.querySelectorAll("#incomeList [data-income]").forEach((el) => {
     el.onclick = () => {
@@ -11593,7 +11709,7 @@ function wireHelpTopics() {
       if (rect) {
         rect.setAttribute("role", "button");
         rect.setAttribute("tabindex", "0");
-        rect.setAttribute("aria-label", `${text.textContent.trim()} - open this topic`);
+        rect.setAttribute("aria-label", `${text.textContent.trim()}, open this topic`);
         rect.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openHelpTopic(topic); }
         });
@@ -12016,7 +12132,7 @@ $("feedbackSendBtn").onclick = async () => {
   $("feedbackMessage").value = "";
   updateFeedbackCharsLeft();
   await loadFeedbackTickets();
-  toast("Sent - thank you");
+  toast("Sent, thank you");
 };
 
 // parseInt returns NaN on empty/invalid input - toNullableInt keeps that

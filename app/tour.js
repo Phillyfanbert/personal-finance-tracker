@@ -29,13 +29,13 @@ export const TOUR_STEPS = {
       target: "logView",
       diagram: "helpDiagramLog",
       title: "Welcome",
-      body: "This app keeps track of your money: what you spend, what you have, and what you owe. Nothing here is shared with anyone, and nothing happens automatically to your real bank accounts - you are just keeping a record. This first page is called Log, and here is what is on it, top to bottom.",
+      body: "This app keeps track of your money: what you spend, what you have, and what you owe. Nothing here is shared with anyone, and nothing happens automatically to your real bank accounts, you are just keeping a record. This first page is called Log, and here is what is on it, top to bottom.",
       placement: "center",
     },
     {
       target: "nav",
       title: "The four pages",
-      body: "Log is the one you are on: your day-to-day money, including bills. Plan is for deciding what happens next - a spending limit, the order to clear what you owe, and where your balance is heading. Reports turns what you have entered into charts. Investments is for money you have invested, if you have any. Whichever page you leave off on is the one you come back to.",
+      body: "Log is the one you are on: your day-to-day money, including bills. Plan is for deciding what happens next: a spending limit, the order to clear what you owe, and where your balance is heading. Reports turns what you have entered into charts. Investments is for money you have invested, if you have any. Whichever page you leave off on is the one you come back to.",
       placement: "bottom",
     },
     {
@@ -89,20 +89,20 @@ export const TOUR_STEPS = {
       target: "assetsCard",
       subtab: "logSubMoney",
       title: "What you have, and what you owe",
-      body: "Two lists. Things you have that are worth money - savings, a car, investments - and things you owe, like a credit card balance or a loan. Both feed into the net worth number above. You do not need to fill in everything at once; add what you know and come back later.",
+      body: "Two lists. One is what you have that is worth money: savings, a car, investments. The other is what you owe, like a credit card balance or a loan. Both feed into the net worth number above. You do not need to fill in everything at once; add what you know and come back later.",
       placement: "top",
     },
     {
       target: "incomeSourcesCard",
       subtab: "logSubMoney",
       title: "Telling the app about your pay",
-      body: "Add your paycheck once: how much, and how often it arrives - weekly, every two weeks, twice a month, monthly, or one time only. After that the app records it for you each time it is due, so you do not have to remember. This is also where that yearly income figure at the top comes from.",
+      body: "Add your paycheck once: how much, and how often it arrives: weekly, every two weeks, twice a month, monthly, or one time only. After that the app records it for you each time it is due, so you do not have to remember. This is also where that yearly income figure at the top comes from.",
       placement: "top",
     },
     {
       target: "helpLogBtn",
       title: "If you get stuck",
-      body: "Every page has this Help button. It explains each part of that page in more detail, and you can replay this walkthrough from there any time. Next to it is Feedback, for telling us something is broken or suggesting a change - we read every one. You will not lose anything by clicking around - have a look.",
+      body: "Every page has this Help button. It explains each part of that page in more detail, and you can replay this walkthrough from there any time. Next to it is Feedback, for telling us something is broken or suggesting a change, and we read every one. You will not lose anything by clicking around, so have a look.",
       placement: "bottom",
     },
   ],
@@ -112,25 +112,25 @@ export const TOUR_STEPS = {
       target: "planView",
       diagram: "helpDiagramPlan",
       title: "Planning ahead",
-      body: "The other pages record what already happened. This one is about what happens next: a limit you want to stick to, the order to pay off what you owe, and where your balance is heading. Nothing here moves any of your money on its own - it only does the arithmetic and shows you.",
+      body: "The other pages record what already happened. This one is about what happens next: a limit you want to stick to, the order to pay off what you owe, and where your balance is heading. Nothing here moves any of your money on its own. It only does the arithmetic and shows you.",
       placement: "center",
     },
     {
       target: "safeToSpendCard",
       title: "How much you can still spend",
-      body: "Once you have set at least one limit below, this shows what is actually left to spend: what is under your limits right now, minus anything already coming due before the month ends and anything you are setting aside. If you have gone over on something, that counts against this number and the card says so - it will not tell you money is free to spend when it already went somewhere.",
+      body: "Once you have set at least one limit below, this shows what is actually left to spend: what is under your limits right now, minus anything already coming due before the month ends and anything you are setting aside. If you have gone over on something, that counts against this number and the card says so. It will not tell you money is free to spend when it already went somewhere.",
       placement: "bottom",
     },
     {
       target: "sinkingFundsCard",
       title: "Saving up for something",
-      body: "Some costs do not come every month - car registration, a yearly insurance bill, presents. Put in the total and when you need it by, and the app works out how much to put aside each month so it is already covered when it arrives. Nothing here moves your money; it only keeps track of what you have set aside.",
+      body: "Some costs do not come every month: car registration, a yearly insurance bill, presents. Put in the total and when you need it by, and the app works out how much to put aside each month so it is already covered when it arrives. Nothing here moves your money; it only keeps track of what you have set aside.",
       placement: "bottom",
     },
     {
       target: "budgetsCard",
       title: "Setting a spending limit",
-      body: "If you want to cap how much you spend on something each month - say $200 on eating out - set it here. The app warns you as you get close, not only once you have gone over, and the warning shows up on the Log page where you are actually spending. You can also tag a category as a need, a want, or savings. A small bar then shows how your budget divides between the three, and under it each one says what you have actually spent against what you set aside for it, so you can see whether the plan is holding up. Tagging is optional: some categories are honestly both, and an untagged one is simply left out rather than guessed at.",
+      body: "If you want to cap how much you spend on something each month, say $200 on eating out, set it here. The app warns you as you get close, not only once you have gone over, and the warning shows up on the Log page where you are actually spending. You can also tag a category as a need, a want, or savings. A small bar then shows how your budget divides between the three, and under it each one says what you have actually spent against what you set aside for it, so you can see whether the plan is holding up. Tagging is optional: some categories are honestly both, and an untagged one is simply left out rather than guessed at.",
       placement: "bottom",
     },
     {
@@ -152,7 +152,7 @@ export const TOUR_STEPS = {
       target: "reportsView",
       diagram: "helpDiagramReports",
       title: "Seeing where your money went",
-      body: "This page takes everything you have written down and turns it into charts and totals, so patterns are easier to spot than in a long list. You do not need to set anything up - it fills in as you use the app.",
+      body: "This page takes everything you have written down and turns it into charts and totals, so patterns are easier to spot than in a long list. You do not need to set anything up. It fills in as you use the app.",
       placement: "center",
     },
     {
@@ -164,7 +164,7 @@ export const TOUR_STEPS = {
     {
       target: "reportTotals",
       title: "The three totals",
-      body: "What you spent in the month you picked, how much of that was subscriptions, and a third that changes with what you have recorded: what a normal month costs you, or - once the app knows about any money coming in - what you have left over after paying for everything. The small line underneath always says how many months it is based on, so a figure resting on very little is obvious.",
+      body: "What you spent in the month you picked, how much of that was subscriptions, and a third that changes with what you have recorded: what a normal month costs you, or what you have left over after paying for everything once the app knows about any money coming in. The small line underneath always says how many months it is based on, so a figure resting on very little is obvious.",
       placement: "bottom",
     },
     {
@@ -188,7 +188,7 @@ export const TOUR_STEPS = {
     {
       target: "trendCard",
       title: "The charts",
-      body: "Where your money goes, which you can switch between by type, by account and by how you paid. Then what came in against what went out over the last six months, one account's balance over time, and your net worth over time. The last three ignore the month picker on purpose - they are about the whole run of your history, not one month.",
+      body: "Where your money goes, which you can switch between by type, by account and by how you paid. Then what came in against what went out over the last six months, one account's balance over time, and your net worth over time. The last three ignore the month picker on purpose. They are about the whole run of your history, not one month.",
       placement: "top",
     },
     {
@@ -204,7 +204,7 @@ export const TOUR_STEPS = {
       target: "investView",
       diagram: "helpDiagramInvest",
       title: "Investments",
-      body: "If you have money invested - in a retirement account through work, or shares you have bought - this page tracks it. If you do not, you can skip this page entirely; nothing else depends on it. Importantly, this app never tells you what to buy or sell. It only shows you the numbers.",
+      body: "If you have money invested, whether in a retirement account through work or in shares you have bought, this page tracks it. If you do not, you can skip this page entirely; nothing else depends on it. Importantly, this app never tells you what to buy or sell. It only shows you the numbers.",
       placement: "center",
     },
     {
@@ -216,7 +216,7 @@ export const TOUR_STEPS = {
     {
       target: "investTabBar",
       title: "Two halves",
-      body: "Market is about the stock market generally - things that are true for everyone, whether or not you own any of it. My portfolio is only your own money. Each half splits into smaller tabs so you are not scrolling forever.",
+      body: "Market is about the stock market generally: things that are true for everyone, whether or not you own any of it. My portfolio is only your own money. Each half splits into smaller tabs so you are not scrolling forever.",
       placement: "bottom",
     },
     {

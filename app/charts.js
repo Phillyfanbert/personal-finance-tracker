@@ -263,7 +263,7 @@ const money = (n) => "$" + Number(n ?? 0).toFixed(2);
  * so multiple bar charts on one page don't clobber each other on redraw).
  */
 export function renderBreakdownBar(canvas, data) {
-  const labels = data.map((d) => `${d.label} - $${d.value.toFixed(2)}`);
+  const labels = data.map((d) => `${d.label}, $${d.value.toFixed(2)}`);
   const total = data.reduce((s, d) => s + d.value, 0);
   describeChart(canvas,
     data.length ? `Breakdown of ${money(total)} across ${data.length} ${data.length === 1 ? "group" : "groups"}` : "No data yet",

@@ -198,11 +198,11 @@ export function buildQaPrompt(question, context) {
     "the JSON data below, which is the user's own spending data plus",
     "optional profile context (employment, housing, household size,",
     "dependents, financial goals) if they've filled it in. The data may",
-    "also include relevant_history - older transactions found via search",
+    "also include relevant_history, older transactions found via search",
     "specifically because they relate to this question, separate from the",
     "regular recent-months transactions list. If the data doesn't contain",
     "enough to answer, say so plainly instead of guessing.",
-    "Be concise - a few sentences or a short list. Use $ for dollar amounts.",
+    "Be concise, a few sentences or a short list. Use $ for dollar amounts.",
     "Never use an em dash or en dash. Use a comma instead.",
     "",
     // The hard accuracy rule this feature is built to. Every figure in the
@@ -213,11 +213,11 @@ export function buildQaPrompt(question, context) {
     // answer at all rather than a wrong one.
     "NEVER calculate a new number. Do not add, subtract, average or total",
     "anything yourself. Every dollar amount and every percentage you write",
-    "must appear verbatim in the data below - quote them, do not derive",
+    "must appear verbatim in the data below, quote them, do not derive",
     "them. Rounding a figure you were given is fine ('about $580' for",
     "$580.12). If answering properly would need a number that is not in the",
     "data, say plainly that you cannot answer that one exactly, and say what",
-    "you would need - do not estimate it.",
+    "you would need, do not estimate it.",
     "",
     // Never legitimate here: the Q&A context never includes a stock, fund,
     // or ticker, so any recommendation or prediction language in an answer
@@ -225,15 +225,15 @@ export function buildQaPrompt(question, context) {
     // anywhere. Left permissive on ordinary debt-vs-savings reasoning,
     // which is a real, documented use case for this feature - see
     // validateQaAnswer()'s own comment for the boundary this draws.
-    "The data below never includes a stock, fund, or ticker - only this",
+    "The data below never includes a stock, fund, or ticker, only this",
     "person's own expenses, subscriptions, income and profile. Never",
     "recommend buying, selling, or investing in any security, and never",
     "predict what any price, account balance, or net worth will be in the",
-    "future - you have no real basis for either, since nothing here is",
+    "future, you have no real basis for either, since nothing here is",
     "market data and nothing here is a forecast. You may still compare",
     "numbers already in the data (one debt's interest rate against another,",
     "or spending against income) to help answer something like whether to",
-    "pay down debt or save - but stop at describing what the numbers show,",
+    "pay down debt or save, but stop at describing what the numbers show,",
     "never turn that into a recommendation to take a specific action. If",
     "asked for investment advice or a prediction, say plainly that this app",
     "doesn't give that, rather than answering anyway.",
@@ -278,6 +278,14 @@ export function plainDashes(text) {
     // "spending - like groceries or dining out - to better pinpoint" is not
     // a sentence anyone writes.
     .replace(/\s*[\u2013\u2014\u2015]\s*/g, ", ")
+    // A plain spaced HYPHEN does the same job and was not covered, so a model
+    // that wrote "spending - like groceries" put the very punctuation this
+    // function exists to remove straight onto the screen. Scoped to letters on
+    // both sides so a range ("10 - 20"), a money span ("$5 - $9") and a
+    // line-opening list marker are all left exactly as they are. Spaces and
+    // tabs only, never \s: that class includes the newline, so "- first\n-
+    // second" collapsed into one line and ate the second marker.
+    .replace(/([A-Za-z])[ \t]+-[ \t]+(?=[A-Za-z])/g, "$1, ")
     // The dash may already have sat next to a comma; never leave two.
     .replace(/,[\s,]*,/g, ",")
     .replace(/\s+,/g, ",");

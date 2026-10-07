@@ -608,6 +608,37 @@
     }
     .stat-bubble.is-up { background: var(--ok-wash); border-left-color: var(--ok); }
     .stat-bubble.is-down { background: var(--err-wash); border-left-color: var(--err); }
+    /* The daily recap's breadth, as two counts side by side. Same visual
+       language as .stat-bubble above (wash fill plus a 4px tone bar, because
+       --panel-2 alone measures ~1.15:1 on the card and cannot carry a block),
+       so this reads as the same kind of headline rather than a new one.
+       Direction is never in the colour alone: the arrow is a shape and the
+       label says "finished up" / "finished down" in words. */
+    .breadth-tiles { display: flex; gap: var(--sp-3); margin: var(--sp-3) 0 var(--sp-2); }
+    .breadth-tile {
+      flex: 1 1 0; width: auto; min-width: 0; min-height: var(--target-min);
+      display: block; text-align: left; font: inherit;
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-left: 4px solid var(--border-strong); border-radius: var(--r-card);
+      padding: var(--sp-3) var(--sp-4); color: var(--text); cursor: default;
+    }
+    .breadth-tile.is-up { background: var(--ok-wash); border-left-color: var(--ok); }
+    .breadth-tile.is-down { background: var(--err-wash); border-left-color: var(--err); }
+    button.breadth-tile { cursor: pointer; }
+    .breadth-tile .figure { display: flex; align-items: baseline; gap: var(--sp-2);
+      font-size: var(--fs-xl); font-weight: 800; line-height: 1.2; }
+    /* Large bold text, so 3:1 is the bar it has to clear rather than 4.5:1 -
+       and it is aria-hidden decoration beside a word that says the same thing. */
+    .breadth-tile.is-up .arrow { color: var(--ok); }
+    .breadth-tile.is-down .arrow { color: var(--err); }
+    .breadth-tile .label { display: block; font-size: var(--fs-xs); margin-top: 2px; }
+    .breadth-list { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+    /* The publisher's own description of the story under the headline. Clamped
+       because an article lede runs to any length and this is a recap card, not
+       the article. */
+    .recap-why { font-size: var(--fs-xs); line-height: 1.5; margin: var(--sp-1) 0 0;
+      color: var(--text); display: -webkit-box; -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical; overflow: hidden; }
     /* Card titles are real headings now, so a view's heading list is navigable
        instead of holding a single entry. They must LOOK exactly as the
        <strong> they replaced did: browsers give h2/h3 a large size and big
@@ -1153,7 +1184,7 @@
         <div class="topbar" style="margin-bottom:6px">
           <h2>Recurring expenses found</h2>
         </div>
-        <p class="muted" style="font-size:12px;margin:0 0 8px">These look like a bill based on your expense history - tap one to start tracking it here.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 8px">These look like a bill based on your expense history, tap one to start tracking it here.</p>
         <div id="recurringList"></div>
       </div>
 
@@ -1239,7 +1270,7 @@
         <!-- Logs today's charge as a real expense against the linked account
              (same asset/liability effect as any other expense) and rolls
              next_renewal forward one cycle - see markPaidBtn in app.js. -->
-        <button class="secondary hidden" id="markPaidBtn">Mark as paid - log this charge</button>
+        <button class="secondary hidden" id="markPaidBtn">Mark as paid, log this charge</button>
         <div style="height:8px"></div>
         <div class="row">
           <button id="saveSubBtn">Save</button>
@@ -1275,7 +1306,7 @@
             <button class="secondary btn-xs" id="addAcctBtn" aria-label="Add an account">+ Add</button>
           </div>
         </div>
-        <p class="muted" style="font-size:12px;margin:0 0 10px">How you pay for things. These are not counted in net worth - what you own is in Things you have, below.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 10px">How you pay for things. These are not counted in net worth, what you own is in Things you have, below.</p>
         <div id="acctList" class="acct-circles">
           <p class="muted" style="font-size:13px">No accounts yet. Use + Add to put in the first one.</p>
         </div>
@@ -1333,7 +1364,7 @@
             <p class="muted" style="font-size:11px;margin:2px 0 0">Which card this is, so two cards from the same bank are tellable apart. Leave blank if you would rather not say.</p>
           </div>
           <div id="acctAssetLink">
-            <p class="muted" style="font-size:12px;margin:8px 0 0">A new $0 balance is created automatically for this account - edit it below once saved.</p>
+            <p class="muted" style="font-size:12px;margin:8px 0 0">A new $0 balance is created automatically for this account, edit it below once saved.</p>
           </div>
           <div id="acctLiabilityLink" class="hidden">
             <p class="muted" style="font-size:12px;margin:8px 0 0">Money spent on this account adds to what you owe rather than reducing what you have. A new $0 debt is created automatically to track it.</p>
@@ -1434,7 +1465,7 @@
           <h2>Things you have</h2>
           <span class="muted" style="font-size:12px" id="assetsTotal">$0</span>
         </div>
-        <p class="muted" style="font-size:12px;margin:0 0 10px">What you own - balances, investments, property. Counted in net worth.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 10px">What you own, balances, investments, property. Counted in net worth.</p>
         <div id="assetsList" class="muted" style="font-size:13px">Nothing added yet. Use + Add for anything you own that is worth money.</div>
         <!-- Only shown when a CD's maturity_date is within 30 days - see
              upcomingMaturities() (app.js). -->
@@ -1642,7 +1673,7 @@
             <button class="secondary btn-xs" id="addIncomeBtn">+ Add</button>
           </div>
         </div>
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Money that arrives regularly, like a paycheck - logged automatically once each one comes due, the same way a bill charge is. Tap one to edit. Got paid once off the books? Use Money received.</p>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Money that arrives regularly, like a paycheck, logged automatically once each one comes due, the same way a bill charge is. Tap one to edit. Got paid once off the books? Use Money received.</p>
         <div id="incomeList" style="margin-top:8px"><p class="muted">Loading…</p></div>
       </div>
 
@@ -1877,7 +1908,7 @@
       <div class="card">
         <h2>Net worth trend</h2>
         <div class="chartbox short"><canvas id="netWorthTrendChart"></canvas></div>
-        <p class="muted" id="netWorthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
+        <p class="muted" id="netWorthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet, check back after using the app on a few different days.</p>
       </div>
 
       <div id="rptEmpty" class="card hidden"><p class="muted" style="margin:0" id="rptEmptyText">No expenses in this month yet.</p></div>
@@ -1939,9 +1970,9 @@
       <div class="card" id="sinkingFundsCard">
         <div class="card-head">
           <h2>Saving up for something</h2>
-          <span class="info-icon" tabindex="0" role="button" data-info="sinkingFundsExplainer" title="For costs that don't come every month - car registration, an annual insurance bill, holiday gifts. Give it a total and a date, and the app works out how much to set aside each month so the bill is already covered when it lands. Nothing here moves your money; it only keeps track of what you've set aside.">i</span>
+          <span class="info-icon" tabindex="0" role="button" data-info="sinkingFundsExplainer" title="For costs that don't come every month, car registration, an annual insurance bill, holiday gifts. Give it a total and a date, and the app works out how much to set aside each month so the bill is already covered when it lands. Nothing here moves your money; it only keeps track of what you've set aside.">i</span>
         </div>
-        <p class="muted explainer hidden" id="sinkingFundsExplainer">For costs that don't come every month - car registration, an annual insurance bill, holiday gifts. Give it a total and a date, and the app works out how much to set aside each month so the bill is already covered when it lands. Nothing here moves your money; it only keeps track of what you've set aside.</p>
+        <p class="muted explainer hidden" id="sinkingFundsExplainer">For costs that don't come every month, car registration, an annual insurance bill, holiday gifts. Give it a total and a date, and the app works out how much to set aside each month so the bill is already covered when it lands. Nothing here moves your money; it only keeps track of what you've set aside.</p>
         <div id="sinkingFundsList" style="margin-top:8px"><p class="muted" style="font-size:13px">Nothing being saved for yet.</p></div>
         <button class="secondary btn-xs" id="addFundBtn" style="margin-top:10px">+ Add something to save for</button>
       </div>
@@ -2053,12 +2084,12 @@
       <div class="card" id="investHealthCard">
         <div class="card-head">
           <h2>Daily health check</h2>
-          <span class="info-icon" tabindex="0" role="button" data-info="investHealthExplainer" title="A plain-English summary of numbers already shown further down this page - never a made-up score. A line only appears when there is something real behind it, so a short list means the app does not know enough yet, not that anything is wrong.">i</span>
+          <span class="info-icon" tabindex="0" role="button" data-info="investHealthExplainer" title="A plain-English summary of numbers already shown further down this page, never a made-up score. A line only appears when there is something real behind it, so a short list means the app does not know enough yet, not that anything is wrong.">i</span>
         </div>
-        <p class="muted explainer hidden" id="investHealthExplainer">A plain-English summary of numbers already shown further down this page - never a made-up score. A line only appears when there is something real behind it, so a short list means the app does not know enough yet, not that anything is wrong.</p>
+        <p class="muted explainer hidden" id="investHealthExplainer">A plain-English summary of numbers already shown further down this page, never a made-up score. A line only appears when there is something real behind it, so a short list means the app does not know enough yet, not that anything is wrong.</p>
         <div id="investHealthList" style="margin-top:10px"></div>
         <div class="chartbox tiny" style="margin-top:10px"><canvas id="investHealthTrendChart"></canvas></div>
-        <p class="muted" id="investHealthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
+        <p class="muted" id="investHealthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet, check back after using the app on a few different days.</p>
       </div>
 
       <div class="totals">
@@ -2097,11 +2128,44 @@
       <div id="investTabMarket">
         <div class="subtab-pills" id="investSubTabsMarket">
           <button type="button" class="subtab-pill active" data-subtab="investSubOverview">Overview</button>
-          <button type="button" class="subtab-pill" data-subtab="investSubMovers">Biggest movers</button>
+          <button type="button" class="subtab-pill" data-subtab="investSubTracked">Companies you track</button>
           <button type="button" class="subtab-pill" data-subtab="investSubHistory">Price history</button>
         </div>
-        <div id="investSubMovers" class="hidden" data-subtab-label="Biggest movers">
-        <div class="card empty-state" id="emptyMovers">No market-wide movers found yet. This card needs a background job to run at least once - check back later.</div>
+
+        <!-- Overview is the MARKET, and only the market. It used to open on the
+             daily recap, which is a count of the user's own tracked companies,
+             so the tab promised one thing and led with another: of the seven
+             blocks under "Market", five were about the tracked list, and the
+             one whole-market scan was hidden behind a sub-tab. Everything
+             about the tracked list moved to its own sub-tab below. -->
+        <div id="investSubOverview" data-subtab-label="Overview">
+        <div class="card empty-state" id="emptyOverview">Live index prices aren't turned on for this app yet.</div>
+  <!-- Market overview: a fixed set of major US indexes (S&P 500, Dow,
+               NASDAQ, Russell 2000 - app.js's MARKET_INDEXES) plus today's top
+               3 movers from a fixed large-cap watchlist (MARKET_MOVERS_
+               WATCHLIST) - both genuinely NOT tied to anything the user owns,
+               unlike every other card on this tab. Fed by tools/price-agent.js
+               (Tavily+Gemini for indexes, Finnhub for real ticker prices - see
+               its own header comment, not SearXNG/Gemma, which this pipeline
+               never used), gated by the same PRICE_FINDINGS_ENABLED flag -
+               hidden entirely (not shown with an empty/placeholder state)
+               until that's on and the agent has actually written rows, since
+               there's no manual-entry fallback for either an index or a
+               watchlist stock the way
+               there is for the user's own assets. The movers subsection hides
+               itself independently (there may be indexes but no rankable
+               movers yet, or vice versa). -->
+          <div class="card hidden" id="marketOverviewCard">
+            <div class="card-head">
+              <h2>Market overview</h2>
+              <span class="info-icon" tabindex="0" role="button" data-info="marketOverviewExplainer" title="Major US indexes, a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.">i</span>
+            </div>
+            <p class="muted explainer hidden" id="marketOverviewExplainer">Major US indexes, a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.</p>
+            <p class="muted" id="marketOverviewFreshness" style="font-size:11px;margin:0 0 2px"></p>
+            <p class="muted" id="marketOverviewLiveFreshness" style="font-size:11px;margin:0 0 6px"></p>
+            <p id="marketOverviewWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
+            <div id="marketOverviewList"></div>
+          </div>
   <!-- Market-wide movers, the one card here that can see a stock outside the
           tracked list. Alpha Vantage answers "what moved most today" - Finnhub
           and every other free quote API can only price symbols you already name,
@@ -2110,6 +2174,7 @@
           one optional Gemini call writes the plain-English summary. Every stage
           degrades on its own: no key, no card; no headline, just numbers; no
           summary, still numbers and links. -->
+        <div class="card empty-state" id="emptyMovers">No market-wide movers found yet. This card needs a background job to run at least once, check back later.</div>
           <div class="card hidden" id="marketMoversCard">
           <div class="card-head">
             <h2>Biggest movers today</h2>
@@ -2123,8 +2188,8 @@
           </div>
       </div>
 
-        <div id="investSubOverview" data-subtab-label="Overview">
-        <div class="card empty-state" id="emptyOverview">Live pricing isn't turned on for this app yet.</div>
+        <div id="investSubTracked" class="hidden" data-subtab-label="Companies you track">
+        <div class="card empty-state" id="emptyTracked">Nothing about the companies you track yet. This needs a background job to run at least once, check back later.</div>
   <!-- The written half of this tab, sitting ABOVE the live numbers it
                describes. Merged in from its own "Daily recap" sub-tab
                (2026-08-24): the two panels showed overlapping facts - a
@@ -2151,7 +2216,14 @@
             </div>
             <p class="muted" style="font-size:12px;margin:4px 0 2px" id="dailyRecapDate"></p>
             <p class="muted explainer hidden" id="dailyRecapExplainer">A short written recap of the trading day, built from the day's real price moves, headlines published about the companies you track, and headlines about the market as a whole. Coverage is what was reported that day, not necessarily why a price moved.</p>
-            <p class="stat-bubble" id="dailyRecapBreadth"></p>
+            <!-- Two counts, each with its own arrow, and each opening the
+                 list of exactly which companies it counted. Built in app.js
+                 rather than written out here because a count with nothing
+                 behind it must render as plain text, not as a control that
+                 does nothing when pressed. -->
+            <div id="dailyRecapBreadth"></div>
+            <p class="muted" id="dailyRecapBreadthNote" style="font-size:var(--fs-xs);margin:0 0 var(--sp-2)"></p>
+            <div id="dailyRecapBreadthList" class="hidden" style="margin:0 0 var(--sp-3)"></div>
             <p class="muted" id="dailyRecapFreshness" style="font-size:11px;margin:0 0 2px"></p>
             <p id="dailyRecapWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
             <p style="font-size:15.5px;line-height:1.6;margin:8px 0 10px" id="dailyRecapSummary"></p>
@@ -2164,47 +2236,32 @@
             </div>
             <div id="dailyRecapMovers"></div>
           </div>
-  <!-- Market overview: a fixed set of major US indexes (S&P 500, Dow,
-               NASDAQ, Russell 2000 - app.js's MARKET_INDEXES) plus today's top
-               3 movers from a fixed large-cap watchlist (MARKET_MOVERS_
-               WATCHLIST) - both genuinely NOT tied to anything the user owns,
-               unlike every other card on this tab. Fed by tools/price-agent.js
-               (Tavily+Gemini for indexes, Finnhub for real ticker prices - see
-               its own header comment, not SearXNG/Gemma, which this pipeline
-               never used), gated by the same PRICE_FINDINGS_ENABLED flag -
-               hidden entirely (not shown with an empty/placeholder state)
-               until that's on and the agent has actually written rows, since
-               there's no manual-entry fallback for either an index or a
-               watchlist stock the way
-               there is for the user's own assets. The movers subsection hides
-               itself independently (there may be indexes but no rankable
-               movers yet, or vice versa). -->
-          <div class="card hidden" id="marketOverviewCard">
+          <!-- The live half of the same subject the recap covers at the close:
+               what the tracked list is doing now, and what is being written
+               about it. Split out of "Market overview", where its own help text
+               had to admit it was "not a scan of the whole market". -->
+          <div class="card hidden" id="trackedTodayCard">
             <div class="card-head">
-              <h2>Market overview</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="marketOverviewExplainer" title="Major US indexes - a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.">i</span>
+              <h2>Latest on the companies you track</h2>
+              <span class="info-icon" tabindex="0" role="button" data-info="trackedTodayExplainer" title="The companies on your own tracked list, not the market as a whole. Their latest moves and the stories published about them today. Coverage is what was reported, not why a price moved.">i</span>
             </div>
+            <p class="muted explainer hidden" id="trackedTodayExplainer">The companies on your own tracked list, not the market as a whole. Their latest moves and the stories published about them today. Coverage is what was reported, not why a price moved.</p>
             <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
-            <p class="muted explainer hidden" id="marketOverviewExplainer">Major US indexes - a live-tracked ETF price under each one refreshes every 15 minutes; the exact index level above it refreshes weekly.</p>
-            <p class="muted" id="marketOverviewFreshness" style="font-size:11px;margin:0 0 2px"></p>
-            <p class="muted" id="marketOverviewLiveFreshness" style="font-size:11px;margin:0 0 6px"></p>
-            <p id="marketOverviewWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
-            <div id="marketOverviewList"></div>
             <div id="marketMoversSection" class="hidden" style="margin-top:14px">
               <div class="card-head">
                 <h3 style="font-size:13px">Today's top movers</h3>
-                <span class="info-icon" tabindex="0" role="button" data-info="topMoversExplainer" title="Biggest moves (up or down) among the companies you track - not a scan of the whole market, and not a recommendation. The button above this section changes which companies are tracked.">i</span>
+                <span class="info-icon" tabindex="0" role="button" data-info="topMoversExplainer" title="Biggest moves (up or down) among the companies you track, not a scan of the whole market, and not a recommendation. The button above this section changes which companies are tracked.">i</span>
               </div>
-              <p class="muted explainer hidden" id="topMoversExplainer">Biggest moves (up or down) among the companies you track - not a scan of the whole market, and not a recommendation. The button above this section changes which companies are tracked.</p>
+              <p class="muted explainer hidden" id="topMoversExplainer">Biggest moves (up or down) among the companies you track, not a scan of the whole market, and not a recommendation. The button above this section changes which companies are tracked.</p>
               <p class="muted" id="marketMoversFreshness" style="font-size:11px;margin:0 0 8px"></p>
               <div id="marketMoversList"></div>
             </div>
             <div id="marketNewsSection" class="hidden" style="margin-top:14px">
               <div class="card-head">
                 <h2 style="font-size:13px">News from your tracked stocks</h2>
-                <span class="info-icon" tabindex="0" role="button" data-info="trackedNewsExplainer" title="Recent stories about the companies you track, taken from each company's own news feed rather than a general one. When the app has managed to read the mood of that coverage it says so above them; when it hasn't, the headlines still stand on their own. It reports what was published - not a prediction, and not a recommendation.">i</span>
+                <span class="info-icon" tabindex="0" role="button" data-info="trackedNewsExplainer" title="Recent stories about the companies you track, taken from each company's own news feed rather than a general one. When the app has managed to read the mood of that coverage it says so above them; when it hasn't, the headlines still stand on their own. It reports what was published, not a prediction, and not a recommendation.">i</span>
               </div>
-              <p class="muted explainer hidden" id="trackedNewsExplainer">Recent stories about the companies you track, taken from each company's own news feed rather than a general one. When the app has managed to read the mood of that coverage it says so above them; when it hasn't, the headlines still stand on their own. It reports what was published - not a prediction, and not a recommendation.</p>
+              <p class="muted explainer hidden" id="trackedNewsExplainer">Recent stories about the companies you track, taken from each company's own news feed rather than a general one. When the app has managed to read the mood of that coverage it says so above them; when it hasn't, the headlines still stand on their own. It reports what was published, not a prediction, and not a recommendation.</p>
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                 <span id="marketSentimentDot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
                 <span id="marketSentimentLabel" style="font-weight:600"></span>
@@ -2315,10 +2372,10 @@
               <p class="muted" id="holdingTotalCost" style="font-size:12px;margin:2px 0 8px"></p>
               <label for="holdingFundingAccount">Paid from (optional)</label>
               <select id="holdingFundingAccount"></select>
-              <p class="muted" style="font-size:12px;margin:2px 0 8px">If selected, this purchase is deducted from and checked against that account's balance - only for money actually being added (buying more shares), never for editing a holding down.</p>
+              <p class="muted" style="font-size:12px;margin:2px 0 8px">If selected, this purchase is deducted from and checked against that account's balance, only for money actually being added (buying more shares), never for editing a holding down.</p>
               <label for="holdingBucket">Group it belongs to (optional)</label>
               <select id="holdingBucket"></select>
-              <p class="muted" style="font-size:12px;margin:8px 0 0">Price per share fills in automatically once a live price is available for the ticker - edit it if you paid a different amount. Once priced, shares x live price is what actually shows as this holding's value.</p>
+              <p class="muted" style="font-size:12px;margin:8px 0 0">Price per share fills in automatically once a live price is available for the ticker, edit it if you paid a different amount. Once priced, shares x live price is what actually shows as this holding's value.</p>
               <div style="height:8px"></div>
               <div class="row">
                 <button id="saveHoldingBtn">Save holding</button>
@@ -2329,7 +2386,7 @@
                  a hint about reordering means nothing beside a list of one,
                  and renderInvestments() toggles it from whether any handle
                  was drawn rather than from a second count of its own. -->
-            <p class="muted text-xs stack-2 hidden" id="investReorderHint">Drag a holding by its handle to reorder it within its account. You can also tap that handle and use the up and down arrow keys. The order is saved as you go and is yours alone - it changes nothing about what anything is worth.</p>
+            <p class="muted text-xs stack-2 hidden" id="investReorderHint">Drag a holding by its handle to reorder it within its account. You can also tap that handle and use the up and down arrow keys. The order is saved as you go and is yours alone, it changes nothing about what anything is worth.</p>
             <div id="investHoldingsList" style="margin-top:8px"><p class="muted" style="font-size:13px">Nothing here yet. Add an investment account from Things you have, on the Log page.</p></div>
             <!-- A drag has a visible result; a keyboard move needs saying out
                  loud. Separate from toast() because an arrow key held down
@@ -2372,11 +2429,11 @@
           <div class="card">
             <div class="card-head">
               <h2>Value over time</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="investTrendExplainer" title="One snapshot per day you actually open the app - a day you didn't open it simply has no point on the line.">i</span>
+              <span class="info-icon" tabindex="0" role="button" data-info="investTrendExplainer" title="One snapshot per day you actually open the app, a day you didn't open it simply has no point on the line.">i</span>
             </div>
-            <p class="muted explainer hidden" id="investTrendExplainer">One snapshot per day you actually open the app - a day you didn't open it simply has no point on the line.</p>
+            <p class="muted explainer hidden" id="investTrendExplainer">One snapshot per day you actually open the app, a day you didn't open it simply has no point on the line.</p>
             <div class="chartbox short"><canvas id="investTrendChart"></canvas></div>
-            <p class="muted" id="investTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet - check back after using the app on a few different days.</p>
+            <p class="muted" id="investTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet, check back after using the app on a few different days.</p>
           </div>
       </div>
 
@@ -2391,9 +2448,9 @@
           <div class="card hidden" id="realizedGainCard">
             <div class="card-head">
               <h2>What you made on sales</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="realizedExplainer" title="From holdings you have actually sold, using the average of what you paid. This is not a tax document - a broker reports individual shares differently.">i</span>
+              <span class="info-icon" tabindex="0" role="button" data-info="realizedExplainer" title="From holdings you have actually sold, using the average of what you paid. This is not a tax document, a broker reports individual shares differently.">i</span>
             </div>
-            <p class="muted explainer hidden" id="realizedExplainer">From holdings you have actually sold, using the average of what you paid. This is not a tax document - a broker reports individual shares differently.</p>
+            <p class="muted explainer hidden" id="realizedExplainer">From holdings you have actually sold, using the average of what you paid. This is not a tax document, a broker reports individual shares differently.</p>
             <div class="row">
               <div><div class="muted" style="font-size:12px">This year</div><div id="realizedYtd" style="font-size:18px;font-weight:600">-</div></div>
               <div><div class="muted" style="font-size:12px">All time</div><div id="realizedAllTime" style="font-size:18px;font-weight:600">-</div></div>
@@ -2417,9 +2474,9 @@
           <div class="card" id="contributionLimitsCard" style="display:none">
             <div class="card-head">
               <h2>How much more you can put in (this year)</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="limitsExplainer" title="Worked out from what you bought inside these accounts this year, not from anything you type. Base annual limits only - no catch-up amounts, income phase-outs or filing status. Check against current IRS figures for your own situation.">i</span>
+              <span class="info-icon" tabindex="0" role="button" data-info="limitsExplainer" title="Worked out from what you bought inside these accounts this year, not from anything you type. Base annual limits only, no catch-up amounts, income phase-outs or filing status. Check against current IRS figures for your own situation.">i</span>
             </div>
-            <p class="muted explainer hidden" id="limitsExplainer">Worked out from what you bought inside these accounts this year, not from anything you type. Base annual limits only - no catch-up amounts, income phase-outs or filing status. Check against current IRS figures for your own situation.</p>
+            <p class="muted explainer hidden" id="limitsExplainer">Worked out from what you bought inside these accounts this year, not from anything you type. Base annual limits only, no catch-up amounts, income phase-outs or filing status. Check against current IRS figures for your own situation.</p>
             <div id="contributionLimitsList"></div>
           </div>
       </div>
@@ -2431,9 +2488,9 @@
           <div class="card">
             <div class="card-head">
               <h2>Your target mix</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="targetExplainer" title="Set your own target mix and see how far off you are - this never picks investments for you.">i</span>
+              <span class="info-icon" tabindex="0" role="button" data-info="targetExplainer" title="Set your own target mix and see how far off you are, this never picks investments for you.">i</span>
             </div>
-            <p class="muted explainer hidden" id="targetExplainer">Set your own target mix and see how far off you are - this never picks investments for you.</p>
+            <p class="muted explainer hidden" id="targetExplainer">Set your own target mix and see how far off you are, this never picks investments for you.</p>
             <label for="investRiskLabel">Risk label (for your own reference only)</label>
             <select id="investRiskLabel">
               <option value="">Not set</option>
@@ -2611,7 +2668,7 @@
     <div class="sheet">
       <div class="topbar"><strong id="watchlistTitle">Tracked companies</strong><button class="secondary btn-sm" id="watchlistClose">&#10005;</button></div>
 
-      <p class="muted" style="font-size:12px;margin:4px 0 8px">Everything on the Market tab is built from this list - the written recap, the up/down count, today's top movers and the price-history charts. Changes take effect on the next background price run.</p>
+      <p class="muted" style="font-size:12px;margin:4px 0 8px">Everything on the Market tab is built from this list, the written recap, the up/down count, today's top movers and the price-history charts. Changes take effect on the next background price run.</p>
       <div class="row">
       <div style="position:relative">
         <label for="watchlistNewSymbol">Add a symbol</label>
@@ -2620,7 +2677,7 @@
       </div>
       <div><label for="watchlistNewName">Company name (optional)</label><input id="watchlistNewName" placeholder="apple" autocomplete="off" /></div>
       </div>
-      <p class="muted" style="font-size:11px;margin:2px 0 8px">Start typing a ticker or company name to pick from known symbols - the name fills in for you. Any real ticker can still be typed in by hand if it isn't suggested. A company name helps match news headlines to the right stock; left blank, headline matching falls back to the ticker alone.</p>
+      <p class="muted" style="font-size:11px;margin:2px 0 8px">Start typing a ticker or company name to pick from known symbols, the name fills in for you. Any real ticker can still be typed in by hand if it isn't suggested. A company name helps match news headlines to the right stock; left blank, headline matching falls back to the ticker alone.</p>
       <button id="watchlistAddBtn">Add symbol</button>
 
       <!-- Reordering is offered two ways on purpose, not as belt and braces.
@@ -2748,7 +2805,7 @@
       <p class="muted" style="font-size:12px;margin:0 0 8px" id="fundContributeSub"></p>
       <label for="fundContributeAmount">How much are you setting aside</label>
       <input id="fundContributeAmount" type="number" step="0.01" min="0" inputmode="decimal" />
-      <p class="muted" style="font-size:11px;margin:2px 0 8px">This only updates the goal. It does not move money between your accounts - if you really moved it, record that as a transfer on the Log page.</p>
+      <p class="muted" style="font-size:11px;margin:2px 0 8px">This only updates the goal. It does not move money between your accounts, if you really moved it, record that as a transfer on the Log page.</p>
       <button id="fundContributeConfirmBtn">Set aside</button>
     </div>
   </div>
@@ -2806,7 +2863,7 @@
       <div class="topbar"><strong id="csvImportTitle">Import CSV</strong><button class="secondary btn-sm" id="csvImportClose">Close</button></div>
 
       <div id="csvStep1">
-        <p class="muted" style="font-size:13px">Bring in what you have spent and what you have been paid, from a bank export or another app. The file stays on your device - it is never uploaded anywhere.</p>
+        <p class="muted" style="font-size:13px">Bring in what you have spent and what you have been paid, from a bank export or another app. The file stays on your device, it is never uploaded anywhere.</p>
         <p class="muted" style="font-size:12px;margin-top:8px"><strong>Imported rows are added as history only. They never change an account balance.</strong> Your balances already include this money in real life, so changing them again would count it twice.</p>
         <label style="margin-top:12px" for="csvFileInput">Spreadsheet or CSV file (up to 5MB, ~10,000 rows)</label>
         <input id="csvFileInput" type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xlsb,.xls,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
@@ -2824,7 +2881,7 @@
       </div>
 
       <div id="csvStep2" class="hidden">
-        <p class="muted" style="font-size:13px">The app has filled these in from your file's column names. Check they look right - only the date and amount matter.</p>
+        <p class="muted" style="font-size:13px">The app has filled these in from your file's column names. Check they look right, only the date and amount matter.</p>
 
         <label for="csvRowKind">What is in this file?</label>
         <select id="csvRowKind">
@@ -3128,7 +3185,7 @@
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
           <svg id="helpDiagramLog" role="group" aria-label="The Log page, card by card, in the order they appear" viewBox="0 0 680 650" xmlns="http://www.w3.org/2000/svg">
-            <text x="28" y="24" fill="var(--muted)" font-size="12.5">This month / Entries / Income per year - always shown</text>
+            <text x="28" y="24" fill="var(--muted)" font-size="12.5">This month / Entries / Income per year, always shown</text>
             <text x="28" y="54" fill="var(--accent)" font-size="13" font-weight="600">Spending tab</text>
             <rect x="10" y="74" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="98" fill="var(--text)" font-size="14">Quick Add</text>
@@ -3479,9 +3536,9 @@
             <text x="40" y="34" fill="var(--text)" font-size="14">Daily health check + totals (always shown)</text>
             <text x="28" y="78" fill="var(--accent)" font-size="13" font-weight="600">Market tab</text>
             <rect x="10" y="98" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="122" fill="var(--text)" font-size="14">Overview (recap in words, then the numbers)</text>
+            <text x="40" y="122" fill="var(--text)" font-size="14">Overview (the market as a whole)</text>
             <rect x="10" y="142" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="166" fill="var(--text)" font-size="14">Biggest movers today (whole market)</text>
+            <text x="40" y="166" fill="var(--text)" font-size="14">Companies you track (recap, moves, news)</text>
             <rect x="10" y="186" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
             <text x="40" y="210" fill="var(--text)" font-size="14">Price history (per-symbol chart)</text>
             <rect x="10" y="230" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
@@ -3505,28 +3562,21 @@
         <div class="help-topic" id="helpTopic-two-tabs-and-what-s-on-each">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-two-tabs-and-what-s-on-each-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Two tabs, and what's on each</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-two-tabs-and-what-s-on-each-body">
-          <p><strong>Market</strong> is the wider stock market and does not depend on what you own. <strong>My portfolio</strong> is only your money. The health check and totals above them stay visible on both.</p>
-          <p>Smaller buttons switch between sections within each tab. Every card has an "i" beside its title for a one-line explanation.</p>
+          <p><strong>Market</strong> is everything that does not depend on what you own. <strong>My portfolio</strong> is only your money. The health check and totals above them stay visible on both.</p>
+          <p>Market splits three ways. <strong>Overview</strong> is the market as a whole. <strong>Companies you track</strong> is your own list, which is a different thing: a count of how they finished, their biggest moves, and the day&#39;s stories about them. <strong>Price history</strong> charts one company at a time.</p>
+          <p>Every card has an "i" beside its title for a one-line explanation.</p>
           <p>Tapping any ticker anywhere opens that company&#39;s price chart.</p>
           
           </div>
         </div>
 
-        <div class="help-topic" id="helpTopic-biggest-movers-today">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-biggest-movers-today-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Biggest movers today</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-biggest-movers-today-body">
-          <p>The biggest single-day moves in the whole US market, not just companies you track. This is the one card that can show you something new.</p>
-          <p>They are usually very small companies, where a big percentage move is far more common. A headline is what was being reported, not why the price moved.</p>
-          
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-overview-part-one-the-day-in-words">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-overview-part-one-the-day-in-words-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Overview, part one: the day in words</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-overview-part-one-the-day-in-words-body">
-          <p>A once-a-day look back at the session that just finished, in words rather than numbers.</p>
-          <p>The recap is labelled <strong>AI-written</strong>. It never suggests buying or selling and never says what a price will do next. If it cannot be written, a plain sentence built from the same numbers takes its place.</p>
-          <p>Headlines are what was being reported that day, never a claim about why a price moved.</p>
+        <div class="help-topic" id="helpTopic-companies-you-track">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-companies-you-track-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Companies you track</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-companies-you-track-body">
+          <p>Your own list of companies, not the market. Change who is on it with <strong>Choose tracked companies</strong>.</p>
+          <p><strong>Daily recap</strong> is a once-a-day look back at the session that just finished. Two counts show how many of them finished up and how many finished down, and tapping either one shows which. Under them are the day's biggest moves, each with what was published about that company.</p>
+          <p><strong>Latest on the companies you track</strong> is the same subject while the market is open: where they stand now and the stories running about them today.</p>
+          <p>A headline, and the line beneath it, is what was being reported, never a claim about why a price moved. A written recap, when there is one, is labelled <strong>AI-written</strong>; it never suggests buying or selling and never says what a price will do next.</p>
           
           </div>
         </div>
@@ -3558,12 +3608,12 @@
           </div>
         </div>
 
-        <div class="help-topic" id="helpTopic-overview-part-two-the-numbers-behind-it">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-overview-part-two-the-numbers-behind-it-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Overview, part two: the numbers behind it</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-overview-part-two-the-numbers-behind-it-body">
-          <p>The numbers behind the recap: today&#39;s level for the major indexes, the biggest moves among companies you track, and recent headlines about them.</p>
-          <p>Prices refresh every few minutes while the market is open; the index figures and any written explanation refresh far less often. A line on each says how fresh it is.</p>
-          <p>The count at the top is a plain tally, not an AI&#39;s read of the mood.</p>
+        <div class="help-topic" id="helpTopic-overview">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-overview-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Overview</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-overview-body">
+          <p>The market as a whole, whether or not you own any of it. The major indexes first, each with a live price from an exchange-traded fund that closely tracks it, then the biggest single-day moves anywhere in the US market.</p>
+          <p>Those movers are usually very small companies, where a big percentage move is far more common and often reverses. A headline is what was being reported, not why a price moved.</p>
+          <p>Prices refresh every few minutes while the market is open; the exact index figures refresh far less often, and a line on each says how fresh it is.</p>
           
           </div>
         </div>
@@ -3688,7 +3738,7 @@
       <textarea id="feedbackMessage" rows="5" maxlength="2000" placeholder="What you tapped, what you expected, and what happened instead."></textarea>
       <p class="muted text-xs stack-1"><span id="feedbackCharsLeft">2000</span> characters left</p>
 
-      <p class="muted text-xs stack-2">Sent with it: the page you were on and your browser. <strong>Nothing about your money</strong> - no balances, accounts or transactions, so type in any figure that matters. A message cannot be taken back once sent.</p>
+      <p class="muted text-xs stack-2">Sent with it: the page you were on and your browser. <strong>Nothing about your money</strong>, no balances, accounts or transactions, so type in any figure that matters. A message cannot be taken back once sent.</p>
 
       <button id="feedbackSendBtn" class="stack-2">Send it</button>
 

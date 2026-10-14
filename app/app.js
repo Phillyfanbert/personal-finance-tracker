@@ -1147,18 +1147,50 @@ async function loadMarketNewsFindings() {
 // own, and stays readable even if live pricing were switched off. Only a
 // handful of rows, newest first.
 const RECAP_HISTORY_DAYS = 30;
-// Only the columns the chart and range stats read, and only symbols with
-// history - the table grows by ~24 rows per trading day forever, so this
-// will eventually want a date window; at a few hundred rows it does not yet.
+// PAGED, not one unbounded select. This table only grows - about 28 rows a
+// trading day, retained indefinitely, nothing purges it - and it passed a
+// thousand rows on 2026-10-14. PostgREST caps a response silently, which is
+// why fetchAllPages() exists and throws at its own cap instead.
+//
+// The old read was ordered ASCENDING by date, which is what made a cap
+// dangerous rather than merely lossy: the rows it would drop are the NEWEST,
+// and every reader here wants exactly those. Measured against a 1,000-row
+// cap on the real 1,078 rows, recapBreadthDetail() reported 16 of 16
+// companies up instead of 24 of 24 - a confidently wrong figure under the
+// label "companies you track", not an empty state that admits it knows
+// nothing.
+//
+// Paged on (symbol, trade_date) because that pair is the table's PRIMARY KEY
+// and therefore unique: each .range() is a separate query and Postgres does
+// not promise a stable order for rows tied on the sort key, so paging on
+// trade_date alone could repeat or skip a row at a page boundary. Nothing
+// downstream depends on the order it arrives in - priceSeries() and
+// priceRangeStats() both sort internally.
+//
+// A date window is NOT the fix: PRICE_HISTORY_RANGES offers "Max", so any
+// cutoff here would silently shorten the one range that promises not to be.
+const TOO_MANY_PRICE_ROWS = "There is more recorded price history than can be loaded at once.";
 async function loadDailyPrices() {
-  const { data } = await sb.from("daily_prices")
-    // previous_close is what makes recapBreadthDetail() agree with the
-    // recap's stored counts exactly: it is the first thing buildDailyRecap()
-    // compares against, and deriving a prior close here instead would be a
-    // second definition of the day's move.
-    .select("symbol,trade_date,open,high,low,close,previous_close")
-    .order("trade_date", { ascending: true });
-  dailyPrices = data || [];
+  try {
+    dailyPrices = await fetchAllPages(() => sb.from("daily_prices")
+      // previous_close is what makes recapBreadthDetail() agree with the
+      // recap's stored counts exactly: it is the first thing buildDailyRecap()
+      // compares against, and deriving a prior close here instead would be a
+      // second definition of the day's move.
+      .select("symbol,trade_date,open,high,low,close,previous_close")
+      .order("symbol", { ascending: true })
+      .order("trade_date", { ascending: true }), TOO_MANY_PRICE_ROWS);
+  } catch (error) {
+    // This runs inside init()'s Promise.all, so rejecting would take the
+    // whole app load down over one optional card. It must also not read as
+    // "no price history yet" - that is a different claim, and the one the
+    // empty state already makes.
+    dailyPrices = [];
+    $("priceHistoryCard").classList.add("hidden");
+    $("emptyHistory").classList.remove("hidden");
+    renderLoadError("emptyHistory", error, loadDailyPrices);
+    return;
+  }
   renderPriceHistory();
 }
 
@@ -6047,9 +6079,10 @@ function clearYearRowsCache() { yearRowsCache.clear(); }
 // CSV and the printed report, which is exactly the confidently-wrong figure
 // rowsForYear exists to prevent. So ask for explicit pages and stop only when
 // a short one comes back, rather than trusting one unbounded select.
+const TOO_MANY_EXPENSE_ROWS = "That period has more transactions than can be loaded at once. Try one month at a time.";
 const ROW_PAGE_SIZE = 1000;
 const MAX_ROW_PAGES = 50; // 50,000 rows in one year is not a real personal budget
-async function fetchAllPages(buildQuery) {
+async function fetchAllPages(buildQuery, tooManyMessage = TOO_MANY_EXPENSE_ROWS) {
   const out = [];
   for (let page = 0; page < MAX_ROW_PAGES; page++) {
     const from = page * ROW_PAGE_SIZE;
@@ -6062,7 +6095,7 @@ async function fetchAllPages(buildQuery) {
   // what we have would understate every figure with no signal at all - the
   // exact silent truncation this function exists to prevent, just moved to a
   // higher threshold. Fail loudly; every caller already reports the error.
-  throw new Error("That period has more transactions than can be loaded at once. Try one month at a time.");
+  throw new Error(tooManyMessage);
 }
 
 async function rowsForYear(year) {
@@ -7898,6 +7931,7 @@ function renderMarketMovers() {
 // chart just shows what exists and the caption says so, which is more
 // honest than hiding a button and leaving the user wondering why "1Y" is
 // missing.
+const EMPTY_HISTORY_TEXT = "No price history recorded yet. Once a price has been tracked at least once, its chart will appear here.";
 const PRICE_HISTORY_RANGES = [
   { label: "1M", days: 30 },
   { label: "3M", days: 90 },
@@ -7963,7 +7997,16 @@ function renderPriceHistory() {
   const symbols = [...new Set(dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()).filter(Boolean))].sort();
   // No manual-entry fallback exists for price history, so an empty card
   // would be clutter - same convention as Market overview.
-  if (!symbols.length) { card.classList.add("hidden"); $("emptyHistory").classList.remove("hidden"); return; }
+  if (!symbols.length) {
+    card.classList.add("hidden");
+    // Written back rather than left alone: a failed load replaces this
+    // element's contents with renderLoadError()'s panel, so after a
+    // successful retry that found nothing it would otherwise still be
+    // showing "Loading..." or a stale error.
+    $("emptyHistory").textContent = EMPTY_HISTORY_TEXT;
+    $("emptyHistory").classList.remove("hidden");
+    return;
+  }
   card.classList.remove("hidden");
   $("emptyHistory").classList.add("hidden");
 

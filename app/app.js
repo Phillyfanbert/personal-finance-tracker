@@ -1358,6 +1358,23 @@ const ownedPriceSymbols = () => [...new Set(
 const indexPriceSymbols = () => [...new Set(
   [...moverSymbols(), ...Object.values(MARKET_INDEX_ETF_PROXIES)]
 )];
+// Every symbol THIS user's app has a reason to chart: their own tracked list,
+// anything they own, and the four index proxies the Overview card links to.
+//
+// daily_prices is deliberately NOT user-scoped - a close on a given day is a
+// public fact with no owner - so it holds the union across every user, and
+// price-agent's loadMoversWatchlist() reads that union on purpose. Reading it
+// back unfiltered therefore put symbols only SOMEONE ELSE tracks into this
+// user's picker. Measured on production 2026-10-14: GDDY, ROKU and VOO were
+// each tracked by exactly one of four users and listed for all four. Because
+// syncHoldingsIntoWatchlist() adds anything you own, that disclosed holdings
+// rather than only interests.
+//
+// The scoping lives here rather than in the query: the rows themselves are
+// shared and cheap, and every other reader of daily_prices (priceSeries for a
+// symbol already chosen, recapBreadthDetail against moverSymbols()) is
+// already scoped by its own arguments. This is the one place that enumerated.
+const chartableSymbols = () => new Set([...indexPriceSymbols(), ...ownedPriceSymbols()]);
 
 async function fetchLiveQuotes(symbols) {
   if (!symbols.length) return null;
@@ -1383,9 +1400,15 @@ async function fetchLiveQuotes(symbols) {
 // day the server machine was off would silently be presented as "today's"
 // change against a two-day-old price.
 //
-// Stamped at the very end of the previous UTC day so it reliably wins that
-// day's bucket (dailyFindingsForSymbol keeps each day's LATEST row, and a
-// real agent row from late yesterday would otherwise outrank it).
+// Stamped at the very end of the previous UTC day. That WAS chosen to win
+// the prior day's bucket outright, and no longer does: dateKey() buckets by
+// America/New_York now, where 23:59:59.999Z is only 19:59 ET, so a real agent
+// row written later that evening sits later in the same ET bucket and wins
+// instead. It is harmless because both hold the same frozen close, which is
+// why nothing looks wrong - but do not reintroduce a dependency on this row
+// outranking the agent's, because it does not. What the stamp still buys is
+// landing in the PRIOR day's bucket rather than today's, which is all
+// dailyFindingsForSymbol() needs to derive a day change.
 function liveQuoteRows(quotes, symbols, stamp) {
   const prev = new Date(Date.parse(stamp) - 24 * 60 * 60 * 1000);
   prev.setUTCHours(23, 59, 59, 999);
@@ -7969,7 +7992,10 @@ const fmtCompact = (n) => {
 function openPriceHistory(symbol) {
   const sym = (symbol || "").trim().toUpperCase();
   if (!sym) return;
-  const recorded = new Set(dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()));
+  const mine = chartableSymbols();
+  const recorded = new Set(
+    dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()).filter((sym) => mine.has(sym))
+  );
   // A market-wide mover is usually NOT tracked, so it genuinely has no
   // history here - say why and point at the fix rather than switching to
   // an empty chart.
@@ -7994,7 +8020,10 @@ document.addEventListener("click", (ev) => {
 function renderPriceHistory() {
   const card = $("priceHistoryCard");
   if (!card) return;
-  const symbols = [...new Set(dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()).filter(Boolean))].sort();
+  const mine = chartableSymbols();
+  const symbols = [...new Set(
+    dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()).filter((sym) => sym && mine.has(sym))
+  )].sort();
   // No manual-entry fallback exists for price history, so an empty card
   // would be clutter - same convention as Market overview.
   if (!symbols.length) {
@@ -8767,13 +8796,20 @@ function renderDailyRecap() {
   // Which companies, not just how many. Computed from daily_prices for the
   // recap's own trade_date using the same comparison buildDailyRecap() counts
   // from, so a list can never come back a company short of the count above it.
-  // It also counts THIS user's tracked list, which is what the label says,
-  // where the stored figure counts the union across every user - the same for
-  // one household, not the same question.
+  // It counts THIS user's tracked list, which is what the label says.
+  //
+  // There is deliberately NO fallback to the stored recap.breadth. That figure
+  // is computed server-side over the union of every user's watchlist, so
+  // rendering it under "of the N companies you track" asserts as yours a count
+  // that includes companies you do not follow - measured as a real divergence
+  // with four users holding 24 distinct symbols, only 17 of them shared by
+  // all. When the detail cannot be computed the tiles are omitted instead,
+  // the same omit-rather-than-state-something-false rule the rest of this tab
+  // holds; the movers section below still carries the day.
   const detail = recapBreadthDetail(dailyPrices, moverSymbols(), recap.tradeDate);
   const breadth = detail
     ? { up: detail.up.length, down: detail.down.length, flat: detail.flat.length, total: detail.total }
-    : recap.breadth;
+    : null;
   const tilesEl = $("dailyRecapBreadth");
   const noteEl = $("dailyRecapBreadthNote");
   const listEl = $("dailyRecapBreadthList");

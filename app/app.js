@@ -11220,8 +11220,15 @@ function renderDealFindings() {
   $("dealFindingsList").innerHTML = best.map((d) => {
     const f = d.finding;
     const link = f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
+    // No Promote/Reject buttons any more. Reviewing a finding is a
+    // maintainer action through service_role now (tools/deal-review.mjs),
+    // because deal_findings holds shared public pricing with no owner: the
+    // old policy could only ask "is this anyone signed in", so one user's
+    // Reject removed a finding from everybody's card. A control that can no
+    // longer act must not stay on screen - that is the silent-no-op shape
+    // this repo keeps recording - so the row states where it stands instead.
     const actions = f.status === "candidate"
-      ? `<button class="secondary" data-promote-finding="${f.id}" style="width:auto;padding:3px 8px;font-size:11px;margin-right:4px">Promote</button><button class="secondary" data-reject-finding="${f.id}" style="width:auto;padding:3px 8px;font-size:11px">Reject</button>`
+      ? `<span class="muted" style="font-size:11px">not checked yet</span>`
       : `<span class="muted" style="font-size:11px">${f.status === "verified" ? "✓ verified" : esc(f.status)}</span>`;
     // A trial changes what the price means, so it is stated on its own line
     // next to the figure it qualifies rather than left buried in the
@@ -11241,50 +11248,14 @@ function renderDealFindings() {
         <span class="amt">${actions}</span>
       </div>`;
   }).join("");
-  document.querySelectorAll("[data-promote-finding]").forEach((el) => {
-    el.onclick = () => promoteFinding(dealFindings.find((f) => f.id === el.dataset.promoteFinding));
-  });
-  document.querySelectorAll("[data-reject-finding]").forEach((el) => {
-    el.onclick = () => rejectFinding(el.dataset.rejectFinding);
-  });
 }
 
-// F6 Phase E (the project notes §9) - promoting copies a
-// finding's fields into subscription_catalog (a plain insert, not
-// atomic with the status update below; low risk for this app's small,
-// trusted ~4-5-user model, same as the rest of this app's multi-step writes) and
-// marks the finding verified so it stops offering Promote/Reject again.
-// Confirmed first (confirmModal) since this has an ongoing effect on
-// the shared, trusted catalog every user sees - not a one-off action.
-async function promoteFinding(finding) {
-  if (!finding) return;
-  const priceLabel = finding.price != null ? fmt(Number(finding.price)) : "no price";
-  const msg = `Add ${finding.service} (${finding.plan_type || "unknown plan"}, ${priceLabel}) to your trusted catalog? This becomes a normal deal every user sees.`;
-  if (!(await confirmModal(msg, { title: "Promote this finding?", confirmLabel: "Promote" }))) return;
-  const { error: insertErr } = await sb.from("subscription_catalog").insert({
-    service: finding.service, plan_type: finding.plan_type, price: finding.price,
-    eligibility: finding.eligibility, url: finding.url, notes: "Promoted from a live finding",
-  });
-  if (insertErr) return toast(insertErr.message);
-  const { error: updateErr } = await sb.from("deal_findings").update({ status: "verified" }).eq("id", finding.id);
-  if (updateErr) return toast(updateErr.message);
-  await loadCatalog();
-  await loadDealFindings();
-  renderDealFindings();
-  renderDeals();
-  toast("Promoted to your trusted catalog");
-}
-
-// Rejecting just hides it - deal_findings' own SELECT policy excludes
-// status = 'rejected', so a rejected row simply stops coming back.
-async function rejectFinding(id) {
-  const { error } = await sb.from("deal_findings").update({ status: "rejected" }).eq("id", id);
-  if (error) return toast(error.message);
-  await loadDealFindings();
-  renderDealFindings();
-  toast("Finding rejected");
-}
-
+// Promote and Reject used to live here, as two client writes: an insert into
+// subscription_catalog and a status update on deal_findings. Both are gone,
+// and 82_deal_review_is_maintainer_only.sql revoked the grants that made them
+// possible, so re-adding them would now fail with 42501 rather than silently
+// affecting zero rows. Reviewing a finding is `node tools/deal-review.mjs`,
+// which runs with service_role on a machine that has the key.
 function renderSubscriptions() {
   const monthly = totalMonthly(subscriptions);
   $("subsTotalMonthly").textContent = fmt(monthly);

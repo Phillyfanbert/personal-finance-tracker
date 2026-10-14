@@ -222,13 +222,13 @@ export const TOUR_STEPS = {
     {
       target: "watchlistGearBtn",
       title: "Choosing what to follow",
-      body: "Everything on the Market side is built from this list of companies. Add any you want to keep an eye on. Anything you already own is added for you automatically. You can also put them in whatever order you like: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys. The ones you care about can sit at the top.",
+      body: "The Companies you track tab, and the price history charts, are built from this list. Overview is the market as a whole and does not use it. Add any you want to keep an eye on. Anything you already own is added for you automatically. You can also put them in whatever order you like: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys. The ones you care about can sit at the top.",
       placement: "bottom",
     },
     {
       target: "investSubTabsMarket",
       title: "Getting around the Market side",
-      body: "Overview explains the day in ordinary words first, with the numbers underneath. Biggest movers shows which companies changed most. Price history charts one company over time. Tapping any company name anywhere on this page opens its history.",
+      body: "Overview is the market as a whole: the big indexes, and the largest moves anywhere in the US market that day. Companies you track is your own list, with a short written recap of how they did and the stories published about them. Price history charts one company over time. Tapping any company name anywhere on this page opens its history.",
       placement: "bottom",
     },
     {

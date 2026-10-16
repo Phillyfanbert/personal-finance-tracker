@@ -718,10 +718,14 @@ const MAX_CONTEXT_HEADLINES = 4;
 // alone: it is also what gates per-symbol explanation sources, and widening
 // it there would change a different feature's behaviour for no reason.
 //
-// STILL TO CONFIRM LIVE: run `DRY_RUN=1 ./tools/run-daily-recap.sh` on the
-// server machine and read what the query actually returns. The diagnosis
-// above is sound but the search half cannot be exercised from a dev box -
-// tools/.env.deal-agent holds the key and lives only on that machine.
+// CONFIRMED LIVE 2026-10-15 on the server machine, and the diagnosis above
+// was only half right. The allowlist WAS the blocker: the search now keeps
+// 4 of 15 results where it used to keep none. But what it kept was four
+// SECTION FRONTS - cnbc.com's own masthead at a bare domain, marketwatch's
+// masthead, Markets Insider, and investors.com's "Stock Market Today" hub.
+// Every one cleared the length and term tests below, because a masthead is
+// long and is of course about markets. See isMarketWideHeadline for the two
+// structural checks that separate a day's coverage from a landing page.
 const MARKET_WRAP_DOMAINS = [
   "reuters.com", "cnbc.com", "apnews.com", "bloomberg.com",
   "wsj.com", "ft.com", "barrons.com", "fortune.com",
@@ -750,13 +754,96 @@ function mentionsWholeTerm(text, term) {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "i").test(text);
 }
-function isMarketWideHeadline(title) {
+// A landing page's URL is short and generic ("/markets", "/business", or a
+// bare domain); an article's carries a date, a .html, or a real slug. This
+// does most of the separating, and it is the check to extend first, because
+// it reasons about STRUCTURE rather than about words - the title vocabulary
+// below is whack-a-mole by comparison ("bond" and "currencies" were both
+// missing from it on the first attempt).
+function isSectionFrontUrl(urlStr) {
+  try {
+    const segments = new URL(urlStr).pathname.split("/").filter(Boolean);
+    if (!segments.length) return true;
+    const last = segments[segments.length - 1];
+    // A real article page, whatever its slug looks like.
+    if (/\.html?$/i.test(last)) return false;
+    // A date anywhere in the path. Covers "/2026/10/15/..." and
+    // "/news/articles/2026-10-15/...", which is how most wraps are filed.
+    if (segments.some((s) => /^(19|20)\d{2}$/.test(s) || /(19|20)\d{2}-\d{2}-\d{2}/.test(s))) return false;
+    // A real headline slug, or an opaque id. A section NAME is a short
+    // dictionary word with no digits in it ("/markets", "/business",
+    // "/market-data"), so a digit anywhere is enough to say this is not one
+    // - which is what keeps AP's and Reuters' id-only article URLs.
+    if (last.split("-").filter(Boolean).length >= 3) return false;
+    if (/\d/.test(last)) return false;
+    // Residual risk, accepted: a 2-word slug carrying no date, no id and no
+    // .html would be read as a section. None of the 17 allowlisted
+    // publishers files articles that way, and the cost if one did is this
+    // one optional line being absent for a day.
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+// What is left after the URL check is a masthead sitting on a real path
+// (investors.com's "Stock Market Today: Stock Market News And Analysis").
+// The property that separates it from a wrap is that it names only the
+// CATEGORY: a headline about a day always introduces at least one word the
+// newsroom furniture does not already supply - a verb, a company, a figure,
+// a date. So a title built entirely from this vocabulary plus the
+// publisher's own name is a landing page.
+//
+// Tuned against a corpus, never by eye - the rule RECAP_ADVICE_PHRASES
+// already has to follow, and for the same reason: this gates a feature that
+// runs once a day, so a false positive is invisible until someone counts
+// rows. Deliberately a vocabulary of filler rather than a blocklist of
+// phrases: "stock market news" as a phrase would have rejected a real WSJ
+// wrap titled "Stock Market News, April 3, 2025", which the date saves here.
+const NEWSROOM_FILLER = new Set([
+  "stock", "stocks", "market", "markets", "news", "analysis", "analyses",
+  "financial", "finance", "business", "world", "global", "international",
+  "today", "todays", "latest", "breaking", "live", "updates", "update",
+  "quotes", "quote", "data", "insider", "watch", "wall", "street",
+  "investing", "investors", "investor", "money", "economy", "economic",
+  "headlines", "coverage", "index", "indexes", "indices", "overview",
+  "center", "centre", "hub", "home", "page", "report", "reports",
+  // asset-class section nouns: a landing page is often just one of these
+  "bond", "bonds", "currency", "currencies", "commodity", "commodities",
+  "forex", "futures", "etf", "etfs", "fund", "funds", "crypto", "equity",
+  "equities", "screener", "screeners", "sectors", "sector",
+  // the allowlisted publishers' own names, for the ones the domain label
+  // does not spell: ft.com prints "Financial Times", apnews "Associated
+  // Press". Without these a masthead reads as specific on the strength of
+  // its own byline.
+  "times", "journal", "press", "associated", "barron", "barrons",
+  "bloomberg", "reuters", "cnbc", "cnn", "npr", "axios", "forbes",
+  "fortune", "yahoo", "investopedia", "ibd", "marketwatch", "wsj",
+  // stopwords, so a connective can never read as the specific thing
+  "a", "an", "and", "the", "of", "in", "on", "for", "with", "your", "from",
+  "to", "at", "by", "more", "all", "plus", "us", "usa", "u", "s", "com",
+]);
+
+function namesSomethingSpecific(title, urlStr) {
+  // The publisher's own name is furniture too, and it is the reason a
+  // vocabulary alone is not enough: "MarketWatch" is not a market term and
+  // not filler, so without this the marketwatch.com masthead reads as
+  // specific and survives.
+  const brand = new Set((hostOf(urlStr) || "").split(".").filter((part) => part && part !== "com"));
+  return (title.toLowerCase().match(/[a-z0-9&]+/g) || []).some((word) => {
+    if (/\d/.test(word)) return true;
+    return !NEWSROOM_FILLER.has(word) && !brand.has(word);
+  });
+}
+
+function isMarketWideHeadline(title, urlStr) {
   if (!title || typeof title !== "string") return false;
   const t = title.trim();
   // A bare section front ("Markets") carries no information; a real wrap
   // headline is a sentence.
   if (t.length < 25) return false;
-  return MARKET_WRAP_TERMS.some((term) => mentionsWholeTerm(t, term));
+  if (!MARKET_WRAP_TERMS.some((term) => mentionsWholeTerm(t, term))) return false;
+  return namesSomethingSpecific(t, urlStr);
 }
 
 // Best-effort by construction. Returns [] on anything going wrong, and the
@@ -766,16 +853,21 @@ function isMarketWideHeadline(title) {
 // status to degraded - the same treatment findRecapSummary already gets.
 async function findMarketContext() {
   try {
-    const results = await tavilySearch(MARKET_CONTEXT_QUERY, MARKET_CONTEXT_RESULTS);
+    // topic "news" is what stops a general web search handing back the big
+    // publishers' market LANDING PAGES, which is what it did on 2026-10-15:
+    // 5 of 15 results were section fronts and not one was an article.
+    const results = await tavilySearch(MARKET_CONTEXT_QUERY, MARKET_CONTEXT_RESULTS, { topic: "news", days: 1 });
     const seen = new Set();
     const picked = [];
     let blockedByDomain = 0;
     let blockedByGate = 0;
+    let blockedAsSectionFront = 0;
     for (const r of results) {
       if (!hostAllowed(r.url, MARKET_WRAP_DOMAINS)) { blockedByDomain++; continue; }
       const title = (r.title || "").trim();
       if (seen.has(r.url)) continue;
-      if (!isMarketWideHeadline(title)) { blockedByGate++; continue; }
+      if (isSectionFrontUrl(r.url)) { blockedAsSectionFront++; continue; }
+      if (!isMarketWideHeadline(title, r.url)) { blockedByGate++; continue; }
       seen.add(r.url);
       picked.push({ title, url: r.url, source: hostOf(r.url) });
       if (picked.length >= MAX_CONTEXT_HEADLINES) break;
@@ -784,9 +876,9 @@ async function findMarketContext() {
     // undifferentiated "nothing passed the gate", which is how a domain-list
     // problem went 22 days looking like a relevance problem.
     if (!picked.length) {
-      console.warn(`No market-wide headline survived this run - ${results.length} result(s), ${blockedByDomain} off-allowlist, ${blockedByGate} rejected by the relevance gate. Recap keeps its existing shape.`);
+      console.warn(`No market-wide headline survived this run - ${results.length} result(s), ${blockedByDomain} off-allowlist, ${blockedAsSectionFront} a section front, ${blockedByGate} rejected by the relevance gate. Recap keeps its existing shape.`);
     } else {
-      console.log(`Market context: kept ${picked.length} of ${results.length} result(s) (${blockedByDomain} off-allowlist, ${blockedByGate} not a market wrap).`);
+      console.log(`Market context: kept ${picked.length} of ${results.length} result(s) (${blockedByDomain} off-allowlist, ${blockedAsSectionFront} a section front, ${blockedByGate} not a market wrap).`);
     }
     return picked;
   } catch (err) {
@@ -2013,7 +2105,13 @@ function hostAllowed(urlStr, domains) {
 }
 
 // ---- Tavily: real live web search -----------------------------------------
-async function tavilySearch(query, maxResults = RESULTS_PER_QUERY) {
+// `extra` exists for the market-wrap search alone: it is the one query here
+// looking for NEWS rather than for a page that happens to mention a thing.
+// deal-agent's pricing searches must stay on the default general topic, so
+// this is opt-in per call site rather than a change to the default - the same
+// reason MARKET_WRAP_DOMAINS is its own list instead of a widened
+// TRUSTED_NEWS_DOMAINS.
+async function tavilySearch(query, maxResults = RESULTS_PER_QUERY, extra = {}) {
   if (tavilyCallCount >= MAX_TAVILY_CALLS_PER_RUN) {
     throw new Error(`Tavily call budget (${MAX_TAVILY_CALLS_PER_RUN}/run) exceeded - skipping`);
   }
@@ -2021,7 +2119,7 @@ async function tavilySearch(query, maxResults = RESULTS_PER_QUERY) {
   const res = await fetchWithRetry(TAVILY_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${TAVILY_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, max_results: maxResults, search_depth: "basic" }),
+    body: JSON.stringify({ query, max_results: maxResults, search_depth: "basic", ...extra }),
   }, SEARCH_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Tavily HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();

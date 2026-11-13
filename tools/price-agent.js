@@ -276,6 +276,36 @@ function geminiUrl(model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 }
 
+// The home model, as the SECOND writer for every sentence this script asks a
+// model for. OPTIONAL: unset, Gemini is the only writer, exactly as before.
+//
+// It exists because of a measurement. From 2026-10-16 to 2026-11-11 the daily
+// recap's written summary failed on 19 trading days out of 19, and so did the
+// news sentiment and the mover summary beside it: Gemini's free tier answered
+// "503 This model is currently experiencing high demand" or simply did not
+// answer inside the timeout. That is not the 20-a-day quota this file plans
+// around, it is the free tier being served last, and under this project's
+// no-card rule there is no paying for a better place in the queue.
+//
+// The model that can always be reached is the one already running on this
+// machine for the personal-data scripts (tools/monthly-report.js). Everything
+// this script sends a model is PUBLIC market data, so it is free to go to
+// either one; the privacy rule only ever ran the other way.
+//
+// Gemini is still asked first. It is the better writer when it answers, and
+// a failed attempt costs seconds on a job that runs once a night.
+const GEMMA_ENDPOINT = process.env.GEMMA_ENDPOINT;
+const GEMMA_MODEL = process.env.GEMMA_MODEL || "gemma";
+// Measured on this hardware: about 15 to 22 tokens a second, after a cold
+// load of 4 to 11 seconds. A three-paragraph recap is roughly 400 tokens, so
+// a real answer lands inside a minute and this is a ceiling, not a target.
+const GEMMA_TIMEOUT_MS = 180000;
+// A runaway backstop, well above what any prompt here asks for. This model
+// cannot be prompted into brevity (app/gemma.js records three attempts), so
+// length is enforced after the fact by the same validators Gemini's output
+// goes through, never by cutting the answer off mid-sentence.
+const GEMMA_MAX_TOKENS = 900;
+
 // Finnhub - real-time US stock quotes, confirmed free tier (60 calls/min,
 // no credit card) as of this writing. https://finnhub.io/register - a
 // plain GET returning the price directly as JSON, no search step and no
@@ -1333,19 +1363,63 @@ function plainDashes(text) {
 // rejection rules themselves are unchanged.
 function validateRecapSummary(raw) {
   if (!raw || typeof raw !== "object") return { reason: "invalid_json" };
-  const summary = typeof raw.summary === "string" ? raw.summary.trim() : "";
+  let summary = typeof raw.summary === "string" ? raw.summary.trim() : "";
   if (!summary) return { reason: "empty" };
-  if (summary.length > MAX_RECAP_SUMMARY_CHARS) {
-    console.warn(`Discarding recap summary - ${summary.length} chars, over the ${MAX_RECAP_SUMMARY_CHARS} cap.`);
-    return { reason: "too_long" };
-  }
+  // The advice check runs on EVERYTHING the model wrote, before any trimming
+  // below. A model that slipped a forecast into its last paragraph has shown
+  // it is not following the rules, and quietly cutting that paragraph off
+  // would keep the rest of an answer there is now less reason to trust. The
+  // gate only ever gets stricter, never looser.
   const lower = summary.toLowerCase();
   const violation = RECAP_ADVICE_PHRASES.find((phrase) => lower.includes(phrase));
   if (violation) {
     console.warn(`Discarding recap summary - contains advice/forecast language ("${violation}").`);
     return { reason: `rejected:${violation}` };
   }
+  if (summary.length > MAX_RECAP_SUMMARY_CHARS) {
+    // Two real summaries were thrown away whole for running a paragraph long
+    // (2026-10-16 and 10-19), on days that then showed no summary at all.
+    // Each paragraph of a recap stands on its own, so keep the leading ones
+    // that fit. Never cut inside a paragraph: half a sentence about a market
+    // is worse than no sentence.
+    const kept = trimToWholeParagraphs(summary, MAX_RECAP_SUMMARY_CHARS);
+    if (!kept) {
+      console.warn(`Discarding recap summary - ${summary.length} chars, over the ${MAX_RECAP_SUMMARY_CHARS} cap, and its first paragraph alone does not fit.`);
+      return { reason: "too_long" };
+    }
+    console.warn(`Recap summary was ${summary.length} chars, over the ${MAX_RECAP_SUMMARY_CHARS} cap - kept its leading paragraphs (${kept.length} chars).`);
+    summary = kept;
+  }
   return { summary: plainDashes(summary) };
+}
+
+// The longest run of leading paragraphs that fits, or null when even the
+// first one does not.
+function trimToWholeParagraphs(text, maxChars) {
+  const paragraphs = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  let kept = "";
+  for (const paragraph of paragraphs) {
+    const next = kept ? `${kept}\n\n${paragraph}` : paragraph;
+    if (next.length > maxChars) break;
+    kept = next;
+  }
+  return kept || null;
+}
+
+// The shared acceptance test for a written summary: the existing validator,
+// then the figure check. One function so the recap and the mover summary
+// cannot come to hold a model's prose to different standards.
+function acceptSummary(prompt) {
+  return (text) => {
+    const result = validateRecapSummary(parseJsonLoose(text));
+    if (!result.summary) return { reason: result.reason };
+    const stray = untracedFigure(result.summary, prompt);
+    if (stray) {
+      console.warn(`Discarding summary - "${stray}" is not a figure it was given.`);
+      return { reason: "untraced_figure" };
+    }
+    return { value: result.summary };
+  };
 }
 
 // Best-effort by contract: any failure here (quota exhausted, timeout,
@@ -1394,23 +1468,16 @@ async function loadIndustries() {
   }
 }
 
+// Returns { summary, writer } or { reason }. `writer` is who actually wrote
+// it, so generated_by can stay the honest record it is meant to be.
 async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames, newsPool = [], contextHeadlines = [], extra = {}) {
-  try {
-    const text = await extractWithGemini(buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool, contextHeadlines, extra));
-    const result = validateRecapSummary(parseJsonLoose(text));
-    if (!result.summary) console.warn(`No usable recap summary this run (${result.reason}) - keeping the zero-LLM recap.`);
-    return result;
-  } catch (err) {
-    // Classified so a quota-exhausted day is tellable apart from a network
-    // blip or a model error - the three want completely different fixes.
-    const m = err.message || "";
-    const reason = /\b429\b|quota|RESOURCE_EXHAUSTED/i.test(m) ? "quota"
-      : /abort|timeout/i.test(m) ? "timeout"
-      : /HTTP \d/.test(m) ? "http_error"
-      : "error";
-    console.warn(`Recap summary failed (non-fatal, keeping the zero-LLM recap): ${reason} - ${m}`);
-    return { reason };
+  const prompt = buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool, contextHeadlines, extra);
+  const result = await writeWithFallback(prompt, acceptSummary(prompt), "Recap summary");
+  if (result.value == null) {
+    console.warn(`No usable recap summary this run (${result.reason}) - keeping the zero-LLM recap.`);
+    return { reason: result.reason };
   }
+  return { summary: result.value, writer: result.writer };
 }
 
 // The first stored headline that actually names the symbol or its company
@@ -1614,24 +1681,16 @@ function buildMoverSummaryPrompt(tradeDate, movers) {
 // One optional Gemini call. Same validation gate as every other generated
 // sentence in this app, so an advice-phrased summary is discarded rather
 // than shown.
+// Returns { summary, writer } or null. An object rather than a bare string so
+// the row can be stamped with who really wrote it.
 async function findMoverSummary(tradeDate, movers) {
-  try {
-    const text = await extractWithGemini(buildMoverSummaryPrompt(tradeDate, movers));
-    // validateRecapSummary returns {summary} OR {reason}, so it is ALWAYS
-    // truthy - read the field, never the object. Returning the object here
-    // wrote "[object Object]" into a text column and stamped the row
-    // rollup+gemini, which is exactly the dishonest provenance
-    // generated_by exists to prevent.
-    const result = validateRecapSummary(parseJsonLoose(text));
-    if (!result.summary) {
-      console.warn(`No usable mover summary this run (${result.reason}) - keeping the numbers and headlines.`);
-      return null;
-    }
-    return result.summary;
-  } catch (err) {
-    console.warn(`Mover summary failed (non-fatal, keeping the numbers): ${err.message}`);
+  const prompt = buildMoverSummaryPrompt(tradeDate, movers);
+  const result = await writeWithFallback(prompt, acceptSummary(prompt), "Mover summary");
+  if (result.value == null) {
+    console.warn(`No usable mover summary this run (${result.reason}) - keeping the numbers and headlines.`);
     return null;
   }
+  return { summary: result.value, writer: result.writer };
 }
 
 async function buildMarketMovers(tradeDate) {
@@ -1671,23 +1730,30 @@ async function buildMarketMovers(tradeDate) {
   // Same reuse guard as the recap summary: a re-run must not spend a
   // second Gemini call, and must not blank a summary already generated.
   let summary = null;
+  let existingGeneratedBy = null;
   try {
-    const existing = await sbGet(`market_mover_summaries?select=summary&trade_date=eq.${tradeDate}`);
+    const existing = await sbGet(`market_mover_summaries?select=summary,generated_by&trade_date=eq.${tradeDate}`);
     summary = existing.length ? existing[0].summary : null;
+    existingGeneratedBy = existing.length ? existing[0].generated_by : null;
   } catch { /* best-effort - treat as absent and try to generate */ }
 
+  // Who wrote it. Read back from the stored row on a reuse, so a re-run does
+  // not restamp a summary the home model wrote as Gemini's.
+  let generatedBy = "rollup";
   if (summary) {
-    console.log("Mover summary already exists for today - reusing it, no Gemini call.");
+    console.log("Mover summary already exists for today - reusing it, no model call.");
+    generatedBy = existingGeneratedBy || "rollup+gemini";
   } else if (DRY_RUN) {
     console.log("[dry-run] skipping the mover summary so no daily quota is spent.");
   } else {
-    summary = await findMoverSummary(tradeDate, movers);
+    const written = await findMoverSummary(tradeDate, movers);
+    if (written) { summary = written.summary; generatedBy = `rollup+${written.writer}`; }
   }
 
   try {
     await sbUpsertRows("market_mover_summaries", [{
       trade_date: tradeDate, summary,
-      generated_by: summary ? "rollup+gemini" : "rollup",
+      generated_by: generatedBy,
       updated_at: new Date().toISOString(),
     }], "trade_date");
   } catch (err) {
@@ -1885,7 +1951,7 @@ async function buildDailyRecap(contextHeadlines = []) {
     // A dry run is for checking the zero-LLM half without side effects;
     // spending a scarce daily quota unit would be a real side effect. Do a
     // real run to exercise this path.
-    console.log("[dry-run] skipping the Gemini synthesis so no daily quota is spent.");
+    console.log("[dry-run] skipping the written summary so no daily quota is spent.");
     skippedReason = "dry_run";
   } else {
     const displayNames = await loadDisplayCompanyNames(companyNames);
@@ -1915,10 +1981,11 @@ async function buildDailyRecap(contextHeadlines = []) {
     const result = await findRecapSummary(tradeDate, movers, breadth, index_moves, displayNames, newsPool, contextHeadlines, { trends, industries });
     summary = result.summary || null;
     skippedReason = summary ? null : (result.reason || "error");
-    // Only claim Gemini touched this row if it actually produced something
-    // usable - generated_by has to stay an honest record of how the row
-    // was made, since the whole card is built on not overstating itself.
-    if (summary) generatedBy = "rollup+gemini";
+    // Only claim a model touched this row if one actually produced something
+    // usable, and name the one that did - generated_by has to stay an honest
+    // record of how the row was made, since the whole card is built on not
+    // overstating itself.
+    if (summary) generatedBy = `rollup+${result.writer}`;
   }
 
   await sbUpsertRows("daily_recaps", [{
@@ -2001,7 +2068,7 @@ async function purgeExpiredFindings() {
 function failureBreakdown() {
   const parts = [];
   if (outcomes.tavilyFail) parts.push(`${outcomes.tavilyFail} search`);
-  if (outcomes.geminiFail) parts.push(`${outcomes.geminiFail} AI extraction`);
+  if (outcomes.aiFail) parts.push(`${outcomes.aiFail} AI extraction`);
   if (outcomes.finnhubFail) parts.push(`${outcomes.finnhubFail} price lookup`);
   return parts.length ? parts.join(", ") : "cause not attributed";
 }
@@ -2027,6 +2094,7 @@ async function writeRunStatus(crashError) {
   console.log(
     `Run outcomes: ${queryFailures}/${queryAttempts} failed ` +
     `(tavily ${outcomes.tavilyFail}, gemini ${outcomes.geminiFail}, finnhub ${outcomes.finnhubFail}); ` +
+    `written by the home model instead ${outcomes.gemmaWrote}; ` +
     `no trusted-domain result ${outcomes.noTrustedResult}; ` +
     `no stored headline for the company ${outcomes.noStoredHeadlines}; ` +
     `extraction found nothing usable ${outcomes.emptyExtraction}; ` +
@@ -2147,6 +2215,161 @@ async function extractWithGemini(prompt) {
   return textPart.text;
 }
 
+// The home model. format:"json" is real constrained decoding on Ollama, which
+// is why this path needs none of parseJsonLoose's recovery (it is still run
+// through it, since one parser for both writers is one fewer thing to drift).
+// think:false and temperature 0 mirror app/gemma.js and monthly-report.js,
+// both measured: gemma4:e4b is a reasoning model that can spend the entire
+// timeout thinking, and a recap of real figures has one correct set of them.
+async function extractWithGemma(prompt) {
+  const res = await fetchWithTimeout(GEMMA_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: GEMMA_MODEL,
+      prompt,
+      stream: false,
+      think: false,
+      format: "json",
+      keep_alive: "10m",
+      options: { temperature: 0, num_predict: GEMMA_MAX_TOKENS },
+    }),
+  }, GEMMA_TIMEOUT_MS);
+  if (!res.ok) throw new Error(`Gemma HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const text = typeof data.response === "string" ? data.response.trim() : "";
+  if (!text) throw new Error("Gemma returned nothing");
+  // Hitting the token ceiling means the JSON was cut off part-way. Said
+  // plainly rather than left to surface as a confusing parse failure.
+  if (data.done_reason === "length") throw new Error("Gemma ran out of room before finishing");
+  return text;
+}
+
+// Tried in this order. A writer with no configuration is skipped, so a
+// machine with only a Gemini key behaves exactly as it always has.
+const WRITERS = [
+  { name: "gemini", configured: () => !!GEMINI_API_KEY, run: extractWithGemini },
+  { name: "gemma", configured: () => !!GEMMA_ENDPOINT, run: extractWithGemma },
+];
+
+// One word for why a call failed, so a quota day is tellable apart from an
+// overloaded service or a dead connection. They want three different fixes.
+function classifyWriterError(err) {
+  const m = (err && err.message) || "";
+  return /\b429\b|quota|RESOURCE_EXHAUSTED/i.test(m) ? "quota"
+    : /abort|timeout/i.test(m) ? "timeout"
+    : /HTTP \d/.test(m) ? "http_error"
+    : "error";
+}
+
+// Asks each writer in turn until one produces something `accept` will take.
+//
+// `accept(text)` is the caller's own validation and returns one of:
+//   { value }               usable, stop here
+//   { reason }              not usable, ask the next writer
+//   { reason, final: true } not usable AND asking again cannot help, stop
+// `final` is for an honest "there is nothing to say": a model reporting that
+// the headlines contain no reason for a move has answered correctly, and
+// asking a second model for a second opinion is how an invented reason gets
+// in. A rejection for length or for advice wording is different, another
+// writer may well phrase it acceptably.
+//
+// Returns { value, writer } or { reason, attempted }. The reason names every
+// writer and what each one did ("gemini:http_error,gemma:too_long"), because
+// "it failed" was exactly as much as a null used to say.
+async function writeWithFallback(prompt, accept, what) {
+  const reasons = [];
+  let produced = false;
+  for (const writer of WRITERS) {
+    if (!writer.configured()) continue;
+    let text;
+    try {
+      text = await writer.run(prompt);
+    } catch (err) {
+      const why = classifyWriterError(err);
+      reasons.push(`${writer.name}:${why}`);
+      if (writer.name === "gemini") outcomes.geminiFail++;
+      console.warn(`  ${what}: ${writer.name} failed (${why}) - ${String(err.message || err).split("\n")[0].slice(0, 160)}`);
+      continue;
+    }
+    produced = true;
+    const result = accept(text) || { reason: "unusable" };
+    if (result.value != null) {
+      if (writer.name === "gemma") outcomes.gemmaWrote++;
+      if (reasons.length) console.log(`  ${what}: written by ${writer.name} after ${reasons.join(", ")}.`);
+      return { value: result.value, writer: writer.name };
+    }
+    reasons.push(`${writer.name}:${result.reason || "unusable"}`);
+    if (result.final) break;
+  }
+  return { reason: reasons.join(",") || "no_writer", produced };
+}
+
+// ---- Do the figures in a model's sentence come from what it was given? ----
+// The home model is known to get numbers wrong in a confident, specific way:
+// handed 150 transactions it reported a category total of $807.11 when the
+// real one was $3,362.37, and it has been caught dividing an amount by three.
+// Letting it write market prose is only acceptable with the same guard the
+// app's own Q&A puts on it (verifyAnswerFigures, app/wiki.js): every figure
+// in the answer has to trace back to one it was handed.
+//
+// Applied to BOTH writers. A wrong figure is wrong whoever wrote it, and one
+// rule is one thing to reason about.
+//
+// What this is and is not. It checks that a figure EXISTS in the data, not
+// that it is attached to the right company, so it catches an invented or
+// miscalculated number and cannot catch two real ones swapped. That is the
+// honest size of it. Scoped to percentages and dollar amounts on purpose:
+// years, counts and "the S&P 500" are everywhere in ordinary prose, and
+// policing them would reject correct summaries without stopping a wrong one.
+function knownFigures(prompt) {
+  // Only the DATA half. The rules half quotes example figures of its own
+  // ("write 'about 9%', not '9.15%'"), and a number the model was shown as an
+  // illustration is not a number about today.
+  const rulesAt = prompt.search(/^Rules\b[^\n]*:\s*$/m);
+  const data = (rulesAt === -1 ? prompt : prompt.slice(0, rulesAt))
+    // A date is not a figure. Left in, "2026-11-11" would vouch for 11%.
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ");
+  const percents = [];
+  const all = [];
+  for (const m of data.matchAll(/(\d[\d,]*(?:\.\d+)?)(\s?(?:%|percent\b|per cent\b|pct\b))?/gi)) {
+    const n = Number(m[1].replace(/,/g, ""));
+    if (!Number.isFinite(n)) continue;
+    all.push(n);
+    if (m[2]) percents.push(n);
+  }
+  return { percents, all };
+}
+
+// Returns the first figure in `text` that cannot be traced, or null.
+//
+// The tolerance is "within one unit of the last digit shown", because the
+// prompts actively ask for rounding: "about 6%" for 5.92, "nearly 3%" for
+// 2.57 and "over 4%" for 4.31 are all the model doing as told, and all were
+// written by a real model on a real day. "1.4%" has to be within 0.1 of a
+// real figure; "6%" within 1. Signs are ignored, since prose says "fell 9%"
+// where the data says "-9.15%".
+function untracedFigure(text, prompt) {
+  const known = knownFigures(prompt);
+  const traced = (raw, pool) => {
+    const x = Number(raw.replace(/,/g, ""));
+    const decimals = (raw.split(".")[1] || "").length;
+    const unit = 10 ** -decimals;
+    return pool.some((n) => Math.abs(n - x) < unit - 1e-9 || Math.abs(n - x) < 1e-9);
+  };
+  // A percentage has to match something that was a percentage in the data.
+  // Matching any number would let "3 up, 2 down" vouch for an invented 3%.
+  for (const m of text.matchAll(/(\d[\d,]*(?:\.\d+)?)\s?(?:%|percent\b|per cent\b)/gi)) {
+    if (!traced(m[1], known.percents)) return m[0];
+  }
+  // A dollar amount may match any number: a closing price is printed bare
+  // ("closed 236.35") and a model writing "$236.35" has invented nothing.
+  for (const m of text.matchAll(/\$\s?(\d[\d,]*(?:\.\d+)?)/g)) {
+    if (!traced(m[1], known.all)) return m[0];
+  }
+  return null;
+}
+
 function buildSourcesBlock(results) {
   return results.map((r, i) => `[Source ${i + 1}: ${r.url}]\n${r.content}`).join("\n\n");
 }
@@ -2176,10 +2399,12 @@ let queryFailures = 0;
 // reporting a problem.
 const outcomes = {
   tavilyFail: 0,
-  geminiFail: 0,
+  geminiFail: 0,        // Gemini alone - still worth seeing when the home model covers for it
+  aiFail: 0,            // NO writer could be reached, which is the real failure
   finnhubFail: 0,
   noTrustedResult: 0,   // search worked, nothing on an allowlisted domain
-  emptyExtraction: 0,   // Gemini answered, but found no usable value
+  emptyExtraction: 0,   // a model answered, but found no usable value
+  gemmaWrote: 0,        // times the home model wrote what Gemini could not
   noStoredHeadlines: 0, // no stored headline names the company, so no explanation
   unpriceable: 0,       // mutual fund symbol, skipped before spending a call
 };
@@ -2327,22 +2552,23 @@ async function findExplanation(symbol, headlines, companyName) {
   }
 
   queryAttempts++;
-  let text;
-  try {
-    text = await extractWithGemini(
-      buildExplanationPrompt(symbol, relevant.slice(0, MAX_EXPLANATION_HEADLINES), companyName)
-    );
-  } catch (err) {
-    queryFailures++;
-    outcomes.geminiFail++;
-    console.warn(`[${symbol}] explanation extraction failed: ${err.message}`);
-    return null;
-  }
+  const prompt = buildExplanationPrompt(symbol, relevant.slice(0, MAX_EXPLANATION_HEADLINES), companyName);
+  const result = await writeWithFallback(prompt, (text) => {
+    const extracted = validateExplanation(parseJsonLoose(text));
+    // final: a model saying the headlines hold no reason has ANSWERED. Asking
+    // a second one is how a reason nobody reported gets written down.
+    if (!extracted) return { reason: "empty", final: true };
+    if (untracedFigure(extracted.explanation, prompt)) return { reason: "untraced_figure" };
+    return { value: extracted.explanation };
+  }, `[${symbol}] explanation`);
   await sleep(REQUEST_DELAY_MS);
 
-  const extracted = validateExplanation(parseJsonLoose(text));
-  if (!extracted) outcomes.emptyExtraction++;
-  return extracted ? extracted.explanation : null;
+  if (result.value != null) return result.value;
+  // A failure is every writer being unreachable. A model that answered and
+  // found nothing is the feature working, and is counted as that instead.
+  if (result.produced) outcomes.emptyExtraction++;
+  else { queryFailures++; outcomes.aiFail++; }
+  return null;
 }
 
 
@@ -2433,32 +2659,32 @@ async function findNewsDigest() {
 
   let sentiment = null;
   let sentiment_reason = null;
+  let sentimentWriter = null;
   if (!DRY_RUN) {
-    try {
-      const text = await extractWithGemini(buildNewsSentimentPrompt(headlines));
+    const prompt = buildNewsSentimentPrompt(headlines);
+    const result = await writeWithFallback(prompt, (text) => {
       const parsed = parseJsonLoose(text);
-      // sentiment_reason is Gemini free text shown to the user, exactly like
-      // the recap summary, so it gets the exact same advice/forecast gate.
-      // It previously had none at all - only a non-empty check - which meant
-      // an advice-phrased reason would have passed straight through.
-      // Reusing validateRecapSummary keeps one definition of that boundary
-      // rather than a second copy that could drift.
-      //
-      // It returns {summary} OR {reason} and is always truthy, so read the
-      // field. Taking the object made the rejection branch below dead and
-      // wrote "[object Object]" into sentiment_reason's text column.
-      const checked = parsed && typeof parsed.sentiment_reason === "string"
+      if (!parsed || !NEWS_SENTIMENTS.has(parsed.sentiment)) return { reason: "invalid_json" };
+      // sentiment_reason is model free text shown to the user, exactly like
+      // the recap summary, so it gets the exact same advice/forecast gate,
+      // and now the same figure check. Reusing validateRecapSummary keeps one
+      // definition of that boundary rather than a second copy that could
+      // drift. It returns {summary} OR {reason} and is always truthy, so the
+      // FIELD is read: taking the object once wrote "[object Object]" into
+      // this column.
+      const checked = typeof parsed.sentiment_reason === "string"
         ? validateRecapSummary({ summary: parsed.sentiment_reason })
-        : null;
-      const reason = checked?.summary || null;
-      if (parsed && NEWS_SENTIMENTS.has(parsed.sentiment) && reason) {
-        sentiment = parsed.sentiment;
-        sentiment_reason = reason;
-      } else if (parsed && !reason) {
-        console.warn(`Sentiment reason rejected (${checked?.reason || "missing"}) - keeping the headlines without it.`);
-      }
-    } catch (err) {
-      console.warn(`News sentiment failed (non-fatal, keeping the headlines): ${err.message}`);
+        : { reason: "missing" };
+      if (!checked.summary) return { reason: checked.reason };
+      if (untracedFigure(checked.summary, prompt)) return { reason: "untraced_figure" };
+      return { value: { sentiment: parsed.sentiment, sentiment_reason: checked.summary } };
+    }, "News sentiment");
+    if (result.value) {
+      sentiment = result.value.sentiment;
+      sentiment_reason = result.value.sentiment_reason;
+      sentimentWriter = result.writer;
+    } else {
+      console.warn(`No usable news sentiment this run (${result.reason}) - keeping the headlines without it.`);
     }
   }
 
@@ -2468,7 +2694,7 @@ async function findNewsDigest() {
     sentiment,
     sentiment_reason,
     source_query: "finnhub:company-news (tracked stocks)",
-    extracted_by: sentiment ? "finnhub+gemini" : "finnhub",
+    extracted_by: sentiment ? `finnhub+${sentimentWriter}` : "finnhub",
   };
 }
 

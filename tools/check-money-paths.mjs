@@ -43,6 +43,10 @@ const PATHS = [
   { dir: "in",  event: "Money back on a purchase",         via: "negative expense",                marker: '$("refundConfirmBtn")' },
   { dir: "in",  event: "Imported pay from a bank file",    via: "CSV import, income rows",         marker: "csvLastImportedActivityIds" },
   { dir: "in",  event: "Correcting a balance upward",      via: "asset_adjust",                    marker: '$("adjustAddBtn")' },
+  // The monthly check-in moves balances in either direction, through the same
+  // two setters the account and debt panels use, so it is listed once per
+  // side and each marker names a call only the live sheet makes.
+  { dir: "in",  event: "Monthly balance check-in",         via: "setAssetBalance / setOwedBalance", marker: "await setAssetBalance(c.target, c.value)" },
   { dir: "in",  event: "Moving money between own accounts", via: "transfer",                       marker: '"transfer", `Transferred' },
 
   // ---- money out ---------------------------------------------------------
@@ -56,6 +60,7 @@ const PATHS = [
   { dir: "out", event: "Interest charged on a loan",       via: "autoAccrueLoanInterest",          marker: "async function autoAccrueLoanInterest" },
   { dir: "out", event: "A charge added to what is owed",   via: "owed_adjust",                     marker: '"owed_adjust", reason' },
   { dir: "out", event: "Correcting a balance downward",    via: "asset_adjust",                    marker: '$("adjustSubtractBtn")' },
+  { dir: "out", event: "Monthly balance check-in",         via: "setAssetBalance / setOwedBalance", marker: "await setOwedBalance(c.target, c.value)" },
   { dir: "out", event: "Imported spending from a bank file", via: "CSV import, expense rows",      marker: "csvLastImportedIds" },
   { dir: "out", event: "Going overdrawn",                  via: "overdraft allowance",             marker: "function overdraftAllowance" },
   { dir: "out", event: "An asset losing value over time",  via: "depreciation",                    marker: 'from "./depreciation.js"' },

@@ -20,7 +20,7 @@
 // current here to close that gap too, not because normal offline use depends
 // on it. If it drifts again, that narrow case regresses; ordinary offline use
 // after a successful first run does not.
-const CACHE = "expense-shell-v76";
+const CACHE = "expense-shell-v77";
 // app/secTickers.js is deliberately ABSENT. It is ~357 KB (108 KB gzipped) of
 // SEC's full ticker index, loaded on demand by loadSecTickers() only when
 // someone actually types in a symbol field. Precaching it would spend that on
@@ -38,6 +38,7 @@ const SHELL = [
   "./csvImport.js", "./depreciation.js", "./discounts.js", "./export.js",
   "./gemma.js", "./income.js", "./investments.js", "./wiki.js",
   "./cardInterest.js", "./loanInterest.js", "./networth.js", "./payoff.js", "./savingsInterest.js",
+  "./setup.js",
   "./subscriptions.js", "./tickers.js",
   "./tour.js",
 ];

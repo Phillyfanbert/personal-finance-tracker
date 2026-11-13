@@ -827,6 +827,40 @@
     .link-action::after { content: ""; position: absolute; left: 50%; top: 50%;
       transform: translate(-50%, -50%);
       height: var(--target-min); width: max(100%, var(--target-min)); }
+    /* Finish setting up. A list, because it is one: each row is a thing that
+       is set up but not running, with the way to fix it and a way to put it
+       aside. The two buttons are both 44px tall and sit --sp-2 apart, the
+       clear space the checklist asks for between adjacent targets. */
+    .setup-list { list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
+    .setup-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3);
+      padding: var(--sp-3) 0; border-top: 1px solid var(--border); }
+    .setup-item:first-child { border-top: none; padding-top: var(--sp-1); }
+    .setup-item:last-child { padding-bottom: 0; }
+    .setup-text { flex: 1 1 220px; min-width: 0; font-size: var(--fs-sm); }
+    .setup-text strong { display: block; }
+    .setup-text span { color: var(--muted); }
+    .setup-actions { display: flex; gap: var(--sp-2); flex: 0 0 auto; }
+    /* The marker on the Log tab. A shape beside the word, with its meaning in
+       visually hidden text inside it, so it is never a dot alone. */
+    .nav-dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px;
+      background: var(--accent); margin-left: 6px; vertical-align: middle; }
+    /* A note under a form field that says what saving will do. Plain muted
+       text when it is only information; a bar and full-strength ink when it
+       is about to move money, so the two do not read the same. */
+    .form-note { font-size: var(--fs-xs); color: var(--muted); margin-top: 6px; }
+    .form-note.warn { font-size: var(--fs-sm); color: var(--text);
+      border-left: 3px solid var(--warn); padding-left: var(--sp-2); }
+    /* Balance check-in. One row per balance: what it is and what the app
+       holds on the left, the box for a new figure on the right. */
+    .checkin-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: var(--sp-2) var(--sp-3); margin-top: var(--sp-3); }
+    .checkin-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3);
+      padding: var(--sp-2) 0; border-top: 1px solid var(--border); }
+    .checkin-item label { flex: 1 1 180px; min-width: 0; margin: 0; color: var(--text); }
+    .checkin-item label small { display: block; color: var(--muted); font-size: var(--fs-xs); font-weight: 400; }
+    .checkin-item input { flex: 0 1 150px; min-width: 110px; }
+    .checkin-item .field-error { flex: 1 1 100%; margin: 0; }
+    #checkinList h3 { margin: var(--sp-3) 0 var(--sp-1); font-size: var(--fs-sm); }
     /* Written by flagField(ids, message). Not below --fs-sm: this is the only
        statement of what went wrong that stays on screen after the toast. */
     .field-error { color: var(--err); font-size: var(--fs-sm); margin: var(--sp-1) 0 0; }
@@ -962,7 +996,12 @@
        the screen. It used to sit second-to-last in <body>, so Tab reached the
        app's main navigation only after every view and all nine modals. -->
   <nav id="nav" class="nav hidden">
-    <button id="navLog" class="active">Log</button>
+    <!-- The dot says something on the Log page is set up but not running yet
+         (renderSetupStrip in app.js). It is here, on the tab, because a new
+         account now opens on Investments and would otherwise never learn
+         there was anything waiting on another page. Never a dot alone: the
+         visually hidden text is what a screen reader hears. -->
+    <button id="navLog" class="active">Log<span id="navLogTodo" class="nav-dot hidden"><span class="sr-only">, there are things to finish setting up</span></span></button>
     <button id="navPlan">Plan</button>
     <button id="navInvest">Investments</button>
     <button id="navReports">Reports</button>
@@ -1042,6 +1081,18 @@
       <div id="budgetWarningNotice" class="card hidden" style="border-color:var(--err)">
         <h2 style="color:var(--err)">Budget warning</h2>
         <div id="budgetWarningList" style="margin-top:6px;font-size:13px"></div>
+      </div>
+
+      <!-- Things that are set up but cannot run yet: a bill with no account
+           to pay from, pay with nowhere to go, balances nobody has compared
+           with the bank in a month. Hidden whenever there is nothing to say,
+           which is the normal state. Pinned above the sub-tabs for the same
+           reason the budget warning is: it has to be seen without going
+           looking for it. Every row can be put away with Not now, which is
+           remembered on this device only. Built by renderSetupStrip(). -->
+      <div id="setupStrip" class="card hidden">
+        <h2 id="setupStripTitle">Finish setting up</h2>
+        <ul id="setupStripList" class="setup-list" aria-labelledby="setupStripTitle"></ul>
       </div>
 
       <!-- Log holds three genuinely different jobs, so it is split the same
@@ -1258,6 +1309,14 @@
           <div><label for="sRenewal">Next renewal</label><input id="sRenewal" type="date" /></div>
           <div><label for="sAccount">Account</label><select id="sAccount"></select></div>
         </div>
+        <!-- Written live by updateSubAutoLogNote(). Two jobs. With no account
+             it says the bill is only a reminder, which nothing on this form
+             used to say. With a date already in the past it says how many
+             charges the next open will write down, because giving an old bill
+             an account makes the catch-up log every missed month against a
+             balance that usually already includes them. -->
+        <div class="form-note hidden" id="subAutoLogNote"></div>
+        <button class="secondary btn-sm hidden" id="subUseNextDateBtn" type="button" style="margin-top:var(--sp-2)"></button>
         <label for="sPaysDebt">Pays down a debt (optional)</label>
         <select id="sPaysDebt"></select>
         <p class="muted" style="font-size:var(--fs-sm);margin:4px 0 0">For a loan or mortgage payment. It lowers what you owe instead of counting as spending, and needs a checking or savings account to pay from.</p>
@@ -1293,6 +1352,13 @@
         <!-- Says how far to trust the figure, in words, and stays empty when
              there is nothing to say. Never an adjustment to the number. -->
         <div id="netWorthNote" class="hidden" style="margin-top:6px;font-size:var(--fs-sm);color:var(--muted)"></div>
+        <!-- The figure above is only as right as the balances typed into it.
+             This is the routine for keeping them right: once a month, compare
+             each one with the bank and correct the ones that drifted. -->
+        <div class="checkin-row">
+          <span id="checkinLastLine" class="muted text-sm"></span>
+          <button class="secondary btn-sm" id="checkinOpenBtn" type="button">Check balances</button>
+        </div>
       </div>
 
       <!-- Accounts = payment methods, used to tag expenses. NOT counted in net
@@ -1701,7 +1767,8 @@
         <!-- Written live by updateIncomeAutoLogNote(). Not a validation
              error: a source with no date/account is a legitimate thing to
              record, it just never adds money on its own. -->
-        <div class="muted hidden" id="incomeAutoLogNote" style="font-size:12px;margin-top:6px"></div>
+        <div class="form-note hidden" id="incomeAutoLogNote"></div>
+        <button class="secondary btn-sm hidden" id="incomeUseNextDateBtn" type="button" style="margin-top:var(--sp-2)"></button>
         <label><input type="checkbox" id="incActive" style="width:auto;margin-right:8px" checked />Active</label>
         <label for="incNotes">Notes</label>
         <input id="incNotes" placeholder="e.g. every 2 weeks on Fridays" />
@@ -2077,6 +2144,15 @@
         </div>
       </div>
 
+      <!-- Everything in this wrapper is about the user's OWN investments, and
+           it is hidden while they have none (renderInvestments). A new account
+           opens on this page, and without that its first screen was a health
+           check reading "Portfolio at $0.00" above four tiles of zeros, with
+           the market, the one thing here worth seeing on day one, below the
+           fold. An empty summary of nothing is clutter, not a fact. Starts
+           hidden so a new account never sees the zeros flash by while its
+           (empty) list of investments is still loading. -->
+      <div id="investOwnSummary" class="hidden">
       <!-- Pinned above the tabs on purpose: portfolioHealthSummary() is
            already a compilation of numbers computed elsewhere on this page,
            so it stands as the permanent answer to "how am I doing?" while
@@ -2101,6 +2177,7 @@
         <div class="card"><div class="muted" style="font-size:12px">What you paid</div><div class="big" id="investTotalCostBasis">$0</div></div>
       </div>
       <p class="muted" id="investTodayChangeEmpty" style="font-size:12px;margin:-8px 0 14px">Today's change needs at least two days of recorded prices, so it stays at $0 until the app has seen a second day.</p>
+      </div>
 
       <!-- Two tabs instead of ten stacked cards. The split is the one this
            app already draws everywhere else: public market facts nobody
@@ -2805,6 +2882,26 @@
     </div>
   </div>
 
+  <!-- Monthly balance check-in. One sheet listing every balance a person
+       types in by hand, so a month of drift is corrected in one sitting
+       rather than one account panel at a time. Balances priced from the
+       market, and a car the app already works out the value of, are left off
+       on purpose: a typed figure there would be overwritten on the next load.
+       Rows are built by openCheckin(). -->
+  <div id="checkinModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="checkinTitle">
+    <div class="sheet">
+      <div class="topbar">
+        <strong id="checkinTitle">Check your balances</strong>
+        <button class="secondary btn-sm" id="checkinClose" aria-label="Close">✕</button>
+      </div>
+      <p class="text-sm" style="margin:var(--sp-2) 0 var(--sp-3)">Open your bank's app or your latest statement and compare. Type a new figure only where one is different, and leave the rest blank.</p>
+      <div id="checkinList"></div>
+      <p class="muted text-sm hidden" id="checkinLeftOut" style="margin:var(--sp-3) 0 0"></p>
+      <div style="height:12px"></div>
+      <button id="checkinSave" type="button">Save</button>
+    </div>
+  </div>
+
   <div id="fundContributeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fundContributeTitle">
     <div class="sheet">
       <div class="topbar"><strong id="fundContributeTitle">Set money aside</strong><button class="secondary btn-sm" id="fundContributeClose"  aria-label="Close">✕</button></div>
@@ -3190,36 +3287,48 @@
 
       <div id="helpContentLog" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramLog" role="group" aria-label="The Log page, card by card, in the order they appear" viewBox="0 0 680 650" xmlns="http://www.w3.org/2000/svg">
+          <svg id="helpDiagramLog" role="group" aria-label="The Log page, card by card, in the order they appear" viewBox="0 0 680 700" xmlns="http://www.w3.org/2000/svg">
             <text x="28" y="24" fill="var(--muted)" font-size="12.5">This month / Entries / Income per year, always shown</text>
-            <text x="28" y="54" fill="var(--accent)" font-size="13" font-weight="600">Spending tab</text>
-            <rect x="10" y="74" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="98" fill="var(--text)" font-size="14">Quick Add</text>
-            <rect x="10" y="118" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="142" fill="var(--text)" font-size="14">Recent History</text>
-            <text x="28" y="186" fill="var(--accent)" font-size="13" font-weight="600">Bills tab</text>
-            <rect x="10" y="206" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="230" fill="var(--text)" font-size="14">Recurring expenses found (only when any are detected)</text>
-            <rect x="10" y="250" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="274" fill="var(--text)" font-size="14">Savings found</text>
-            <rect x="10" y="294" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="318" fill="var(--text)" font-size="14">Upcoming renewals (30 days)</text>
-            <rect x="10" y="338" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="362" fill="var(--text)" font-size="14">All subscriptions</text>
-            <text x="28" y="406" fill="var(--accent)" font-size="13" font-weight="600">Money tab</text>
-            <rect x="10" y="426" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="450" fill="var(--text)" font-size="14">Net worth</text>
-            <rect x="10" y="470" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="494" fill="var(--text)" font-size="14">Accounts</text>
-            <rect x="10" y="514" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="538" fill="var(--text)" font-size="14">Things you have</text>
-            <rect x="10" y="558" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="582" fill="var(--text)" font-size="14">Things you owe</text>
-            <rect x="10" y="602" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="626" fill="var(--text)" font-size="14">Income sources</text>
+            <rect x="10" y="38" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="62" fill="var(--text)" font-size="14">Finish setting up (only when something needs it)</text>
+            <text x="28" y="104" fill="var(--accent)" font-size="13" font-weight="600">Spending tab</text>
+            <rect x="10" y="124" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="148" fill="var(--text)" font-size="14">Quick Add</text>
+            <rect x="10" y="168" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="192" fill="var(--text)" font-size="14">Recent History</text>
+            <text x="28" y="236" fill="var(--accent)" font-size="13" font-weight="600">Bills tab</text>
+            <rect x="10" y="256" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="280" fill="var(--text)" font-size="14">Recurring expenses found (only when any are detected)</text>
+            <rect x="10" y="300" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="324" fill="var(--text)" font-size="14">Savings found</text>
+            <rect x="10" y="344" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="368" fill="var(--text)" font-size="14">Upcoming renewals (30 days)</text>
+            <rect x="10" y="388" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="412" fill="var(--text)" font-size="14">All subscriptions</text>
+            <text x="28" y="456" fill="var(--accent)" font-size="13" font-weight="600">Money tab</text>
+            <rect x="10" y="476" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="500" fill="var(--text)" font-size="14">Net worth</text>
+            <rect x="10" y="520" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="544" fill="var(--text)" font-size="14">Accounts</text>
+            <rect x="10" y="564" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="588" fill="var(--text)" font-size="14">Things you have</text>
+            <rect x="10" y="608" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="632" fill="var(--text)" font-size="14">Things you owe</text>
+            <rect x="10" y="652" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="676" fill="var(--text)" font-size="14">Income sources</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:0 0 var(--sp-4)">Three tabs, with the totals always on top. Spending is what you write down, Bills is what charges you on a schedule, Money is what you have and owe. Tap any row above to jump to it.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 var(--sp-4)">Three tabs, with the totals always on top and anything left to finish just under them. Spending is what you write down, Bills is what charges you on a schedule, Money is what you have and owe. Tap any row above to jump to it.</p>
+
+        <div class="help-topic" id="helpTopic-finish-setting-up">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-finish-setting-up-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Finish setting up</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-finish-setting-up-body">
+          <p>Shown only when something is set up but cannot run yet: a bill with no account to pay from, pay with nowhere to go, or balances nobody has compared with the bank in a month. A dot beside Log at the top says the same from any page.</p>
+          <p>Each line has a button that takes you to the fix. <strong>Not now</strong> puts a line away on this device only.</p>
+          <p>If a bill or pay date is already in the past, the form tells you how many it will write down to catch up, and offers the next date instead. Use that if your balance already includes them, or the same money is counted twice.</p>
+          
+          </div>
+        </div>
 
         <div class="help-topic" id="helpTopic-expenses-quick-add">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-expenses-quick-add-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Quick Add</button></h3>
@@ -3246,6 +3355,7 @@
           <div class="help-topic-body hidden" id="helpTopic-net-worth-body">
           <p>What you own minus what you owe. Subscriptions and everyday spending are not debts, so they are not subtracted here.</p>
           <p>A short note appears underneath if part of the figure is less current than it looks, for example a price that has stopped updating.</p>
+          <p><strong>Check balances</strong> lists every figure you type in by hand, so once a month you can compare each with your bank. Type a new figure only where one is different. A change to an account shows in Recent History and can be undone there. Things the app prices for you are left off.</p>
           
           </div>
         </div>
@@ -3283,7 +3393,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-income-sources-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Income sources</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-income-sources-body">
           <p>Money coming in regularly, like a paycheck. Each source records how much, how often, and which account it lands in.</p>
-          <p>The app adds it for you when it is due. Source and Amount are needed; anything still missing turns red.</p>
+          <p>The app adds it for you when it is due, once it has an account to go into and a next pay day. Without those it still counts toward your yearly income, but no money is added anywhere. Source and Amount are needed; anything still missing turns red.</p>
           
           </div>
         </div>
@@ -3316,7 +3426,7 @@
         <div class="help-topic" id="helpTopic-add-edit-a-subscription-or-bill">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-add-edit-a-subscription-or-bill-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Add / edit a subscription or bill</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-add-edit-a-subscription-or-bill-body">
-          <p>Records something that bills you regularly: the amount, how often, and when it renews next.</p>
+          <p>Records something that bills you regularly: the amount, how often, and when it renews next. Give it an account and the app writes the charge down each time it is due. With no account it is only a reminder.</p>
           <p><strong>Mark as paid</strong> logs it as a real expense today and moves the renewal on.</p>
           
           </div>

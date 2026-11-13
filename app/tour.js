@@ -29,19 +29,28 @@ export const TOUR_STEPS = {
       target: "logView",
       diagram: "helpDiagramLog",
       title: "Welcome",
-      body: "This app keeps track of your money: what you spend, what you have, and what you owe. Nothing here is shared with anyone, and nothing happens automatically to your real bank accounts, you are just keeping a record. This first page is called Log, and here is what is on it, top to bottom.",
+      body: "This app keeps track of your money: what you spend, what you have, and what you owe. Nothing here is shared with anyone, and nothing happens automatically to your real bank accounts, you are just keeping a record. This page is called Log, and here is what is on it, top to bottom.",
       placement: "center",
     },
     {
       target: "nav",
       title: "The four pages",
-      body: "Log is the one you are on: your day-to-day money, including bills. Plan is for deciding what happens next: a spending limit, the order to clear what you owe, and where your balance is heading. Reports turns what you have entered into charts. Investments is for money you have invested, if you have any. Whichever page you leave off on is the one you come back to.",
+      body: "Log is the one you are on: your day-to-day money, including bills. Plan is for deciding what happens next: a spending limit, the order to clear what you owe, and where your balance is heading. Reports turns what you have entered into charts. Investments shows how the stock market is doing, and any money you have invested. Whichever page you leave off on is the one you come back to.",
       placement: "bottom",
     },
     {
       target: "logTotals",
       title: "Your numbers at a glance",
       body: "How much you have spent so far this month, how many things you have written down, and roughly how much you earn in a year. The income one shows $0 until you tell the app about your pay, which you can do further down this page.",
+      placement: "bottom",
+    },
+    {
+      // Dropped by visibleSteps() whenever the strip is hidden, which is the
+      // normal state: it only exists while something is set up but not
+      // running, so this step is only ever read by someone looking at it.
+      target: "setupStrip",
+      title: "Things to finish",
+      body: "This box only shows up when something is set up but not working yet, like a bill with no account to pay from, or pay with nowhere to go. Each line has a button that takes you straight to the fix. Not now puts a line away on this device. When nothing is left, the box goes away by itself.",
       placement: "bottom",
     },
     {
@@ -68,14 +77,14 @@ export const TOUR_STEPS = {
       target: "addSubBtn",
       subtab: "logSubBills",
       title: "Bills that charge you every month",
-      body: "Under the Bills tab, add anything that takes money on a schedule: a phone plan, streaming, insurance, rent. Tell the app once and it records the charge when it is due, so your balances stay right without you doing anything. If the same payment keeps appearing in what you have written down, the app offers to track it for you.",
+      body: "Under the Bills tab, add anything that takes money on a schedule: a phone plan, streaming, insurance, rent. Tell the app once, with the account it comes out of and the date it is next due, and it records the charge each time, so your balances stay right without you doing anything. Leave the account off and it is only a reminder. If the same payment keeps appearing in what you have written down, the app offers to track it for you.",
       placement: "bottom",
     },
     {
       target: "netWorthCard",
       subtab: "logSubMoney",
       title: "Net worth, in plain terms",
-      body: "Net worth is just everything you have, minus everything you owe. If you have $500 in the bank and owe $200 on a card, your net worth is $300. It can be a negative number, which is normal and very common, especially with student loans. This updates itself from what you enter below.",
+      body: "Net worth is just everything you have, minus everything you owe. If you have $500 in the bank and owe $200 on a card, your net worth is $300. It can be a negative number, which is normal and very common, especially with student loans. This updates itself from what you enter below. Once a month, press Check balances to compare each figure with your bank and correct any that have drifted.",
       placement: "top",
     },
     {
@@ -96,7 +105,7 @@ export const TOUR_STEPS = {
       target: "incomeSourcesCard",
       subtab: "logSubMoney",
       title: "Telling the app about your pay",
-      body: "Add your paycheck once: how much, and how often it arrives: weekly, every two weeks, twice a month, monthly, or one time only. After that the app records it for you each time it is due, so you do not have to remember. This is also where that yearly income figure at the top comes from.",
+      body: "Add your paycheck once: how much, how often it arrives (weekly, every two weeks, twice a month, monthly, or one time only), which account it lands in, and when it is next due. After that the app adds it for you each time, so you do not have to remember. This is also where that yearly income figure at the top comes from.",
       placement: "top",
     },
     {
@@ -204,8 +213,17 @@ export const TOUR_STEPS = {
       target: "investView",
       diagram: "helpDiagramInvest",
       title: "Investments",
-      body: "If you have money invested, whether in a retirement account through work or in shares you have bought, this page tracks it. If you do not, you can skip this page entirely; nothing else depends on it. Importantly, this app never tells you what to buy or sell. It only shows you the numbers.",
+      body: "A new account opens here, because this page has something to show before you have typed anything: how the stock market did today, which is the same for everyone. If you have money invested, whether in a retirement account through work or in shares you have bought, this page tracks that too. If you do not, nothing else depends on it. Importantly, this app never tells you what to buy or sell. It only shows you the numbers.",
       placement: "center",
+    },
+    {
+      // A new account lands on this page, so this tour is the first one it
+      // sees and has to say where the everyday part of the app is. Without it
+      // someone could finish this walkthrough and never learn Log exists.
+      target: "navLog",
+      title: "Where the everyday part is",
+      body: "Log is where you write down what you spend, your bills, what you have and what you owe. A dot beside the word means something there is set up but not working yet. Go there when you are ready, it has its own short walkthrough.",
+      placement: "bottom",
     },
     {
       target: "investHealthCard",

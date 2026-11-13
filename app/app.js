@@ -42,6 +42,11 @@ import { computeNetWorth, netWorthCaveats } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 import { TOUR_STEPS, visibleSteps, clampStep } from "./tour.js";
 import { localDateISO } from "./dates.js";
+import {
+  billAutoLogBlocker, incomeAutoLogBlocker, FIXABLE_BLOCKERS, billCatchUp, incomeCatchUp,
+  daysBetweenISO, sinceWords, checkinDue, balanceJumpLooksWrong, AUTO_LOG_BILLING_CYCLES,
+  billMissing, incomeMissing,
+} from "./setup.js";
 
 const { SUPABASE_URL, SUPABASE_ANON_KEY, GEMMA_ENDPOINT, GEMMA_MODEL, GEMMA_EMBED_MODEL, GEMMA_AUTH_KEY, DEAL_FINDINGS_ENABLED, PRICE_FINDINGS_ENABLED } = window.APP_CONFIG || {};
 // Ollama's embeddings endpoint, derived from GEMMA_ENDPOINT (the full
@@ -709,7 +714,20 @@ sb.auth.getSession().then(({ data }) => renderAuth(data.session));
 // simply falls through the includes() check below and lands on "log",
 // which is where its content now lives anyway.
 const VIEWS = ["log", "plan", "reports", "invest"];
-const lastView = () => (VIEWS.includes(prefGet("lastView")) ? prefGet("lastView") : "log");
+// A device with no remembered page opens on Investments, not Log. That is
+// what a brand-new account is: Log on day one is three zeros and an empty
+// list, while Investments already has the day's market on it, because a
+// price is a public fact that needs nothing typed in first. It is the one
+// page that can show a new person something before they have done any work.
+// Decided from the device rather than from the account's data on purpose:
+// the page has to be chosen before anything has loaded, and switching pages
+// a second later, once the data says "this one is established", would move
+// the screen under someone who has already started reading it. The cost is
+// that a long-standing user on a new phone lands here once, one tap from Log.
+// What still needs doing on Log is not lost by landing elsewhere: the dot on
+// the Log tab (renderSetupStrip) says so from every page.
+const DEFAULT_VIEW = "invest";
+const lastView = () => (VIEWS.includes(prefGet("lastView")) ? prefGet("lastView") : DEFAULT_VIEW);
 
 function renderAuth(session) {
   const authed = !!session;
@@ -718,6 +736,12 @@ function renderAuth(session) {
   $("authView").classList.toggle("hidden", authed);
   $("nav").classList.toggle("hidden", !authed);
   if (authed) {
+    // supabase-js announces the SAME session over and over: once through
+    // onAuthStateChange and once through getSession() at startup, again every
+    // time the tab or the installed icon comes back to the front, and again on
+    // each token refresh. A load already under way serves all of them, so a
+    // second one is not started beside it. See init() for what two at once did.
+    if (initRunning) return;
     const view = lastView();
     showView(view);
     // The per-tab data each view needs (loadSubscriptions/loadReports/the
@@ -793,16 +817,36 @@ function showView(v) {
 }
 
 // ---- INIT ------------------------------------------------------------------
-async function init() {
+// ONE load at a time, and that is a money rule rather than tidiness.
+//
+// renderAuth() runs for every announcement of a session, and at startup two or
+// three of those arrive within the same few milliseconds. Each used to start
+// its own init(), all of them read the same list of bills before any had
+// written anything back, and each then logged the same due charge. Measured
+// against a stand-in database on 2026-11-12: one $30 bill, due once, was
+// written down THREE times on a single page load, and the account behind it
+// lost $60, matching neither the one real charge nor the three recorded.
+//
+// It went unseen in production only because no bill there had ever been given
+// an account, so the loop had nothing to log. The Finish setting up strip
+// exists to get bills attached to accounts, which is exactly what would have
+// set this off.
+//
+// A later load, once this one has finished, is still allowed and is wanted:
+// coming back to the app is how an installed icon picks up what another
+// device changed, and how a bill that came due overnight gets logged without
+// a reload. Those run one after another, each reading what the last one
+// wrote. claimCycle() below covers the case this cannot, two devices at once.
+let initRunning = null;
+let autoFilledDate = null; // the Quick Add date this app set, as opposed to one the user chose
+function init() {
+  if (initRunning) return initRunning;
   // The longest wait in the app, and it had no indicator of any kind. Ends
   // in the finally below so a failed load cannot leave the bar spinning
   // forever, which would be worse than no bar.
   busyStart();
-  try {
-    await initInner();
-  } finally {
-    busyEnd();
-  }
+  initRunning = initInner().finally(() => { busyEnd(); initRunning = null; });
+  return initRunning;
 }
 
 async function initInner() {
@@ -817,7 +861,15 @@ async function initInner() {
   fillCategorySelect($("eCategory"));
   fillCategorySelect($("bulkCategorySelect"));
   fillCategorySelect($("budgetCategory"));
-  $("fDate").value = localDateISO();
+  // Today, unless the person has picked a date of their own. init() runs
+  // again whenever the app comes back to the front, and resetting this each
+  // time threw away a date chosen for something bought last week. A date the
+  // app put there itself still rolls forward, so a form left idle overnight
+  // does not file tomorrow's lunch under yesterday.
+  if (!$("fDate").value || $("fDate").value === autoFilledDate) {
+    autoFilledDate = localDateISO();
+    $("fDate").value = autoFilledDate;
+  }
   capBackwardLookingDates();
   await ensureCashAccount();
   await ensureWatchlistSymbols();
@@ -855,6 +907,12 @@ async function initInner() {
   // slower headline cadence starts from here rather than firing again on
   // the very first tick.
   lastHeadlineRefresh = Date.now();
+  // Only now, with accounts, bills, income, balances and the profile all in
+  // memory. Drawn any earlier, the strip would flash "add your first account"
+  // at someone whose accounts simply had not arrived yet.
+  setupReady = true;
+  renderSetupStrip();
+  renderCheckinLine();
   startLiveRefresh();
   // Not awaited: the live overlay is a best-effort enhancement on top of
   // data that's already rendered, so app startup shouldn't wait on a
@@ -1536,7 +1594,9 @@ const fillEnumSelect = (sel, labels) => {
 };
 
 function fillCategorySelect(sel) {
-  sel.innerHTML = `<option value="">None</option>` + CATEGORIES.map((c) => `<option>${c}</option>`).join("");
+  // Keeps the current choice: init() refills these every time the app comes
+  // back to the front, which used to blank a category already picked.
+  setOptionsKeepingChoice(sel, `<option value="">None</option>` + CATEGORIES.map((c) => `<option>${c}</option>`).join(""));
 }
 
 async function loadRules() {
@@ -2895,9 +2955,7 @@ async function loadAccounts() {
   // see 22_account_archive.sql.
   const spendable = accounts.filter((a) => !NON_SPENDABLE_ACCOUNT_TYPES.has(a.type) && !a.archived_at);
   const opts = `<option value="">None</option>` + spendable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
-  $("fAccount").innerHTML = opts;
-  $("eAccount").innerHTML = opts;
-  $("sAccount").innerHTML = opts;
+  for (const id of ["fAccount", "eAccount", "sAccount"]) setOptionsKeepingChoice($(id), opts);
   // NOT the spendable list, for the same reason Transfer's pickers below
   // aren't: that list counts a credit account as spendable (you do pay
   // WITH a card), but applyAssetDelta/assetDeltaError are silent no-ops
@@ -2907,8 +2965,8 @@ async function loadAccounts() {
   // only, which also matches reality: brokerages don't settle securities
   // purchases on a credit card.
   const assetBacked = accounts.filter((a) => a.linked_asset_id && !a.archived_at);
-  $("holdingFundingAccount").innerHTML = `<option value="">None</option>` +
-    assetBacked.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+  setOptionsKeepingChoice($("holdingFundingAccount"), `<option value="">None</option>` +
+    assetBacked.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join(""));
   // Deliberately NOT the spendable list above - Transfer needs an
   // asset-backed account specifically (applyAssetDelta/assetDeltaError
   // are silent no-ops for a credit/liability-linked one, which the
@@ -2927,8 +2985,8 @@ async function loadAccounts() {
   // filter had to be made in five places.
   const transferable = accounts.filter((a) => a.linked_asset_id && !a.archived_at);
   const fillAssetBackedSelect = (id, placeholder) => {
-    $(id).innerHTML = `<option value="">${placeholder}</option>`
-      + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
+    setOptionsKeepingChoice($(id), `<option value="">${placeholder}</option>`
+      + transferable.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join(""));
   };
   fillAssetBackedSelect("transferFrom", "Choose an account");
   fillAssetBackedSelect("transferTo", "Choose an account");
@@ -2945,6 +3003,7 @@ async function loadAccounts() {
   $("bankSuggestions").innerHTML = "";
   populateTxnTypeFilter();
   populateTxnAccountFilter();
+  renderSetupStrip();
 }
 
 // Shared by all four Recent History filters below - rebuilds a
@@ -2956,6 +3015,20 @@ async function loadAccounts() {
 // fixed label (safe either way), others pass acctLabel()/category text
 // that traces back to a free-typed field, so escaping once here is safer
 // than trusting every call site to remember to.
+// The same promise for a picker on a FORM, where losing the choice costs
+// more than a filter resetting: loadAccounts() runs again every time the app
+// comes back to the front, and rebuilding the options put every account
+// picker back on its first one. Someone who chose an account on the bill
+// form, switched to their bank's app to check a figure, and came back, found
+// the form on "None" again with nothing to say it had changed, and saved a
+// bill with no account. Caught by doing exactly that in a browser.
+function setOptionsKeepingChoice(sel, html) {
+  const prev = sel.value;
+  sel.innerHTML = html;
+  // Only when the old choice is still offered. An account archived on another
+  // device has to fall back to the blank option, not linger as a ghost value.
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
 function repopulateFilter(sel, allLabel, entries) {
   const prev = sel.value;
   sel.innerHTML = `<option value="">${esc(allLabel)}</option>` +
@@ -3418,6 +3491,7 @@ async function loadAssets() {
   renderNetWorth();
   renderAccountsList(); // a changed asset value may be a linked account's balance line
   renderInvestments();
+  renderSetupStrip();
 }
 
 // Matches findings to the user's own assets by symbol, exact
@@ -3905,25 +3979,65 @@ $("adjustSubtractBtn").onclick = async () => {
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Subtracted");
 };
 
+// Setting a balance to a figure read off a statement, in ONE place. The
+// account panel's Set button and the monthly check-in sheet both come through
+// here, so the floor, the rounding and the history row cannot differ between
+// them. Share the function, not the formula.
+//
+// Why a balance may be refused, or null. The asset is resolved BEFORE the
+// floor is known, because the floor is that account's own overdraft allowance
+// rather than a flat zero (overdraftAllowance() is 0 for every type that
+// cannot go negative, so a house or a CD floors at $0 through the same line).
+function assetBalanceRefusal(asset, newValue) {
+  if (!Number.isFinite(newValue)) return "Enter a valid balance";
+  const allowance = overdraftAllowance(asset);
+  if (newValue < -allowance) {
+    return allowance > 0
+      ? `${asset.name} can only go down to ${fmt(-allowance)} with its ${fmt(allowance)} overdraft.`
+      : `${asset.name} can't go below $0`;
+  }
+  return null;
+}
+
+// Writes the new balance. Returns { error } or { changed }.
+//
+// An account's balance leaves an asset_adjust row carrying the SIGNED
+// difference, which is what makes the correction undoable from Recent
+// History. Something with no account (a house, a car) gets no row, exactly as
+// editing its value in its own form never has: undoActivity() finds the asset
+// through the account, so a row with no account could be seen and not undone,
+// which is worse than not showing one.
+//
+// A figure equal to the one already held writes nothing at all. A zero-amount
+// history row is noise, and "I checked and it was right" is what
+// profiles.balances_checked_at records.
+async function setAssetBalance(asset, newValue, accountId) {
+  const rounded = Math.round(newValue * 100) / 100;
+  const delta = Math.round((rounded - Number(asset.value)) * 100) / 100;
+  if (!delta) return { changed: false };
+  const { error } = await sb.from("assets").update({ value: rounded }).eq("id", asset.id);
+  if (error) return { error: error.message };
+  // The cached row is brought into step at once, before any reload. Every
+  // caller reloads anyway, but the check-in sheet applies several of these in
+  // a row and can stop half way: without this, pressing Save again would
+  // measure the same difference from the stale figure and log the correction
+  // a second time, and undoing both would take the balance past where it
+  // started.
+  asset.value = rounded;
+  const acctId = accountId ?? accounts.find((a) => a.linked_asset_id === asset.id)?.id ?? null;
+  if (acctId) await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, delta, undefined, acctId);
+  return { changed: true };
+}
+
 $("adjustSetBtn").onclick = async () => {
   const newValue = parseFloat($("adjustNewBalance").value);
-  if (!Number.isFinite(newValue)) { flagField("adjustNewBalance"); return toast("Enter a valid balance"); }
-  // Asset resolved BEFORE the floor check, because the floor now depends on
-  // this account's own overdraft allowance rather than being a flat zero.
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
-  const setAllowance = overdraftAllowance(asset);
-  if (newValue < -setAllowance) {
-    flagField("adjustNewBalance");
-    return toast(setAllowance > 0
-      ? `${asset.name} can only go down to ${fmt(-setAllowance)} with its ${fmt(setAllowance)} overdraft.`
-      : "Balance can't go negative", "error");
-  }
-  const rounded = Math.round(newValue * 100) / 100;
-  const oldValue = Number(asset.value);
-  const { error } = await sb.from("assets").update({ value: rounded }).eq("id", asset.id);
-  if (error) { flagField("adjustNewBalance"); return toast(error.message); }
-  await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, rounded - oldValue, undefined, adjustingAccountId);
+  const refusal = assetBalanceRefusal(asset, newValue);
+  if (refusal) { flagField("adjustNewBalance"); return toast(refusal, "error"); }
+  const result = await setAssetBalance(asset, newValue, adjustingAccountId);
+  if (result.error) { flagField("adjustNewBalance"); return toast(result.error, "error"); }
+  if (!result.changed) { closeAssetAdjust(); return toast("That is already the balance"); }
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Balance updated");
 };
 
@@ -4179,6 +4293,7 @@ async function loadDebts() {
   // to be opened, silently double-charging or skipping months.
   renderNetWorth();
   renderAccountsList(); // a changed liability balance may be a linked account's balance line
+  renderSetupStrip();
 }
 
 // Interest rate / minimum payment / due date / draw period end - never
@@ -4382,21 +4497,42 @@ async function logOwedAdjust(debt, delta, reason) {
   await logActivity("owed_adjust", reason, delta, undefined, debtAccountId, null, debt.id);
 }
 
-$("debtOwedSetConfirm").onclick = async () => {
-  const newBalance = parseFloat($("debtOwedSet").value);
-  if (!Number.isFinite(newBalance)) { flagField("debtOwedSet"); return toast("Enter a valid amount"); }
-  if (newBalance < 0) { flagField("debtOwedSet"); return toast("Amount owed can't be negative"); }
-  const debt = debts.find((d) => d.id === activeDebtId);
-  if (!debt) return;
+// The owed-side pair of assetBalanceRefusal()/setAssetBalance(), shared by
+// this card's own "set" and the monthly check-in for the same reason. There
+// is no floor below zero to model: this app has no credit-balance concept to
+// hold one, so a negative figure is refused rather than stored.
+function owedBalanceRefusal(debt, newBalance) {
+  if (!Number.isFinite(newBalance)) return "Enter a valid amount";
+  if (newBalance < 0) return `What you owe on ${debt.name} can't be negative`;
+  return null;
+}
+// Every change goes through logOwedAdjust(), so an owed balance still never
+// moves without a row saying why. Deliberately not held to the credit limit:
+// a real balance can sit over its limit, and a correction has to be able to
+// record that.
+async function setOwedBalance(debt, newBalance) {
   const rounded = Math.round(newBalance * 100) / 100;
   const delta = Math.round((rounded - Number(debt.balance)) * 100) / 100;
+  if (!delta) return { changed: false };
   const { error } = await sb.from("liabilities").update({ balance: rounded }).eq("id", debt.id);
-  if (error) { flagField("debtOwedSet"); return toast(error.message); }
+  if (error) return { error: error.message };
+  debt.balance = rounded; // same reason as setAssetBalance: a retry must find nothing left to do
   await logOwedAdjust(debt, delta, `Corrected ${debt.name} owed to ${fmt(rounded)}`);
+  return { changed: true };
+}
+
+$("debtOwedSetConfirm").onclick = async () => {
+  const newBalance = parseFloat($("debtOwedSet").value);
+  const debt = debts.find((d) => d.id === activeDebtId);
+  if (!debt) return;
+  const refusal = owedBalanceRefusal(debt, newBalance);
+  if (refusal) { flagField("debtOwedSet"); return toast(refusal, "error"); }
+  const result = await setOwedBalance(debt, newBalance);
+  if (result.error) { flagField("debtOwedSet"); return toast(result.error, "error"); }
   await loadDebts();
   renderRecentTransactions();
   closeDebtBalanceForm();
-  toast("Amount owed updated");
+  toast(result.changed ? "Amount owed updated" : "That is already what you owe");
 };
 
 $("debtOwedConfirm").onclick = async () => {
@@ -4513,6 +4649,7 @@ function renderNetWorth() {
   $("assetsTotal").textContent = fmt(nw.assetsTotal);
   $("liabilitiesTotal").textContent = fmt(nw.liabilitiesTotal);
   renderNetWorthCaveats();
+  renderCheckinLine();
 
   // Monthly liabilities is just this month's charges against any
   // liability-linked account type (credit card, HELOC, mortgage, ...) - a
@@ -5631,6 +5768,7 @@ async function loadExpenses() {
   populateTxnCategoryFilter();
   renderRecentTransactions();
   renderRecurringCandidates();
+  renderSetupStrip();
 }
 
 // Options are whatever categories actually appear on a real expense, not
@@ -6894,7 +7032,12 @@ async function buildPortfolioRecapIfNeeded() {
     summary_skipped_reason: skipped,
     updated_at: new Date().toISOString(),
   }, { onConflict: "user_id,trade_date" });
-  if (error) return; // best effort: the tab is complete without this card
+  // Best effort: the tab is complete without this card, so nothing is shown.
+  // But not silent either. This write was refused on every attempt for seven
+  // weeks (the table's user_id had no default, fixed in migration 83) and the
+  // bare return here is why nobody could tell: zero rows looked exactly like
+  // "the market has not closed yet".
+  if (error) { console.warn("portfolio note: could not save", error); return; }
 
   portfolioRecapBuiltFor = tradeDate;
   await loadPortfolioRecaps();
@@ -7136,6 +7279,18 @@ function renderInvestments() {
   const countable = countableInvestmentAssets();           // maths: never both
   const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
   const totals = portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable);
+
+  // The health check and the four totals describe the user's own money, so
+  // with no investments at all they are a column of zeros. Hidden then, which
+  // matters more now that a new account opens on this page: the market leads
+  // instead. Everything below still writes into these elements either way,
+  // the same toggle-with-.hidden shape the tabs use, so nothing has to know.
+  const summary = $("investOwnSummary");
+  const wasHidden = summary.classList.contains("hidden");
+  summary.classList.toggle("hidden", !investmentAssets.length);
+  // A chart drawn while its container had no size comes out blank, so the
+  // sparkline is redrawn the moment the first investment makes this visible.
+  if (wasHidden && investmentAssets.length) renderInvestmentsTrend();
 
   $("investTotalValue").textContent = fmt(totals.totalValue);
   $("investTotalCostBasis").textContent = fmt(totals.totalCostBasis);
@@ -10556,6 +10711,7 @@ async function loadSubscriptions() {
   // user invented once show back up as a suggestion next time.
   const cats = [...new Set([...SUBSCRIPTION_CATEGORY_SUGGESTIONS, ...subscriptions.map((s) => s.category).filter(Boolean)])].sort();
   $("subCategorySuggestions").innerHTML = cats.map((c) => `<option value="${esc(c)}"></option>`).join("");
+  renderSetupStrip();
 }
 
 async function loadIncome() {
@@ -10563,6 +10719,7 @@ async function loadIncome() {
   if (error) { renderLoadError("incomeList", error, loadIncome); return; }
   incomeSources = data || [];
   renderIncomeList();
+  renderSetupStrip();
 }
 
 // A subscription's next_renewal reaching today means the real-world charge
@@ -10635,34 +10792,74 @@ async function payBillTowardDebt(sub, occurredAt) {
   return { paid: pay };
 }
 
+// Taking one cycle of a bill or a pay day, so that it is logged ONCE however
+// many things try at the same moment.
+//
+// The date is moved forward FIRST, in a write that only succeeds while the
+// stored date is still the one this run read. Whoever gets that write owns the
+// cycle and goes on to log it; anyone else finds no row matched and stops.
+// This is the guard deposit interest and loan interest already carry, for the
+// same reason: two devices opening together would otherwise both read "due",
+// both log, and both move the date, and nothing afterwards could tell that the
+// same charge had been written twice. init() being single-flight covers one
+// tab; this covers two.
+//
+// `.select("id")` is what reports whether a row matched. supabase-js resolves
+// on a query error rather than rejecting, so both are checked.
+async function claimCycle(table, id, column, from, to) {
+  const { data, error } = await sb.from(table).update({ [column]: to }).eq("id", id).eq(column, from).select("id");
+  return !error && Array.isArray(data) && data.length === 1;
+}
+// Hands a cycle back when the thing it was taken for then could not be
+// written, so it is tried again on the next load instead of being skipped for
+// good. The same compensating write payBillTowardDebt() makes across its two
+// tables. Best effort: if this fails as well, one charge goes unlogged, which
+// is the survivable direction and shows up at the next balance check.
+async function releaseCycle(table, id, column, taken, back) {
+  await sb.from(table).update({ [column]: back }).eq("id", id).eq(column, taken);
+}
+
 async function autoLogDueSubscriptions() {
   const today = localDateISO();
   let loggedCount = 0;
   const blockedNames = new Set();
 
   for (const sub of subscriptions) {
-    if (!sub.is_active || !sub.next_renewal || !sub.account_id) continue;
-    if (!["monthly", "quarterly", "semiannual", "annual"].includes(sub.billing_cycle)) continue;
+    // One definition of "this bill cannot run", shared with the Finish
+    // setting up strip so the two cannot disagree about a bill. It covers
+    // what the inline test here used to: inactive, no date, no account, a
+    // cycle with no interval to step by, and an account that is gone or
+    // archived (a real delete nulls account_id; archiving has to stop the
+    // loop the same way, or it would keep charging an account that is meant
+    // to act deleted every time the app loads).
+    if (billAutoLogBlocker(sub, accounts)) continue;
     const account = accounts.find((a) => a.id === sub.account_id);
-    // A real delete already stops this loop (account_id -> null on delete,
-    // per schema, fails the !sub.account_id check above); archiving must
-    // stop it the same way, or this would keep silently charging an
-    // account that's supposed to act deleted every time the app loads.
-    if (!account || account.archived_at) continue;
     const paymentType = account.type;
     const amount = Number(sub.amount);
 
     let renewal = sub.next_renewal;
     let cycles = 0;
     while (renewal <= today && cycles < 36) {
+      // Stepped before anything is written, so a cycle that cannot advance is
+      // left alone rather than logged with nowhere for the date to go.
+      const next = advanceRenewal(renewal, sub.billing_cycle);
+      if (!next || next === renewal) break;
       if (sub.pays_liability_id) {
+        if (!(await claimCycle("subscriptions", sub.id, "next_renewal", renewal, next))) break;
         const result = await payBillTowardDebt(sub, renewal);
-        if (result.blocked || result.error) { blockedNames.add(sub.name); break; }
+        if (result.blocked || result.error) {
+          await releaseCycle("subscriptions", sub.id, "next_renewal", next, renewal);
+          blockedNames.add(sub.name);
+          break;
+        }
         if (result.paid) loggedCount++;
-        renewal = advanceRenewal(renewal, sub.billing_cycle);
+        renewal = next;
+        sub.next_renewal = next;
         cycles++;
         continue;
       }
+      // Everything that can simply refuse comes BEFORE the claim, so a bill
+      // held back for lack of funds never touches its date at all.
       const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
       if (assetErr) { blockedNames.add(sub.name); break; }
       // A renewal that would breach the card's limit is held back rather
@@ -10673,12 +10870,19 @@ async function autoLogDueSubscriptions() {
         break;
       }
 
+      // Another tab or device already took this cycle, or the write failed.
+      // Either way it is not ours to log.
+      if (!(await claimCycle("subscriptions", sub.id, "next_renewal", renewal, next))) break;
       const { error } = await sb.from("expenses").insert({
         amount, description: sub.name, merchant: sub.name,
         category: "Subscriptions", payment_type: paymentType,
         account_id: sub.account_id, occurred_at: renewal, source: "manual",
       });
-      if (error) break; // don't loop forever against a persistent write error
+      if (error) {
+        // Not logged, so the date goes back and the next load tries again.
+        await releaseCycle("subscriptions", sub.id, "next_renewal", next, renewal);
+        break;
+      }
       await applyAssetDelta(sub.account_id, paymentType, amount, -1);
       await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
       if (account.linked_liability_id) {
@@ -10689,12 +10893,11 @@ async function autoLogDueSubscriptions() {
         if (asset) asset.value = Math.round((Number(asset.value) - amount) * 100) / 100;
       }
       loggedCount++;
-      renewal = advanceRenewal(renewal, sub.billing_cycle);
+      renewal = next;
+      sub.next_renewal = next;
       cycles++;
     }
-    if (renewal !== sub.next_renewal) {
-      await sb.from("subscriptions").update({ next_renewal: renewal }).eq("id", sub.id);
-    }
+    // No date write here any more: each cycle's claim already moved it.
   }
 
   if (loggedCount) { await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions(); }
@@ -10719,9 +10922,14 @@ async function autoLogDueIncome() {
   let loggedCount = 0;
 
   for (const src of incomeSources) {
-    if (!src.is_active || !src.next_expected || !src.account_id) continue;
-    const account = accounts.find((a) => a.id === src.account_id);
-    if (!account || account.archived_at || !account.linked_asset_id) continue;
+    // The whole skip test, shared with the Finish setting up strip. It also
+    // carries the cadence whitelist and the semimonthly pay-day check that
+    // used to sit below the one_time branch: a cadence advanceIncomeDate()
+    // has no interval for returns the date unchanged, so the catch-up loop
+    // would log the same deposit 36 times, write nothing back, and do it
+    // again on the next load. one_time is exempt from that list inside the
+    // blocker, exactly as it was here.
+    if (incomeAutoLogBlocker(src, accounts)) continue;
     const amount = Number(src.amount);
 
     // one_time never advances (advanceIncomeDate returns it unchanged),
@@ -10730,24 +10938,29 @@ async function autoLogDueIncome() {
     // only by the 36-cycle cap) or double-log the same deposit repeatedly
     // across future app loads. Deactivating it here is what actually
     // stops that, not just the cap.
+    // The balance is carried in the cache between deposits, the way the bill
+    // loop above does. applyAssetDelta() reads the cached figure and writes an
+    // absolute one back without updating the cache, so three pay days caught
+    // up in a row each added to the SAME starting balance: three deposits in
+    // Recent History and one deposit's worth of money in the account.
+    const creditCache = () => {
+      const asset = assets.find((a) => a.id === accounts.find((x) => x.id === src.account_id)?.linked_asset_id);
+      if (asset) asset.value = Math.round((Number(asset.value) + amount) * 100) / 100;
+    };
+
     if (src.cadence === "one_time") {
       if (src.next_expected > today) continue;
+      // Switched off FIRST, and only while it is still on: the same claim the
+      // recurring kinds make on their date, since this one has no date to move.
+      const { data: took, error: claimErr } = await sb.from("income").update({ is_active: false })
+        .eq("id", src.id).eq("is_active", true).select("id");
+      if (claimErr || !Array.isArray(took) || took.length !== 1) continue;
       await applyAssetDelta(src.account_id, null, amount, +1);
+      creditCache();
       await logActivity("income", src.source, amount, src.next_expected, src.account_id);
       loggedCount++;
-      await sb.from("income").update({ is_active: false }).eq("id", src.id);
       continue;
     }
-
-    // Same whitelist autoLogDueSubscriptions() applies to billing_cycle, and
-    // for the same reason: a cadence advanceIncomeDate() has no interval for
-    // returns the date unchanged, so the catch-up loop below would log the
-    // same deposit 36 times, write nothing back (next_expected never moved),
-    // and do it again on the very next app load. Income needs the check in
-    // BOTH places, unlike subscriptions: semimonthly is a real cadence that
-    // still cannot advance when either pay day is missing.
-    if (!["weekly", "biweekly", "semimonthly", "monthly", "annual"].includes(src.cadence)) continue;
-    if (src.cadence === "semimonthly" && (!src.semimonthly_day_1 || !src.semimonthly_day_2)) continue;
 
     let expected = src.next_expected;
     let cycles = 0;
@@ -10757,15 +10970,17 @@ async function autoLogDueIncome() {
       // not move past - which would re-log the same deposit on every load.
       const next = advanceIncomeDate(expected, src.cadence, src.semimonthly_day_1, src.semimonthly_day_2);
       if (next === expected) break;
+      // Claimed before the money is added, for the reason claimCycle() gives.
+      if (!(await claimCycle("income", src.id, "next_expected", expected, next))) break;
       await applyAssetDelta(src.account_id, null, amount, +1);
+      creditCache();
       await logActivity("income", src.source, amount, expected, src.account_id);
       loggedCount++;
       expected = next;
+      src.next_expected = next;
       cycles++;
     }
-    if (expected !== src.next_expected) {
-      await sb.from("income").update({ next_expected: expected }).eq("id", src.id);
-    }
+    // No date write here any more: each cycle's claim already moved it.
   }
 
   if (loggedCount) {
@@ -11320,10 +11535,96 @@ function openSubForm(sub) {
   $("deleteSubBtn").classList.toggle("hidden", !sub);
   // Only makes sense for an existing, currently-active subscription.
   $("markPaidBtn").classList.toggle("hidden", !sub || !sub.is_active);
+  updateSubAutoLogNote();
   $("subForm").classList.remove("hidden");
   $("subForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 function closeSubForm() { $("subForm").classList.add("hidden"); editingSub = null; }
+
+// "Nov 14" for a stored YYYY-MM-DD. Built from the parts rather than handed to
+// new Date() as a string, which would read it as UTC midnight and show the
+// day before for anyone west of Greenwich.
+function shortDay(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// One sentence for "this date has passed, and here is what catching up will
+// do", shared by the bill form and the income form so they describe the same
+// mechanism in the same words. Returns "" when there is nothing to catch up.
+function catchUpSentence(preview, { noun, amount, effect }) {
+  if (!preview.count) return "";
+  const each = Number.isFinite(amount) && amount > 0 ? ` of ${fmt(amount)}` : "";
+  if (preview.count === 1) {
+    return `The next time the app opens it will write down one ${noun}${each}, dated ${shortDay(preview.first)}, ${effect}.`;
+  }
+  return `That date has already passed. The next time the app opens it will write down ${preview.count} ${noun}s${each}${each ? " each" : ""}, dated ${shortDay(preview.first)} to ${shortDay(preview.last)}, ${effect}.`;
+}
+
+// What saving this bill will actually do, said before it does it. The form
+// used to say nothing in either direction: nothing that a bill with no
+// account is only a reminder (so two bills sat "due" from August to November
+// with no charge ever written down), and nothing that fixing it by picking an
+// account makes the catch-up loop log every month since, against a balance
+// that was corrected by hand in the meantime and already includes them.
+//
+// A note, never a block. Catching up is right for someone who really was
+// away for three months, so the form says what will happen and offers the one
+// tap that avoids it. Same shape as updateIncomeAutoLogNote() below.
+function updateSubAutoLogNote() {
+  const note = $("subAutoLogNote");
+  const nextBtn = $("subUseNextDateBtn");
+  const accountId = $("sAccount").value;
+  const date = $("sRenewal").value;
+  const cycle = $("sCycle").value;
+  let text = "";
+  let warn = false;
+  let nextDate = null;
+  if (!$("sActive").checked) {
+    text = "";
+  } else if (!accountId) {
+    text = "With no account chosen this is only a reminder. Nothing is written down as spending when it comes due.";
+  } else if (!date) {
+    text = "Add the date it is next due, and the app will write the charge down for you each time.";
+  } else if (!AUTO_LOG_BILLING_CYCLES.includes(cycle)) {
+    text = "A bill with no set gap between charges is never written down on its own. Use Mark as paid each time it is charged.";
+  } else {
+    const preview = billCatchUp({ next_renewal: date, billing_cycle: cycle }, localDateISO());
+    const paysDebt = !!$("sPaysDebt").value;
+    text = catchUpSentence(preview, {
+      noun: paysDebt ? "payment" : "charge",
+      amount: parseFloat($("sAmount").value),
+      effect: `and take ${preview.count === 1 ? "it" : "them"} out of ${acctName(accountId)}`,
+    });
+    // Only a run of more than one is the hazard. A single charge dated today
+    // or yesterday is the feature doing its job.
+    if (preview.count > 1) {
+      warn = true;
+      nextDate = preview.next;
+      text += " If your balance already includes them, use the next date instead.";
+    }
+  }
+  note.textContent = text;
+  note.classList.toggle("hidden", !text);
+  note.classList.toggle("warn", warn);
+  nextBtn.classList.toggle("hidden", !nextDate);
+  nextBtn.dataset.date = nextDate || "";
+  nextBtn.textContent = nextDate ? `Use the next date, ${shortDay(nextDate)}` : "";
+}
+$("subUseNextDateBtn").onclick = () => {
+  const date = $("subUseNextDateBtn").dataset.date;
+  if (!date) return;
+  $("sRenewal").value = date;
+  // Setting .value fires no event, so the note is refreshed by hand or it
+  // would go on describing the date that was just replaced.
+  updateSubAutoLogNote();
+  $("sRenewal").focus();
+};
+for (const id of ["sAmount", "sRenewal"]) $(id).addEventListener("input", updateSubAutoLogNote);
+// change as well as input: a select and a date picker report a mouse-driven
+// choice as change, the same reason the income form listens for both.
+for (const id of ["sRenewal", "sAccount", "sCycle", "sPaysDebt", "sActive"]) $(id).addEventListener("change", updateSubAutoLogNote);
 
 $("saveSubBtn").onclick = async () => {
   const name = $("sName").value.trim();
@@ -11355,9 +11656,12 @@ $("saveSubBtn").onclick = async () => {
   const { error } = await q;
   $("saveSubBtn").disabled = false;
   if (error) { flagField("sName"); return toast(error.message); }
+  // Read BEFORE closing: closeSubForm() clears editingSub, so the toast below
+  // tested a value that was always null and said "added" after every edit.
+  const wasEdit = !!editingSub;
   closeSubForm();
   await loadSubscriptions();
-  toast(editingSub ? "Subscription/bill updated" : "Subscription/bill added");
+  toast(wasEdit ? "Subscription/bill updated" : "Subscription/bill added");
 };
 
 // A subscription's amount/cycle is just a forecast (see networth.js) until
@@ -11531,15 +11835,59 @@ function updateIncomeFieldHighlighting() {
 // the exact silent-no-op class of bug the project notes already record two of.
 // Stating the consequence keeps the legitimate state available without
 // letting it fail quietly.
+//
+// It has a second job, added with the Finish setting up strip, and it is the
+// same one updateSubAutoLogNote() has: once both are filled in and the date
+// has already passed, the next open adds every pay day since. For pay that
+// really was missed that is right; for a balance already corrected by hand it
+// counts the same money twice, so the form says how many and offers the next
+// date instead.
 function updateIncomeAutoLogNote() {
+  const note = $("incomeAutoLogNote");
+  const nextBtn = $("incomeUseNextDateBtn");
+  const date = $("incNextExpected").value;
+  const accountId = $("incAccount").value;
   const missing = [];
-  if (!$("incNextExpected").value) missing.push("the next pay day");
-  if (!$("incAccount").value) missing.push("an account");
-  $("incomeAutoLogNote").textContent = missing.length
-    ? `Add ${missing.join(" and ")}, and the app will add this money for you each time it arrives. Left blank, this still counts toward your yearly income, but no money is ever added anywhere.`
-    : "";
-  $("incomeAutoLogNote").classList.toggle("hidden", !missing.length);
+  if (!date) missing.push("the next pay day");
+  if (!accountId) missing.push("an account");
+  let text = "";
+  let warn = false;
+  let nextDate = null;
+  if (missing.length) {
+    text = `Add ${missing.join(" and ")}, and the app will add this money for you each time it arrives. Left blank, this still counts toward your yearly income, but no money is ever added anywhere.`;
+  } else if ($("incActive").checked) {
+    const cadence = $("incCadence").value;
+    const preview = incomeCatchUp({
+      next_expected: date, cadence,
+      semimonthly_day_1: parseInt($("incSemimonthlyDay1").value, 10) || null,
+      semimonthly_day_2: parseInt($("incSemimonthlyDay2").value, 10) || null,
+    }, localDateISO());
+    text = catchUpSentence(preview, {
+      noun: "deposit",
+      amount: parseFloat($("incAmount").value),
+      effect: `and add ${preview.count === 1 ? "it" : "them"} to ${acctName(accountId)}`,
+    });
+    if (preview.count > 1) {
+      warn = true;
+      nextDate = preview.next;
+      text += " If your balance already includes them, use the next date instead.";
+    }
+  }
+  note.textContent = text;
+  note.classList.toggle("hidden", !text);
+  note.classList.toggle("warn", warn);
+  nextBtn.classList.toggle("hidden", !nextDate);
+  nextBtn.dataset.date = nextDate || "";
+  nextBtn.textContent = nextDate ? `Use the next date, ${shortDay(nextDate)}` : "";
 }
+$("incomeUseNextDateBtn").onclick = () => {
+  const date = $("incomeUseNextDateBtn").dataset.date;
+  if (!date) return;
+  $("incNextExpected").value = date;
+  updateIncomeFieldHighlighting(); // refreshes the note too, since .value fires no event
+  $("incNextExpected").focus();
+};
+$("incActive").addEventListener("change", updateIncomeAutoLogNote);
 
 for (const id of [...REQUIRED_INCOME_FIELDS, "incSemimonthlyDay1", "incSemimonthlyDay2", "incNextExpected"]) {
   $(id).addEventListener("input", updateIncomeFieldHighlighting);
@@ -11595,9 +11943,12 @@ $("saveIncomeBtn").onclick = async () => {
   const { error } = await q;
   $("saveIncomeBtn").disabled = false;
   if (error) { flagField("incSource"); return toast(error.message); }
+  // Read before closing, for the reason saveSubBtn records: the close clears
+  // editingIncome, so this toast said "added" after every edit.
+  const wasEdit = !!editingIncome;
   closeIncomeForm();
   await loadIncome();
-  toast(editingIncome ? "Income source updated" : "Income source added");
+  toast(wasEdit ? "Income source updated" : "Income source added");
 };
 
 $("deleteIncomeBtn").onclick = async () => {
@@ -11657,6 +12008,321 @@ $("openPrivacyBtn").onclick = () => openModal("privacyModal");
 $("privacyClose").onclick = () => closeModal("privacyModal");
 $("openTermsBtn").onclick = () => openModal("termsModal");
 $("termsClose").onclick = () => closeModal("termsModal");
+
+// ---- FINISH SETTING UP, AND THE MONTHLY BALANCE CHECK-IN -----------------
+// Two things with one cause. This app only knows what is typed into it, and
+// what it does on its own (writing a bill down when it is due, adding pay
+// when it arrives) only runs once a bill or a source has an account and a
+// date. Measured across every account on 2026-11-12: two logged expenses and
+// six balance corrections in total, and on the busiest account two bills
+// "due" since August plus an income source, none attached to anything. All of
+// it was set up, none of it could run, and no screen said so.
+//
+// The strip says so. The check-in is the other half: for anyone who would
+// rather correct a balance once a month than write down every purchase, that
+// IS the way this app is used, so it gets a real sheet and a date instead of
+// six separate trips into six account panels.
+let setupReady = false;   // true once init() has loaded everything the strip reads
+let setupItemsShown = []; // what is drawn, so a click can find its action by index
+let checkinRowsShown = [];
+
+// Every balance a person types in by hand, which is exactly the set that
+// drifts. Left out, on purpose: anything priced from the market and any
+// account holding positions (investmentLiveValues() is the same set the net
+// worth figure treats as price-driven, and a figure typed there is overwritten
+// on the next load), and a car the app already works out the value of.
+// Archived accounts and anything with a delete pending are already gone,
+// because both lists come through the helpers every total uses.
+function handTypedBalances() {
+  const live = investmentLiveValues();
+  const day = (stamp) => (stamp ? localDateISO(new Date(stamp)) : null);
+  const rows = [];
+  for (const a of topLevelAssets()) {
+    if (live.has(a.id)) continue;
+    if (a.type === "vehicle" && estimateValue(a.purchase_price, a.purchase_date, a.depreciation_rate) !== null) continue;
+    rows.push({ kind: "asset", id: a.id, name: a.name, current: Number(a.value || 0), changedOn: day(a.updated_at) });
+  }
+  for (const d of countableDebts()) {
+    rows.push({ kind: "debt", id: d.id, name: d.name, current: Number(d.balance || 0), changedOn: day(d.updated_at) });
+  }
+  return rows;
+}
+
+// "Netflix", "Netflix and Rent", "Netflix, Rent and 2 more". A strip row is
+// one line on a phone, so it names enough to be recognised and counts the rest.
+function nameList(names) {
+  if (names.length <= 2) return names.join(" and ");
+  return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+}
+// "an account to pay from and the date it is next due".
+const andList = (parts) => (parts.length <= 1 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`);
+// Short and stable, so "Not now" is forgotten the moment the set of things it
+// was said about changes: a third bill left without an account raises the row
+// again even though two were put aside last week.
+const setupKey = (prefix, rows) => `${prefix}:${rows.map((r) => String(r.id).slice(0, 8)).sort().join("+")}`;
+
+const BILL_NEEDS = {
+  no_account: "an account to pay from",
+  no_date: "the date it is next due",
+  account_gone: "a new account, the one it used is no longer here",
+};
+const INCOME_NEEDS = {
+  no_account: "an account to go into",
+  no_date: "the next pay day",
+  account_gone: "a new account to go into, the one it used is no longer here",
+  no_pay_days: "both of its pay days",
+};
+
+function setupItems() {
+  const today = localDateISO();
+  const items = [];
+
+  // Someone who has only the Cash account the app made for them, and has not
+  // written anything down. Past that point they have either added an account
+  // or shown they are happy tracking cash, and neither needs telling.
+  const open = accounts.filter((a) => !a.archived_at);
+  if (open.length && open.every((a) => a.type === "cash") && !allExpenses.length) {
+    items.push({
+      key: "first-account",
+      title: "Add the account you use most",
+      detail: "A checking account or a card. It is what lets the app keep a balance for you.",
+      action: "Add an account",
+      run: () => {
+        showSubTabFor("logSubMoney");
+        if ($("acctForm").classList.contains("hidden")) $("addAcctBtn").click();
+        $("acctForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      },
+    });
+  }
+
+  // billAutoLogBlocker() is the loop's own skip test, so a bill is listed here
+  // for exactly the reason the loop would pass over it. Only the reasons a
+  // person can clear are raised: a bill switched off, or one on a schedule
+  // with no set gap, is the user's own choice and not something to fix.
+  const stuckBills = subscriptions
+    .map((sub) => ({ sub, why: billAutoLogBlocker(sub, accounts) }))
+    .filter((b) => FIXABLE_BLOCKERS.has(b.why));
+  if (stuckBills.length) {
+    const first = stuckBills[0];
+    const one = stuckBills.length === 1;
+    // What to fill in comes from billMissing(), which lists every gap, so a
+    // bill short of both an account and a date is told about both at once.
+    const firstNeeds = billMissing(first.sub, accounts);
+    const allNeeds = [...new Set(stuckBills.flatMap((b) => billMissing(b.sub, accounts)))];
+    items.push({
+      key: setupKey("bills", stuckBills.map((b) => b.sub)),
+      title: one ? `${first.sub.name} is only a reminder right now` : `${stuckBills.length} bills are only reminders right now`,
+      detail: one
+        ? `It needs ${andList(firstNeeds.map((n) => BILL_NEEDS[n]))} before the app can write its charge down for you.`
+        : `${nameList(stuckBills.map((b) => b.sub.name))}. Each needs ${allNeeds.length === 1 ? BILL_NEEDS[allNeeds[0]] : "an account to pay from and a next date"} before the app can write the charge down for you.`,
+      action: one ? "Fix it" : "Fix the first",
+      run: () => {
+        showSubTabFor("logSubBills");
+        openSubForm(first.sub);
+        flagField(firstNeeds.map((n) => (n === "no_date" ? "sRenewal" : "sAccount")));
+      },
+    });
+  }
+
+  const stuckIncome = incomeSources
+    .map((src) => ({ src, why: incomeAutoLogBlocker(src, accounts) }))
+    .filter((b) => FIXABLE_BLOCKERS.has(b.why));
+  if (stuckIncome.length) {
+    const first = stuckIncome[0];
+    const one = stuckIncome.length === 1;
+    const firstNeeds = incomeMissing(first.src, accounts);
+    const allNeeds = [...new Set(stuckIncome.flatMap((b) => incomeMissing(b.src, accounts)))];
+    const fieldFor = { no_account: ["incAccount"], account_gone: ["incAccount"], no_date: ["incNextExpected"], no_pay_days: ["incSemimonthlyDay1", "incSemimonthlyDay2"] };
+    items.push({
+      key: setupKey("income", stuckIncome.map((b) => b.src)),
+      title: one ? `${first.src.source} is not being added to any balance` : `${stuckIncome.length} kinds of income are not being added to any balance`,
+      detail: one
+        ? `It needs ${andList(firstNeeds.map((n) => INCOME_NEEDS[n]))} before the app can add it for you when it arrives.`
+        : `${nameList(stuckIncome.map((b) => b.src.source))}. Each needs ${allNeeds.length === 1 ? INCOME_NEEDS[allNeeds[0]] : "an account to go into and a next pay day"} before the app can add it for you.`,
+      action: one ? "Fix it" : "Fix the first",
+      run: () => {
+        showSubTabFor("logSubMoney");
+        openIncomeForm(first.src);
+        flagField(firstNeeds.flatMap((n) => fieldFor[n]));
+      },
+    });
+  }
+
+  const due = checkinDue({ rows: handTypedBalances(), lastChecked: profile?.balances_checked_at ?? null, today });
+  if (due) {
+    items.push({
+      // Keyed by month, so putting it aside lasts until the next one.
+      key: `checkin:${today.slice(0, 7)}`,
+      title: due.never
+        ? "Check your balances against your bank"
+        : `It has been ${sinceWords(due.days)} since you checked your balances`,
+      detail: due.never
+        ? `Some of these figures have not changed in ${sinceWords(due.days)}. A look once a month keeps them matching your bank.`
+        : "A look once a month keeps the figures here matching your bank.",
+      action: "Check balances",
+      run: () => openCheckin(),
+    });
+  }
+  return items;
+}
+
+const setupDismissed = (key) => prefGet(`setupDismissed:${key}`) === "1";
+
+function renderSetupStrip() {
+  const strip = $("setupStrip");
+  if (!strip) return;
+  // Nothing before init() has finished: half-loaded data reads as "nothing is
+  // set up", which is the one thing this must never say by mistake.
+  const items = setupReady ? setupItems().filter((it) => !setupDismissed(it.key)) : [];
+  setupItemsShown = items;
+  strip.classList.toggle("hidden", !items.length);
+  $("navLogTodo").classList.toggle("hidden", !items.length);
+  $("setupStripList").innerHTML = items.map((it, i) => `
+    <li class="setup-item">
+      <div class="setup-text"><strong>${esc(it.title)}</strong><span>${esc(it.detail)}</span></div>
+      <div class="setup-actions">
+        <button type="button" class="btn-sm" data-setup-run="${i}">${esc(it.action)}</button>
+        <button type="button" class="secondary btn-sm" data-setup-dismiss="${i}" aria-label="Not now, hide: ${esc(it.title)}">Not now</button>
+      </div>
+    </li>`).join("");
+}
+
+// One delegated listener: the rows are rebuilt on every render, so a handler
+// bound to a row would be gone the next time anything loaded.
+$("setupStripList").addEventListener("click", (ev) => {
+  const runBtn = ev.target.closest("[data-setup-run]");
+  if (runBtn) { setupItemsShown[Number(runBtn.dataset.setupRun)]?.run(); return; }
+  const dismissBtn = ev.target.closest("[data-setup-dismiss]");
+  if (!dismissBtn) return;
+  const item = setupItemsShown[Number(dismissBtn.dataset.setupDismiss)];
+  if (!item) return;
+  // This device only, like the remembered tab: it is a "stop showing me this
+  // here", not a fact about the account, and it must never hide the same row
+  // from another person signed in to the same household's data elsewhere.
+  prefSet(`setupDismissed:${item.key}`, "1");
+  renderSetupStrip();
+  // The button that was pressed no longer exists, so focus would fall back to
+  // the top of the page. Hand it to the next row, or to the page's own tabs.
+  (document.querySelector("#setupStripList [data-setup-run]")
+    || document.querySelector("#logSubTabs .subtab-pill"))?.focus();
+});
+
+function renderCheckinLine() {
+  const el = $("checkinLastLine");
+  if (!el) return;
+  if (!setupReady) { el.textContent = ""; return; } // the profile may not have arrived yet
+  const last = profile?.balances_checked_at;
+  if (!last) { el.textContent = "Not checked against your bank yet"; return; }
+  const days = daysBetweenISO(last, localDateISO());
+  el.textContent = days == null || days <= 0 ? "Balances checked today" : `Balances last checked ${sinceWords(days)} ago`;
+}
+
+function checkinRowHtml(row, today) {
+  const days = row.changedOn ? daysBetweenISO(row.changedOn, today) : null;
+  const age = days == null ? "" : days <= 0 ? ", changed today" : `, last changed ${sinceWords(days)} ago`;
+  const holds = row.kind === "asset" ? `The app has ${fmt(row.current)}` : `The app has ${fmt(row.current)} owed`;
+  return `
+    <div class="checkin-item">
+      <label for="checkin-${row.id}">${esc(row.name)}<small>${holds}${age}</small></label>
+      <input id="checkin-${row.id}" type="number" step="0.01" inputmode="decimal" autocomplete="off" />
+    </div>`;
+}
+
+function drawCheckinRows() {
+  const today = localDateISO();
+  const rows = handTypedBalances();
+  checkinRowsShown = rows;
+  const group = (title, list) => (list.length ? `<h3>${title}</h3>${list.map((r) => checkinRowHtml(r, today)).join("")}` : "");
+  $("checkinList").innerHTML = rows.length
+    ? group("What you have", rows.filter((r) => r.kind === "asset")) + group("What you owe", rows.filter((r) => r.kind === "debt"))
+    : `<p class="muted text-sm">There is nothing to check yet. Add an account first, and it will be listed here.</p>`;
+  $("checkinSave").classList.toggle("hidden", !rows.length);
+  // Saying what is missing, and why, so its absence does not read as the app
+  // having lost an account.
+  const listed = new Set(rows.filter((r) => r.kind === "asset").map((r) => r.id));
+  const leftOut = topLevelAssets().filter((a) => !listed.has(a.id)).length;
+  $("checkinLeftOut").textContent = leftOut
+    ? `${leftOut} ${leftOut === 1 ? "thing is" : "things are"} not listed because the app works ${leftOut === 1 ? "its" : "their"} value out for you, from market prices or from a car's age.`
+    : "";
+  $("checkinLeftOut").classList.toggle("hidden", !leftOut);
+}
+
+async function openCheckin() {
+  // Fresh figures first. A correction is stored as the DIFFERENCE from what
+  // the app held, so one measured from a figure another device has since
+  // changed would undo to the wrong place.
+  await Promise.all([loadAssets(), loadDebts()]);
+  drawCheckinRows();
+  openModal("checkinModal");
+}
+$("checkinOpenBtn").onclick = () => openCheckin();
+$("checkinClose").onclick = () => closeModal("checkinModal");
+
+$("checkinSave").onclick = async () => {
+  // Every cheap rejection first, across the whole sheet, so nothing is
+  // written until all of it can be. A blank box means "that one is right".
+  const changes = [];
+  for (const row of checkinRowsShown) {
+    const input = $(`checkin-${row.id}`);
+    const raw = input ? input.value.trim() : "";
+    if (!raw) continue;
+    const value = parseFloat(raw);
+    const target = row.kind === "asset" ? assets.find((a) => a.id === row.id) : debts.find((d) => d.id === row.id);
+    if (!target) {
+      // Deleted or archived on another device while this sheet was open.
+      flagField(input.id, "This is no longer here. Close this and open it again.");
+      return toast(`${row.name} is no longer here`, "error");
+    }
+    const refusal = row.kind === "asset" ? assetBalanceRefusal(target, value) : owedBalanceRefusal(target, value);
+    if (refusal) { flagField(input.id, refusal); return toast(refusal, "error"); }
+    changes.push({ row, target, value, input });
+  }
+
+  // The one confirmation is the LAST gate, after everything that can simply
+  // be refused: an extra or a missing digit turns $5,000 into $50,000 or $500,
+  // and from here it would go straight into net worth and its history.
+  const odd = changes.filter((c) => balanceJumpLooksWrong(c.row.current, c.value));
+  if (odd.length) {
+    const lines = odd.map((c) => `${c.row.name}, from ${fmt(c.row.current)} to ${fmt(c.value)}`).join(". ");
+    const ok = await confirmModal(
+      `${lines}. That is a big jump. If it is right, carry on, this is only here to catch an extra or a missing digit.`,
+      { title: odd.length === 1 ? "Check this figure" : "Check these figures", confirmLabel: "Yes, that is correct", danger: false }
+    );
+    if (!ok) return;
+  }
+
+  let updated = 0;
+  for (const c of changes) {
+    const result = c.row.kind === "asset" ? await setAssetBalance(c.target, c.value) : await setOwedBalance(c.target, c.value);
+    if (result.error) {
+      // The ones before this are saved and stay saved; the setters keep the
+      // cache in step, so pressing Save again finds nothing left to do for
+      // them and only retries from here.
+      flagField(c.input.id, "This one could not be saved. Nothing after it was changed.");
+      await Promise.all([loadAssets(), loadDebts(), loadAccountActivity()]);
+      renderRecentTransactions();
+      return toast(`Could not save ${c.row.name}. ${result.error}`, "error");
+    }
+    if (result.changed) updated++;
+  }
+
+  // Stamped even when nothing changed. "I looked, and it was all right" is
+  // the answer this exists to record, and it is the common one.
+  const today = localDateISO();
+  const { error } = await sb.from("profiles").upsert({ id: userId, balances_checked_at: today }, { onConflict: "id" });
+  if (error) {
+    console.warn("balance check-in: could not record the date", error);
+    toast("Your balances were saved, but the app could not note that you checked them, so it may ask again.", "error");
+  } else {
+    profile = { ...(profile || {}), balances_checked_at: today };
+  }
+  await Promise.all([loadAssets(), loadDebts(), loadAccountActivity()]);
+  renderRecentTransactions();
+  renderCheckinLine();
+  renderSetupStrip();
+  closeModal("checkinModal");
+  if (!error) toast(updated ? `Balances checked, ${updated} updated` : "Balances checked, nothing needed changing");
+};
 
 // ---- HELP MODAL --------------------------------------------------------
 // One shared modal (index.html) for all 4 pages' documentation - openHelp
@@ -11838,24 +12504,45 @@ let tourIndex = -1;
 // Such a step IS reachable, because renderTourStep switches to its panel
 // before showing it. Both style writes are synchronous with no paint between
 // them, so nothing flickers.
+//
+// A panel can sit inside ANOTHER tab panel: Holdings is a sub-tab of My
+// portfolio, which is itself one of the two top-level Investments tabs. Only
+// the innermost was revealed, so with Market showing (the default) the
+// portfolio steps measured as nothing and were dropped from every tour, which
+// is exactly the reader they were written for. Every hidden tab panel on the
+// way up is revealed now, and showSubTabFor() switches each of them.
 function tourTargetShowable(step) {
-  const panel = step.subtab ? $(step.subtab) : null;
-  const wasHidden = !!panel && panel.classList.contains("hidden");
-  if (wasHidden) panel.classList.remove("hidden");
+  const revealed = step.subtab
+    ? subTabChain(step.subtab).map((id) => $(id)).filter((p) => p && p.classList.contains("hidden"))
+    : [];
+  for (const p of revealed) p.classList.remove("hidden");
   const el = $(step.target);
   const showable = !!el && el.getClientRects().length > 0;
-  if (wasHidden) panel.classList.add("hidden");
+  for (const p of revealed) p.classList.add("hidden");
   return showable;
 }
 
-// Switch to whichever sub-tab group owns this panel, given only the panel id.
-// The bar is found from its own button and the storage key from the bar's
-// dataset (written by wireSubTabs), so this needs no second copy of the
-// group -> key mapping to drift out of sync.
+// The tab panels from the outermost down to `panelId`: the panel itself and
+// every ancestor that some [data-subtab] button controls.
+function subTabChain(panelId) {
+  const chain = [];
+  for (let el = $(panelId); el; el = el.parentElement) {
+    if (el.id && document.querySelector(`[data-subtab="${el.id}"]`)) chain.unshift(el.id);
+  }
+  return chain;
+}
+
+// Switch to whichever sub-tab group owns this panel, given only the panel id,
+// and to every enclosing tab on the way, outermost first. The bar is found by
+// the storage key wireSubTabs() writes onto it rather than by the
+// .subtab-pills class: the top-level Investments bar is a plain row, so the
+// class lookup never found it and asking for a portfolio panel did nothing.
 function showSubTabFor(panelId) {
-  const btn = document.querySelector(`[data-subtab="${panelId}"]`);
-  const bar = btn && btn.closest(".subtab-pills");
-  if (bar) setSubTab(bar.id, bar.dataset.subtabStore, panelId);
+  for (const id of subTabChain(panelId)) {
+    const btn = document.querySelector(`[data-subtab="${id}"]`);
+    const bar = btn && btn.closest("[data-subtab-store]");
+    if (bar) setSubTab(bar.id, bar.dataset.subtabStore, id);
+  }
 }
 
 function endTour(markSeen = true) {
@@ -12184,7 +12871,16 @@ $("feedbackSendBtn").onclick = async () => {
     // is context, not content.
     user_agent: (navigator.userAgent || "").slice(0, 400),
   });
-  if (error) { flagField("feedbackMessage"); return toast(error.message, "error"); }
+  if (error) {
+    // The raw database text is for whoever maintains this, not for the person
+    // who just typed a message: the failure this form had for its whole first
+    // six weeks read "new row violates row-level security policy for table
+    // feedback_tickets", which tells a user nothing and does not even say the
+    // message was not sent. Their words stay in the box so nothing is lost.
+    console.warn("feedback: could not send", error);
+    flagField("feedbackMessage", "This was not sent. Your message is still here, so you can try again.");
+    return toast("Could not send that. Nothing was lost, please try again in a moment.", "error");
+  }
   $("feedbackMessage").value = "";
   updateFeedbackCharsLeft();
   await loadFeedbackTickets();

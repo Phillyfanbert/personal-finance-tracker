@@ -1,0 +1,38 @@
+-- The feedback form and the personal end-of-day investment note had never
+-- written a single row, and this is why.
+--
+-- Both tables declare `user_id uuid not null` with NO default, and both of
+-- their client inserts leave user_id out, exactly as every other insert in
+-- this app does. The other eighteen user-owned tables carry
+-- `default auth.uid()`, so the column fills itself in from the caller's
+-- session. These two were created without it (75 and 77), so the row arrived
+-- with user_id null and the `auth.uid() = user_id` check refused it:
+--
+--   42501 new row violates row-level security policy for table "..."
+--
+-- Found 2026-11-12 from the data rather than from a report, which is the
+-- point worth keeping. feedback_tickets held 0 rows 45 days after shipping
+-- and docs/FEEDBACK.md read "0 total, nothing yet" - a broken form looked
+-- exactly like nobody having anything to say. portfolio_recaps held 0 rows
+-- 51 days after shipping although its one precondition (the market being
+-- closed when the app is opened) had been met on at least eight weekend
+-- opens, and that write is best-effort by design, so it failed silently.
+--
+-- Both were "verified" when they shipped, by paths that could not see this:
+-- 77 and 78 were tested with SQL inserts that named user_id explicitly, and
+-- an agent cannot complete a real sign-in to drive the form itself. Proven
+-- this time by running each insert with EXACTLY the columns app.js sends, as
+-- the authenticated role, inside a block that always rolls back, with a
+-- control insert that names user_id to show the probe itself can succeed.
+-- Before: both refused, control accepted. After: both accepted.
+--
+-- The default opens nothing. Re-checked in the same probe: naming another
+-- user's id is still refused by the policy, and 78's guard still refuses a
+-- ticket that arrives carrying a status or a reply.
+--
+-- expense_embeddings is the one remaining table with no default, and that is
+-- correct: only tools/embed-expenses.js writes it, through service_role,
+-- which has no auth.uid() and names user_id itself.
+
+alter table public.feedback_tickets alter column user_id set default auth.uid();
+alter table public.portfolio_recaps alter column user_id set default auth.uid();

@@ -42,6 +42,11 @@
 #      prices/net worth track the market closely instead of up to a week
 #      stale - see price-agent.js's own header comment for the full
 #      before/after call-volume accounting.
+#   7. A monthly schedule for monthly-report.js.
+#   8. The repository sync (sync-server.sh, every 15 minutes), which is what
+#      stops this directory falling behind the repo. It installs itself, so
+#      it can also be set up alone with `./sync-server.sh --install` on a
+#      machine where the rest of this file has already been run.
 #
 # Usage:
 #   cd tools
@@ -419,6 +424,18 @@ EOF
   bootout_and_bootstrap "${label}" "$plist"
 }
 install_monthly_agent "com.monthly-report.monthly" "${TOOLS_DIR}/run-monthly-report.sh" "$MONTHLY_REPORT_DAY" "$MONTHLY_REPORT_HOUR" "$MONTHLY_REPORT_MIN"
+
+# ---- 8. Keep this directory level with the repository --------------------
+# Installed by the sync script itself rather than by a function here, so the
+# job has ONE definition and can be (re)installed on its own. That matters:
+# this whole file is not safe to re-run casually (it mints a new proxy secret
+# unless handed the existing one), and the sync job must never depend on
+# someone doing so. See sync-server.sh's header for what it does and why.
+log "Installing the repository sync (com.server-sync.interval)"
+"${TOOLS_DIR}/sync-server.sh" --install
+# Whoever ran this has just applied the schedules by hand, so any standing
+# "schedules changed" note is now answered.
+"${TOOLS_DIR}/sync-server.sh" --ack-schedules >/dev/null
 
 log "Done"
 echo "Scheduled: deal-agent ${WEEKDAY_NAMES[0]}s ${DEAL_AGENT_HOUR}:$(printf '%02d' "$DEAL_AGENT_MIN"), price-agent (full) ${WEEKDAY_NAMES[$PRICE_AGENT_WEEKDAY]}s ${PRICE_AGENT_HOUR}:$(printf '%02d' "$PRICE_AGENT_MIN") - deliberately different days, see PRICE_AGENT_WEEKDAY's own comment above for why. embed-expenses every ${EMBED_EXPENSES_INTERVAL_SECONDS}s (cheap thanks to content-hash delta detection - most runs do nothing). price-agent (FAST_ONLY, Finnhub-only real ticker prices) wakes every ${PRICE_AGENT_FAST_INTERVAL_SECONDS}s and exits at once unless the US market is open (or inside the 30-minute post-close settle window), so it really runs ~28 times a weekday and never at a weekend. monthly-report day ${MONTHLY_REPORT_DAY} of each month at ${MONTHLY_REPORT_HOUR}:$(printf '%02d' "$MONTHLY_REPORT_MIN")."

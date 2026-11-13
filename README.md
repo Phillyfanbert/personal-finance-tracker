@@ -74,10 +74,10 @@ Every outbound call the project makes, and what it costs. Re-verified
 | Supabase (database, auth, row-level security) | 500 MB Postgres, ~5 GB egress | No |
 | Cloudflare Workers (hosting and the price proxy) | 100k requests/day | No |
 | Cloudflare Tunnel (reaching the home machine) | Yes | No |
-| Ollama + Gemma (language model, local) | Your own hardware | No |
+| Ollama + Gemma (language model, local; also writes the market recap when Gemini is busy) | Your own hardware | No |
 | jsDelivr (three JavaScript libraries) | Public CDN | No |
-| Tavily (subscription and index search) | 1,000 credits/month | No |
-| Gemini (text extraction, written recaps) | 20 requests **per day** | No, and deliberately no billing account |
+| Tavily (subscription pricing and the day's market headlines) | 1,000 credits/month | No |
+| Gemini (text extraction, written recaps, tried first) | 20 requests **per day** | No, and deliberately no billing account |
 | Finnhub (share prices, company news) | 60 calls/min | No |
 | Alpha Vantage (market-wide movers) | 25 requests/day | No |
 | Installed as a web app rather than a native one | Yes | No, avoids Apple's $99/yr |
@@ -124,6 +124,17 @@ The **browser** holds no secrets beyond your own session. **Supabase** is the
 source of truth and where privacy is actually enforced. The **home machine** is
 optional enrichment that never blocks the app: with it switched off, everything
 still works apart from the written summaries and the live price refresh.
+
+**Written summaries cost nothing either way.** Each one is asked of Gemini first
+and, when Gemini's free tier is busy or out for the day, of the local model
+instead. Every figure in what comes back has to match a figure the script
+handed over, or the summary is thrown away rather than shown.
+
+**The home machine keeps itself current.** Every 15 minutes it fetches this
+repository, checks that each script at least parses, and only then copies the
+new versions into place, so a change pushed here reaches the scheduled jobs
+without anyone logging in to it. A version that fails the check is refused and
+the last good one keeps running.
 
 **No build step.** The front end is plain HTML, CSS and JavaScript modules
 loaded directly by the browser. There is no bundler, no framework and no

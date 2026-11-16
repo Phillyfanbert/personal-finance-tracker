@@ -22,21 +22,56 @@ import { advanceIncomeDate } from "./income.js";
 export const AUTO_LOG_BILLING_CYCLES = ["monthly", "quarterly", "semiannual", "annual"];
 export const AUTO_LOG_INCOME_CADENCES = ["weekly", "biweekly", "semimonthly", "monthly", "annual"];
 
+// Every gap that stops a bill being logged and that the form can fill: an
+// account (or a new one, when the old one is gone or archived) and a date.
+// ALL of them, not the first, because the strip has to tell someone
+// everything to fill in at once rather than send them back to the form twice.
+//
+// This is the ONE place these conditions are written. billAutoLogBlocker()
+// below is built from it, so the strip's wording and the loop's skip test
+// cannot come to describe a bill differently.
+export function billMissing(sub, accounts) {
+  const out = [];
+  if (!sub.account_id) out.push("no_account");
+  else {
+    const account = (accounts || []).find((a) => a.id === sub.account_id);
+    // A deleted account nulls the link and is caught above; an archived one
+    // has to stop the loop the same way, or a bill would keep charging an
+    // account that is meant to act deleted.
+    if (!account || account.archived_at) out.push("account_gone");
+  }
+  if (!sub.next_renewal) out.push("no_date");
+  return out;
+}
+
+// The same for an income source. `account_gone` also covers an account with no
+// balance of its own (a card), where adding money would be a silent no-op.
+export function incomeMissing(src, accounts) {
+  const out = [];
+  if (!src.account_id) out.push("no_account");
+  else {
+    const account = (accounts || []).find((a) => a.id === src.account_id);
+    if (!account || account.archived_at || !account.linked_asset_id) out.push("account_gone");
+  }
+  if (!src.next_expected) out.push("no_date");
+  if (src.cadence === "semimonthly" && (!src.semimonthly_day_1 || !src.semimonthly_day_2)) out.push("no_pay_days");
+  return out;
+}
+
 // Why a bill will never be logged on its own, or null when it will be.
 //
 // This IS the skip test at the top of autoLogDueSubscriptions(), moved here so
 // there is one of it. Share the function, not the formula: the loop calls
-// this, and the strip calls this, so they cannot disagree about a bill.
+// this, and the strip calls this, so they cannot disagree about a bill. The
+// checks run in the order the loop's own test had, so the reason reported is
+// the one it would have hit first.
 export function billAutoLogBlocker(sub, accounts) {
   if (!sub || !sub.is_active) return "inactive";
-  if (!sub.account_id) return "no_account";
-  if (!sub.next_renewal) return "no_date";
+  const missing = billMissing(sub, accounts);
+  if (missing.includes("no_account")) return "no_account";
+  if (missing.includes("no_date")) return "no_date";
   if (!AUTO_LOG_BILLING_CYCLES.includes(sub.billing_cycle)) return "cycle";
-  const account = (accounts || []).find((a) => a.id === sub.account_id);
-  // A deleted account nulls the link and fails the check above; an archived
-  // one has to stop the loop the same way, or a bill would keep charging an
-  // account that is meant to act deleted.
-  if (!account || account.archived_at) return "account_gone";
+  if (missing.includes("account_gone")) return "account_gone";
   return null;
 }
 
@@ -45,39 +80,14 @@ export function billAutoLogBlocker(sub, accounts) {
 // own single deposit.
 export function incomeAutoLogBlocker(src, accounts) {
   if (!src || !src.is_active) return "inactive";
-  if (!src.account_id) return "no_account";
-  if (!src.next_expected) return "no_date";
-  const account = (accounts || []).find((a) => a.id === src.account_id);
-  // linked_asset_id too: money can only be added to an account that has a
-  // balance of its own. A card has none, so the add would be a silent no-op.
-  if (!account || account.archived_at || !account.linked_asset_id) return "account_gone";
+  const missing = incomeMissing(src, accounts);
+  if (missing.includes("no_account")) return "no_account";
+  if (missing.includes("no_date")) return "no_date";
+  if (missing.includes("account_gone")) return "account_gone";
   if (src.cadence === "one_time") return null;
   if (!AUTO_LOG_INCOME_CADENCES.includes(src.cadence)) return "cadence";
-  if (src.cadence === "semimonthly" && (!src.semimonthly_day_1 || !src.semimonthly_day_2)) return "no_pay_days";
+  if (missing.includes("no_pay_days")) return "no_pay_days";
   return null;
-}
-
-// EVERY fixable thing a bill is missing, not only the first the blocker
-// trips on. The blocker answers "will the loop skip this", and stops at the
-// first reason because one is enough to skip. The strip has to tell a person
-// what to fill in, and naming only the first would send them back to the same
-// form a second time for the date it never mentioned.
-export function billMissing(sub, accounts) {
-  const out = [];
-  const account = (accounts || []).find((a) => a.id === sub.account_id);
-  if (!sub.account_id) out.push("no_account");
-  else if (!account || account.archived_at) out.push("account_gone");
-  if (!sub.next_renewal) out.push("no_date");
-  return out;
-}
-export function incomeMissing(src, accounts) {
-  const out = [];
-  const account = (accounts || []).find((a) => a.id === src.account_id);
-  if (!src.account_id) out.push("no_account");
-  else if (!account || account.archived_at || !account.linked_asset_id) out.push("account_gone");
-  if (!src.next_expected) out.push("no_date");
-  if (src.cadence === "semimonthly" && (!src.semimonthly_day_1 || !src.semimonthly_day_2)) out.push("no_pay_days");
-  return out;
 }
 
 // The blockers a person can actually clear from the form. `cycle` and
@@ -97,14 +107,19 @@ export const FIXABLE_BLOCKERS = new Set(["no_account", "no_date", "account_gone"
 // to catch up (that is what makes a week away from the app harmless); the form
 // just has to say what it is about to do before it does it.
 //
-// `step` is the real date stepper for the thing being previewed, so this
-// counts exactly what the loop will, including its 36-cycle ceiling.
-export function catchUpPreview(startISO, step, today, cap = 36) {
+// `step` is the real date stepper for the thing being previewed. The count is
+// EVERY cycle up to today, not the 36 one load writes: the loop stops at 36
+// per load and carries on from there next time, so the eventual total is what
+// a person needs to know. Stopping at 36 here understated a weekly pay a year
+// behind and, worse, left `next` empty, which hid the one button that avoids
+// all of it in exactly the case that needed it most. `limit` only guards
+// against a runaway stepper.
+export function catchUpPreview(startISO, step, today, limit = 5000) {
   if (!startISO || startISO > today) return { count: 0, first: null, last: null, next: startISO || null };
   let date = startISO;
   let count = 0;
   let last = null;
-  while (date <= today && count < cap) {
+  while (date <= today && count < limit) {
     const next = step(date);
     // A stepper that cannot advance would loop forever in the caller too,
     // which is why both loops stop here rather than log the same date twice.

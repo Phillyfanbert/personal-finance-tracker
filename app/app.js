@@ -577,6 +577,15 @@ const acctLabel = (a) =>
   (a ? (a.card_product || (a.bank_name ? `${a.bank_name} ${a.name}` : a.name)) : "");
 const acctName = (id) => acctLabel(accounts.find((a) => a.id === id));
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+// "Nov 14" for a stored YYYY-MM-DD, the one chart-label and sentence format.
+// Built from the parts rather than handed to new Date() as a string, which
+// reads it as UTC midnight and shows the day before for anyone west of
+// Greenwich. It was written out inline at five chart sites before this.
+function shortDay(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 // A stable keyword to learn from (first meaningful token of merchant/
 // description). Strips leading/trailing punctuation from each candidate
 // word before the length check - categorize.js now matches keywords as
@@ -701,6 +710,9 @@ $("passwordSignInBtn").onclick = async () => {
 };
 $("signOutBtn").onclick = async () => { await sb.auth.signOut(); location.reload(); };
 
+// Whose data is loaded (or loading). A session announced again for the same
+// person is not a reason to load everything again; see renderAuth().
+let loadedForUser = null;
 sb.auth.onAuthStateChange((_e, session) => renderAuth(session));
 sb.auth.getSession().then(({ data }) => renderAuth(data.session));
 
@@ -738,10 +750,15 @@ function renderAuth(session) {
   if (authed) {
     // supabase-js announces the SAME session over and over: once through
     // onAuthStateChange and once through getSession() at startup, again every
-    // time the tab or the installed icon comes back to the front, and again on
-    // each token refresh. A load already under way serves all of them, so a
-    // second one is not started beside it. See init() for what two at once did.
-    if (initRunning) return;
+    // time the tab or the installed icon comes back to the front (as
+    // SIGNED_IN), on every hourly token refresh, and after a password change.
+    // Each of those used to run the WHOLE load again: every table, every
+    // catch-up loop, every snapshot, under whatever form the person had open.
+    // A full load now happens once per person signed in. Coming back to the
+    // app is handled on purpose, by refreshOnReturn() below, rather than by
+    // whatever the auth library happens to announce.
+    if (session.user.id === loadedForUser) return;
+    loadedForUser = session.user.id;
     const view = lastView();
     showView(view);
     // The per-tab data each view needs (loadSubscriptions/loadReports/the
@@ -759,7 +776,10 @@ function renderAuth(session) {
       maybeStartTour(view);
     });
   }
-  else { $("logView").classList.add("hidden"); $("planView").classList.add("hidden"); $("reportsView").classList.add("hidden"); $("investView").classList.add("hidden"); }
+  else {
+    loadedForUser = null;
+    $("logView").classList.add("hidden"); $("planView").classList.add("hidden"); $("reportsView").classList.add("hidden"); $("investView").classList.add("hidden");
+  }
 }
 
 // ---- NAVIGATION ------------------------------------------------------------
@@ -833,10 +853,11 @@ function showView(v) {
 // set this off.
 //
 // A later load, once this one has finished, is still allowed and is wanted:
-// coming back to the app is how an installed icon picks up what another
-// device changed, and how a bill that came due overnight gets logged without
-// a reload. Those run one after another, each reading what the last one
-// wrote. claimCycle() below covers the case this cannot, two devices at once.
+// refreshOnReturn() runs one after a real absence or a new day, which is how
+// an installed icon picks up what another device changed and logs a bill that
+// came due overnight. Those run one after another, each reading what the last
+// one wrote. claimCycle() below covers the case this cannot, two devices at
+// once.
 let initRunning = null;
 let autoFilledDate = null; // the Quick Add date this app set, as opposed to one the user chose
 function init() {
@@ -845,9 +866,13 @@ function init() {
   // in the finally below so a failed load cannot leave the bar spinning
   // forever, which would be worse than no bar.
   busyStart();
+  lastFullLoadAt = Date.now();
+  lastFullLoadDay = localDateISO();
   initRunning = initInner().finally(() => { busyEnd(); initRunning = null; });
   return initRunning;
 }
+let lastFullLoadAt = 0;
+let lastFullLoadDay = null;
 
 async function initInner() {
   // Fire-and-forget, as early as possible: a genuinely cold model measured
@@ -1552,8 +1577,22 @@ function startLiveRefresh() {
 // after hours away needs its own immediate catch-up - this is the path that
 // actually matters for an installed icon, where "reopening" never reloads
 // the page.
+// Coming back to the app after a while runs the full load again, which is
+// how an installed icon picks up what another device changed and logs a bill
+// that came due while it was in the background. Only after a real absence or
+// a new calendar day, not on every glance: this used to happen by accident on
+// every return, through the auth library's own announcements.
+const REFRESH_AFTER_AWAY_MS = 30 * 60 * 1000;
+function refreshOnReturn() {
+  if (!loadedForUser || initRunning) return false;
+  if (localDateISO() === lastFullLoadDay && Date.now() - lastFullLoadAt < REFRESH_AFTER_AWAY_MS) return false;
+  init();
+  return true;
+}
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refreshLivePrices();
+  if (document.hidden) return;
+  // init() refreshes prices at its end, so only one of the two is needed.
+  if (!refreshOnReturn()) refreshLivePrices();
 });
 
 // A blank "None" first option, not just the real categories - so a select
@@ -3603,7 +3642,16 @@ async function applyAssetDelta(accountId, paymentType, amount, sign) {
   const asset = assets.find((a) => a.id === account.linked_asset_id);
   if (!asset) return;
   const newValue = Math.round((Number(asset.value) + sign * Number(amount)) * 100) / 100;
-  await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
+  // The cached row follows what was just written. It used not to, so the
+  // NEXT delta in the same flow read the figure from before this one and
+  // overwrote it. Editing an expense reverses the old amount and then applies
+  // the new one: changing a $14 lunch to $20 on a $2,500 account left $2,480,
+  // not $2,494, because the second write never saw the first (measured
+  // 2026-11-16). The bill and income catch-up loops had each grown a private
+  // copy of this line to work around the same thing.
+  if (!error) asset.value = newValue;
+  return { error };
 }
 
 // Accumulates onto the linked liability's running balance for any account
@@ -3704,7 +3752,12 @@ async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
   const debt = debts.find((d) => d.id === account.linked_liability_id);
   if (!debt) return;
   const newBalance = Math.max(0, Math.round((Number(debt.balance) + sign * Number(amount)) * 100) / 100);
-  await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
+  const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
+  // Same reason as applyAssetDelta: an edit that moves a charge on the same
+  // card takes the old amount off and puts the new one on, and the second
+  // write has to start from the first one's result.
+  if (!error) debt.balance = newBalance;
+  return { error };
 }
 
 // ---- ACCOUNT ACTIVITY (non-expense money movements) ---------------------
@@ -6393,10 +6446,7 @@ async function renderNetWorthTrend() {
   const rows = data || [];
   $("netWorthTrendEmpty").classList.toggle("hidden", rows.length >= 2);
   if (rows.length < 2) return; // a single point isn't a "trend"
-  const labels = rows.map((r) => {
-    const [y, m, d] = r.snapshot_date.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  });
+  const labels = rows.map((r) => shortDay(r.snapshot_date));
   renderLineChart($("netWorthTrendChart"), labels, rows.map((r) => Number(r.net_worth)));
 }
 
@@ -7052,10 +7102,7 @@ const HEALTH_SPARKLINE_DAYS = 14;
 async function renderInvestmentsTrend() {
   const { data } = await sb.from("portfolio_snapshots").select("*").order("snapshot_date", { ascending: true });
   const rows = data || [];
-  const dayLabel = (r) => {
-    const [y, m, d] = r.snapshot_date.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  };
+  const dayLabel = (r) => shortDay(r.snapshot_date);
 
   $("investTrendEmpty").classList.toggle("hidden", rows.length >= 2);
   if (rows.length >= 2) {
@@ -7289,8 +7336,13 @@ function renderInvestments() {
   const wasHidden = summary.classList.contains("hidden");
   summary.classList.toggle("hidden", !investmentAssets.length);
   // A chart drawn while its container had no size comes out blank, so the
-  // sparkline is redrawn the moment the first investment makes this visible.
-  if (wasHidden && investmentAssets.length) renderInvestmentsTrend();
+  // sparkline is redrawn when the first investment makes this visible while
+  // the page is on screen. Not during a load and not on another page:
+  // goToView("invest") draws it when the page is opened, and drawing it here
+  // as well cost a second query on every start.
+  if (wasHidden && investmentAssets.length && !initRunning && document.body.dataset.view === "invest") {
+    renderInvestmentsTrend();
+  }
 
   $("investTotalValue").textContent = fmt(totals.totalValue);
   $("investTotalCostBasis").textContent = fmt(totals.totalCostBasis);
@@ -8238,10 +8290,7 @@ function renderPriceHistory() {
   } else {
     canvas.style.display = "";
     empty.textContent = "";
-    const labels = series.map((p) => {
-      const [y, m, d] = p.date.split("-").map(Number);
-      return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    });
+    const labels = series.map((p) => shortDay(p.date));
     renderLineChart(canvas, labels, series.map((p) => p.close));
   }
 
@@ -9982,10 +10031,7 @@ function renderAccountHistory() {
     return;
   }
   const points = buildBalanceHistory(account, accountCurrentBalance(account), allExpenses, accountActivity);
-  const labels = points.map((p) => {
-    const [y, m, d] = p.date.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  });
+  const labels = points.map((p) => shortDay(p.date));
   renderLineChart($("historyChart"), labels, points.map((p) => p.balance));
   // One point means the balance has never moved, which a line chart draws as
   // an empty box. Say so rather than leaving the reader to guess.
@@ -10023,10 +10069,7 @@ function renderCashFlowForecast() {
     return;
   }
   const points = forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30);
-  const labels = points.map((p) => {
-    const [y, m, d] = p.date.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  });
+  const labels = points.map((p) => shortDay(p.date));
   renderLineChart($("forecastChart"), labels, points.map((p) => p.balance));
 
   // A rising line means opposite things for the two kinds of account, so the
@@ -10885,13 +10928,6 @@ async function autoLogDueSubscriptions() {
       }
       await applyAssetDelta(sub.account_id, paymentType, amount, -1);
       await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
-      if (account.linked_liability_id) {
-        const debt = debts.find((d) => d.id === account.linked_liability_id);
-        if (debt) debt.balance = Math.max(0, Math.round((Number(debt.balance) + amount) * 100) / 100);
-      } else {
-        const asset = assets.find((a) => a.id === account.linked_asset_id);
-        if (asset) asset.value = Math.round((Number(asset.value) - amount) * 100) / 100;
-      }
       loggedCount++;
       renewal = next;
       sub.next_renewal = next;
@@ -10938,16 +10974,6 @@ async function autoLogDueIncome() {
     // only by the 36-cycle cap) or double-log the same deposit repeatedly
     // across future app loads. Deactivating it here is what actually
     // stops that, not just the cap.
-    // The balance is carried in the cache between deposits, the way the bill
-    // loop above does. applyAssetDelta() reads the cached figure and writes an
-    // absolute one back without updating the cache, so three pay days caught
-    // up in a row each added to the SAME starting balance: three deposits in
-    // Recent History and one deposit's worth of money in the account.
-    const creditCache = () => {
-      const asset = assets.find((a) => a.id === accounts.find((x) => x.id === src.account_id)?.linked_asset_id);
-      if (asset) asset.value = Math.round((Number(asset.value) + amount) * 100) / 100;
-    };
-
     if (src.cadence === "one_time") {
       if (src.next_expected > today) continue;
       // Switched off FIRST, and only while it is still on: the same claim the
@@ -10956,7 +10982,6 @@ async function autoLogDueIncome() {
         .eq("id", src.id).eq("is_active", true).select("id");
       if (claimErr || !Array.isArray(took) || took.length !== 1) continue;
       await applyAssetDelta(src.account_id, null, amount, +1);
-      creditCache();
       await logActivity("income", src.source, amount, src.next_expected, src.account_id);
       loggedCount++;
       continue;
@@ -10973,7 +10998,6 @@ async function autoLogDueIncome() {
       // Claimed before the money is added, for the reason claimCycle() gives.
       if (!(await claimCycle("income", src.id, "next_expected", expected, next))) break;
       await applyAssetDelta(src.account_id, null, amount, +1);
-      creditCache();
       await logActivity("income", src.source, amount, expected, src.account_id);
       loggedCount++;
       expected = next;
@@ -11522,6 +11546,7 @@ function openSubForm(sub) {
   $("sAmount").value = sub?.amount ?? "";
   $("sCycle").value = sub?.billing_cycle ?? "monthly";
   $("sRenewal").value = sub?.next_renewal ?? "";
+  subFormOpenedDate = $("sRenewal").value;
   $("sAccount").value = sub?.account_id ?? "";
   // Rebuilt on every open, since debts come and go. Every counted debt is
   // offered, cards included - paying a card in full each month is a real
@@ -11541,14 +11566,17 @@ function openSubForm(sub) {
 }
 function closeSubForm() { $("subForm").classList.add("hidden"); editingSub = null; }
 
-// "Nov 14" for a stored YYYY-MM-DD. Built from the parts rather than handed to
-// new Date() as a string, which would read it as UTC midnight and show the
-// day before for anyone west of Greenwich.
-function shortDay(iso) {
-  if (!iso) return "";
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
+// The renewal date the bill form showed when it opened. A form can stay open
+// across a reload, and the catch-up loop can log a cycle and move the stored
+// date on in that time (another device, or this one coming back after
+// midnight). Saving the date the form still shows would then put the old one
+// back, and the next load would log the same charge a second time. So an
+// edit sends the date only when the person actually changed it; untouched,
+// whatever the database now holds stands.
+let subFormOpenedDate = "";
+// Whether a form's date field should be written on save: always for a new
+// row, and for an edit only when it differs from what the form opened with.
+const dateWasChanged = (editing, now, opened) => !editing || now !== opened;
 
 // One sentence for "this date has passed, and here is what catching up will
 // do", shared by the bill form and the income form so they describe the same
@@ -11591,15 +11619,29 @@ function updateSubAutoLogNote() {
     text = "A bill with no set gap between charges is never written down on its own. Use Mark as paid each time it is charged.";
   } else {
     const preview = billCatchUp({ next_renewal: date, billing_cycle: cycle }, localDateISO());
-    const paysDebt = !!$("sPaysDebt").value;
+    const debtId = $("sPaysDebt").value;
+    const debt = debtId ? debts.find((d) => d.id === debtId) : null;
+    const account = accounts.find((a) => a.id === accountId);
+    const them = preview.count === 1 ? "it" : "them";
+    // The sentence names what really happens to the money, which depends on
+    // where it goes: out of a balance, onto a card, or toward a debt.
+    const effect = debt
+      ? `and pay ${them} toward ${debt.name} from ${acctName(accountId)}`
+      : account?.linked_liability_id
+        ? `and add ${them} to what you owe on ${acctName(accountId)}`
+        : `and take ${them} out of ${acctName(accountId)}`;
     text = catchUpSentence(preview, {
-      noun: paysDebt ? "payment" : "charge",
+      noun: debt ? "payment" : "charge",
       amount: parseFloat($("sAmount").value),
-      effect: `and take ${preview.count === 1 ? "it" : "them"} out of ${acctName(accountId)}`,
+      effect,
     });
-    // Only a run of more than one is the hazard. A single charge dated today
-    // or yesterday is the feature doing its job.
-    if (preview.count > 1) {
+    // A debt already cleared takes nothing: payBillTowardDebt() pays the
+    // lesser of the bill and what is owed, so the dates simply move on.
+    if (debt && preview.count && !(Number(debt.balance) > 0)) {
+      text = `Nothing is owed on ${debt.name} right now, so when this comes due no money moves, the date just moves on.`;
+    } else if (preview.count > 1) {
+      // Only a run of more than one is the hazard. A single charge dated
+      // today or yesterday is the feature doing its job.
       warn = true;
       nextDate = preview.next;
       text += " If your balance already includes them, use the next date instead.";
@@ -11635,13 +11677,15 @@ $("saveSubBtn").onclick = async () => {
     name, amount,
     category: $("sCategory").value.trim() || null,
     billing_cycle: $("sCycle").value,
-    next_renewal: $("sRenewal").value || null,
     account_id: $("sAccount").value || null,
     is_active: $("sActive").checked,
     is_essential: $("sEssential").checked,
     notes: $("sNotes").value.trim() || null,
     pays_liability_id: $("sPaysDebt").value || null,
   };
+  if (dateWasChanged(editingSub, $("sRenewal").value, subFormOpenedDate)) {
+    row.next_renewal = $("sRenewal").value || null;
+  }
   if (row.pays_liability_id) {
     const payer = accounts.find((a) => a.id === row.account_id);
     if (!payer || !payer.linked_asset_id) {
@@ -11678,14 +11722,32 @@ $("markPaidBtn").onclick = async () => {
   if (!account) { flagField("sAccount"); return toast("Linked account not found, pick one, save, then mark as paid."); }
   const amount = Number(sub.amount);
   const paymentType = account.type;
+  // This cycle is TAKEN before anything is logged, through the same claim the
+  // catch-up loop uses, so a charge the loop already wrote down (on another
+  // device, or in this tab while the form sat open) cannot be written down a
+  // second time here. A bill with no date, or on a cycle with no set gap, has
+  // nothing to claim and nothing the loop would ever log on its own, so it
+  // just logs.
+  const nextRenewal = sub.next_renewal ? advanceRenewal(sub.next_renewal, sub.billing_cycle) : null;
+  const claims = !!nextRenewal && nextRenewal !== sub.next_renewal;
+  const claim = async () => {
+    if (!claims) return true;
+    if (await claimCycle("subscriptions", sub.id, "next_renewal", sub.next_renewal, nextRenewal)) return true;
+    closeSubForm();
+    await loadSubscriptions();
+    toast("This bill was updated somewhere else, so nothing was logged. Open it again to see where it is now.", "error");
+    return false;
+  };
+  const release = () => (claims ? releaseCycle("subscriptions", sub.id, "next_renewal", nextRenewal, sub.next_renewal) : null);
   if (sub.pays_liability_id) {
     $("markPaidBtn").disabled = true;
+    if (!(await claim())) { $("markPaidBtn").disabled = false; return; }
     const result = await payBillTowardDebt(sub, localDateISO());
     $("markPaidBtn").disabled = false;
-    if (result.blocked || result.error) { flagField("sAccount"); return toast(result.blocked || result.error, "error"); }
-    const nextRenewal = advanceRenewal(sub.next_renewal, sub.billing_cycle);
-    if (nextRenewal !== sub.next_renewal) {
-      await sb.from("subscriptions").update({ next_renewal: nextRenewal }).eq("id", sub.id);
+    if (result.blocked || result.error) {
+      await release();
+      flagField("sAccount");
+      return toast(result.blocked || result.error, "error");
     }
     closeSubForm();
     await loadAssets(); await loadDebts(); await loadSubscriptions();
@@ -11703,15 +11765,16 @@ $("markPaidBtn").onclick = async () => {
     source: "manual",
   };
   $("markPaidBtn").disabled = true;
+  if (!(await claim())) { $("markPaidBtn").disabled = false; return; }
   const { error } = await sb.from("expenses").insert(row);
-  if (error) { $("markPaidBtn").disabled = false; flagField("sAccount"); return toast(error.message); }
+  if (error) {
+    await release();
+    $("markPaidBtn").disabled = false;
+    flagField("sAccount");
+    return toast(error.message, "error");
+  }
   await applyAssetDelta(sub.account_id, paymentType, amount, -1);
   await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
-
-  const nextRenewal = advanceRenewal(sub.next_renewal, sub.billing_cycle);
-  if (nextRenewal !== sub.next_renewal) {
-    await sb.from("subscriptions").update({ next_renewal: nextRenewal }).eq("id", sub.id);
-  }
   $("markPaidBtn").disabled = false;
   closeSubForm();
   await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions();
@@ -11796,6 +11859,8 @@ function openIncomeForm(src) {
   $("incSemimonthlyDay1").value = src?.semimonthly_day_1 ?? "";
   $("incSemimonthlyDay2").value = src?.semimonthly_day_2 ?? "";
   $("incNextExpected").value = src?.next_expected ?? "";
+  incomeFormOpenedDate = $("incNextExpected").value;
+  incomeFormOpenedActive = src ? !!src.is_active : true;
   $("incAccount").value = src?.account_id ?? "";
   $("incActive").checked = src ? !!src.is_active : true;
   $("incNotes").value = src?.notes ?? "";
@@ -11806,6 +11871,10 @@ function openIncomeForm(src) {
   $("incomeForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 function closeIncomeForm() { $("incomeForm").classList.add("hidden"); editingIncome = null; }
+// Same reason as subFormOpenedDate: the catch-up loop moves next_expected on
+// by itself, and a form opened before that must not move it back.
+let incomeFormOpenedDate = "";
+let incomeFormOpenedActive = true;
 
 // Same live "still empty" red border as REQUIRED_QUICK_ADD_FIELDS and
 // REQUIRED_HOLDING_FIELDS - this form had neither, so nothing on it showed
@@ -11931,11 +12000,19 @@ $("saveIncomeBtn").onclick = async () => {
     source, amount, cadence,
     semimonthly_day_1: semimonthlyDay1,
     semimonthly_day_2: semimonthlyDay2,
-    next_expected: $("incNextExpected").value || null,
     account_id: $("incAccount").value || null,
-    is_active: $("incActive").checked,
     notes: $("incNotes").value.trim() || null,
   };
+  if (dateWasChanged(editingIncome, $("incNextExpected").value, incomeFormOpenedDate)) {
+    row.next_expected = $("incNextExpected").value || null;
+  }
+  // The same for Active, which the loop also writes: a one-off deposit is
+  // claimed by switching it OFF the moment it is added. A form opened before
+  // that and saved untouched would switch it back on, and the next load would
+  // add the same money again.
+  if (!editingIncome || $("incActive").checked !== incomeFormOpenedActive) {
+    row.is_active = $("incActive").checked;
+  }
   $("saveIncomeBtn").disabled = true;
   const q = editingIncome
     ? sb.from("income").update(row).eq("id", editingIncome.id)
@@ -12024,6 +12101,7 @@ $("termsClose").onclick = () => closeModal("termsModal");
 // six separate trips into six account panels.
 let setupReady = false;   // true once init() has loaded everything the strip reads
 let setupItemsShown = []; // what is drawn, so a click can find its action by index
+let setupStripSignature = null; // what the drawn rows say, so an identical redraw is skipped
 let checkinRowsShown = [];
 
 // Every balance a person types in by hand, which is exactly the set that
@@ -12177,6 +12255,13 @@ function renderSetupStrip() {
   setupItemsShown = items;
   strip.classList.toggle("hidden", !items.length);
   $("navLogTodo").classList.toggle("hidden", !items.length);
+  // Six loaders and the five-minute price tick all call this. Rebuilding
+  // identical rows replaced the button someone had tabbed to and dropped
+  // their focus, so the list is only rewritten when what it says changed.
+  // setupItemsShown is still refreshed above, so a press runs today's action.
+  const signature = items.map((it) => `${it.key}|${it.title}|${it.detail}|${it.action}`).join("\n");
+  if (signature === setupStripSignature) return;
+  setupStripSignature = signature;
   $("setupStripList").innerHTML = items.map((it, i) => `
     <li class="setup-item">
       <div class="setup-text"><strong>${esc(it.title)}</strong><span>${esc(it.detail)}</span></div>
@@ -12264,6 +12349,15 @@ $("checkinSave").onclick = async () => {
   const changes = [];
   for (const row of checkinRowsShown) {
     const input = $(`checkin-${row.id}`);
+    // A number box that holds text it cannot read reports its value as "",
+    // which is indistinguishable from a box left blank on purpose. Safari
+    // lets "2,350" or "$2350" be typed into one, so a real correction was
+    // skipped as "that one is right" and the day stamped as checked anyway.
+    if (input && input.validity && input.validity.badInput) {
+      const msg = "Type the figure as a plain number, like 2350.50, with no commas or $ sign.";
+      flagField(input.id, msg);
+      return toast(`Could not read the figure for ${row.name}`, "error");
+    }
     const raw = input ? input.value.trim() : "";
     if (!raw) continue;
     const value = parseFloat(raw);
@@ -12551,6 +12645,11 @@ function endTour(markSeen = true) {
   tourSteps = [];
   tourIndex = -1;
   $("tour").classList.add("hidden");
+  for (const bar of tourTabsBefore) {
+    const now = $(bar.id)?.querySelector("[data-subtab].active")?.dataset.subtab || null;
+    if (bar.active && now !== bar.active) setSubTab(bar.id, bar.store, bar.active);
+  }
+  tourTabsBefore = [];
 }
 
 function renderTourStep() {
@@ -12665,9 +12764,19 @@ function startTour(view, force = false) {
   tourView = view;
   tourSteps = steps;
   tourIndex = 0;
+  // Which tab each tab bar was on, so the tour can put them back. Steps
+  // behind a tab switch to it, and setSubTab() remembers that choice, so the
+  // Investments tour used to leave a brand-new account on an empty My
+  // portfolio tab and reopen it there next time, when the market is the
+  // reason that page is where a new account lands.
+  tourTabsBefore = [...document.querySelectorAll("[data-subtab-store]")].map((bar) => ({
+    id: bar.id, store: bar.dataset.subtabStore,
+    active: bar.querySelector("[data-subtab].active")?.dataset.subtab || null,
+  }));
   $("tour").classList.remove("hidden");
   renderTourStep();
 }
+let tourTabsBefore = [];
 
 // A short timeout, deliberately NOT requestAnimationFrame. rAF does not fire
 // at all while a tab is hidden, so a first load in a background tab (or any

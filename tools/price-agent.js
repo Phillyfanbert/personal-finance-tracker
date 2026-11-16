@@ -1471,13 +1471,21 @@ async function loadIndustries() {
 // Returns { summary, writer } or { reason }. `writer` is who actually wrote
 // it, so generated_by can stay the honest record it is meant to be.
 async function findRecapSummary(tradeDate, movers, breadth, indexMoves, companyNames, newsPool = [], contextHeadlines = [], extra = {}) {
-  const prompt = buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool, contextHeadlines, extra);
-  const result = await writeWithFallback(prompt, acceptSummary(prompt), "Recap summary");
-  if (result.value == null) {
-    console.warn(`No usable recap summary this run (${result.reason}) - keeping the zero-LLM recap.`);
-    return { reason: result.reason };
+  // The outer guard the header promises: whatever goes wrong in here, the
+  // zero-LLM recap is still written. Building the prompt reads a lot of
+  // stored data, and none of it is allowed to cost the day its recap.
+  try {
+    const prompt = buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, companyNames, newsPool, contextHeadlines, extra);
+    const result = await writeWithFallback(prompt, acceptSummary(prompt), "Recap summary");
+    if (result.value == null) {
+      console.warn(`No usable recap summary this run (${result.reason}) - keeping the zero-LLM recap.`);
+      return { reason: result.reason };
+    }
+    return { summary: result.value, writer: result.writer };
+  } catch (err) {
+    console.warn(`Recap summary failed (non-fatal, keeping the zero-LLM recap): ${err.message}`);
+    return { reason: "error" };
   }
-  return { summary: result.value, writer: result.writer };
 }
 
 // The first stored headline that actually names the symbol or its company
@@ -1684,13 +1692,19 @@ function buildMoverSummaryPrompt(tradeDate, movers) {
 // Returns { summary, writer } or null. An object rather than a bare string so
 // the row can be stamped with who really wrote it.
 async function findMoverSummary(tradeDate, movers) {
-  const prompt = buildMoverSummaryPrompt(tradeDate, movers);
-  const result = await writeWithFallback(prompt, acceptSummary(prompt), "Mover summary");
-  if (result.value == null) {
-    console.warn(`No usable mover summary this run (${result.reason}) - keeping the numbers and headlines.`);
+  // Same outer guard as findRecapSummary: the movers row is written either way.
+  try {
+    const prompt = buildMoverSummaryPrompt(tradeDate, movers);
+    const result = await writeWithFallback(prompt, acceptSummary(prompt), "Mover summary");
+    if (result.value == null) {
+      console.warn(`No usable mover summary this run (${result.reason}) - keeping the numbers and headlines.`);
+      return null;
+    }
+    return { summary: result.value, writer: result.writer };
+  } catch (err) {
+    console.warn(`Mover summary failed (non-fatal, keeping the numbers): ${err.message}`);
     return null;
   }
-  return { summary: result.value, writer: result.writer };
 }
 
 async function buildMarketMovers(tradeDate) {
@@ -2293,7 +2307,17 @@ async function writeWithFallback(prompt, accept, what) {
       continue;
     }
     produced = true;
-    const result = accept(text) || { reason: "unusable" };
+    // The caller's own checks run here, and a throw from them must not escape:
+    // every caller is best-effort by contract, and an exception at this point
+    // would skip the row the recap or digest was about to write. It counts as
+    // this writer's answer being unusable, and the next writer is asked.
+    let result;
+    try {
+      result = accept(text) || { reason: "unusable" };
+    } catch (err) {
+      console.warn(`  ${what}: checking ${writer.name}'s answer failed - ${String(err.message || err).split("\n")[0].slice(0, 160)}`);
+      result = { reason: "check_error" };
+    }
     if (result.value != null) {
       if (writer.name === "gemma") outcomes.gemmaWrote++;
       if (reasons.length) console.log(`  ${what}: written by ${writer.name} after ${reasons.join(", ")}.`);
@@ -2554,7 +2578,12 @@ async function findExplanation(symbol, headlines, companyName) {
   queryAttempts++;
   const prompt = buildExplanationPrompt(symbol, relevant.slice(0, MAX_EXPLANATION_HEADLINES), companyName);
   const result = await writeWithFallback(prompt, (text) => {
-    const extracted = validateExplanation(parseJsonLoose(text));
+    const parsed = parseJsonLoose(text);
+    // An answer that cannot be read, or that never filled in the field, has
+    // not said anything yet, so the next writer is asked. That is different
+    // from the model reading the headlines and reporting there is no reason.
+    if (!parsed || typeof parsed !== "object" || !("explanation" in parsed)) return { reason: "invalid_json" };
+    const extracted = validateExplanation(parsed);
     // final: a model saying the headlines hold no reason has ANSWERED. Asking
     // a second one is how a reason nobody reported gets written down.
     if (!extracted) return { reason: "empty", final: true };

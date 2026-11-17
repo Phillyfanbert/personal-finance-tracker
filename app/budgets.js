@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { localDateISO } from "./dates.js";
+import { advanceRenewal } from "./subscriptions.js";
 const r2 = (n) => Math.round(n * 100) / 100;
 
 // A category counts as "approaching" its budget at 90% spent, not just
@@ -232,6 +233,11 @@ const AUTO_LOG_CYCLES = new Set(["monthly", "quarterly", "semiannual", "annual"]
  * merely due - that is why the boundary below is strictly "> today", not
  * "today or later".
  *
+ * That guarantee only holds for a bill the loop CAN log. One with no account
+ * is a reminder whose date never moves, so its stored date says nothing
+ * about when it is next charged; `nextCharge` below steps it forward to the
+ * first date after today instead of reading it as it stands.
+ *
  * **Overspend counts against this total, and is reported separately so it
  * can be named on screen.** An earlier version floored each category at $0
  * on the reasoning that an overspend has already left the real account, so
@@ -271,13 +277,30 @@ export function safeToSpend(statuses, subscriptions, fundsMonthly = 0, today = n
   // Last real day of the current month, whatever its length - not a fixed 30.
   const monthEndStr = localDateISO(new Date(today.getFullYear(), today.getMonth() + 1, 0));
 
+  // When a bill is next really charged. For one the app logs on its own that
+  // is simply its date, which the catch-up loop has already moved past today.
+  // A bill with no account is only a reminder and is never logged, so its
+  // date stays wherever it was typed: one entered as due on 28 August is
+  // still charged on 28 November, and reading the stored date alone left
+  // that out and overstated what was safe to spend. Stepped with the real
+  // date function, so it lands on the day the loop itself would.
+  const nextCharge = (s) => {
+    let date = s.next_renewal;
+    for (let i = 0; date <= todayStr && i < 600; i++) {
+      const next = advanceRenewal(date, s.billing_cycle);
+      if (!next || next === date) return null;
+      date = next;
+    }
+    return date > todayStr ? date : null;
+  };
+
   const upcoming = subscriptions
     .filter((s) => s.is_active && s.next_renewal && AUTO_LOG_CYCLES.has(s.billing_cycle))
     // A bill that pays down a debt is a payment, not spending in any budgeted
     // category, so netting it here would shrink the room by money that no
     // budget was ever going to cover.
     .filter((s) => !s.pays_liability_id)
-    .filter((s) => s.next_renewal > todayStr && s.next_renewal <= monthEndStr)
+    .filter((s) => { const due = nextCharge(s); return due != null && due <= monthEndStr; })
     .reduce((sum, s) => sum + Number(s.amount || 0), 0);
 
   const funds = r2(Math.max(0, Number(fundsMonthly) || 0));

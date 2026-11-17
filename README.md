@@ -32,7 +32,9 @@ app that merchant for next time.
 **Track what you own and owe.** Around 24 kinds of account, from checking and
 savings through credit cards, mortgages, 401(k)s and HSAs. Net worth is assets
 minus tracked debts, and every balance changes only through a real, dated,
-undoable entry.
+undoable entry. If you would rather correct balances once a month than log
+every purchase, a check-in lists every balance you keep by hand on one sheet,
+and a short list on the first page says what is set up but cannot run yet.
 
 **Plan ahead.** Per-category budgets that warn before you go over rather than
 after, tagged as needs, wants or savings so you can see the shape of the plan

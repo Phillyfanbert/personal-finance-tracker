@@ -4,7 +4,7 @@
 // richer account management, and monthly charts.
 // RLS scopes every query to the signed-in user.
 // ============================================================================
-import { categorize, quickParse, CATEGORIES } from "./categorize.js";
+import { categorize, quickParse, pickMerchant, CATEGORIES } from "./categorize.js";
 import {
   monthKey, monthLabel, lastMonths, sumBy, incomeVsExpense, averageMonth,
   renderBreakdownBar, renderTrendBar, renderLineChart,
@@ -37,7 +37,7 @@ import { cardInterestEligible, cardInterestCharges, seedCardMarker } from "./car
 import { forecastCashFlow } from "./cashflow.js";
 import { findDeals, studentUpsell, eligibilityUpsells, matchService, bestFindingPerSubscription } from "./discounts.js";
 import { parseWithGemma, askGemma, warmUpGemma, embedText, QaAdviceRejectedError, plainDashes, buildPortfolioRecapPrompt, knownRecapFigures, generatePortfolioRecap } from "./gemma.js";
-import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures, isAboutOwnMoney, CONTEXT_WINDOW_MONTHS } from "./wiki.js";
+import { deriveWikiFacts, answerQuestion, buildVerifiedContext, verifyAnswerFigures, isAboutOwnMoney, resolveRange, resolveMonths, CONTEXT_WINDOW_MONTHS } from "./wiki.js";
 import { computeNetWorth, netWorthCaveats } from "./networth.js";
 import { BANK_NAMES } from "./bankNames.js";
 import { TOUR_STEPS, visibleSteps, clampStep } from "./tour.js";
@@ -755,7 +755,7 @@ function renderAuth(session) {
     // Each of those used to run the WHOLE load again: every table, every
     // catch-up loop, every snapshot, under whatever form the person had open.
     // A full load now happens once per person signed in. Coming back to the
-    // app is handled on purpose, by refreshOnReturn() below, rather than by
+    // app is handled on purpose, by refreshIfDue() below, rather than by
     // whatever the auth library happens to announce.
     if (session.user.id === loadedForUser) return;
     loadedForUser = session.user.id;
@@ -853,7 +853,7 @@ function showView(v) {
 // set this off.
 //
 // A later load, once this one has finished, is still allowed and is wanted:
-// refreshOnReturn() runs one after a real absence or a new day, which is how
+// refreshIfDue() runs one after a real absence or a new day, which is how
 // an installed icon picks up what another device changed and logs a bill that
 // came due overnight. Those run one after another, each reading what the last
 // one wrote. claimCycle() below covers the case this cannot, two devices at
@@ -949,8 +949,12 @@ async function initInner() {
 // on first load rather than manually added (accounts_one_cash_per_user in
 // 09_cash_account.sql is the DB-level backstop against duplicates).
 async function ensureCashAccount() {
-  const { data } = await sb.from("accounts").select("id").eq("type", "cash").limit(1);
-  if (data && data.length) return;
+  const { data, error } = await sb.from("accounts").select("id").eq("type", "cash").limit(1);
+  // A failed lookup is not "there is no Cash account". Treating it as one
+  // went on to insert a new Cash asset; the account insert after it is then
+  // refused by the one-per-user index, leaving a stray $0 "Cash" under Things
+  // you have. A reload on a flaky connection is exactly when this ran.
+  if (error || (data && data.length)) return;
   const { data: asset, error: assetErr } = await sb.from("assets")
     .insert({ name: "Cash", type: "cash", value: 0 }).select().single();
   if (assetErr) return; // best-effort - don't block app load on this
@@ -1570,7 +1574,13 @@ async function refreshLivePrices() {
 // again on a later auth-state change.
 function startLiveRefresh() {
   if (liveRefreshTimer) clearInterval(liveRefreshTimer);
-  liveRefreshTimer = setInterval(refreshLivePrices, LIVE_REFRESH_MS);
+  // The same tick also notices a new calendar day on a tab nobody hid. The
+  // hourly token refresh used to cover that by accident: without it a tab
+  // left in front past midnight kept yesterday in the Quick Add date and did
+  // not log a bill that came due today until it was hidden and shown again.
+  liveRefreshTimer = setInterval(async () => {
+    if (!(await refreshIfDue(false))) refreshLivePrices();
+  }, LIVE_REFRESH_MS);
 }
 
 // A background tab has its timers throttled hard, so returning to the app
@@ -1583,17 +1593,43 @@ function startLiveRefresh() {
 // a new calendar day, not on every glance: this used to happen by accident on
 // every return, through the auth library's own announcements.
 const REFRESH_AFTER_AWAY_MS = 30 * 60 * 1000;
-function refreshOnReturn() {
-  if (!loadedForUser || initRunning) return false;
-  if (localDateISO() === lastFullLoadDay && Date.now() - lastFullLoadAt < REFRESH_AFTER_AWAY_MS) return false;
-  init();
-  return true;
+let refreshChecking = false;
+// Runs the full load again when it is due, and resolves true if it did.
+// Due means a new calendar day (dates roll over and bills come due), or,
+// when `returning`, half an hour since the last one. The timer above passes
+// false, so a tab in use is not reloaded every half hour under a form.
+async function refreshIfDue(returning) {
+  if (!loadedForUser || initRunning || refreshChecking) return false;
+  const newDay = localDateISO() !== lastFullLoadDay;
+  if (!newDay && !(returning && Date.now() - lastFullLoadAt >= REFRESH_AFTER_AWAY_MS)) return false;
+  refreshChecking = true;
+  try {
+    // One small read first. A phone often comes to the front before its
+    // connection does, and several loaders replace their list with nothing
+    // when a request fails, so a load started then blanked the page and was
+    // counted as done for the next half hour. With no connection, what is on
+    // screen stays and this is tried again on the next return, the next tick,
+    // or when the browser reports being back online.
+    const { error } = await sb.from("accounts").select("id").limit(1);
+    if (error) return false;
+    await init();
+    // The page being looked at has loads of its own (Reports, the Plan
+    // forecast, the Investments renders) that init() does not run.
+    goToView(document.body.dataset.view || lastView());
+    return true;
+  } catch (err) {
+    console.warn("refresh on return failed", err);
+    return false;
+  } finally {
+    refreshChecking = false;
+  }
 }
-document.addEventListener("visibilitychange", () => {
+document.addEventListener("visibilitychange", async () => {
   if (document.hidden) return;
   // init() refreshes prices at its end, so only one of the two is needed.
-  if (!refreshOnReturn()) refreshLivePrices();
+  if (!(await refreshIfDue(true))) refreshLivePrices();
 });
+window.addEventListener("online", () => { refreshIfDue(true); });
 
 // A blank "None" first option, not just the real categories - so a select
 // that's never been explicitly set (fCategory on a fresh Quick Add) starts
@@ -3242,8 +3278,22 @@ $("saveAssetBtn").onclick = async () => {
   const { error } = await q;
   if (error) { flagField("assetName"); return toast(error.message); }
   const wasEditing = !!editingAsset;
+  // A value changed by hand is recorded like any other correction, so it is
+  // dated, shows in Recent History and can be undone. This form used to
+  // change what a house or a car was worth with no trace at all. Skipped
+  // where the typed value is not what counts: a priced investment (the price
+  // sync owns it) and a car the app works out the value of.
+  if (wasEditing) {
+    const delta = Math.round((value - Number(editingAsset.value)) * 100) / 100;
+    const worksItOut = isVehicle && estimateValue(purchase_price, purchase_date, depreciation_rate) !== null;
+    if (delta && !worksItOut && !investmentLiveValues().has(editingAsset.id)) {
+      const acctId = accounts.find((a) => a.linked_asset_id === editingAsset.id)?.id ?? null;
+      await logActivity("asset_adjust", `Set ${name} value to ${fmt(value)}`, delta, undefined,
+        acctId, null, null, acctId ? null : editingAsset.id);
+    }
+  }
   closeAssetForm();
-  await loadAssets(); toast(wasEditing ? "Asset updated" : "Added");
+  await loadAssets(); renderRecentTransactions(); toast(wasEditing ? "Asset updated" : "Added");
 };
 
 // CD is the only asset type with a maturity date today - reuses
@@ -4054,12 +4104,13 @@ function assetBalanceRefusal(asset, newValue) {
 
 // Writes the new balance. Returns { error } or { changed }.
 //
-// An account's balance leaves an asset_adjust row carrying the SIGNED
-// difference, which is what makes the correction undoable from Recent
-// History. Something with no account (a house, a car) gets no row, exactly as
-// editing its value in its own form never has: undoActivity() finds the asset
-// through the account, so a row with no account could be seen and not undone,
-// which is worse than not showing one.
+// Every change leaves an asset_adjust row carrying the SIGNED difference,
+// which is what makes the correction show in Recent History and be undoable
+// there. An account's row is tied to the account; something with no account
+// (a house, a car) is tied to the asset itself through asset_id, the column
+// contributions already use, and undoActivity() resolves it either way. That
+// second half is what makes "every balance changes only through a real,
+// dated, undoable entry" true for the things with no account as well.
 //
 // A figure equal to the one already held writes nothing at all. A zero-amount
 // history row is noise, and "I checked and it was right" is what
@@ -4078,7 +4129,8 @@ async function setAssetBalance(asset, newValue, accountId) {
   // started.
   asset.value = rounded;
   const acctId = accountId ?? accounts.find((a) => a.linked_asset_id === asset.id)?.id ?? null;
-  if (acctId) await logActivity("asset_adjust", `Set ${asset.name} balance to ${fmt(rounded)}`, delta, undefined, acctId);
+  await logActivity("asset_adjust", `Set ${asset.name} ${acctId ? "balance" : "value"} to ${fmt(rounded)}`,
+    delta, undefined, acctId, null, null, acctId ? null : asset.id);
   return { changed: true };
 }
 
@@ -4915,7 +4967,7 @@ $("saveBtn").onclick = async () => {
   const fullText = $("quick").value.trim();
   const row = {
     amount, description: fullText || desc || null,
-    merchant: desc.split(/\s+/)[0] || null,
+    merchant: pickMerchant(desc, userRules),
     category,
     payment_type: paymentType,
     account_id: accountId,
@@ -5551,8 +5603,12 @@ function netAmountByAccount(rows) {
 async function undoActivity(row) {
   if (row.kind === "asset_adjust") {
     const account = accounts.find((a) => a.id === row.account_id);
-    const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
-    if (!asset) return toast("Can't undo, the linked account no longer exists.");
+    // Through the account when there is one; otherwise straight to the asset
+    // the row names, which is how a correction to something with no account
+    // (a house) is recorded.
+    const asset = account ? assets.find((a) => a.id === account.linked_asset_id)
+      : row.asset_id ? assets.find((a) => a.id === row.asset_id) : null;
+    if (!asset) return toast("Can't undo, what this changed is no longer here.");
     const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
     if (newValue < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
     const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
@@ -6095,7 +6151,7 @@ $("editSave").onclick = async () => {
   const prevAccountId = editing.account_id, prevPaymentType = editing.payment_type, prevAmount = Number(editing.amount);
 
   const patch = {
-    amount, description: desc || null, merchant: desc.split(/\s+/)[0] || editing.merchant,
+    amount, description: desc || null, merchant: pickMerchant(desc, userRules) || editing.merchant,
     category: newCategory, payment_type: paymentType,
     account_id: accountId, occurred_at: occurredAt,
     note: $("eNote").value.trim() || null,
@@ -7641,7 +7697,10 @@ function healthLineText(l) {
     case "today":
       return l.change != null
         ? `Today ${fmt(l.change)} (${signedPct(l.changePct)}), portfolio at ${fmt(l.value)}`
-        : `Portfolio at ${fmt(l.value)}, no live price data yet for today's change`;
+        // Not "no live price data": the pricing line two rows down can say
+        // every holding HAS a live price in the same breath. What is missing
+        // is a second day to measure a change from.
+        : `Portfolio at ${fmt(l.value)}, today's change needs a second day of prices`;
     case "gainLoss":
       return l.gainLoss != null
         ? `${fmt(l.gainLoss)} (${signedPct(l.gainLossPct)}) since cost basis`
@@ -7658,7 +7717,7 @@ function healthLineText(l) {
         : "Contributions within limits";
     case "pricing":
       return l.priced === l.total
-        ? `Live pricing available for all ${l.total} holding${l.total === 1 ? "" : "s"}`
+        ? (l.total === 1 ? "Live pricing available for your holding" : `Live pricing available for all ${l.total} holdings`)
         : `Live pricing available for ${l.priced} of ${l.total} holding${l.total === 1 ? "" : "s"}`;
     default:
       return "";
@@ -7961,14 +8020,19 @@ wireInfoIcons();
 // The spacer is reset to 0 at the start of every switch rather than being
 // removed on scroll - clearing it mid-scroll would cause the exact jump this
 // exists to prevent.
-let investScrollSpacer = null;
+const scrollSpacers = new Map(); // one per page, made on first use
 function preserveScrollAcross(anchor, apply) {
-  const view = $("investView");
+  // The spacer belongs to whichever page the tab bar is on. It was always put
+  // on Investments, so on Log (which has sub-tabs too) there was nothing to
+  // pad and switching from a long tab to a short one still jumped.
+  const view = anchor && anchor.closest("#logView, #planView, #reportsView, #investView");
   if (!anchor || !view || anchor.offsetParent === null) { apply(); return; }
+  let investScrollSpacer = scrollSpacers.get(view);
   if (!investScrollSpacer) {
     investScrollSpacer = document.createElement("div");
     investScrollSpacer.setAttribute("aria-hidden", "true");
     view.appendChild(investScrollSpacer);
+    scrollSpacers.set(view, investScrollSpacer);
   }
   // Measure BEFORE clearing the previous pad. Clearing it shrinks the
   // document, which can clamp scrollY on the spot - so reading the anchor
@@ -10158,6 +10222,9 @@ function renderStandouts() {
 // ---- The answer cache (qa_cache, migration 63) -----------------------------
 // Exact repeats within a short window, by explicit choice over invalidating
 // on data change. Expected to hit rarely - mostly on a retry after a failure.
+// For WRITTEN answers only: a counted one is never stored or replayed, since
+// counting again is instant and a stored total goes stale the moment a
+// record changes.
 const QA_CACHE_TTL_MS = 60 * 60 * 1000;
 const normalizeQuestion = (q) => String(q || "").trim().toLowerCase();
 
@@ -10180,6 +10247,37 @@ async function saveQaCache(question, answer, answerKind) {
 }
 
 // ---- INTERACTIVE Q&A (Gemma, optional/best-effort like Phase 3) -----------
+
+// The rows a question is counted from. What is in memory reaches back
+// HISTORY_CACHE_MONTHS and no further, so a question about an older span
+// ("last year", "March 2024") is loaded from the database first. Counting it
+// from memory added up whichever part of the span happened to be loaded and
+// called the result exact: asked in November, "how much did I spend last
+// year" came back as December's total.
+//
+// `from` is the earliest date the returned rows are complete from, which the
+// answer path checks its span against. A failed load throws, so a part
+// period is never handed over as though it were whole.
+async function qaRowsFor(question, today) {
+  const cacheFrom = lastMonths(HISTORY_CACHE_MONTHS)[0] + "-01";
+  const income = accountActivity.filter((a) => a.kind === "income");
+  const range = resolveRange(question, today);
+  const asked = [range && range.from, ...resolveMonths(question, today).map((m) => `${m}-01`)].filter(Boolean).sort()[0];
+  if (!asked || asked >= cacheFrom) return { expenses: allExpenses, income, from: cacheFrom };
+  const [olderExpenses, olderIncome] = await Promise.all([
+    // `id` breaks every tie, which is what makes paging on a date sound.
+    fetchAllPages(() => sb.from("expenses").select("*")
+      .gte("occurred_at", asked).lt("occurred_at", cacheFrom)
+      .order("occurred_at", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })),
+    fetchAllPages(() => sb.from("account_activity").select("*").eq("kind", "income")
+      .gte("occurred_at", asked).lt("occurred_at", cacheFrom)
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: false })),
+  ]);
+  return { expenses: [...allExpenses, ...olderExpenses], income: [...income, ...olderIncome], from: asked };
+}
 
 // RAG retrieval, additive to buildVerifiedContext's recent-window data (see
 // supabase/45_expense_embeddings.sql's header for the full rationale).
@@ -10236,14 +10334,6 @@ $("qaAskBtn").onclick = async () => {
   try {
     if (!allExpenses.length) await loadExpenses();
 
-    // Tier 0: an identical question asked recently. Keeps its original
-    // label, so a reused answer never loses the note saying how it was made.
-    const cached = await lookupQaCache(question);
-    if (cached) {
-      showQaAnswer(cached.answer, cached.answer_kind, "Answered a moment ago, reused.");
-      return;
-    }
-
     // Tier 1: computed outright. Exact by construction and instant, because
     // no model runs at all. Returns null rather than guessing at a question
     // whose shape it does not recognise.
@@ -10251,20 +10341,41 @@ $("qaAskBtn").onclick = async () => {
     // behind is not exact, and this is a few passes over data already in
     // memory. The same facts feed tier 2's context below.
     const liveFacts = deriveWikiFacts({ expenses: allExpenses, subscriptions, profile, today: new Date() });
-    const incomeRows = accountActivity.filter((a) => a.kind === "income");
+    let rows;
+    try {
+      rows = await qaRowsFor(question, new Date());
+    } catch (err) {
+      // Not a model problem, so it must not reach the catch below and be
+      // reported as one.
+      $("qaStatus").textContent = "Could not load records that far back, so there is no answer to give. Try again in a moment.";
+      return;
+    }
     // The same figures the Net worth card shows, passed in rather than
     // recomputed: this module cannot see archived accounts or parent-rolled
     // holdings, so a second calculation could only disagree with the card.
     const nw = computeNetWorth(topLevelAssets().map((a) => ({ ...a, value: effectiveAssetValue(a) })), countableDebts());
     const computed = answerQuestion(question, {
-      expenses: allExpenses, subscriptions, income: incomeRows, facts: liveFacts,
+      expenses: rows.expenses, subscriptions, income: rows.income, facts: liveFacts,
       balances: { assets: nw.assetsTotal, liabilities: nw.liabilitiesTotal, net: nw.netWorth },
       typical: typicalMonth(),
+      history: { from: rows.from, months: HISTORY_CACHE_MONTHS },
       today: new Date(),
     });
     if (computed) {
+      // Never stored. It costs nothing to count again, and a stored one was
+      // replayed for an hour as "exact" after the records under it changed:
+      // log an expense, ask the same thing, get the old total.
       showQaAnswer(computed.answer, "computed");
-      await saveQaCache(question, computed.answer, "computed");
+      return;
+    }
+
+    // An identical question asked recently, for WRITTEN answers only, which
+    // take about a minute to produce. Sits below tier 1 so a counted answer
+    // is always counted now. Rows of the "computed" kind were stored by an
+    // earlier version and are ignored until they expire.
+    const cached = await lookupQaCache(question);
+    if (cached && cached.answer_kind !== "computed") {
+      showQaAnswer(cached.answer, cached.answer_kind, "Answered a moment ago, reused.");
       return;
     }
 
@@ -11630,15 +11741,21 @@ function updateSubAutoLogNote() {
       : account?.linked_liability_id
         ? `and add ${them} to what you owe on ${acctName(accountId)}`
         : `and take ${them} out of ${acctName(accountId)}`;
-    text = catchUpSentence(preview, {
-      noun: debt ? "payment" : "charge",
-      amount: parseFloat($("sAmount").value),
-      effect,
-    });
-    // A debt already cleared takes nothing: payBillTowardDebt() pays the
-    // lesser of the bill and what is owed, so the dates simply move on.
-    if (debt && preview.count && !(Number(debt.balance) > 0)) {
+    const amount = parseFloat($("sAmount").value);
+    text = catchUpSentence(preview, { noun: debt ? "payment" : "charge", amount, effect });
+    // payBillTowardDebt() pays the LESSER of the bill and what is owed, then
+    // nothing, so a debt smaller than the payments being caught up takes less
+    // than the sentence above would promise, and a cleared one takes none.
+    const owed = debt ? Number(debt.balance) : null;
+    if (debt && preview.count && !(owed > 0)) {
       text = `Nothing is owed on ${debt.name} right now, so when this comes due no money moves, the date just moves on.`;
+    } else if (debt && preview.count && amount > 0 && owed < preview.count * amount) {
+      text = `The next time the app opens it will pay the ${fmt(owed)} still owed on ${debt.name} from ${acctName(accountId)}, and nothing after that.`;
+      if (preview.count > 1) {
+        warn = true;
+        nextDate = preview.next;
+        text += " If your balance already includes it, use the next date instead.";
+      }
     } else if (preview.count > 1) {
       // Only a run of more than one is the hazard. A single charge dated
       // today or yesterday is the feature doing its job.
@@ -12646,8 +12763,11 @@ function endTour(markSeen = true) {
   tourIndex = -1;
   $("tour").classList.add("hidden");
   for (const bar of tourTabsBefore) {
-    const now = $(bar.id)?.querySelector("[data-subtab].active")?.dataset.subtab || null;
-    if (bar.active && now !== bar.active) setSubTab(bar.id, bar.store, bar.active);
+    const el = $(bar.id);
+    const now = el?.querySelector("[data-subtab].active")?.dataset.subtab || null;
+    // Through the same scroll hold a tab click uses: going back to a shorter
+    // tab shortens the page, and the browser would otherwise jump.
+    if (bar.active && now !== bar.active) preserveScrollAcross(el, () => setSubTab(bar.id, bar.store, bar.active));
   }
   tourTabsBefore = [];
 }
@@ -13157,7 +13277,7 @@ $("exportLogBtn").onclick = () => exportPage(
   { page: "Log" });
 
 $("exportPlanBtn").onclick = () => exportPage(
-  "your budgets, payoff comparison and forecast",
+  "your budgets, saving goals and forecast",
   `plan-${today()}`,
   () => {
     const account = accounts.find((a) => a.id === $("forecastAccountSelect").value);
@@ -13195,7 +13315,15 @@ $("exportInvestBtn").onclick = async () => {
       // Mirrors renderInvestments' own calls, including the countable-vs-display
       // split that stops holdings being counted twice.
       const countable = countableInvestmentAssets();
-      const holdings = exportOrderedHoldings(investmentHoldings(allInvestmentAssets(), assetPriceFindings));
+      // Each row is told which account it sits in. A holding's own name is
+      // its ticker, so without this the file's Account column read "AAPL"
+      // beside a Symbol column that also read "AAPL", and never said where
+      // the position is held.
+      const holdings = exportOrderedHoldings(investmentHoldings(allInvestmentAssets(), assetPriceFindings))
+        .map((h) => {
+          const parent = h.asset?.parent_asset_id ? assets.find((a) => a.id === h.asset.parent_asset_id) : null;
+          return { ...h, accountName: (parent || h.asset || {}).name || "" };
+        });
       return investmentsSections({
         totals: portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable),
         holdings,

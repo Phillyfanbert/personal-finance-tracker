@@ -2306,7 +2306,6 @@ async function writeWithFallback(prompt, accept, what) {
       console.warn(`  ${what}: ${writer.name} failed (${why}) - ${String(err.message || err).split("\n")[0].slice(0, 160)}`);
       continue;
     }
-    produced = true;
     // The caller's own checks run here, and a throw from them must not escape:
     // every caller is best-effort by contract, and an exception at this point
     // would skip the row the recap or digest was about to write. It counts as
@@ -2316,8 +2315,13 @@ async function writeWithFallback(prompt, accept, what) {
       result = accept(text) || { reason: "unusable" };
     } catch (err) {
       console.warn(`  ${what}: checking ${writer.name}'s answer failed - ${String(err.message || err).split("\n")[0].slice(0, 160)}`);
-      result = { reason: "check_error" };
+      result = { reason: "check_error", unreadable: true };
     }
+    // `produced` means a writer gave an answer that could be READ. A reply
+    // nobody could parse is a failed call that happened to return text, and
+    // counting it as "answered, found nothing" made a run where every reply
+    // was broken look like a quiet news day.
+    if (!result.unreadable) produced = true;
     if (result.value != null) {
       if (writer.name === "gemma") outcomes.gemmaWrote++;
       if (reasons.length) console.log(`  ${what}: written by ${writer.name} after ${reasons.join(", ")}.`);
@@ -2582,7 +2586,7 @@ async function findExplanation(symbol, headlines, companyName) {
     // An answer that cannot be read, or that never filled in the field, has
     // not said anything yet, so the next writer is asked. That is different
     // from the model reading the headlines and reporting there is no reason.
-    if (!parsed || typeof parsed !== "object" || !("explanation" in parsed)) return { reason: "invalid_json" };
+    if (!parsed || typeof parsed !== "object" || !("explanation" in parsed)) return { reason: "invalid_json", unreadable: true };
     const extracted = validateExplanation(parsed);
     // final: a model saying the headlines hold no reason has ANSWERED. Asking
     // a second one is how a reason nobody reported gets written down.

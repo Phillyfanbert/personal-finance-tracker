@@ -99,7 +99,7 @@ export function logSections({ expenses = [], activity = [], subscriptions = [], 
 // row labelled with a value the split beneath it ignores would contradict it.
 const CLASS_LABELS = { need: "need", want: "want", savings: "savings" };
 
-/** Plan: the limits you set, the payoff comparison, the projected balance. */
+/** Plan: what is safe to spend, the limits you set, what you are saving up for, the projected balance. */
 export function planSections({ safeToSpend = null, budgets = [], split = null, funds = [], forecast = [], forecastAccount = "" }) {
   return ([
     // First, matching the page: Safe to spend is the Plan page's headline card
@@ -154,7 +154,7 @@ export function investmentsSections({ totals = null, holdings = [], snapshots = 
                       ["Gain or loss", money(totals.totalGainLoss)],
                       ["Gain or loss percent", totals.totalGainLossPct != null ? `${totals.totalGainLossPct}%` : ""]] : [] },
     { title: "Holdings", header: ["Account", "Symbol", "Shares", "Cost basis", "Latest price", "Current value", "Gain or loss"],
-      rows: holdings.map((h) => [h.asset?.name || "", h.symbol || "", h.quantity ?? "", money(h.costBasis), money(h.latestPrice), money(h.currentValue), money(h.gainLoss)]) },
+      rows: holdings.map((h) => [h.accountName ?? h.asset?.name ?? "", h.symbol || "", h.quantity ?? "", money(h.costBasis), money(h.latestPrice), money(h.currentValue), money(h.gainLoss)]) },
     // The one thing on this page a reader cannot reconstruct from the rest
     // of the file: a snapshot is only written on a day the app was opened,
     // so the series is not derivable from today's holdings. Cost basis

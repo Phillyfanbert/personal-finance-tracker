@@ -60,6 +60,23 @@ export const CONTEXT_WINDOW_MONTHS = 6;
 const CONTEXT_MAX_TRANSACTIONS = 150;
 
 const r2 = (n) => Math.round(n * 100) / 100;
+// The one money format for every sentence this module writes: "$315,693.56",
+// and "-$40.00" for a negative. These were written "$" + toFixed(2), which
+// printed a net worth as "$315693.56" beside a card showing "$315,693.56",
+// and a negative as "$-40.00". en-US on purpose rather than the browser's
+// locale: the app is US dollars only, and the same strings are handed to the
+// model as context, where a locale's "1.234,56" would read as a different
+// number.
+const money = (n) => {
+  const v = Number(n || 0);
+  return (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+// One place a merchant's name is compared. "Chipotle" and "chipotle" are the
+// same place: typed entries, imports and the model's own parse do not agree
+// on capitals, and treating them as two merchants made "how much have I spent
+// at Chipotle" ambiguous, so it was not answered at all.
+const merchantKey = (name) => String(name || "").trim().toLowerCase();
+const paidAt = (e, merchant) => merchantKey(e.merchant) === merchantKey(merchant);
 const num = (v) => Number(v || 0);
 const monthOf = (row) => (row.occurred_at || "").slice(0, 7);
 
@@ -158,8 +175,8 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
     const changePct = r2(((recent - earlier) / earlier) * 100);
     const figures = { total, average, months_counted: catMonths.size, recent_half: recent, earlier_half: earlier, change_pct: changePct };
     const body = changePct === 0
-      ? `${cat} runs about $${average.toFixed(2)} a month, level with where it was earlier in the year.`
-      : `${cat} runs about $${average.toFixed(2)} a month, ${changePct > 0 ? "up" : "down"} ${Math.abs(changePct).toFixed(0)}% on the first half of the last ${windowMonths} months.`;
+      ? `${cat} runs about ${money(average)} a month, level with where it was earlier in the year.`
+      : `${cat} runs about ${money(average)} a month, ${changePct > 0 ? "up" : "down"} ${Math.abs(changePct).toFixed(0)}% on the first half of the last ${windowMonths} months.`;
     facts.push({ key: `category:${cat}`, title: cat, body, figures, as_of: asOf });
   }
 
@@ -175,7 +192,7 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
       const notes = inWindow
         .filter((e) => monthOf(e) === ym && (e.note || "").trim())
         .map((e) => e.note.trim());
-      let body = `${monthName(ym)} came to $${total.toFixed(2)}, ${abovePct.toFixed(0)}% above your median month of $${med.toFixed(2)}.`;
+      let body = `${monthName(ym)} came to ${money(total)}, ${abovePct.toFixed(0)}% above your median month of ${money(med)}.`;
       if (notes.length) body += ` You explained it: ${notes.join("; ")}.`;
       facts.push({
         key: `month_outlier:${ym}`,
@@ -194,9 +211,12 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
   // checking the run is still current. This module only looks for a price
   // MOVE, which that detector does not report and no chart shows.
   const byMerchant = new Map();
+  const spelling = new Map(); // merchantKey -> the first spelling seen
   for (const e of inWindow) {
-    const name = (e.merchant || "").trim();
-    if (!name) continue;
+    const typed = (e.merchant || "").trim();
+    if (!typed) continue;
+    if (!spelling.has(merchantKey(typed))) spelling.set(merchantKey(typed), typed);
+    const name = spelling.get(merchantKey(typed));
     if (!byMerchant.has(name)) byMerchant.set(name, []);
     byMerchant.get(name).push(e);
   }
@@ -214,7 +234,7 @@ export function deriveWikiFacts({ expenses = [], subscriptions = [], profile = n
       facts.push({
         key: `price_change:${name}`,
         title: `${name} changed price`,
-        body: `${name} went from $${first.toFixed(2)} to $${last.toFixed(2)}, ${changePct > 0 ? "up" : "down"} ${Math.abs(changePct).toFixed(0)}%.`,
+        body: `${name} went from ${money(first)} to ${money(last)}, ${changePct > 0 ? "up" : "down"} ${Math.abs(changePct).toFixed(0)}%.`,
         figures: { from: first, to: last, change_pct: changePct },
         as_of: asOf,
       });
@@ -290,9 +310,15 @@ export function resolveCategory(question, expenses) {
 /** A merchant the user has actually paid, named in the question. */
 export function resolveMerchant(question, expenses) {
   const q = question.toLowerCase();
-  const names = [...new Set(expenses.map((e) => (e.merchant || "").trim()).filter((n) => n.length > 2))];
-  const hits = names.filter((n) => mentionsWholeWord(q, n));
-  return hits.length === 1 ? hits[0] : null;
+  // Grouped without regard to capitals, keeping the first spelling seen for
+  // the answer to use.
+  const names = new Map();
+  for (const e of expenses) {
+    const name = (e.merchant || "").trim();
+    if (name.length > 2 && !names.has(merchantKey(name))) names.set(merchantKey(name), name);
+  }
+  const hits = [...names.keys()].filter((key) => mentionsWholeWord(q, key));
+  return hits.length === 1 ? names.get(hits[0]) : null;
 }
 
 /** Every month a question names, in the order named. */
@@ -361,6 +387,17 @@ export function resolveRange(question, today = new Date()) {
   }
   const month = resolveMonth(q, today);
   if (month) return monthSpan(month);
+  // A year named outright ("in 2025"). Without this the year was ignored and
+  // the question was answered across everything on hand, so "how much did I
+  // spend on food in 2025" came back with this year's food as well. Only
+  // after a word that makes it a date: "purchases over 2000" is an amount.
+  const namedYear = q.match(/\b(?:in|during|for|of)\s+(20\d{2})\b/);
+  if (namedYear) {
+    const y = namedYear[1];
+    return y === thisMonth.slice(0, 4)
+      ? { from: `${y}-01-01`, to: `${thisMonth}-31`, label: `${y} so far` }
+      : { from: `${y}-01-01`, to: `${y}-12-31`, label: y };
+  }
   return null;
 }
 
@@ -372,8 +409,8 @@ export function resolveRange(question, today = new Date()) {
  *
  * @returns {{answer:string, figures:object}|null}
  */
-export function answerQuestion(question, { expenses = [], subscriptions = [], income = [], facts = [], balances = null, typical = null, today = new Date() } = {}) {
-  const direct = answerFromTransactions(question, { expenses, subscriptions, income, balances, typical, today });
+export function answerQuestion(question, { expenses = [], subscriptions = [], income = [], facts = [], balances = null, typical = null, history = null, today = new Date() } = {}) {
+  const direct = answerFromTransactions(question, { expenses, subscriptions, income, balances, typical, history, today });
   if (direct) return direct;
   // Facts are tried only after the direct paths, which are more specific.
   // This is what makes tier 1's coverage GROW as knowledge accumulates: a
@@ -383,7 +420,7 @@ export function answerQuestion(question, { expenses = [], subscriptions = [], in
   return answerFromFacts(question, facts);
 }
 
-function answerFromTransactions(question, { expenses = [], subscriptions = [], income = [], balances = null, typical = null, today = new Date() } = {}) {
+function answerFromTransactions(question, { expenses = [], subscriptions = [], income = [], balances = null, typical = null, history = null, today = new Date() } = {}) {
   const q = String(question || "").toLowerCase().trim();
   if (!q) return null;
 
@@ -391,13 +428,38 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     // "how much on petrol this year" names no verb at all, and is still
     // unambiguously a spend question once it has named something to scope by.
     || /\bhow much\b/.test(q) || /\bwhat did .* cost\b/.test(q);
+  // Money coming IN. Decided up here because two branches below need it, and
+  // both used to let an income question through to a spending answer.
+  // "paid in" is deliberately not a signal: "how much have I paid in rent" is
+  // spending, and it was being answered with a paycheck total. Being paid is
+  // "was paid", "got paid", "been paid". "make" counts only when it is not
+  // beside the things a person makes that are not money ("how many
+  // transactions did I make" was once answered with a paycheck figure).
+  const makesMoney = /\b(make|made|making)\b/.test(q) && !/\b(transactions?|purchases?|payments?|expenses?)\b/.test(q);
+  const asksIncome = /\b(earn|earned|earning|earnings|income|salary|wages|paycheck|payslip|take home|took home|came in|come in|coming in|bring in|brought in)\b/.test(q)
+    || /\b(?:was|were|am|got|get|getting|been|be)(?: i)? paid\b/.test(q)
+    || (makesMoney && /\b(how much|money)\b/.test(q));
   const range = resolveRange(q, today);
+  // `history.from` is the earliest date the rows handed in are complete
+  // from. A span that starts before it would be added up from whatever part
+  // of it happens to be here and then labelled exact, so it is declined.
+  // app.js loads the older rows first, which is why this rarely fires; it is
+  // here so that no caller can get a part-period total by forgetting to.
+  if (history && history.from) {
+    const earliest = [range && range.from, ...resolveMonths(q, today).map((m) => `${m}-01`)].filter(Boolean).sort()[0];
+    if (earliest && earliest < history.from) return null;
+  }
   const category = resolveCategory(q, expenses);
   const merchant = resolveMerchant(q, expenses);
   // Compares the stored YYYY-MM-DD directly, so a range can be a day, a week
   // or a year without a separate code path for each.
   const inRange = (row) => !range || ((row.occurred_at || "") >= range.from && (row.occurred_at || "") <= range.to);
-  const when = range ? ` in ${range.label}` : "";
+  // A question that names no period is answered across everything on hand,
+  // which is the last `history.months` months and not all time. Said in the
+  // answer, because a bare total reads as all time to anyone with a longer
+  // history than that.
+  const when = range ? ` in ${range.label}`
+    : history && history.months ? ` in the last ${history.months} months` : "";
   const monthTotal = (ym, cat) => r2(expenses
     .filter((e) => monthOf(e) === ym && (!cat || e.category === cat))
     .reduce((sum, e) => sum + num(e.amount), 0));
@@ -415,15 +477,24 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     // Income against spending is a comparison too, and contains "more than",
     // so it has to be caught here or the month-pair logic below declines a
     // question this can answer exactly.
-    if (income.length && /\b(earn|earning|income|make|making|bring in|coming in)\b/.test(q)) {
-      const inc = r2(income.filter(inRange).reduce((sum, r) => sum + num(r.amount), 0));
+    if (asksIncome || makesMoney) {
+      const cameIn = income.filter(inRange);
+      const inc = r2(cameIn.reduce((sum, r) => sum + num(r.amount), 0));
       const out = r2(expenses.filter(inRange).reduce((sum, e) => sum + num(e.amount), 0));
-      if (inc > 0 || out > 0) {
+      const againstSpending = /\b(spend|spent|spending|spends|outgoings|goes out|going out|went out)\b/.test(q);
+      if (againstSpending && cameIn.length) {
         return {
-          answer: `$${inc.toFixed(2)} came in${when} and $${out.toFixed(2)} went out, so you are spending ${out > inc ? "more than" : out < inc ? "less than" : "exactly what"} you earn.`,
+          answer: `${money(inc)} came in${when} and ${money(out)} went out, so you are spending ${out > inc ? "more than" : out < inc ? "less than" : "exactly what"} you earn.`,
           figures: { income: inc, spent: out },
         };
       }
+      if (againstSpending) {
+        return { answer: `You have nothing recorded as coming in${when}, so there is nothing to compare your spending with.`, figures: {} };
+      }
+      // One month's pay against another's. Nothing here computes that, and
+      // the month-pair logic below only knows about spending, so it would
+      // answer "did I earn more than last month" with what was SPENT.
+      return null;
     }
     const named = resolveMonths(q, today);
     const thisM = localMonthKey(today);
@@ -443,8 +514,8 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
       const label = (ym) => monthName(ym) + (ym === localMonthKey(today) ? " so far" : "");
       return {
         answer: dir === "the same"
-          ? `You spent the same${what} in both: $${av.toFixed(2)} in ${label(a)} and $${bv.toFixed(2)} in ${label(b)}.`
-          : `You spent $${bv.toFixed(2)}${what} in ${label(b)} against $${av.toFixed(2)} in ${label(a)}, so ${dir} by $${Math.abs(r2(bv - av)).toFixed(2)}.`,
+          ? `You spent the same${what} in both: ${money(av)} in ${label(a)} and ${money(bv)} in ${label(b)}.`
+          : `You spent ${money(bv)}${what} in ${label(b)} against ${money(av)} in ${label(a)}, so ${dir} by ${money(Math.abs(r2(bv - av)))}.`,
         figures: { [a]: av, [b]: bv, difference: Math.abs(r2(bv - av)) },
       };
     }
@@ -463,8 +534,8 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
         const what = category ? `${category} spending` : "Your spending";
         return {
           answer: pct === 0
-            ? `${what} is level: $${recent.toFixed(2)} in the last three months against $${earlier.toFixed(2)} in the three before.`
-            : `${what} is ${pct > 0 ? "up" : "down"} ${Math.abs(pct).toFixed(0)}%: $${recent.toFixed(2)} in the last three months against $${earlier.toFixed(2)} in the three before.`,
+            ? `${what} is level: ${money(recent)} in the last three months against ${money(earlier)} in the three before.`
+            : `${what} is ${pct > 0 ? "up" : "down"} ${Math.abs(pct).toFixed(0)}%: ${money(recent)} in the last three months against ${money(earlier)} in the three before.`,
           figures: { recent, earlier, change_pct: pct },
         };
       }
@@ -482,7 +553,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     const monthlyTotal = r2(active.reduce(
       (sum, s) => sum + (s.billing_cycle === "annual" ? num(s.amount) / 12 : num(s.amount)), 0));
     return {
-      answer: `Your ${active.length} active subscription${active.length === 1 ? "" : "s"} cost $${monthlyTotal.toFixed(2)} a month.`,
+      answer: `Your ${active.length} active subscription${active.length === 1 ? "" : "s"} cost ${money(monthlyTotal)} a month.`,
       figures: { monthly_total: monthlyTotal, count: active.length },
     };
   }
@@ -490,24 +561,43 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
   // Income. Tier 1 could not answer a single income question before this,
   // which is a large hole in something called "ask about your spending" -
   // money coming in is half of what anyone wants to know.
-  // No "make"/"made": "how many transactions did I make" is not an income
-  // question, and treating it as one answered it with a paycheck figure.
-  const asksIncome = /\b(earn|earned|earning|earnings|income|paid in|salary|wages|paycheck|payslip|take home|came in)\b/.test(q);
   // "net worth" is assets minus liabilities, a different concept from income
   // minus spending - answering one with the other was confidently wrong, not
   // merely imprecise, so it is excluded here and handled on its own below.
-  const asksNet = /\b(save|saved|saving|left over|leftover|net|difference|ahead|behind)\b/.test(q) && !/\bnet worth\b/.test(q);
-  if ((asksIncome || asksNet) && income.length && !asksComparison) {
-    const inc = r2(income.filter(inRange).reduce((sum, r) => sum + num(r.amount), 0));
+  // "difference" alone is too loose to mean this (the difference between two
+  // categories is a comparison), so it counts only beside an income word.
+  const asksNet = (/\b(save|saved|saving|left over|leftover|net|ahead|behind)\b/.test(q) || (/\bdifference\b/.test(q) && asksIncome))
+    && !/\bnet worth\b/.test(q);
+  if (asksIncome || asksNet) {
+    // "how much did I save on food" names something to scope by, so it is
+    // not asking what was left of what came in, and nothing here knows what
+    // a purchase would otherwise have cost.
+    if (asksNet && !asksIncome && (category || merchant)) return null;
+    const cameIn = income.filter(inRange);
+    const inc = r2(cameIn.reduce((sum, r) => sum + num(r.amount), 0));
+    const out = r2(expenses.filter(inRange).reduce((sum, e) => sum + num(e.amount), 0));
+    // Nothing recorded is its own answer, and it has to be given HERE.
+    // This used to require income to exist before answering, so with none
+    // the question fell through to the spending path, which accepts any
+    // "how much": "how much did I earn this year" came back as "You spent
+    // $1,713.37". The same went for a month with no pay in it.
+    if (!cameIn.length) {
+      if (!asksNet) return { answer: `You have nothing recorded as coming in${when}.`, figures: {} };
+      return {
+        answer: out > 0
+          ? `You have nothing recorded as coming in${when}, so there is nothing to set against the ${money(out)} that went out.`
+          : `You have nothing recorded as coming in or going out${when}.`,
+        figures: out > 0 ? { spent: out } : {},
+      };
+    }
     if (asksNet) {
-      const out = r2(expenses.filter(inRange).reduce((sum, e) => sum + num(e.amount), 0));
       const net = r2(inc - out);
       return {
-        answer: `${when ? when.trim()[0].toUpperCase() + when.trim().slice(1) : "Across everything recorded"}, $${inc.toFixed(2)} came in and $${out.toFixed(2)} went out, so you were ${net >= 0 ? "ahead" : "behind"} by $${Math.abs(net).toFixed(2)}.`,
+        answer: `${when ? when.trim()[0].toUpperCase() + when.trim().slice(1) : "Across everything recorded"}, ${money(inc)} came in and ${money(out)} went out, so you were ${net >= 0 ? "ahead" : "behind"} by ${money(Math.abs(net))}.`,
         figures: { income: inc, spent: out, net: Math.abs(net) },
       };
     }
-    return { answer: `You had $${inc.toFixed(2)} come in${when}.`, figures: { income: inc } };
+    return { answer: `You had ${money(inc)} come in${when}.`, figures: { income: inc } };
   }
 
   // Net worth and debt, from the totals app.js already computed for the Net
@@ -517,19 +607,27 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
   if (balances) {
     if (/\bnet worth\b/.test(q)) {
       return {
-        answer: `Your net worth is $${balances.net.toFixed(2)}: $${balances.assets.toFixed(2)} in things you own, less $${balances.liabilities.toFixed(2)} you owe.`,
+        answer: `Your net worth is ${money(balances.net)}: ${money(balances.assets)} in things you own, less ${money(balances.liabilities)} you owe.`,
         figures: { net: balances.net, assets: balances.assets, liabilities: balances.liabilities },
       };
     }
     if (/\b(owe|owed|debt|debts)\b/.test(q)) {
       return {
         answer: balances.liabilities > 0
-          ? `You owe $${balances.liabilities.toFixed(2)} in total.`
+          ? `You owe ${money(balances.liabilities)} in total.`
           : `You have nothing recorded as owed.`,
         figures: { liabilities: balances.liabilities },
       };
     }
   }
+
+  // A question naming HOW something was paid ("in cash", "on my card") is
+  // narrower than anything below scopes by. Everything from here on counts
+  // expenses across every way of paying, so answering would be the right
+  // total for a different question. Declined unless the word is part of a
+  // place's own name.
+  const paidHow = /\b(cash|card|cards|credit|debit)\b/;
+  if (paidHow.test(q) && !(merchant && paidHow.test(merchantKey(merchant)))) return null;
 
   // "what was my biggest expense" - a single transaction, not a category.
   if (/\b(biggest|largest|most expensive|priciest|highest)\b/.test(q) && /\b(expense|purchase|transaction|payment|buy|bought|thing)\b/.test(q)) {
@@ -538,7 +636,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     const top = [...scope].sort((a, b) => num(b.amount) - num(a.amount))[0];
     const what = (top.description || top.merchant || "").trim();
     return {
-      answer: `Your biggest single expense${when} was $${num(top.amount).toFixed(2)}${what ? ` at ${what}` : ""} on ${top.occurred_at}.`,
+      answer: `Your biggest single expense${when} was ${money(num(top.amount))}${what ? ` at ${what}` : ""} on ${top.occurred_at}.`,
       figures: { amount: r2(num(top.amount)) },
     };
   }
@@ -547,14 +645,14 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
   // arithmetic this file can do exactly.
   const scopedNow = () => expenses.filter((e) => inRange(e)
     && (!category || e.category === category)
-    && (!merchant || (e.merchant || "").trim() === merchant));
+    && (!merchant || paidAt(e, merchant)));
 
   if (/\baverage\b|\btypical\b/.test(q) && /\b(transaction|transactions|purchase|purchases|expense|expenses|spend)\b/.test(q)) {
     const scope = scopedNow();
     if (scope.length) {
       const avg = r2(scope.reduce((sum, e) => sum + num(e.amount), 0) / scope.length);
       return {
-        answer: `Your average transaction${when} was $${avg.toFixed(2)}, across ${scope.length} of them.`,
+        answer: `Your average transaction${when} was ${money(avg)}, across ${scope.length} of them.`,
         figures: { average: avg, count: scope.length },
       };
     }
@@ -566,7 +664,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
       const low = [...scope].sort((a, b) => num(a.amount) - num(b.amount))[0];
       const what = (low.description || low.merchant || "").trim();
       return {
-        answer: `Your smallest expense${when} was $${num(low.amount).toFixed(2)}${what ? ` at ${what}` : ""} on ${low.occurred_at}.`,
+        answer: `Your smallest expense${when} was ${money(num(low.amount))}${what ? ` at ${what}` : ""} on ${low.occurred_at}.`,
         figures: { amount: r2(num(low.amount)) },
       };
     }
@@ -574,11 +672,11 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
 
   // "when did I last shop at Shell"
   if (/\b(when|last time|how recently)\b/.test(q) && merchant) {
-    const hits = expenses.filter((e) => (e.merchant || "").trim() === merchant)
+    const hits = expenses.filter((e) => paidAt(e, merchant))
       .sort((a, b) => (b.occurred_at || "").localeCompare(a.occurred_at || ""));
     if (hits.length) {
       return {
-        answer: `The last time was ${hits[0].occurred_at}, for $${num(hits[0].amount).toFixed(2)}.`,
+        answer: `The last time was ${hits[0].occurred_at}, for ${money(num(hits[0].amount))}.`,
         figures: { amount: r2(num(hits[0].amount)) },
       };
     }
@@ -591,7 +689,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     if (inc > 0) {
       const kept = r2(((inc - out) / inc) * 100);
       return {
-        answer: `Of the $${inc.toFixed(2)} that came in${when}, you spent $${out.toFixed(2)} and kept ${kept.toFixed(0)}%.`,
+        answer: `Of the ${money(inc)} that came in${when}, you spent ${money(out)} and kept ${kept.toFixed(0)}%.`,
         figures: { income: inc, spent: out, kept_pct: kept },
       };
     }
@@ -604,7 +702,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
       const monthly = (x) => (x.billing_cycle === "annual" ? num(x.amount) / 12 : num(x.amount));
       const top = [...active].sort((a, b) => monthly(b) - monthly(a))[0];
       return {
-        answer: `Your biggest is ${top.name}, at $${r2(monthly(top)).toFixed(2)} a month.`,
+        answer: `Your biggest is ${top.name}, at ${money(r2(monthly(top)))} a month.`,
         figures: { amount: r2(monthly(top)) },
       };
     }
@@ -614,7 +712,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
   if (/\bhow many\b|\bhow often\b|\bnumber of\b|\bhow much did i buy\b/.test(q)) {
     const scope = expenses.filter((e) => inRange(e)
       && (!category || e.category === category)
-      && (!merchant || (e.merchant || "").trim() === merchant));
+      && (!merchant || paidAt(e, merchant)));
     if (!category && !merchant && !range) return null;
     const what = merchant ? ` at ${merchant}` : category ? ` on ${category}` : "";
     return {
@@ -634,7 +732,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
       }
       const top = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
       return {
-        answer: `Mostly ${top.map(([c, v]) => `${c} at $${v.toFixed(2)}`).join(", then ")}${when}.`,
+        answer: `Mostly ${top.map(([c, v]) => `${c} at ${money(v)}`).join(", then ")}${when}.`,
         figures: Object.fromEntries(top),
       };
     }
@@ -651,7 +749,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     }
     const [topCat, topVal] = [...totals.entries()].sort((a, b) => b[1] - a[1])[0];
     return {
-      answer: `Your biggest category${when} was ${topCat}, at $${topVal.toFixed(2)}.`,
+      answer: `Your biggest category${when} was ${topCat}, at ${money(topVal)}.`,
       figures: { total: topVal },
     };
   }
@@ -665,10 +763,10 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
     // Two months minimum: averaged over one, "typical" is just that month.
     if (typical && typical.monthsCounted >= 2 && typical.spend != null) {
       const kept = typical.hasIncome && typical.net != null
-        ? ` You keep about $${typical.net.toFixed(2)} of what comes in.`
+        ? ` You keep about ${money(typical.net)} of what comes in.`
         : "";
       return {
-        answer: `You spend about $${typical.spend.toFixed(2)} in a typical month, averaged across the ${typical.monthsCounted} months that have spending recorded.${kept}`,
+        answer: `You spend about ${money(typical.spend)} in a typical month, averaged across the ${typical.monthsCounted} months that have spending recorded.${kept}`,
         figures: Object.assign({ average: typical.spend, months_counted: typical.monthsCounted },
           typical.net != null ? { net: typical.net } : {}),
       };
@@ -691,6 +789,29 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
       || /\bpay(s|ing)? for\b/.test(q))
     && !/\b(spent|spend|spending)\b/.test(q);
   if (asksWhatItCharges && !range) {
+    // A bill the user entered themselves is the most direct answer there is,
+    // and it was the one case this could not answer: the detector below
+    // leaves out anything already entered as a bill, so "what does Netflix
+    // cost me" was declined for exactly the people who had told the app what
+    // Netflix costs. Matched on the bill's whole name or its first word
+    // ("Spotify" for "Spotify Family Plan"), and only when exactly one bill
+    // is named.
+    const billNamed = (s) => {
+      const name = (s.name || "").trim();
+      if (name.length < 3) return false;
+      const first = name.split(/\s+/)[0];
+      return mentionsWholeWord(q, name) || (first.length > 3 && mentionsWholeWord(q, first));
+    };
+    const bills = subscriptions.filter((s) => s.is_active && billNamed(s));
+    if (bills.length === 1) {
+      const every = { monthly: "a month", quarterly: "every three months", semiannual: "every six months", annual: "a year" }[bills[0].billing_cycle];
+      if (every) {
+        return {
+          answer: `${bills[0].name.trim()} costs ${money(num(bills[0].amount))} ${every}, going by the bill you entered.`,
+          figures: { amount: r2(num(bills[0].amount)) },
+        };
+      }
+    }
     const hits = detectRecurringExpenses(expenses, subscriptions, today)
       .filter((c) => mentionsWholeWord(q, c.merchant));
     // Asked what a NAMED merchant costs, with no repeating charge found for
@@ -706,7 +827,7 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
       const c = hits[0];
       return {
         // cycleLabel is "month" / "year" / "~7 days", so it needs "every".
-        answer: `${c.merchant} charges $${c.amount.toFixed(2)} every ${c.cycleLabel.toLowerCase()}, and has done so ${c.occurrenceCount} times.`,
+        answer: `${c.merchant} charges ${money(c.amount)} every ${c.cycleLabel.toLowerCase()}, and has done so ${c.occurrenceCount} times.`,
         figures: { amount: c.amount, occurrences: c.occurrenceCount },
       };
     }
@@ -720,14 +841,14 @@ function answerFromTransactions(question, { expenses = [], subscriptions = [], i
   if (!range && !category && !merchant) return null;
   const scoped = expenses.filter((e) => inRange(e)
     && (!category || e.category === category)
-    && (!merchant || (e.merchant || "").trim() === merchant));
+    && (!merchant || paidAt(e, merchant)));
   const what = merchant ? ` at ${merchant}` : category ? ` on ${category}` : "";
   if (!scoped.length) {
     return { answer: `You have nothing recorded${what}${when}.`, figures: {} };
   }
   const total = r2(scoped.reduce((sum, e) => sum + num(e.amount), 0));
   return {
-    answer: `You spent $${total.toFixed(2)}${what}${when}, across ${scoped.length} transaction${scoped.length === 1 ? "" : "s"}.`,
+    answer: `You spent ${money(total)}${what}${when}, across ${scoped.length} transaction${scoped.length === 1 ? "" : "s"}.`,
     figures: { total, count: scoped.length },
   };
 }

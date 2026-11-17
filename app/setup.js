@@ -96,6 +96,8 @@ export function incomeAutoLogBlocker(src, accounts) {
 // them their bill is wrong.
 export const FIXABLE_BLOCKERS = new Set(["no_account", "no_date", "account_gone", "no_pay_days"]);
 
+const EARLIEST_REAL_DATE = "2000-01-01";
+
 // What a catch-up loop would do from `startISO` if it ran today: how many
 // times it would act, and the first date it would leave alone.
 //
@@ -116,6 +118,10 @@ export const FIXABLE_BLOCKERS = new Set(["no_account", "no_date", "account_gone"
 // against a runaway stepper.
 export function catchUpPreview(startISO, step, today, limit = 5000) {
   if (!startISO || startISO > today) return { count: 0, first: null, last: null, next: startISO || null };
+  // A date box reports the year as it is typed ("0002-11-14", "0020-..."), and
+  // this runs on every keystroke. Nothing here was due before this floor, so
+  // such a date is someone mid-typing, not thousands of missed charges.
+  if (startISO < EARLIEST_REAL_DATE) return { count: 0, first: null, last: null, next: null };
   let date = startISO;
   let count = 0;
   let last = null;

@@ -150,6 +150,53 @@ export function categorize(text, userRules = {}) {
   return null;
 }
 
+// Words that say WHAT was bought, never WHERE. Every one is also a category
+// keyword above, which is how "lunch" files an expense under Food, but none
+// of them is a merchant.
+const KIND_OF_PURCHASE = new Set([
+  "coffee", "lunch", "dinner", "breakfast", "brunch", "restaurant", "groceries", "grocery",
+  "sushi", "bakery", "deli", "diner", "cafe", "brewery", "bagel", "pizza", "burger", "taco",
+  "sandwich", "takeout",
+  "electric", "water", "internet", "wifi", "cable", "sewer", "electricity", "propane",
+  "gas", "metro", "transit", "parking", "flight", "airline", "toll", "tolls", "taxi", "train",
+  "gym", "rent", "mortgage", "hoa",
+  "pharmacy", "doctor", "dentist", "dental", "hospital", "clinic", "urgentcare", "optometrist",
+  "vision", "chiropractor", "therapist", "therapy", "copay", "prescription", "vet", "veterinary",
+  "movie", "movies", "cinema", "theater", "theatre", "concert", "museum", "zoo", "aquarium",
+  "bowling", "arcade", "golf", "karaoke", "comedy", "festival",
+]);
+const JOINING_WORDS = new Set(["at", "from", "for", "the", "a", "an", "and", "with", "to", "on", "in", "my", "of", "via"]);
+
+/**
+ * The merchant in a typed description: where the money went.
+ *
+ * It used to be the first word, so "lunch chipotle" was filed under the
+ * merchant "lunch". That is the app's own headline example, and it matters
+ * beyond the label: the Q&A's merchant questions ("how much have I spent at
+ * Chipotle") match the stored merchant exactly, so they found nothing.
+ *
+ * In order: a word the rules already know as a place wins wherever it sits;
+ * failing that, the first word that is not a kind of purchase or a joining
+ * word; failing that, the first word, which is what "lunch" on its own has to
+ * be. Punctuation is stripped from the edges, and a bare number is never a
+ * merchant.
+ * @param {string} desc       the description with the amount already removed
+ * @param {object} userRules  keyword -> category the user has taught the app
+ */
+export function pickMerchant(desc, userRules = {}) {
+  const words = String(desc || "").split(/\s+/)
+    .map((w) => w.replace(/^[^A-Za-z0-9&]+|[^A-Za-z0-9&]+$/g, ""))
+    .filter((w) => /[A-Za-z]/.test(w));
+  if (!words.length) return null;
+  const lower = words.map((w) => w.toLowerCase());
+  const couldBeAPlace = (w) => !KIND_OF_PURCHASE.has(w) && !JOINING_WORDS.has(w);
+  const known = lower.findIndex((w) => couldBeAPlace(w)
+    && (Object.prototype.hasOwnProperty.call(DEFAULT_RULES, w) || Object.prototype.hasOwnProperty.call(userRules || {}, w)));
+  if (known !== -1) return words[known];
+  const first = lower.findIndex(couldBeAPlace);
+  return words[first !== -1 ? first : 0];
+}
+
 /**
  * Very small free-text pre-parser, and the fallback whenever Gemma is unavailable.
  * Extracts a leading/embedded dollar amount and a payment-type hint.

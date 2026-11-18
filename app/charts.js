@@ -252,7 +252,65 @@ function escapeCell(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 }
 
-const money = (n) => "$" + Number(n ?? 0).toFixed(2);
+// Every figure this module draws is money, and the app holds US dollars only
+// (no multi-currency, by decision). A bare "$" is also the sign for the
+// Canadian, Australian, Hong Kong and a dozen other dollars, so the axis that
+// carries the money names its currency rather than leaving the symbol to
+// imply it. Named once here so no chart can forget to say it.
+export const CURRENCY_CODE = "USD";
+const usd = (digits) => new Intl.NumberFormat("en-US", {
+  style: "currency", currency: CURRENCY_CODE,
+  minimumFractionDigits: digits, maximumFractionDigits: digits,
+});
+const USD_CENTS = usd(2);
+const USD_WHOLE = usd(0);
+// Intl puts the sign outside the symbol ("-$40.00"), which the old
+// `"$" + n` did not ("$-40.00"), and adds thousands separators. A net worth
+// below zero and an overdrawn balance are both real, so the minus case is not
+// an edge.
+const money = (n) => USD_CENTS.format(Number(n ?? 0));
+
+// Whole dollars when every tick on the axis is whole, cents otherwise. Decided
+// for the axis as a set, not tick by tick, or one axis would read "$0",
+// "$0.50", "$1".
+function moneyTick(value, _index, ticks) {
+  const whole = ticks.every((t) => Number.isInteger(t.value));
+  return (whole ? USD_WHOLE : USD_CENTS).format(value);
+}
+
+const moneyAxisTitle = (labels) => `${labels.y} (${CURRENCY_CODE})`;
+
+// Both axes are titled on every chart: what runs along the bottom, and what
+// the height measures plus its currency. `labels` is { x, y } in plain words;
+// the currency is added here, so a caller cannot leave it off.
+//
+// `flatDates` lays a date axis's labels flat and lets Chart.js skip some.
+// Diagonal labels took about 50px of a 150px chart, which left the health
+// check's plot shorter than its own y-axis title and clipped it. Only for a
+// line of dates: every date is still in the hover readout and the hidden
+// table, while a bar chart's labels name categories, and skipping one would
+// leave a bar with no name.
+function axisScales(t, labels, { flatDates = false } = {}) {
+  const title = (text) => ({ display: true, text, color: t.text, font: { size: 12, weight: "600" } });
+  const xTicks = flatDates
+    ? { color: t.text, maxRotation: 0, autoSkip: true, autoSkipPadding: 12 }
+    : { color: t.text };
+  return {
+    x: { ticks: xTicks, grid: { display: false }, title: title(labels.x) },
+    y: { ticks: { color: t.text, callback: moneyTick }, grid: { color: t.grid }, title: title(moneyAxisTitle(labels)) },
+  };
+}
+
+// The hover readout states the currency too. Chart.js prints the raw number by
+// default ("1234.5"), which was the one place on a chart a figure appeared
+// with no unit at all.
+function moneyTooltip() {
+  return {
+    callbacks: {
+      label: (ctx) => `${ctx.dataset.label ? ctx.dataset.label + ": " : ""}${money(ctx.parsed.y)} ${CURRENCY_CODE}`,
+    },
+  };
+}
 
 /**
  * Horizontal bar chart for any label/value breakdown (category, account,
@@ -262,12 +320,12 @@ const money = (n) => "$" + Number(n ?? 0).toFixed(2);
  * `canvas` must have a unique `id` (used as the internal chart registry key
  * so multiple bar charts on one page don't clobber each other on redraw).
  */
-export function renderBreakdownBar(canvas, data) {
-  const labels = data.map((d) => `${d.label}, $${d.value.toFixed(2)}`);
+export function renderBreakdownBar(canvas, data, axes = { x: "Group", y: "Amount" }) {
+  const labels = data.map((d) => `${d.label}, ${money(d.value)}`);
   const total = data.reduce((s, d) => s + d.value, 0);
   describeChart(canvas,
-    data.length ? `Breakdown of ${money(total)} across ${data.length} ${data.length === 1 ? "group" : "groups"}` : "No data yet",
-    data.map((d) => [d.label, money(d.value)]), ["Group", "Amount"]);
+    data.length ? `${axes.y} by ${axes.x.toLowerCase()}: ${money(total)} ${CURRENCY_CODE} across ${data.length} ${data.length === 1 ? "group" : "groups"}` : "No data yet",
+    data.map((d) => [d.label, money(d.value)]), [axes.x, moneyAxisTitle(axes)]);
   mount(canvas, () => {
     const t = themeColors();
     return {
@@ -282,11 +340,8 @@ export function renderBreakdownBar(canvas, data) {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: t.text }, grid: { display: false } },
-          y: { ticks: { color: t.text, callback: (v) => "$" + v }, grid: { color: t.grid } },
-        },
+        plugins: { legend: { display: false }, tooltip: moneyTooltip() },
+        scales: axisScales(t, axes),
       },
     };
   });
@@ -297,13 +352,13 @@ export function renderBreakdownBar(canvas, data) {
  * `canvas.id` is the registry key, same as renderBreakdownBar - lets this
  * coexist with the bar charts without clobbering them on redraw.
  */
-export function renderLineChart(canvas, labels, values) {
+export function renderLineChart(canvas, labels, values, axes = { x: "Date", y: "Value" }) {
   const nums = values.filter((v) => Number.isFinite(v));
   describeChart(canvas,
     nums.length
-      ? `${labels.length} ${labels.length === 1 ? "point" : "points"}, from ${money(nums[0])} on ${labels[0]} to ${money(nums[nums.length - 1])} on ${labels[labels.length - 1]}. Lowest ${money(Math.min(...nums))}, highest ${money(Math.max(...nums))}.`
+      ? `${moneyAxisTitle(axes)}, ${labels.length} ${labels.length === 1 ? "point" : "points"}, from ${money(nums[0])} on ${labels[0]} to ${money(nums[nums.length - 1])} on ${labels[labels.length - 1]}. Lowest ${money(Math.min(...nums))}, highest ${money(Math.max(...nums))}.`
       : "No data yet",
-    labels.map((l, i) => [l, money(values[i])]), ["Date", "Value"]);
+    labels.map((l, i) => [l, money(values[i])]), [axes.x, moneyAxisTitle(axes)]);
   mount(canvas, () => {
     const t = themeColors();
     return {
@@ -321,11 +376,8 @@ export function renderLineChart(canvas, labels, values) {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: t.text }, grid: { display: false } },
-          y: { ticks: { color: t.text, callback: (v) => "$" + v }, grid: { color: t.grid } },
-        },
+        plugins: { legend: { display: false }, tooltip: moneyTooltip() },
+        scales: axisScales(t, axes, { flatDates: true }),
       },
     };
   });
@@ -342,7 +394,7 @@ export function renderLineChart(canvas, labels, values) {
  * first one's Chart.js instance on redraw - purely internal, no caller
  * ever referenced the old literal key.
  */
-export function renderTrendBar(canvas, months, totals, secondDataset = null) {
+export function renderTrendBar(canvas, months, totals, secondDataset = null, axes = { x: "Month", y: "Amount" }) {
   const labelFor = (m) => monthLabel(m);
   describeChart(canvas,
     months.length
@@ -353,7 +405,9 @@ export function renderTrendBar(canvas, months, totals, secondDataset = null) {
     months.map((m, i) => secondDataset
       ? [labelFor(m), money(secondDataset.data[i]), money(totals[i])]
       : [labelFor(m), money(totals[i])]),
-    secondDataset ? ["Month", secondDataset.label, "Money out"] : ["Month", "Total"]);
+    secondDataset
+      ? [axes.x, `${secondDataset.label} (${CURRENCY_CODE})`, `Money out (${CURRENCY_CODE})`]
+      : [axes.x, moneyAxisTitle(axes)]);
   mount(canvas, () => {
     const t = themeColors();
     // Built inside the builder, not outside it: a repaint re-invokes this, and
@@ -365,7 +419,7 @@ export function renderTrendBar(canvas, months, totals, secondDataset = null) {
     // the furthest-apart pair in the palette under simulated colour vision
     // deficiency rather than for looking like "money in" and "money out".
     const datasets = [{
-      label: secondDataset ? "Expense" : undefined,
+      label: secondDataset ? "Money out" : undefined,
       data: totals, backgroundColor: t.series[0], borderRadius: 6,
     }];
     if (secondDataset) {
@@ -379,11 +433,8 @@ export function renderTrendBar(canvas, months, totals, secondDataset = null) {
       data: { labels: months.map(monthLabel), datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: !!secondDataset, labels: { color: t.text } } },
-        scales: {
-          x: { ticks: { color: t.text }, grid: { display: false } },
-          y: { ticks: { color: t.text, callback: (v) => "$" + v }, grid: { color: t.grid } },
-        },
+        plugins: { legend: { display: !!secondDataset, labels: { color: t.text } }, tooltip: moneyTooltip() },
+        scales: axisScales(t, axes),
       },
     };
   });

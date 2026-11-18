@@ -586,6 +586,17 @@ function shortDay(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+// The bottom-axis title for a chart whose ticks come from shortDay(). Those
+// ticks carry no year ("Nov 12"), so a line that runs from one year into the
+// next would print the same day twice with nothing to tell them apart. The
+// title carries the year, or the span of years.
+function dateAxisTitle(isoDates) {
+  const years = isoDates.filter(Boolean).map((d) => d.slice(0, 4)).sort();
+  if (!years.length) return "Date";
+  const first = years[0];
+  const last = years[years.length - 1];
+  return first === last ? `Date (${first})` : `Date (${first} to ${last})`;
+}
 // A stable keyword to learn from (first meaningful token of merchant/
 // description). Strips leading/trailing punctuation from each candidate
 // word before the length check - categorize.js now matches keywords as
@@ -6503,7 +6514,8 @@ async function renderNetWorthTrend() {
   $("netWorthTrendEmpty").classList.toggle("hidden", rows.length >= 2);
   if (rows.length < 2) return; // a single point isn't a "trend"
   const labels = rows.map((r) => shortDay(r.snapshot_date));
-  renderLineChart($("netWorthTrendChart"), labels, rows.map((r) => Number(r.net_worth)));
+  renderLineChart($("netWorthTrendChart"), labels, rows.map((r) => Number(r.net_worth)),
+    { x: dateAxisTitle(rows.map((r) => r.snapshot_date)), y: "Net worth" });
 }
 
 // ---- BUDGETS (the project notes, Reports & Net Worth #2) ---------------------
@@ -7162,13 +7174,15 @@ async function renderInvestmentsTrend() {
 
   $("investTrendEmpty").classList.toggle("hidden", rows.length >= 2);
   if (rows.length >= 2) {
-    renderLineChart($("investTrendChart"), rows.map(dayLabel), rows.map((r) => Number(r.total_value)));
+    renderLineChart($("investTrendChart"), rows.map(dayLabel), rows.map((r) => Number(r.total_value)),
+      { x: dateAxisTitle(rows.map((r) => r.snapshot_date)), y: "Total value" });
   }
 
   const recent = rows.slice(-HEALTH_SPARKLINE_DAYS);
   $("investHealthTrendEmpty").classList.toggle("hidden", recent.length >= 2);
   if (recent.length >= 2) {
-    renderLineChart($("investHealthTrendChart"), recent.map(dayLabel), recent.map((r) => Number(r.total_value)));
+    renderLineChart($("investHealthTrendChart"), recent.map(dayLabel), recent.map((r) => Number(r.total_value)),
+      { x: dateAxisTitle(recent.map((r) => r.snapshot_date)), y: "Total value" });
   }
 }
 
@@ -8355,7 +8369,8 @@ function renderPriceHistory() {
     canvas.style.display = "";
     empty.textContent = "";
     const labels = series.map((p) => shortDay(p.date));
-    renderLineChart(canvas, labels, series.map((p) => p.close));
+    renderLineChart(canvas, labels, series.map((p) => p.close),
+      { x: dateAxisTitle(series.map((p) => p.date)), y: "Share price" });
   }
 
   renderPriceRange();
@@ -10090,13 +10105,14 @@ function renderAccountHistory() {
   // words looks identical to a broken one. Returning early here left the
   // PREVIOUS account's line on screen under the new account's name.
   if (!account) {
-    renderLineChart($("historyChart"), [], []);
+    renderLineChart($("historyChart"), [], [], { x: "Date", y: "Balance" });
     note.textContent = "Add an account on the Log page and its balance history will show here.";
     return;
   }
   const points = buildBalanceHistory(account, accountCurrentBalance(account), allExpenses, accountActivity);
   const labels = points.map((p) => shortDay(p.date));
-  renderLineChart($("historyChart"), labels, points.map((p) => p.balance));
+  renderLineChart($("historyChart"), labels, points.map((p) => p.balance),
+    { x: dateAxisTitle(points.map((p) => p.date)), y: account.linked_liability_id ? "Amount owed" : "Balance" });
   // One point means the balance has never moved, which a line chart draws as
   // an empty box. Say so rather than leaving the reader to guess.
   note.textContent = points.length < 2
@@ -10128,13 +10144,14 @@ function renderCashFlowForecast() {
   // A blank chart with no words looks identical to a broken one, which is the
   // same reason renderLoadError exists for the list loaders.
   if (!account) {
-    renderLineChart($("forecastChart"), [], []);
+    renderLineChart($("forecastChart"), [], [], { x: "Date", y: "Balance" });
     note.textContent = "Add an account on the Log page and this will project its balance forward.";
     return;
   }
   const points = forecastCashFlow(account, accountCurrentBalance(account), subscriptions, incomeSources, 30);
   const labels = points.map((p) => shortDay(p.date));
-  renderLineChart($("forecastChart"), labels, points.map((p) => p.balance));
+  renderLineChart($("forecastChart"), labels, points.map((p) => p.balance),
+    { x: dateAxisTitle(points.map((p) => p.date)), y: account.linked_liability_id ? "Amount owed" : "Balance" });
 
   // A rising line means opposite things for the two kinds of account, so the
   // chart has to say which one it is drawing rather than leaving the reader
@@ -10703,14 +10720,14 @@ async function renderReports() {
   // expenses, no query) and Chart.js needs a laid-out canvas to size
   // itself, so drawing only the visible one would leave the other two blank
   // when their pill is first tapped.
-  renderBreakdownBar($("catChart"), byCat);
-  renderBreakdownBar($("acctChart"), byAcct);
-  renderBreakdownBar($("payChart"), byPayment);
+  renderBreakdownBar($("catChart"), byCat, { x: "Category", y: "Spent" });
+  renderBreakdownBar($("acctChart"), byAcct, { x: "Account", y: "Spent" });
+  renderBreakdownBar($("payChart"), byPayment, { x: "How you paid", y: "Spent" });
   const trailing = reportTrendMonths(period);
   const ive = incomeVsExpense(rows.income, periodExpenses, trailing);
   renderTrendBar($("incomeExpenseChart"), trailing, ive.map((r) => r.expense), {
-    label: "Income", data: ive.map((r) => r.income),
-  });
+    label: "Money in", data: ive.map((r) => r.income),
+  }, { x: "Month", y: "Amount" });
 
   // The savings rate is for the PERIOD, so a year rate is the year's income
   // against the year's spending - not one month's rate left over from before

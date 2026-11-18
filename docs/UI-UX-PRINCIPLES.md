@@ -382,6 +382,14 @@ graphics get `aria-hidden="true"`.
 **8.8 Lists are lists.** A pile of sibling `<div>`s gives no item count and no item
 boundaries. Tabular data with real columns is a `<table>` with headers.
 
+**8.9 A chart titles both of its axes, and an axis of money names its currency.
+[house rule]** A line with no titles leaves the reader to work out what the height
+measures and what runs along the bottom. "$" alone is the sign for a dozen
+currencies, so the money axis says "(USD)", and so does the hover readout. Ticks
+carry thousands separators and put a minus sign before the symbol ("-$50,000"),
+because a net worth or a balance below zero is real. A date axis whose ticks drop
+the year carries the year in its title.
+
 ---
 
 ## 9. This app's scales
@@ -485,6 +493,7 @@ For any new or changed screen:
 - [ ] Loading, empty and error look different from each other
 - [ ] Every denial names its field, marks it, and says what to do
 - [ ] No meaning carried by colour alone (read it aloud in greyscale)
+- [ ] Every chart titles both axes, and a money axis names its currency
 - [ ] Selected state exposed via ARIA, not just a CSS class
 - [ ] Toasts and async results announced to assistive tech
 - [ ] Destructive actions confirmed or undoable

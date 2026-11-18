@@ -445,9 +445,9 @@
     .totals .card:nth-child(4)::before { background: var(--rule-7); }
     .totals .card { flex: 1 1 150px; min-width: 0; text-align: center; margin: 0; }
     .totals .big { font-size: 22px; font-weight: 800; }
-    .chartbox { position: relative; height: 240px; }
-    .chartbox.short { height: 200px; }
-    .chartbox.tiny { height: 110px; }
+    .chartbox { position: relative; height: 260px; }
+    .chartbox.short { height: 220px; }
+    .chartbox.tiny { height: 170px; }
     /* Top nav */
     .nav { position: fixed; left: 0; right: 0; top: 0; z-index: 40;
       display: flex; background: var(--panel); border-bottom: 1px solid var(--border);
@@ -1943,7 +1943,7 @@
           <span class="info-icon" tabindex="0" role="button" data-info="incExpExplainer" title="What came in against what went out, for each of the last six months. Green is money in, blue is money out.">i</span>
         </div>
         <p class="muted explainer hidden" id="incExpExplainer">What came in against what went out, for each of the last six months. Green is money in, blue is money out.</p>
-        <div class="chartbox short"><canvas id="incomeExpenseChart"></canvas></div>
+        <div class="chartbox"><canvas id="incomeExpenseChart"></canvas></div>
         <!-- Deliberately no color/threshold framing - a plain number, same
              restraint as the Liabilities
              card's credit-utilization line. -->

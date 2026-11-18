@@ -242,10 +242,14 @@ export const TOUR_STEPS = {
       placement: "bottom",
     },
     {
-      target: "watchlistGearBtn",
+      // The wrapper, not the Edit list button: that button is inside a card
+      // that hides itself while it has nothing to show, which is the state a
+      // first-run reader is most often in. The wrapper always holds either
+      // the card or its empty state, and both carry the button.
+      target: "trackedArea",
       subtab: "investTabMarket",
       title: "Choosing what to follow",
-      body: "The Companies you track card, and the price charts, are built from this list. The rest of the Market tab is the market as a whole and does not use it. Add any you want to keep an eye on. Anything you already own is added for you automatically. You can also put them in whatever order you like: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys.",
+      body: "This card is built from your own list of companies, and so are the price charts. The rest of the Market tab is the market as a whole and does not use it. Use the button on this card to add any you want to keep an eye on. Anything you already own is added for you automatically. You can also put them in whatever order you like: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys.",
       placement: "bottom",
     },
     {

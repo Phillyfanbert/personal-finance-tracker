@@ -913,7 +913,7 @@
        the value. An account with one holding is the common case. */
     .holding-body { min-width: 0; grid-column: 2; }
     .holding-row > .spark { grid-column: 3; }
-    .holding-row > .holding-figs { grid-column: 4; }
+    .holding-row > .holding-figs, .holding-row > .amt { grid-column: 4; }
     .holding-row > .x { grid-column: 5; }
     .holding-sym { font-weight: 700; }
     /* The name column is the only one allowed to give way, so a long company
@@ -2211,9 +2211,12 @@
              (renderMarketOverview). The button that edits the list lives here
              because this is the only card built from it; the empty state
              carries a copy, or the list could not be reached at all before
-             the first background run. -->
+             the first background run. #trackedArea always shows one of the
+             two (syncTrackedEmptyState), which is what lets the tour point at
+             it: the button inside the card is hidden whenever the card is. -->
+        <div id="trackedArea">
         <div class="card empty-state hidden" id="emptyTracked">
-          <p style="margin:0 0 var(--sp-2)">Nothing about the companies you track yet. This needs a background job to run at least once, check back later.</p>
+          <p style="margin:0 0 var(--sp-2)" id="emptyTrackedText">Nothing about the companies you track yet. This needs a background job to run at least once, check back later.</p>
           <button type="button" class="secondary btn-sm watchlist-edit-btn">Choose companies</button>
         </div>
         <div class="card hidden" id="trackedCard">
@@ -2279,6 +2282,7 @@
               <div id="marketNewsList"></div>
             </div>
         </div>
+        </div>
   <!-- Market-wide movers, the one card here that can see a stock outside the
           tracked list. Alpha Vantage answers "what moved most today" - Finnhub
           and every other free quote API can only price symbols you already name,
@@ -2315,7 +2319,7 @@
           <div class="card"><div class="muted" style="font-size:12px">Gain or loss</div><div class="big" id="investTotalGainLoss">$0</div><div class="muted" id="investTotalCostBasis" style="font-size:11px;margin-top:2px"></div></div>
         </div>
         <!-- ONE card where there were three: the daily health check, the full
-             "Value over time" chart (the health check drew a second, smaller
+             full-history value chart (the health check drew a second, smaller
              copy of the same rows) and Today's note. The two health lines that
              restated the tiles above are no longer drawn. -->
         <div class="card" id="investHealthCard">
@@ -2327,7 +2331,7 @@
           <!-- One snapshot per calendar day the app was actually opened
                (snapshotPortfolioIfNeeded) - no cron or server for a static
                PWA, so a day the app wasn't opened simply has no row. -->
-          <div class="chartbox short" style="margin-top:10px"><canvas id="investTrendChart"></canvas></div>
+          <div class="chartbox short hidden" id="investTrendBox" style="margin-top:10px"><canvas id="investTrendChart"></canvas></div>
           <p class="muted" id="investTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet, check back after using the app on a few different days.</p>
           <div id="investHealthList" style="margin-top:10px"></div>
           <!-- The user's OWN end-of-day note (portfolio_recaps, 75), written
@@ -3695,7 +3699,7 @@
         <div class="help-topic" id="helpTopic-export-invest">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-export-invest-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Export (top right)</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-export-invest-body">
-          <p>Saves your investments as a spreadsheet: the totals, every holding, what you have sold, and your target mix.</p>
+          <p>Saves your investments as a spreadsheet: the totals, every holding, what everything has been worth day by day, your notes, what you have sold, your yearly limits and your target mix.</p>
           <p>It asks which file type first. Spreadsheet (.csv) opens anywhere.</p>
           
           </div>

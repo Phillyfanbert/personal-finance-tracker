@@ -160,14 +160,14 @@ export function investmentsSections({ totals = null, holdings = [], snapshots = 
     // so the series is not derivable from today's holdings. Cost basis
     // rides along because it is stored on the same row and is what makes
     // each day's gain checkable.
-    { title: "Value over time", header: ["Date", "Total value", "Total cost basis"],
+    { title: "How it's going, value by day", header: ["Date", "Total value", "Total cost basis"],
       rows: snapshots.map((s) => [s.snapshot_date || "", money(s.total_value), money(s.total_cost_basis)]) },
     // The end-of-day notes (portfolio_recaps). Like the snapshots above,
     // these exist only for days the app was opened after the close, so they
     // cannot be reconstructed from anything else in the file. The written
     // paragraph rides along with the figures it was written from, so a
     // reader can check one against the other.
-    { title: "End of day notes", header: ["Date", "Total value", "Change on the day", "Change percent", "Written note"],
+    { title: "Today's note, by day", header: ["Date", "Total value", "Change on the day", "Change percent", "Written note"],
       rows: dayRecaps.map((r) => {
         const t = r.figures?.totals || {};
         return [

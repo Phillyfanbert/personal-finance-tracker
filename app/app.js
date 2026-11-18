@@ -7174,7 +7174,10 @@ async function renderInvestmentsTrend() {
   const rows = data || [];
   const dayLabel = (r) => shortDay(r.snapshot_date);
 
+  // The box hides with too little history, or the first card on My portfolio
+  // opens with an empty rectangle above the sentence saying why.
   $("investTrendEmpty").classList.toggle("hidden", rows.length >= 2);
+  $("investTrendBox").classList.toggle("hidden", rows.length < 2);
   if (rows.length >= 2) {
     renderLineChart($("investTrendChart"), rows.map(dayLabel), rows.map((r) => Number(r.total_value)),
       { x: dateAxisTitle(rows.map((r) => r.snapshot_date)), y: "Total value" });
@@ -7386,10 +7389,12 @@ function sparklineSvg(series) {
 // chart someone is reading, and a year squeezed into 68px is a smear.
 const SPARK_WINDOW_DAYS = 30;
 
-// Whether the folded target mix card has been opened during this visit. A
-// render runs on every live-price tick, and without this a form someone had
-// just opened would fold itself shut again before the first target was saved.
-let investTargetOpened = false;
+// Who opened the folded target mix card during this visit. A render runs on
+// every live-price tick, and without this a form someone had just opened
+// would fold itself shut again before the first target was saved. Keyed by
+// the person rather than a plain boolean, so it does not carry over to a
+// different account signed in on the same tab.
+let investTargetOpenedFor = null;
 
 function renderInvestments() {
   const investmentAssets = allInvestmentAssets();          // display: parents + holdings
@@ -7397,8 +7402,8 @@ function renderInvestments() {
   const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
   const totals = portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable);
 
-  // The health check and the four totals describe the user's own money, so
-  // with no investments at all they are a column of zeros. Hidden then, which
+  // The two tiles and How it's going describe the user's own money, so
+  // with no investments at all they are zeros. Hidden then, which
   // matters more now that a new account opens on this page: the market leads
   // instead. Everything below still writes into these elements either way,
   // the same toggle-with-.hidden shape the tabs use, so nothing has to know.
@@ -7406,7 +7411,7 @@ function renderInvestments() {
   const wasHidden = summary.classList.contains("hidden");
   summary.classList.toggle("hidden", !investmentAssets.length);
   // A chart drawn while its container had no size comes out blank, so the
-  // sparkline is redrawn when the first investment makes this visible while
+  // value chart is redrawn when the first investment makes this visible while
   // the page is on screen. Not during a load and not on another page:
   // goToView("invest") draws it when the page is opened, and drawing it here
   // as well cost a second query on every start.
@@ -7433,7 +7438,7 @@ function renderInvestments() {
   } else {
     today.textContent = totals.todayChange === 0
       ? "Unchanged today"
-      : `Today ${fmt(totals.todayChange)} (${signedPct(totals.todayChangePct)})`;
+      : `Today ${fmt(totals.todayChange)}${totals.todayChangePct != null ? ` (${signedPct(totals.todayChangePct)})` : ""}`;
     today.style.color = gainColor(totals.todayChange);
   }
 
@@ -7646,7 +7651,8 @@ function renderInvestments() {
   // hidden until something is owned. Until a target or a risk label exists it
   // is one button rather than a form, because most people never set one.
   $("investTargetCard").classList.toggle("hidden", !investmentAssets.length);
-  const targetOpen = investTargetOpened || investmentTargets.length > 0 || !!profile?.risk_label;
+  const targetOpen = (investTargetOpenedFor != null && investTargetOpenedFor === loadedForUser)
+    || investmentTargets.length > 0 || !!profile?.risk_label;
   $("investTargetSetBtn").classList.toggle("hidden", targetOpen);
   $("investTargetBody").classList.toggle("hidden", !targetOpen);
 
@@ -7696,6 +7702,9 @@ function renderInvestments() {
     el.onclick = async () => {
       const { error } = await sb.from("investment_targets").delete().eq("bucket", el.dataset.delInvestTarget);
       if (error) return toast(error.message);
+      // Someone removing a target is working in this form, so deleting the
+      // last one must not fold it shut under them.
+      investTargetOpenedFor = loadedForUser;
       await loadInvestmentTargets();
       renderInvestments();
       toast("Target removed");
@@ -8254,6 +8263,8 @@ const fmtCompact = (n) => {
 // bubble phase would already have fired (opening the edit form) before a
 // document-level listener ever saw the event. Capturing lets the ticker
 // inside that row claim the click and stop it there.
+const noHistoryMessage = (sym) =>
+  `No price history recorded for ${sym} yet. Add it with "Edit list" on the Companies you track card to start building one.`;
 function openPriceHistory(symbol) {
   const sym = (symbol || "").trim().toUpperCase();
   if (!sym) return;
@@ -8267,7 +8278,7 @@ function openPriceHistory(symbol) {
   // A failed load is not "no history", so it opens the sheet and says so there
   // with a retry, rather than refusing with a toast that blames the symbol.
   if (!dailyPricesLoadError && !recorded.has(sym)) {
-    return toast(`No price history recorded for ${sym} yet. Add it with "Edit list" on the Companies you track card to start building one.`);
+    return toast(noHistoryMessage(sym));
   }
   priceHistorySymbol = sym;
   // Opened BEFORE drawing: a chart drawn into a hidden sheet has no size.
@@ -8287,10 +8298,27 @@ document.addEventListener("click", (ev) => {
 // (tabindex="0" role="button" where it is drawn) and Enter or Space opens it,
 // as they would on a real button. Only when the ticker ITSELF has focus, so a
 // key pressed inside some other control in the same row is left alone.
+//
+// Enter opens on keydown and Space on KEYUP, which is what a native button
+// does. Opening the sheet moves focus to its close button, and opening on a
+// Space keydown would leave the keyup to land on that button, which some
+// browsers treat as a press: the sheet would shut as the key came up.
+const focusedTicker = (ev) => {
+  const el = ev.target.closest && ev.target.closest("[data-price-symbol]");
+  return el && el === ev.target ? el : null;
+};
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Enter" && ev.key !== " ") return;
-  const el = ev.target.closest && ev.target.closest("[data-price-symbol]");
-  if (!el || el !== ev.target) return;
+  const el = focusedTicker(ev);
+  if (!el) return;
+  ev.preventDefault(); // Space would otherwise scroll the page
+  ev.stopPropagation();
+  if (ev.key === "Enter" && !ev.repeat) openPriceHistory(el.dataset.priceSymbol);
+}, true);
+document.addEventListener("keyup", (ev) => {
+  if (ev.key !== " ") return;
+  const el = focusedTicker(ev);
+  if (!el) return;
   ev.preventDefault();
   ev.stopPropagation();
   openPriceHistory(el.dataset.priceSymbol);
@@ -8327,7 +8355,18 @@ function renderPriceHistory() {
   note.classList.add("hidden");
   note.innerHTML = "";
 
-  if (!priceHistorySymbol || !symbols.includes(priceHistorySymbol)) {
+  // Reached with an unrecorded symbol only when the sheet was opened over a
+  // failed load and Try again has now succeeded: openPriceHistory() refuses
+  // one otherwise. Charting some other company in its place would answer a
+  // question nobody asked, so close and say what the normal path says.
+  if (priceHistorySymbol && !symbols.includes(priceHistorySymbol)) {
+    const missing = priceHistorySymbol;
+    priceHistorySymbol = null;
+    closeModal("priceHistoryModal");
+    toast(noHistoryMessage(missing));
+    return;
+  }
+  if (!priceHistorySymbol) {
     // Default to something the user actually owns before falling back to
     // whatever is first alphabetically in the shared watchlist.
     const owned = ownedPriceSymbols().find((s) => symbols.includes(s));
@@ -9227,16 +9266,20 @@ function renderDailyRecap() {
 // the cheap, honest answer: it cannot drift from what is actually on screen
 // the way a second copy of every condition would.
 //
-// The empty state only shows while live pricing is on. With it off the
-// Market tab's broader "not turned on" message already says why this is
-// empty, and two dashed boxes saying nothing is here is one too many.
+// Exactly one of the card and its empty state shows, always. The empty state
+// carries the only other copy of the button that edits the list, so hiding
+// both (it used to be hidden while live pricing was off) left the list with
+// no way in at all. Its wording says which of the two reasons it is empty.
 function syncTrackedEmptyState() {
   const card = $("trackedCard"), empty = $("emptyTracked");
   if (!card || !empty) return;
   const anything = ["trackedTodayCard", "dailyRecapCard", "marketNewsSection"]
     .some((id) => $(id) && !$(id).classList.contains("hidden"));
   card.classList.toggle("hidden", !anything);
-  empty.classList.toggle("hidden", anything || !PRICE_FINDINGS_ENABLED);
+  empty.classList.toggle("hidden", anything);
+  $("emptyTrackedText").textContent = PRICE_FINDINGS_ENABLED
+    ? "Nothing about the companies you track yet. This needs a background job to run at least once, check back later."
+    : "Live prices aren't turned on, so there is nothing to show about the companies you track yet. You can still choose which ones to follow.";
 }
 
 function renderMarketOverview() {
@@ -9270,8 +9313,8 @@ function renderMarketOverview() {
   const pulse = marketBreadth(moverSymbols(), etfTickers, marketIndexFindings);
   const pulseEl = $("marketPulse");
   if (pulseEl) {
-    // The Daily recap card directly above states breadth at the last close.
-    // Now that the merge puts both in one tab, this line only earns its
+    // The recap further down this same card states breadth at the last
+    // close. With both in one card, this line only earns its
     // place when it says something that one doesn't: while the market is
     // OPEN it is genuinely live (refreshed every 15 minutes) and will
     // differ, and with no recap at all it is the only breadth signal there
@@ -10064,7 +10107,7 @@ $("saveContributionBtn").onclick = async () => {
 };
 
 $("investTargetSetBtn").onclick = () => {
-  investTargetOpened = true;
+  investTargetOpenedFor = loadedForUser;
   $("investTargetSetBtn").classList.add("hidden");
   $("investTargetBody").classList.remove("hidden");
   $("investTargetBucket").focus();

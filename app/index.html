@@ -906,7 +906,15 @@
     .holding-row { display: grid; align-items: center; gap: var(--sp-2);
       grid-template-columns: auto minmax(0, 1fr) auto auto auto;
       cursor: default; padding: var(--sp-2) 0 var(--sp-2) var(--sp-3); }
-    .holding-body { min-width: 0; }
+    /* Every item is pinned to its column. The drag handle is only drawn when
+       an account holds more than one thing, and with it missing, auto-placement
+       shifted the whole row one column left: the name took the handle's
+       column, the sparkline took the name's, and the sparkline was drawn over
+       the value. An account with one holding is the common case. */
+    .holding-body { min-width: 0; grid-column: 2; }
+    .holding-row > .spark { grid-column: 3; }
+    .holding-row > .holding-figs { grid-column: 4; }
+    .holding-row > .x { grid-column: 5; }
     .holding-sym { font-weight: 700; }
     /* The name column is the only one allowed to give way, so a long company
        name truncates instead of squeezing the figure or the badge. */
@@ -2144,47 +2152,13 @@
         </div>
       </div>
 
-      <!-- Everything in this wrapper is about the user's OWN investments, and
-           it is hidden while they have none (renderInvestments). A new account
-           opens on this page, and without that its first screen was a health
-           check reading "Portfolio at $0.00" above four tiles of zeros, with
-           the market, the one thing here worth seeing on day one, below the
-           fold. An empty summary of nothing is clutter, not a fact. Starts
-           hidden so a new account never sees the zeros flash by while its
-           (empty) list of investments is still loading. -->
-      <div id="investOwnSummary" class="hidden">
-      <!-- Pinned above the tabs on purpose: portfolioHealthSummary() is
-           already a compilation of numbers computed elsewhere on this page,
-           so it stands as the permanent answer to "how am I doing?" while
-           the tabs below hold the detail behind it. -->
-      <div class="card" id="investHealthCard">
-        <div class="card-head">
-          <h2>Daily health check</h2>
-          <span class="info-icon" tabindex="0" role="button" data-info="investHealthExplainer" title="A plain-English summary of numbers already shown further down this page, never a made-up score. A line only appears when there is something real behind it, so a short list means the app does not know enough yet, not that anything is wrong.">i</span>
-        </div>
-        <p class="muted explainer hidden" id="investHealthExplainer">A plain-English summary of numbers already shown further down this page, never a made-up score. A line only appears when there is something real behind it, so a short list means the app does not know enough yet, not that anything is wrong.</p>
-        <div id="investHealthList" style="margin-top:10px"></div>
-        <div class="chartbox tiny" style="margin-top:10px"><canvas id="investHealthTrendChart"></canvas></div>
-        <p class="muted" id="investHealthTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet, check back after using the app on a few different days.</p>
-      </div>
-
-      <div class="totals">
-        <div class="card"><div class="muted" style="font-size:12px">Total value</div><div class="big" id="investTotalValue">$0</div></div>
-        <div class="card"><div class="muted" style="font-size:12px">Total gain/loss</div><div class="big" id="investTotalGainLoss">$0</div></div>
-      </div>
-      <div class="totals">
-        <div class="card"><div class="muted" style="font-size:12px">Today's change</div><div class="big" id="investTodayChange">$0</div></div>
-        <div class="card"><div class="muted" style="font-size:12px">What you paid</div><div class="big" id="investTotalCostBasis">$0</div></div>
-      </div>
-      <p class="muted" id="investTodayChangeEmpty" style="font-size:12px;margin:-8px 0 14px">Today's change needs at least two days of recorded prices, so it stays blank until the app has seen a second day.</p>
-      </div>
-
-      <!-- Two tabs instead of ten stacked cards. The split is the one this
-           app already draws everywhere else: public market facts nobody
-           owns, versus this user's own money. Both panels stay in the DOM
-           and toggle with .hidden, so every existing render function keeps
-           writing into its elements whether or not its tab is showing - no
-           render call has to know which tab is active. -->
+      <!-- Two tabs and NO sub-tabs (2026-11-18). Each tab used to split again
+           into pills, three under Market and six under My portfolio, and for
+           most accounts the six portfolio pills each opened an empty
+           placeholder. Each tab is now one short scroll of about three cards,
+           and a card with nothing to say is hidden rather than given a tab of
+           its own. Both panels stay in the DOM and toggle with .hidden, so no
+           render function has to know which tab is showing. -->
       <div class="row" id="investTabBar" style="gap:10px;margin:6px 0 18px">
         <!-- No id here on purpose: wireSubTabs assigns "<panel>-tab" so the
              panel's aria-labelledby can point at it, exactly as it does for
@@ -2193,29 +2167,7 @@
         <button type="button" class="secondary" data-subtab="investTabPortfolio" style="padding:16px 0;font-size:16px">My portfolio</button>
       </div>
 
-      <!-- Sits with the Market/portfolio buttons rather than as a bare cog in
-           the topbar, where it was unlabelled and easy to miss - this is the
-           one control that decides what every card on the Market tab is built
-           from, so it says so in words. Deliberately smaller and right-aligned
-           so it doesn't read as a third tab. -->
-      <div style="display:flex;justify-content:flex-end;margin:-12px 0 14px">
-        <button class="secondary btn-sm" id="watchlistGearBtn">&#9881; Choose tracked companies</button>
-      </div>
-
       <div id="investTabMarket">
-        <div class="subtab-pills" id="investSubTabsMarket">
-          <button type="button" class="subtab-pill active" data-subtab="investSubOverview">Overview</button>
-          <button type="button" class="subtab-pill" data-subtab="investSubTracked">Companies you track</button>
-          <button type="button" class="subtab-pill" data-subtab="investSubHistory">Price history</button>
-        </div>
-
-        <!-- Overview is the MARKET, and only the market. It used to open on the
-             daily recap, which is a count of the user's own tracked companies,
-             so the tab promised one thing and led with another: of the seven
-             blocks under "Market", five were about the tracked list, and the
-             one whole-market scan was hidden behind a sub-tab. Everything
-             about the tracked list moved to its own sub-tab below. -->
-        <div id="investSubOverview" data-subtab-label="Overview">
         <div class="card empty-state" id="emptyOverview">Live index prices aren't turned on for this app yet.</div>
   <!-- Market overview: a fixed set of major US indexes (S&P 500, Dow,
                NASDAQ, Russell 2000 - app.js's MARKET_INDEXES) plus today's top
@@ -2241,60 +2193,54 @@
             <p class="muted" id="marketOverviewLiveFreshness" style="font-size:11px;margin:0 0 6px"></p>
             <div id="marketOverviewList"></div>
           </div>
-  <!-- Market-wide movers, the one card here that can see a stock outside the
-          tracked list. Alpha Vantage answers "what moved most today" - Finnhub
-          and every other free quote API can only price symbols you already name,
-          which is why this list used to be capped at the ~20 already tracked.
-          Finnhub then supplies each ticker's company name and a real headline;
-          one optional Gemini call writes the plain-English summary. Every stage
-          degrades on its own: no key, no card; no headline, just numbers; no
-          summary, still numbers and links. -->
-        <div class="card empty-state" id="emptyMovers">No market-wide movers found yet. This card needs a background job to run at least once, check back later.</div>
-          <div class="card hidden" id="marketMoversCard">
-          <div class="card-head">
-            <h2>Biggest movers today</h2>
-            <span class="info-icon" tabindex="0" role="button" data-info="marketMoversExplainer" title="The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.">i</span>
-          </div>
-          <p class="muted" style="font-size:12px;margin:4px 0 2px" id="marketMoversDate"></p>
-          <p class="muted explainer hidden" id="marketMoversExplainer">The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.</p>
-          <p style="font-size:15.5px;line-height:1.5;margin:8px 0 10px" id="marketMoversSummary"></p>
-          <div id="marketMoversGainers"></div>
-          <div id="marketMoversLosers" style="margin-top:10px"></div>
-          </div>
-      </div>
-
-        <div id="investSubTracked" class="hidden" data-subtab-label="Companies you track">
-        <div class="card empty-state" id="emptyTracked">Nothing about the companies you track yet. This needs a background job to run at least once, check back later.</div>
         <!-- PANEL level, not inside a card, and that placement is the whole
              point. These report the weekly price-agent, and they used to sit
-             inside trackedTodayCard - which hides itself when its three
-             sections are all empty, so the "this run failed" banner vanished
-             in exactly the state that failure produces. A warning that is
-             only visible when there is nothing to warn about is not one. -->
+             inside a card that hides itself when it has nothing to show, so
+             the "this run failed" banner vanished in exactly the state that
+             failure produces. A warning that is only visible when there is
+             nothing to warn about is not one. -->
         <p class="muted" id="trackedAgentFreshness" style="font-size:11px;margin:0 0 2px"></p>
         <p id="trackedAgentWarning" class="hidden" style="font-size:12px;margin:0 0 8px"></p>
-  <!-- The written half of this tab, sitting ABOVE the live numbers it
-               describes. Merged in from its own "Daily recap" sub-tab
-               (2026-08-24): the two panels showed overlapping facts - a
-               breadth count, index moves and tracked-stock headlines each
-               appeared on both - so this now reads prose first, specifics
-               second, instead of making the reader hop between two tabs to
-               assemble one picture. The recap's own index-moves line was
-               dropped in that merge; the full index list directly below
-               states the same thing with more detail.
-               Stage 1 is deliberately ZERO-LLM - every number comes from
-               daily_prices and every headline from Finnhub's free
-               company-news output already on the findings tables, so
-               nothing here can be rate-limited out of existence. Written
-               once per trading day by tools/price-agent.js's RECAP_ONLY
-               mode into daily_recaps. A headline is the day's COVERAGE,
-               never the cause of the move. Hidden until a real recap
-               exists, with no placeholder of its own anymore - the live
-               cards below keep this tab from ever being empty on their
-               own. -->
-          <div class="card hidden" id="dailyRecapCard">
+        <!-- ONE card for the user's own list. It used to be a sub-tab holding
+             two cards: "Daily recap" (the close, in words) and "Latest on the
+             companies you track" (the same companies while the market is
+             open). They answered one question at two times of day and both
+             listed the day's biggest movers. The live section leads while the
+             market is open and steps aside after the close, when the recap
+             says the same thing with the coverage attached
+             (renderMarketOverview). The button that edits the list lives here
+             because this is the only card built from it; the empty state
+             carries a copy, or the list could not be reached at all before
+             the first background run. -->
+        <div class="card empty-state hidden" id="emptyTracked">
+          <p style="margin:0 0 var(--sp-2)">Nothing about the companies you track yet. This needs a background job to run at least once, check back later.</p>
+          <button type="button" class="secondary btn-sm watchlist-edit-btn">Choose companies</button>
+        </div>
+        <div class="card hidden" id="trackedCard">
+          <div class="topbar" style="margin-bottom:4px">
             <div class="card-head">
-              <h2>Daily recap</h2>
+              <h2>Companies you track</h2>
+              <span class="info-icon" tabindex="0" role="button" data-info="trackedCardExplainer" title="Your own list of companies, not the whole market. While the market is open this shows where they stand right now. After the close it shows a short recap of how they finished. A headline is what was reported that day, not why a price moved.">i</span>
+            </div>
+            <button type="button" class="secondary btn-xs watchlist-edit-btn" id="watchlistGearBtn" aria-label="Edit the list of companies you track">Edit list</button>
+          </div>
+          <p class="muted explainer hidden" id="trackedCardExplainer">Your own list of companies, not the whole market. While the market is open this shows where they stand right now. After the close it shows a short recap of how they finished. A headline is what was reported that day, not why a price moved.</p>
+          <div id="trackedTodayCard" class="hidden">
+            <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
+            <div id="marketMoversSection" class="hidden" style="margin-top:var(--sp-3)">
+              <h3 style="font-size:13px">Their biggest moves</h3>
+              <p class="muted" id="marketMoversFreshness" style="font-size:11px;margin:0 0 8px"></p>
+              <div id="marketMoversList"></div>
+            </div>
+          </div>
+          <!-- Stage 1 is ZERO-LLM: every number comes from daily_prices and
+               every headline from Finnhub's free company-news output, so none
+               of it can be rate-limited out of existence. Written once per
+               trading day by tools/price-agent.js's RECAP_ONLY mode. A
+               headline is the day's COVERAGE, never the cause of the move. -->
+          <div id="dailyRecapCard" class="hidden" style="margin-top:var(--sp-4)">
+            <div class="card-head">
+              <h3 style="font-size:13px">Daily recap</h3>
               <span class="info-icon" tabindex="0" role="button" data-info="dailyRecapExplainer" title="A short written recap of the trading day, built from the day's real price moves, headlines published about the companies you track, and headlines about the market as a whole. Coverage is what was reported that day, not necessarily why a price moved.">i</span>
             </div>
             <p class="muted" style="font-size:12px;margin:4px 0 2px" id="dailyRecapDate"></p>
@@ -2319,84 +2265,94 @@
             </div>
             <div id="dailyRecapMovers"></div>
           </div>
-          <!-- The live half of the same subject the recap covers at the close:
-               what the tracked list is doing now, and what is being written
-               about it. Split out of "Market overview", where its own help text
-               had to admit it was "not a scan of the whole market". -->
-          <div class="card hidden" id="trackedTodayCard">
-            <div class="card-head">
-              <h2>Latest on the companies you track</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="trackedTodayExplainer" title="The companies on your own tracked list, not the market as a whole. Their latest moves and the stories published about them today. Coverage is what was reported, not why a price moved.">i</span>
-            </div>
-            <p class="muted explainer hidden" id="trackedTodayExplainer">The companies on your own tracked list, not the market as a whole. Their latest moves and the stories published about them today. Coverage is what was reported, not why a price moved.</p>
-            <p style="font-size:13px;margin:6px 0 4px;font-weight:600" id="marketPulse"></p>
-            <div id="marketMoversSection" class="hidden" style="margin-top:14px">
+            <div id="marketNewsSection" class="hidden" style="margin-top:var(--sp-4)">
               <div class="card-head">
-                <h3 style="font-size:13px">Today's top movers</h3>
-                <span class="info-icon" tabindex="0" role="button" data-info="topMoversExplainer" title="Biggest moves (up or down) among the companies you track, not a scan of the whole market, and not a recommendation. The button above this section changes which companies are tracked.">i</span>
-              </div>
-              <p class="muted explainer hidden" id="topMoversExplainer">Biggest moves (up or down) among the companies you track, not a scan of the whole market, and not a recommendation. The button above this section changes which companies are tracked.</p>
-              <p class="muted" id="marketMoversFreshness" style="font-size:11px;margin:0 0 8px"></p>
-              <div id="marketMoversList"></div>
-            </div>
-            <div id="marketNewsSection" class="hidden" style="margin-top:14px">
-              <div class="card-head">
-                <h2 style="font-size:13px">News from your tracked stocks</h2>
+                <h3 style="font-size:13px">In the news</h3>
                 <span class="info-icon" tabindex="0" role="button" data-info="trackedNewsExplainer" title="Recent stories about the companies you track, taken from each company's own news feed rather than a general one. When the app has managed to read the mood of that coverage it says so above them; when it hasn't, the headlines still stand on their own. It reports what was published, not a prediction, and not a recommendation.">i</span>
               </div>
               <p class="muted explainer hidden" id="trackedNewsExplainer">Recent stories about the companies you track, taken from each company's own news feed rather than a general one. When the app has managed to read the mood of that coverage it says so above them; when it hasn't, the headlines still stand on their own. It reports what was published, not a prediction, and not a recommendation.</p>
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <div id="marketSentimentRow" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                 <span id="marketSentimentDot" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
                 <span id="marketSentimentLabel" style="font-weight:600"></span>
               </div>
               <p class="muted" id="marketSentimentReason" style="font-size:12px;margin:0 0 10px"></p>
               <div id="marketNewsList"></div>
             </div>
+        </div>
+  <!-- Market-wide movers, the one card here that can see a stock outside the
+          tracked list. Alpha Vantage answers "what moved most today" - Finnhub
+          and every other free quote API can only price symbols you already name,
+          which is why this list used to be capped at the ~20 already tracked.
+          Finnhub then supplies each ticker's company name and a real headline;
+          one optional Gemini call writes the plain-English summary. Every stage
+          degrades on its own: no key, no card; no headline, just numbers; no
+          summary, still numbers and links. -->
+        <div class="card empty-state" id="emptyMovers">No market-wide movers found yet. This card needs a background job to run at least once, check back later.</div>
+          <div class="card hidden" id="marketMoversCard">
+          <div class="card-head">
+            <h2>Biggest movers today</h2>
+            <span class="info-icon" tabindex="0" role="button" data-info="marketMoversExplainer" title="The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.">i</span>
           </div>
-      </div>
-
-        <div id="investSubHistory" class="hidden" data-subtab-label="Price history">
-        <div class="card empty-state" id="emptyHistory">No price history recorded yet. Once a price has been tracked at least once, its chart will appear here.</div>
-  <!-- Price history: the per-symbol chart daily_prices was built for.
-               Finnhub's real historical-candle endpoint is premium and 403s on
-               a free key, so this is drawn from history the app accumulates
-               itself, one row per symbol per trading day. That means the range
-               genuinely starts short and grows - the high/low line below states
-               the real span rather than calling five days a "52-week" anything
-               until a full year actually exists. Hidden until there is history
-               for at least one symbol. -->
-          <div class="card hidden" id="priceHistoryCard">
-            <div class="card-head">
-              <h2>Price history</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="priceHistoryExplainer" title="Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.">i</span>
-            </div>
-            <p class="muted explainer hidden" id="priceHistoryExplainer">Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.</p>
-            <label for="priceHistorySymbol">Symbol</label>
-            <select id="priceHistorySymbol"></select>
-            <div id="priceHistoryRanges" style="display:flex;gap:6px;margin:10px 0 8px;flex-wrap:wrap"></div>
-            <div class="chartbox short"><canvas id="priceHistoryChart"></canvas></div>
-            <p class="muted" id="priceHistoryEmpty" style="font-size:13px;margin:8px 0 0"></p>
-            <p id="priceHistoryRange" style="font-size:13px;margin:8px 0 0"></p>
-            <div id="priceHistoryFundamentals" style="margin-top:8px"></div>
+          <p class="muted" style="font-size:12px;margin:4px 0 2px" id="marketMoversDate"></p>
+          <p class="muted explainer hidden" id="marketMoversExplainer">The largest single-day moves anywhere in the US market, not just among the stocks you track. These are usually small companies, and big swings in them are common and often reverse.</p>
+          <p style="font-size:15.5px;line-height:1.5;margin:8px 0 10px" id="marketMoversSummary"></p>
+          <div id="marketMoversGainers"></div>
+          <div id="marketMoversLosers" style="margin-top:10px"></div>
           </div>
-      </div>
       </div>
 
       <div id="investTabPortfolio" class="hidden">
-        <div class="subtab-pills" id="investSubTabsPortfolio">
-          <button type="button" class="subtab-pill active" data-subtab="investSubHoldings">Holdings</button>
-          <button type="button" class="subtab-pill" data-subtab="investSubDayRecap">Today's note</button>
-          <button type="button" class="subtab-pill" data-subtab="investSubValue">Value over time</button>
-          <button type="button" class="subtab-pill" data-subtab="investSubRealized">Sales</button>
-          <button type="button" class="subtab-pill" data-subtab="investSubLimits">Yearly limits</button>
-          <button type="button" class="subtab-pill" data-subtab="investSubTarget">Target mix</button>
+      <!-- Everything in this wrapper is about the user's OWN investments, and
+           it is hidden while they have none (renderInvestments), so a new
+           account's portfolio tab is the Holdings card's one line about adding
+           an account rather than tiles of zeros. Starts hidden so the zeros
+           never flash by while the (empty) list is still loading. -->
+      <div id="investOwnSummary" class="hidden">
+        <!-- Two tiles, not four: today's change rides under the value and what
+             you paid rides under the gain, which is what each is read against. -->
+        <div class="totals">
+          <div class="card"><div class="muted" style="font-size:12px">Total value</div><div class="big" id="investTotalValue">$0</div><div class="muted" id="investTodayChange" style="font-size:11px;margin-top:2px"></div></div>
+          <div class="card"><div class="muted" style="font-size:12px">Gain or loss</div><div class="big" id="investTotalGainLoss">$0</div><div class="muted" id="investTotalCostBasis" style="font-size:11px;margin-top:2px"></div></div>
         </div>
-        <div id="investSubHoldings" data-subtab-label="Holdings">
+        <!-- ONE card where there were three: the daily health check, the full
+             "Value over time" chart (the health check drew a second, smaller
+             copy of the same rows) and Today's note. The two health lines that
+             restated the tiles above are no longer drawn. -->
+        <div class="card" id="investHealthCard">
+          <div class="card-head">
+            <h2>How it's going</h2>
+            <span class="info-icon" tabindex="0" role="button" data-info="investHealthExplainer" title="What everything you own has been worth over time, with one point for each day you opened the app. Under it, plain sentences built from real numbers on this page, never a made-up score. After the market closes, a short note on how your own things did that day.">i</span>
+          </div>
+          <p class="muted explainer hidden" id="investHealthExplainer">What everything you own has been worth over time, with one point for each day you opened the app. Under it, plain sentences built from real numbers on this page, never a made-up score. After the market closes, a short note on how your own things did that day.</p>
+          <!-- One snapshot per calendar day the app was actually opened
+               (snapshotPortfolioIfNeeded) - no cron or server for a static
+               PWA, so a day the app wasn't opened simply has no row. -->
+          <div class="chartbox short" style="margin-top:10px"><canvas id="investTrendChart"></canvas></div>
+          <p class="muted" id="investTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet, check back after using the app on a few different days.</p>
+          <div id="investHealthList" style="margin-top:10px"></div>
+          <!-- The user's OWN end-of-day note (portfolio_recaps, 75), written
+               client-side after the close by the self-hosted model, never a
+               cloud one, because it names what someone owns. Every figure in
+               it was computed by portfolioRecapFigures() and checked before
+               display. Only the written paragraph is shown: its headline and
+               per-holding lines restated the tiles above and the Holdings card
+               below, so with no paragraph this shows nothing at all. -->
+          <div id="portfolioRecapCard" class="hidden" style="margin-top:var(--sp-4)">
+            <div class="card-head">
+              <h3 style="font-size:13px">Today's note</h3>
+              <span class="info-icon" tabindex="0" role="button" data-info="portfolioRecapExplainer" title="A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app; the wording is written by a model running on your own machine, never sent anywhere. A day you don't open the app after the close simply has no note.">i</span>
+            </div>
+            <p class="muted" style="font-size:12px;margin:4px 0 2px" id="portfolioRecapDate"></p>
+            <p class="muted explainer hidden" id="portfolioRecapExplainer">A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app; the wording is written by a model running on your own machine, never sent anywhere. A day you don't open the app after the close simply has no note.</p>
+            <p style="font-size:15.5px;line-height:1.6;margin:8px 0 0" id="portfolioRecapSummary"></p>
+          </div>
+        </div>
+      </div>
   <!-- Every asset in INVESTMENT_ASSET_TYPES (app.js) - a ticker-tracked
                holding shows live price/gain-loss/day-change math; a symbol-less
                one (a blended 401(k), say) just shows its value. Explanation
                text (if tools/price-agent.js found one) shows under the row. -->
-          <div class="card">
+          <div class="card" id="investHoldingsCard">
             <div class="topbar" style="margin-bottom:4px">
               <div class="card-head">
                 <h2>Holdings</h2>
@@ -2476,52 +2432,8 @@
                  would flood the shared live region. -->
             <p id="investReorderStatus" class="sr-only" role="status" aria-live="polite"></p>
           </div>
-      </div>
-
-        <div id="investSubDayRecap" class="hidden" data-subtab-label="Today's note">
-          <div class="card empty-state" id="emptyDayRecap">Once the market has closed and you open the app, a short note about how the things you own did that day appears here.</div>
-  <!-- The user's OWN end-of-day note (portfolio_recaps, 75). Deliberately
-               separate from the Daily recap card on the Market tab: that one
-               is about the market, which belongs to nobody, and this is about
-               this person's own money. Same split the two top-level tabs draw.
-
-               Written client-side after the close, because the figures name
-               what someone owns - so the paragraph comes from the self-hosted
-               Gemma, never a cloud model. Every number is computed by
-               portfolioRecapFigures() in investments.js, the same functions
-               the Holdings card renders from; the model only writes prose
-               around them and its figures are checked before display. -->
-          <div class="card hidden" id="portfolioRecapCard">
-            <div class="card-head">
-              <h2>Today's note</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="portfolioRecapExplainer" title="A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app; the wording is written by a model running on your own machine, never sent anywhere. A day you don't open the app after the close simply has no note.">i</span>
-            </div>
-            <p class="muted" style="font-size:12px;margin:4px 0 2px" id="portfolioRecapDate"></p>
-            <p class="muted explainer hidden" id="portfolioRecapExplainer">A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app; the wording is written by a model running on your own machine, never sent anywhere. A day you don't open the app after the close simply has no note.</p>
-            <p class="stat-bubble" id="portfolioRecapHeadline"></p>
-            <p style="font-size:15.5px;line-height:1.6;margin:8px 0 10px" id="portfolioRecapSummary"></p>
-            <div id="portfolioRecapPositions"></div>
-            <p class="muted" id="portfolioRecapCaveat" style="font-size:12px;margin:8px 0 0"></p>
-          </div>
-        </div>
-        <div id="investSubValue" class="hidden" data-subtab-label="Value">
-  <!-- One snapshot per calendar day the app was actually opened
-               (snapshotPortfolioIfNeeded, app.js) - same reasoning as the
-               Reports page's net worth trend (no cron/server for a static
-               PWA). A day the app wasn't opened just has no row. -->
-          <div class="card">
-            <div class="card-head">
-              <h2>Value over time</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="investTrendExplainer" title="One snapshot per day you actually open the app, a day you didn't open it simply has no point on the line.">i</span>
-            </div>
-            <p class="muted explainer hidden" id="investTrendExplainer">One snapshot per day you actually open the app, a day you didn't open it simply has no point on the line.</p>
-            <div class="chartbox short"><canvas id="investTrendChart"></canvas></div>
-            <p class="muted" id="investTrendEmpty" style="font-size:12px;margin:6px 0 0">Not enough history yet, check back after using the app on a few different days.</p>
-          </div>
-      </div>
-
-        <div id="investSubRealized" class="hidden" data-subtab-label="Realized">
-        <div class="card empty-state" id="emptyRealized">You haven't recorded a sale yet. Once you sell part or all of a holding, it shows up here.</div>
+        <!-- Sales and yearly limits have no placeholder of their own. Each card
+             appears under Holdings only once it has something real in it. -->
   <!-- Realized gain/loss - money actually banked on sales, genuinely
                separate from the unrealized gain the totals above show. Average
                cost basis (assets.purchase_price is one blended total for the
@@ -2540,10 +2452,6 @@
             </div>
             <p class="muted" id="realizedDetail" style="font-size:12px;margin:8px 0 0"></p>
           </div>
-      </div>
-
-        <div id="investSubLimits" class="hidden" data-subtab-label="Limits">
-        <div class="card empty-state" id="emptyLimits">None of your accounts are a type with a tracked contribution limit, like a 401(k) or IRA.</div>
   <!-- Base 2026 IRS limits only (no catch-up, no income phase-outs) -
                see docs/bank-account-types-research.md §9b.6 and §9b.7 for the
                full per-type reasoning, which types share a limit vs. have
@@ -2562,18 +2470,19 @@
             <p class="muted explainer hidden" id="limitsExplainer">Worked out from what you bought inside these accounts this year, not from anything you type. Base annual limits only, no catch-up amounts, income phase-outs or filing status. Check against current IRS figures for your own situation.</p>
             <div id="contributionLimitsList"></div>
           </div>
-      </div>
-
-        <div id="investSubTarget" class="hidden" data-subtab-label="Target">
   <!-- A calculator, not a recommendation - risk label and targets are
                only ever shown back to you as numbers. Nothing here ever
                suggests what to buy. -->
-          <div class="card">
-            <div class="card-head">
-              <h2>Your target mix</h2>
-              <span class="info-icon" tabindex="0" role="button" data-info="targetExplainer" title="Set your own target mix and see how far off you are, this never picks investments for you.">i</span>
+          <div class="card hidden" id="investTargetCard">
+            <div class="topbar" style="margin-bottom:0">
+              <div class="card-head">
+                <h2>Your target mix</h2>
+                <span class="info-icon" tabindex="0" role="button" data-info="targetExplainer" title="Set your own target mix and see how far off you are, this never picks investments for you.">i</span>
+              </div>
+              <button type="button" class="secondary btn-xs hidden" id="investTargetSetBtn">Set one</button>
             </div>
             <p class="muted explainer hidden" id="targetExplainer">Set your own target mix and see how far off you are, this never picks investments for you.</p>
+            <div id="investTargetBody">
             <label for="investRiskLabel">Risk label (for your own reference only)</label>
             <select id="investRiskLabel">
               <option value="">Not set</option>
@@ -2591,14 +2500,9 @@
               <input id="investTargetPercent" aria-label="Target percentage" type="number" step="0.1" min="0" max="100" inputmode="decimal" placeholder="Target %" style="flex:1" />
               <button class="btn-xs" id="saveInvestTargetBtn">Set</button>
             </div>
+            </div>
           </div>
       </div>
-      </div>
-
-
-      
-
-      
 
       <!-- One shared panel, retargeted per account - same "single form,
            repositioned" pattern assetAdjustForm already uses for Checking/
@@ -2751,7 +2655,7 @@
     <div class="sheet">
       <div class="topbar"><strong id="watchlistTitle">Tracked companies</strong><button class="secondary btn-sm" id="watchlistClose">&#10005;</button></div>
 
-      <p class="muted" style="font-size:12px;margin:4px 0 8px">The Companies you track tab is built from this list: the written recap, the up and down count, their biggest moves and the stories about them. The price history charts use it too. Overview is the market as a whole and does not depend on it. Changes take effect on the next background price run.</p>
+      <p class="muted" style="font-size:12px;margin:4px 0 8px">The Companies you track card on the Market tab is built from this list: where they stand now, the written recap, their biggest moves and the stories about them. The price charts use it too. The rest of the Market tab is the market as a whole and does not depend on it. Changes take effect on the next background price run.</p>
       <div class="row">
       <div style="position:relative">
         <label for="watchlistNewSymbol">Add a symbol</label>
@@ -2779,6 +2683,30 @@
            Separate from toast(): this fires on every nudge, and an arrow key
            held down would flood the shared live region. -->
       <p id="watchlistReorderStatus" class="sr-only" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+
+  <!-- Price history is a SHEET, not a tab. It used to be the third Market
+       sub-tab, but every ticker on the page already opened it, so as a
+       destination it only added a tab to look through. Built from history this
+       app records itself (daily_prices), because Finnhub's historical endpoint
+       is paid, so the range genuinely starts short and grows, and the high/low
+       line states the real span rather than calling five days a "52-week"
+       anything. -->
+  <div id="priceHistoryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="priceHistoryTitle">
+    <div class="sheet">
+      <div class="topbar"><strong id="priceHistoryTitle">Price history</strong><button class="secondary btn-sm" id="priceHistoryClose" aria-label="Close price history">&#10005;</button></div>
+      <p class="muted" style="font-size:12px;margin:4px 0 8px">Built from prices this app has recorded itself, so the range grows over time rather than starting with years of backfill.</p>
+      <div id="priceHistoryError" class="hidden"></div>
+      <div id="priceHistoryBody">
+        <label for="priceHistorySymbol">Symbol</label>
+        <select id="priceHistorySymbol"></select>
+        <div id="priceHistoryRanges" style="display:flex;gap:6px;margin:10px 0 8px;flex-wrap:wrap"></div>
+        <div class="chartbox short"><canvas id="priceHistoryChart"></canvas></div>
+        <p class="muted" id="priceHistoryEmpty" style="font-size:13px;margin:8px 0 0"></p>
+        <p id="priceHistoryRange" style="font-size:13px;margin:8px 0 0"></p>
+        <div id="priceHistoryFundamentals" style="margin-top:8px"></div>
+      </div>
     </div>
   </div>
 
@@ -3647,116 +3575,85 @@
       </div>
       <div id="helpContentInvest" class="hidden">
         <div class="help-diagram">
-          <svg id="helpDiagramInvest" role="group" aria-label="The Investments page, card by card, in the order they appear" viewBox="0 0 680 592" xmlns="http://www.w3.org/2000/svg">
-            <rect x="10" y="10" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="34" fill="var(--text)" font-size="14">Daily health check + totals (always shown)</text>
-            <text x="28" y="78" fill="var(--accent)" font-size="13" font-weight="600">Market tab</text>
-            <rect x="10" y="98" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="122" fill="var(--text)" font-size="14">Overview (the market as a whole)</text>
-            <rect x="10" y="142" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="166" fill="var(--text)" font-size="14">Companies you track (recap, moves, news)</text>
-            <rect x="10" y="186" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="210" fill="var(--text)" font-size="14">Price history (per-symbol chart)</text>
-            <rect x="10" y="230" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-                        <text x="28" y="298" fill="var(--accent)" font-size="13" font-weight="600">My portfolio tab</text>
-            <rect x="10" y="318" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="342" fill="var(--text)" font-size="14">Holdings</text>
-            <rect x="10" y="362" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="386" fill="var(--text)" font-size="14">Today's note</text>
-            <rect x="10" y="406" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="430" fill="var(--text)" font-size="14">Value over time</text>
-            <rect x="10" y="450" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="474" fill="var(--text)" font-size="14">What you made on sales (only after a sale)</text>
-            <rect x="10" y="494" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="518" fill="var(--text)" font-size="14">How much more you can put in (only if tracked)</text>
-            <rect x="10" y="538" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
-            <text x="40" y="562" fill="var(--text)" font-size="14">Your target mix</text>
+          <svg id="helpDiagramInvest" role="group" aria-label="The Investments page, card by card, in the order they appear" viewBox="0 0 680 484" xmlns="http://www.w3.org/2000/svg">
+            <text x="28" y="24" fill="var(--accent)" font-size="13" font-weight="600">Market tab</text>
+            <rect x="10" y="40" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="64" fill="var(--text)" font-size="14">Market overview</text>
+            <rect x="10" y="84" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="108" fill="var(--text)" font-size="14">Companies you track</text>
+            <rect x="10" y="128" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="152" fill="var(--text)" font-size="14">Biggest movers today</text>
+            <rect x="10" y="172" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="196" fill="var(--text)" font-size="14">Price history (opens from any ticker)</text>
+            <text x="28" y="244" fill="var(--accent)" font-size="13" font-weight="600">My portfolio tab</text>
+            <rect x="10" y="260" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="284" fill="var(--text)" font-size="14">How it's going (and the totals above it)</text>
+            <rect x="10" y="304" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="328" fill="var(--text)" font-size="14">Holdings</text>
+            <rect x="10" y="348" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="372" fill="var(--text)" font-size="14">What you made on sales (only after a sale)</text>
+            <rect x="10" y="392" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="416" fill="var(--text)" font-size="14">How much more you can put in (only if tracked)</text>
+            <rect x="10" y="436" width="660" height="38" rx="9" fill="var(--panel-2)" stroke="var(--border)"/>
+            <text x="40" y="460" fill="var(--text)" font-size="14">Your target mix (once you own something)</text>
           </svg>
         </div>
-        <p class="muted" style="font-size:12px;margin:0 0 var(--sp-4)">Your health check and totals sit at the top. Below them, <strong>Market</strong> is the wider market and <strong>My portfolio</strong> is your own money. Some cards only appear once there is real data for them.</p>
+        <p class="muted" style="font-size:12px;margin:0 0 var(--sp-4)"><strong>Market</strong> is the wider market and <strong>My portfolio</strong> is your own money. Each is one page. Some cards only appear once there is real data for them.</p>
 
         <div class="help-topic" id="helpTopic-two-tabs-and-what-s-on-each">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-two-tabs-and-what-s-on-each-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Two tabs, and what's on each</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-two-tabs-and-what-s-on-each-body">
-          <p><strong>Market</strong> is everything that does not depend on what you own. <strong>My portfolio</strong> is only your money. The health check and totals above them stay visible on both.</p>
-          <p>Market splits three ways. <strong>Overview</strong> is the market as a whole. <strong>Companies you track</strong> is your own list, which is a different thing: a count of how they finished, their biggest moves, and the day&#39;s stories about them. <strong>Price history</strong> charts one company at a time.</p>
-          <p>Every card has an "i" beside its title for a one-line explanation.</p>
-          <p>Tapping any ticker anywhere opens that company&#39;s price chart.</p>
-          
+          <p><strong>Market</strong> is everything that does not depend on what you own: the big indexes, the companies you track, and the largest moves anywhere in the market. <strong>My portfolio</strong> is only your money.</p>
+          <p>Every card has an "i" beside its title for a one-line explanation. Tapping any ticker anywhere opens that company&#39;s price chart.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-market-overview">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-market-overview-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Market overview</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-market-overview-body">
+          <p>How the major US indexes did today, whether or not you own any of them.</p>
+          <p>Each index is followed through a fund built to track it, named on its row, because the index levels themselves need a paid data feed this app does not have. The percentage is that fund&#39;s move for the day. The price beside it is one share of the fund, not the level of the index.</p>
+          <p>Prices refresh every 15 minutes while the market is open, and a line on the card says how fresh they are.</p>
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-companies-you-track">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-companies-you-track-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Companies you track</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-companies-you-track-body">
-          <p>Your own list of companies, not the market. Change who is on it with <strong>Choose tracked companies</strong>.</p>
-          <p><strong>Daily recap</strong> is a once-a-day look back at the session that just finished. Two counts show how many of them finished up and how many finished down, and tapping either one shows which. Under them are the day's biggest moves, each with what was published about that company.</p>
-          <p><strong>Latest on the companies you track</strong> is the same subject while the market is open: where they stand now and the stories running about them today.</p>
-          <p>A headline, and the line beneath it, is what was being reported, never a claim about why a price moved. A written recap, when there is one, is labelled <strong>AI-written</strong>; it never suggests buying or selling and never says what a price will do next.</p>
-          
+          <p>Your own list of companies, not the market. While the market is open it shows how many are up right now and their biggest moves. After the close, a short recap takes over: how many finished up and down (tap either count to see which), the day&#39;s biggest moves, and the stories about them.</p>
+          <p>A headline is what was being reported, never a claim about why a price moved. A written recap, when there is one, is labelled <strong>AI-written</strong>; it never suggests buying or selling and never says what a price will do next.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-choose-companies">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-choose-companies-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Edit list</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-choose-companies-body">
+          <p>The button on the Companies you track card. It changes which companies that card and the price charts are built from. Add one by its ticker or company name.</p>
+          <p>Drag a row by its handle to reorder it, or tap the handle and use the arrow keys. Anything you own is added for you.</p>
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-biggest-movers-today">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-biggest-movers-today-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Biggest movers today</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-biggest-movers-today-body">
+          <p>The largest single-day moves anywhere in the US market, not just among the companies you track.</p>
+          <p>These are usually very small companies, where a big percentage move is far more common and often reverses. A headline is what was being reported, not why a price moved.</p>
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-price-history">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-price-history-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Price history</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-price-history-body">
-          <p>A price chart for any symbol the app has recorded, with the high and low underneath.</p>
+          <p>Opens when you tap a company name or ticker on this page: a price chart, with the high and low underneath. You can switch to another company inside it.</p>
           <p>The history starts short and grows, because it is built from the day this was switched on. It is only called a 52-week range once there is really a year of it.</p>
-          
           </div>
         </div>
 
-        <div class="help-topic" id="helpTopic-realized-gain-loss">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-realized-gain-loss-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>What you made on sales</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-realized-gain-loss-body">
-          <p>What you made or lost on holdings you have <em>sold</em>, which is different from the gain shown on Holdings for what you still own.</p>
-          <p>To record one, tap <strong>Sell</strong> on a holding. This uses an average cost and is not a tax document.</p>
-          
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-choose-tracked-companies">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-choose-tracked-companies-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Choose tracked companies</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-choose-tracked-companies-body">
-          <p>The list behind the Companies you track tab and the price history charts. Overview is the market as a whole and does not use it. Add a symbol by its ticker or company name.</p>
-          <p>Drag a row by its handle to reorder it, or tap the handle and use the arrow keys. Anything you own is added for you.</p>
-          
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-overview">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-overview-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Overview</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-overview-body">
-          <p>The market as a whole, whether or not you own any of it. The major indexes first, then the biggest single-day moves anywhere in the US market.</p>
-          <p>Each index is followed through a fund built to track it, named on its row, because the index levels themselves need a paid data feed this app does not have. The percentage is that fund's move for the day, which is the part a tracking fund reproduces closely. The price beside it is one share of the fund, not the level of the index.</p>
-          <p>Those movers are usually very small companies, where a big percentage move is far more common and often reverses. A headline is what was being reported, not why a price moved.</p>
-          <p>Prices refresh every 15 minutes while the market is open, and a line on the card says how fresh they are.</p>
-          
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-daily-health-check">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-daily-health-check-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Daily health check</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-daily-health-check-body">
-          <p>A few plain sentences pulling together numbers already shown further down. Never a made-up score, and a line is left out if there is nothing real behind it.</p>
-          
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-todays-note">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-todays-note-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Today's note</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-todays-note-body">
-          <p>A short note on how the things you own did on the last day the market was open.</p>
-          <p>Every figure is worked out by this app; only the wording is written for you, on your own machine. It never suggests buying or selling.</p>
-          
-          </div>
-        </div>
-
-        <div class="help-topic" id="helpTopic-value-over-time">
-          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-value-over-time-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Value over time</button></h3>
-          <div class="help-topic-body hidden" id="helpTopic-value-over-time-body">
-          <p>One point for each day you opened the app. It needs two days before a line appears.</p>
-          
+        <div class="help-topic" id="helpTopic-how-it-s-going">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-how-it-s-going-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>How it's going</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-how-it-s-going-body">
+          <p>Above it, what everything you own is worth with today&#39;s move, and your gain or loss with what you paid. The chart is what it has been worth, with one point for each day you opened the app, so it needs two days before a line appears.</p>
+          <p>Under the chart, a few plain sentences built from real numbers on this page, never a made-up score. After the market closes, a short note on how your own things did that day: every figure is worked out by this app, and only the wording is written for you, on your own machine. It never suggests buying or selling.</p>
           </div>
         </div>
 
@@ -3767,17 +3664,23 @@
           <p>Drag a row by its handle to reorder it, or tap the handle and use the arrow keys. That only changes the order you see.</p>
           <p><strong>+ Add stock</strong> records a holding. You can type a company name instead of a ticker, and optionally pay for it from a real account.</p>
           <p>Buying inside an account with a yearly limit counts towards that limit on its own, and a purchase that would go over is refused. Money moved in from another retirement account is a rollover and should not count: undo that line in Recent History if it happens.</p>
-          
+          </div>
+        </div>
+
+        <div class="help-topic" id="helpTopic-realized-gain-loss">
+          <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-realized-gain-loss-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>What you made on sales</button></h3>
+          <div class="help-topic-body hidden" id="helpTopic-realized-gain-loss-body">
+          <p>Appears under Holdings once you have sold something. It is what you made or lost on holdings you have <em>sold</em>, which is different from the gain shown for what you still own.</p>
+          <p>To record one, tap <strong>Sell</strong> on a holding. This uses an average cost and is not a tax document.</p>
           </div>
         </div>
 
         <div class="help-topic" id="helpTopic-contribution-limits">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-contribution-limits-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>How much more you can put in</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-contribution-limits-body">
-          <p>How much you have put into each kind of retirement account this year, and how much can still go in.</p>
+          <p>Appears under Holdings when you have a retirement account with a yearly limit. It shows how much you have put in this year, and how much can still go in.</p>
           <p>The total comes from what you actually bought inside those accounts. A Traditional and a Roth IRA share one limit; a 401(k) and a 457(b) each get their own.</p>
           <p>These are base figures only, for reference. Check your real numbers with whoever holds the account.</p>
-          
           </div>
         </div>
 
@@ -3785,7 +3688,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-target-allocation-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Your target mix</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-target-allocation-body">
           <p>A calculator, not advice. Set a target percentage for each kind of investment and it shows how far off you are, in dollars and percent. It never says what to buy.</p>
-          
+          <p>It appears once you own something, with a <strong>Set one</strong> button until you set a target.</p>
           </div>
         </div>
 

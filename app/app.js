@@ -663,6 +663,11 @@ let marketIndexFindings = []; // shared, machine-found market index levels (Inve
 let marketNewsFindings = []; // shared, machine-found daily market news digest + sentiment (market_news_findings)
 let dailyRecaps = []; // stored zero-LLM daily market recaps (daily_recaps, 55_daily_recaps.sql)
 let dailyPrices = []; // durable per-symbol daily OHLC history (daily_prices, 54)
+// Set when the last load of daily_prices failed. Price history is a sheet now,
+// opened from a ticker, so there is no card on the page to show the failure
+// in; the sheet shows it instead, rather than a tap reading as "this company
+// has no history", which is a different claim.
+let dailyPricesLoadError = null;
 let symbolFundamentals = []; // P/E, market cap, dividend yield (symbol_fundamentals, 56)
 let watchlistSymbols = []; // the user's own editable movers watchlist (watchlist_symbols, 56)
 let holdingSales = []; // realized gain/loss from actual sales (holding_sales, 57)
@@ -1284,11 +1289,11 @@ async function loadDailyPrices() {
     // "no price history yet" - that is a different claim, and the one the
     // empty state already makes.
     dailyPrices = [];
-    $("priceHistoryCard").classList.add("hidden");
-    $("emptyHistory").classList.remove("hidden");
-    renderLoadError("emptyHistory", error, loadDailyPrices);
+    dailyPricesLoadError = error;
+    renderPriceHistory();
     return;
   }
+  dailyPricesLoadError = null;
   renderPriceHistory();
 }
 
@@ -7161,12 +7166,9 @@ async function buildPortfolioRecapIfNeeded() {
   await loadPortfolioRecaps();
 }
 
-// Same portfolio_snapshots query feeds both the full-history "Value over
-// time" chart and the Daily health check card's compact recent-trend
-// sparkline (last HEALTH_SPARKLINE_DAYS points) - one fetch, two renders,
-// rather than a second round-trip for what's already the same rows.
-const HEALTH_SPARKLINE_DAYS = 14;
-
+// One chart of what everything owned has been worth. There used to be two
+// drawn from these same rows, a full-history card and a 14-day copy inside the
+// health check, which is the same line twice on one page.
 async function renderInvestmentsTrend() {
   const { data } = await sb.from("portfolio_snapshots").select("*").order("snapshot_date", { ascending: true });
   const rows = data || [];
@@ -7176,13 +7178,6 @@ async function renderInvestmentsTrend() {
   if (rows.length >= 2) {
     renderLineChart($("investTrendChart"), rows.map(dayLabel), rows.map((r) => Number(r.total_value)),
       { x: dateAxisTitle(rows.map((r) => r.snapshot_date)), y: "Total value" });
-  }
-
-  const recent = rows.slice(-HEALTH_SPARKLINE_DAYS);
-  $("investHealthTrendEmpty").classList.toggle("hidden", recent.length >= 2);
-  if (recent.length >= 2) {
-    renderLineChart($("investHealthTrendChart"), recent.map(dayLabel), recent.map((r) => Number(r.total_value)),
-      { x: dateAxisTitle(recent.map((r) => r.snapshot_date)), y: "Total value" });
   }
 }
 
@@ -7391,6 +7386,11 @@ function sparklineSvg(series) {
 // chart someone is reading, and a year squeezed into 68px is a smear.
 const SPARK_WINDOW_DAYS = 30;
 
+// Whether the folded target mix card has been opened during this visit. A
+// render runs on every live-price tick, and without this a form someone had
+// just opened would fold itself shut again before the first target was saved.
+let investTargetOpened = false;
+
 function renderInvestments() {
   const investmentAssets = allInvestmentAssets();          // display: parents + holdings
   const countable = countableInvestmentAssets();           // maths: never both
@@ -7415,14 +7415,27 @@ function renderInvestments() {
   }
 
   $("investTotalValue").textContent = fmt(totals.totalValue);
-  $("investTotalCostBasis").textContent = fmt(totals.totalCostBasis);
-  $("investTotalGainLoss").textContent = totals.totalGainLoss != null
-    ? `${fmt(totals.totalGainLoss)} (${signedPct(totals.totalGainLossPct)})` : "-";
+  // The percentage rides on the line underneath, beside what it is a
+  // percentage OF. In the tile itself it wrapped onto a second line at phone
+  // width and made the two tiles different heights.
+  $("investTotalGainLoss").textContent = totals.totalGainLoss != null ? fmt(totals.totalGainLoss) : "-";
+  $("investTotalCostBasis").textContent = totals.totalGainLoss != null && totals.totalGainLossPct != null
+    ? `${signedPct(totals.totalGainLossPct)} on the ${fmt(totals.totalCostBasis)} you paid`
+    : `You paid ${fmt(totals.totalCostBasis)}`;
   $("investTotalGainLoss").style.color = gainColor(totals.totalGainLoss);
-  $("investTodayChangeEmpty").classList.toggle("hidden", totals.todayChange != null);
-  $("investTodayChange").textContent = totals.todayChange != null
-    ? `${fmt(totals.todayChange)} (${signedPct(totals.todayChangePct)})` : "-";
-  $("investTodayChange").style.color = gainColor(totals.todayChange);
+  // Today's change needs a second day of recorded prices. Until then it says
+  // so in words: a bare "-" under the value reads as a rendering fault, and a
+  // "$0.00" would claim a flat day that was never measured.
+  const today = $("investTodayChange");
+  if (totals.todayChange == null) {
+    today.textContent = "Today's change not known yet";
+    today.style.color = "";
+  } else {
+    today.textContent = totals.todayChange === 0
+      ? "Unchanged today"
+      : `Today ${fmt(totals.todayChange)} (${signedPct(totals.todayChangePct)})`;
+    today.style.color = gainColor(totals.todayChange);
+  }
 
   // Grouped account-first: each investment account, then the individual
   // tickers held inside it (assets with parent_asset_id set). An account
@@ -7465,7 +7478,7 @@ function renderInvestments() {
       <div class="exp holding-row drag-row${a.id === investJustMovedId ? " just-moved" : ""}" data-reorder-row="${esc(a.id)}">
         ${grip}
         <div class="holding-body">
-          <div class="holding-sym sym-link" data-price-symbol="${esc(h.symbol)}" title="View price history for ${esc(h.symbol)}">${esc(h.symbol)}</div>
+          <div class="holding-sym sym-link" role="button" tabindex="0" data-price-symbol="${esc(h.symbol)}" title="View price history for ${esc(h.symbol)}">${esc(h.symbol)}</div>
           <div class="meta holding-name">${company ? esc(company) + " · " : ""}${h.quantity ?? "?"} @ ${h.latestPrice != null ? fmt(h.latestPrice) : "no live price yet"}</div>
         </div>
         ${sparklineSvg(priceSeries(dailyPrices, h.symbol, SPARK_WINDOW_DAYS))}
@@ -7598,8 +7611,9 @@ function renderInvestments() {
   // it from the type map drops its contributions with it, so unarchiving
   // restores the group and its figures exactly.
   const limitUsage = contributionLimitUsage(allInvestmentAssets(), contributions, CONTRIBUTION_LIMIT_GROUPS);
+  // No placeholder: with no account that has a yearly limit, this card simply
+  // is not there, the same as Sales below Holdings.
   $("contributionLimitsCard").style.display = limitUsage.length ? "" : "none";
-  $("emptyLimits").classList.toggle("hidden", limitUsage.length > 0);
   const limitYear = new Date().getFullYear();
   $("contributionLimitsList").innerHTML = limitUsage.map((u) => {
     const pctClamped = Math.min(100, (u.contributed / u.limit) * 100);
@@ -7627,6 +7641,14 @@ function renderInvestments() {
   }).join("");
 
   $("investRiskLabel").value = profile?.risk_label ?? "";
+
+  // A target mix for money you do not have measures nothing, so the card is
+  // hidden until something is owned. Until a target or a risk label exists it
+  // is one button rather than a form, because most people never set one.
+  $("investTargetCard").classList.toggle("hidden", !investmentAssets.length);
+  const targetOpen = investTargetOpened || investmentTargets.length > 0 || !!profile?.risk_label;
+  $("investTargetSetBtn").classList.toggle("hidden", targetOpen);
+  $("investTargetBody").classList.toggle("hidden", !targetOpen);
 
   const allocation = allocationVsTarget(countable, holdings, investmentTargets);
   $("investTargetsList").innerHTML = allocation.length ? allocation.map((a) => {
@@ -7737,8 +7759,15 @@ function healthLineText(l) {
       return "";
   }
 }
+// The "today" and "gainLoss" lines are the two tiles directly above this card
+// in sentence form, so they are left out here rather than said twice.
+// portfolioHealthSummary() still returns them: it is a pure compilation and
+// the export and tests read it whole.
+const HEALTH_LINES_SHOWN_ELSEWHERE = new Set(["today", "gainLoss"]);
 function renderInvestmentHealth(totals, allocation, limitUsage, holdings) {
-  const health = portfolioHealthSummary(totals, allocation, limitUsage, holdings);
+  const health = portfolioHealthSummary(totals, allocation, limitUsage, holdings)
+    .filter((l) => !HEALTH_LINES_SHOWN_ELSEWHERE.has(l.kind));
+  $("investHealthList").classList.toggle("hidden", !health.length);
   $("investHealthList").innerHTML = health.map((l) => `
     <div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0">
       <span aria-hidden="true" style="width:8px;height:8px;flex:none;background:${HEALTH_TONE_COLOR[l.tone]};${HEALTH_TONE_SHAPE[l.tone]}"></span>
@@ -7777,78 +7806,25 @@ const recapDateLabel = (iso) => {
 // today's prices under a past date.
 function renderPortfolioRecap() {
   const card = $("portfolioRecapCard");
-  const empty = $("emptyDayRecap");
   if (!card) return;
   const row = portfolioRecaps[0];
   const f = row?.figures;
-  if (!f || !f.positions?.length) {
+  // Only the written paragraph is shown. The note's headline restated the
+  // tiles above it, its per-holding lines restated the Holdings card below,
+  // and its caveats each restated a health line or the Sales card, so on a
+  // day with no paragraph there is nothing here the page does not already say.
+  if (!f || !f.positions?.length || !row.summary) {
     card.classList.add("hidden");
-    empty?.classList.remove("hidden");
     return;
   }
   card.classList.remove("hidden");
-  empty?.classList.add("hidden");
-
   $("portfolioRecapDate").textContent = `Market close, ${recapDateLabel(f.tradeDate || row.trade_date)}`;
-
-  // The headline states the direction IN WORDS as well as in colour - the
-  // same never-state-it-in-colour-alone rule the rest of the app holds.
-  const t = f.totals || {};
-  const headline = $("portfolioRecapHeadline");
-  headline.className = `stat-bubble ${bubbleTone(t.dayChange)}`.trim();
-  if (t.dayChange == null) {
-    headline.textContent = `${fmt(t.value)}, change on the day not known`;
-  } else {
-    const dir = t.dayChange > 0 ? "up" : t.dayChange < 0 ? "down" : "unchanged";
-    headline.textContent = t.dayChange === 0
-      ? `${fmt(t.value)}, unchanged on the day`
-      : `${fmt(t.value)}, ${dir} ${fmt(Math.abs(t.dayChange))}${t.dayChangePct != null ? ` (${signedPct(t.dayChangePct)})` : ""}`;
-  }
-
   // Labelled as written rather than measured, the same distinction the daily
   // recap's byline draws, and named as the LOCAL model so the privacy
   // position is visible rather than something the user has to take on trust.
-  const summaryEl = $("portfolioRecapSummary");
-  if (row.summary) {
-    summaryEl.innerHTML =
-      `<span class="muted" style="font-size:11px;display:block;margin-bottom:4px">Written on your own machine, from figures this app worked out</span>` +
-      esc(plainDashes(row.summary)).replace(/\n+/g, "<br><br>");
-    summaryEl.classList.remove("hidden");
-  } else {
-    summaryEl.textContent = "";
-    summaryEl.classList.add("hidden");
-  }
-
-  // The per-position figures stand on their own with no model involved,
-  // which is what keeps this card complete on a day the narrative is absent.
-  $("portfolioRecapPositions").innerHTML = f.positions.map((p) => {
-    const day = p.dayChange == null
-      ? `<span class="muted">no price that day</span>`
-      : `<span style="color:${gainColor(p.dayChange)}">${p.dayChange === 0 ? "unchanged" : `${p.dayChange > 0 ? "up" : "down"} ${fmt(Math.abs(p.dayChange))}`}${p.dayChangePct != null && p.dayChange !== 0 ? ` (${signedPct(p.dayChangePct)})` : ""}</span>`;
-    // A holding is very often named after its own ticker ("VOO"), and
-    // printing both reads as a rendering fault rather than as two facts.
-    const who = p.name && p.name.trim().toUpperCase() !== p.symbol
-      ? `<strong>${esc(p.name)}</strong> <span class="muted">${esc(p.symbol)}</span>`
-      : `<strong>${esc(p.symbol)}</strong>`;
-    return `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-top:1px solid var(--border)">
-      <div>${who}</div>
-      <div style="text-align:right"><div>${fmt(p.value)}</div><div style="font-size:12px">${day}</div></div>
-    </div>`;
-  }).join("");
-
-  // Says how far to trust the figure instead of quietly adjusting it, the
-  // same position netWorthCaveats() takes.
-  const caveats = [];
-  if (f.unpriced?.length) {
-    caveats.push(`${f.unpriced.map(esc).join(", ")} had no up-to-date price, so ${f.unpriced.length === 1 ? "it counts" : "they count"} at the last value saved.`);
-  }
-  if (f.drift) {
-    caveats.push(`${esc(f.drift.bucket)} is ${f.drift.currentPct}% of what you own, against the ${f.drift.targetPercent}% you set.`);
-  }
-  if (f.realized) {
-    caveats.push(`You sold ${f.realized.count} time${f.realized.count === 1 ? "" : "s"} in ${f.realized.year}, ${f.realized.gain >= 0 ? "making" : "losing"} ${fmt(Math.abs(f.realized.gain))}.`);
-  }
-  $("portfolioRecapCaveat").innerHTML = caveats.join("<br>");
+  $("portfolioRecapSummary").innerHTML =
+    `<span class="muted" style="font-size:11px;display:block;margin-bottom:4px">Written on your own machine, from figures this app worked out</span>` +
+    esc(plainDashes(row.summary)).replace(/\n+/g, "<br><br>");
 }
 
 // Stage 1 recap: real numbers and real linked headlines, no generated text
@@ -8104,8 +8080,9 @@ wireSubTabs("investTabBar", "investTab", "investTabMarket");
 //
 // Generic across every group rather than near-duplicate functions per
 // group, since the only difference between them is which buttons and
-// storage key they use. Three groups use it now: Market's 4, Portfolio's 5,
-// and the Log page's 3.
+// storage key they use. Two groups use it now: the Log page's three pills and
+// the Investments page's Market / My portfolio pair. The Investments page
+// had two more groups of pills under those, removed 2026-11-18.
 function setSubTab(barId, storageKey, subId) {
   const bar = $(barId);
   if (!bar) return;
@@ -8164,13 +8141,16 @@ function wireSubTabs(barId, storageKey, defaultSubId) {
   setSubTab(barId, storageKey, valid ? stored : defaultSubId);
 }
 wireSubTabs("logSubTabs", "logSubTab", "logSubSpending");
-wireSubTabs("investSubTabsMarket", "investSubTabMarket", "investSubOverview");
-wireSubTabs("investSubTabsPortfolio", "investSubTabPortfolio", "investSubHoldings");
 
-$("watchlistGearBtn").onclick = () => {
-  renderWatchlistEditor();
-  openModal("watchlistModal");
-};
+// Two buttons open the list: one on the Companies you track card, and a copy
+// on its empty state, so the list can be edited before the first background
+// run has produced anything for the card to show.
+document.querySelectorAll(".watchlist-edit-btn").forEach((btn) => {
+  btn.onclick = () => {
+    renderWatchlistEditor();
+    openModal("watchlistModal");
+  };
+});
 // Flushes any reorder still inside its debounce window. Not awaited on
 // purpose: wireBusyButtons tracks a returned promise and would put a spinner
 // on a Close button that has already closed. Escape and a backdrop click do
@@ -8216,7 +8196,7 @@ function renderMarketMovers() {
   const row = (m) => `
     <div class="exp" style="cursor:default">
       <div>
-        <div class="sym-link" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.company_name || m.symbol)}${m.company_name ? ` <span class="muted">(${esc(m.symbol)})</span>` : ""}</div>
+        <div class="sym-link" role="button" tabindex="0" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.company_name || m.symbol)}${m.company_name ? ` <span class="muted">(${esc(m.symbol)})</span>` : ""}</div>
         ${m.headline
           ? `<div class="meta"><a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headline.title)}</a>${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>`
           : `<div class="meta muted">No news coverage found for this move</div>`}
@@ -8284,16 +8264,17 @@ function openPriceHistory(symbol) {
   // A market-wide mover is usually NOT tracked, so it genuinely has no
   // history here - say why and point at the fix rather than switching to
   // an empty chart.
-  if (!recorded.has(sym)) {
-    return toast(`No price history recorded for ${sym} yet. Add it under "Choose tracked companies" to start building one.`);
+  // A failed load is not "no history", so it opens the sheet and says so there
+  // with a retry, rather than refusing with a toast that blames the symbol.
+  if (!dailyPricesLoadError && !recorded.has(sym)) {
+    return toast(`No price history recorded for ${sym} yet. Add it with "Edit list" on the Companies you track card to start building one.`);
   }
   priceHistorySymbol = sym;
-  setSubTab("investTabBar", "investTab", "investTabMarket");
-  setSubTab("investSubTabsMarket", "investSubTabMarket", "investSubHistory");
+  // Opened BEFORE drawing: a chart drawn into a hidden sheet has no size.
+  openModal("priceHistoryModal");
   renderPriceHistory();
-  const card = $("priceHistoryCard");
-  if (card) card.scrollIntoView({ block: "start" });
 }
+$("priceHistoryClose").onclick = () => closeModal("priceHistoryModal");
 document.addEventListener("click", (ev) => {
   const el = ev.target.closest && ev.target.closest("[data-price-symbol]");
   if (!el) return;
@@ -8301,28 +8282,50 @@ document.addEventListener("click", (ev) => {
   ev.stopPropagation();
   openPriceHistory(el.dataset.priceSymbol);
 }, true);
+// Price history used to have its own tab, which was the keyboard route to
+// it. A ticker is now the only way in, so every ticker is focusable
+// (tabindex="0" role="button" where it is drawn) and Enter or Space opens it,
+// as they would on a real button. Only when the ticker ITSELF has focus, so a
+// key pressed inside some other control in the same row is left alone.
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter" && ev.key !== " ") return;
+  const el = ev.target.closest && ev.target.closest("[data-price-symbol]");
+  if (!el || el !== ev.target) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  openPriceHistory(el.dataset.priceSymbol);
+}, true);
 
 function renderPriceHistory() {
-  const card = $("priceHistoryCard");
-  if (!card) return;
+  const body = $("priceHistoryBody");
+  const note = $("priceHistoryError");
+  if (!body || !note) return;
+  // Only worth drawing while the sheet is open: openPriceHistory() draws it
+  // on the way in, and a chart drawn into a hidden sheet comes out with no
+  // size anyway.
+  if ($("priceHistoryModal").classList.contains("hidden")) return;
+  if (dailyPricesLoadError) {
+    body.classList.add("hidden");
+    note.classList.remove("hidden");
+    renderLoadError("priceHistoryError", dailyPricesLoadError, loadDailyPrices);
+    return;
+  }
   const mine = chartableSymbols();
   const symbols = [...new Set(
     dailyPrices.map((r) => (r.symbol || "").trim().toUpperCase()).filter((sym) => sym && mine.has(sym))
   )].sort();
-  // No manual-entry fallback exists for price history, so an empty card
-  // would be clutter - same convention as Market overview.
+  // Reached when a retry succeeds but finds nothing. Written back every time
+  // rather than left alone, because a failed load replaced this element's
+  // contents with renderLoadError()'s panel.
   if (!symbols.length) {
-    card.classList.add("hidden");
-    // Written back rather than left alone: a failed load replaces this
-    // element's contents with renderLoadError()'s panel, so after a
-    // successful retry that found nothing it would otherwise still be
-    // showing "Loading..." or a stale error.
-    $("emptyHistory").textContent = EMPTY_HISTORY_TEXT;
-    $("emptyHistory").classList.remove("hidden");
+    body.classList.add("hidden");
+    note.classList.remove("hidden");
+    note.innerHTML = `<p class="muted">${esc(EMPTY_HISTORY_TEXT)}</p>`;
     return;
   }
-  card.classList.remove("hidden");
-  $("emptyHistory").classList.add("hidden");
+  body.classList.remove("hidden");
+  note.classList.add("hidden");
+  note.innerHTML = "";
 
   if (!priceHistorySymbol || !symbols.includes(priceHistorySymbol)) {
     // Default to something the user actually owns before falling back to
@@ -8429,9 +8432,8 @@ function renderRealizedGains() {
   const card = $("realizedGainCard");
   if (!card) return;
   const summary = realizedGainSummary(holdingSales);
-  if (!summary) { card.classList.add("hidden"); $("emptyRealized").classList.remove("hidden"); return; }
+  if (!summary) { card.classList.add("hidden"); return; }
   card.classList.remove("hidden");
-  $("emptyRealized").classList.add("hidden");
 
   const ytd = $("realizedYtd");
   ytd.textContent = summary.ytdCount
@@ -9206,7 +9208,7 @@ function renderDailyRecap() {
         return `
         <div style="margin:0 0 12px">
           <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
-            <span class="sym-link" style="font-weight:700" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.symbol)}</span>
+            <span class="sym-link" style="font-weight:700" role="button" tabindex="0" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.symbol)}</span>
             <span style="font-weight:700;font-size:13px;color:${gainColor(m.change_pct)}">${signedPct(m.change_pct)}</span>
             ${name ? `<span class="muted" style="font-size:12px">${esc(name)}</span>` : ""}
           </div>
@@ -9218,25 +9220,33 @@ function renderDailyRecap() {
     : "";
 }
 
-// The tracked-companies sub-tab holds two independently-hidden cards written
-// by two different render functions, so neither can decide on its own whether
-// the panel is empty. Reading the DOM is the cheap, honest answer: it cannot
-// drift from what is actually on screen the way a second copy of both
-// conditions would.
+// The Companies you track card holds three independently-hidden sections
+// written by two different render functions (the live figures and the news
+// by renderMarketOverview, the recap by renderDailyRecap), so neither can
+// decide on its own whether the card has anything in it. Reading the DOM is
+// the cheap, honest answer: it cannot drift from what is actually on screen
+// the way a second copy of every condition would.
+//
+// The empty state only shows while live pricing is on. With it off the
+// Market tab's broader "not turned on" message already says why this is
+// empty, and two dashed boxes saying nothing is here is one too many.
 function syncTrackedEmptyState() {
-  const recap = $("dailyRecapCard"), today = $("trackedTodayCard"), empty = $("emptyTracked");
-  if (!empty) return;
-  const anything = (recap && !recap.classList.contains("hidden")) || (today && !today.classList.contains("hidden"));
-  empty.classList.toggle("hidden", anything);
+  const card = $("trackedCard"), empty = $("emptyTracked");
+  if (!card || !empty) return;
+  const anything = ["trackedTodayCard", "dailyRecapCard", "marketNewsSection"]
+    .some((id) => $(id) && !$(id).classList.contains("hidden"));
+  card.classList.toggle("hidden", !anything);
+  empty.classList.toggle("hidden", anything || !PRICE_FINDINGS_ENABLED);
 }
 
 function renderMarketOverview() {
   const card = $("marketOverviewCard");
-  const trackedCard = $("trackedTodayCard");
+  const liveSection = $("trackedTodayCard");
   if (!card) return;
   if (!PRICE_FINDINGS_ENABLED) {
     card.classList.add("hidden");
-    if (trackedCard) trackedCard.classList.add("hidden");
+    if (liveSection) liveSection.classList.add("hidden");
+    $("marketNewsSection")?.classList.add("hidden");
     $("emptyOverview").classList.remove("hidden");
     syncTrackedEmptyState();
     return;
@@ -9308,21 +9318,27 @@ function renderMarketOverview() {
     return `
     <div class="exp" style="cursor:default">
       <div>
-        <div class="sym-link" data-price-symbol="${esc(ticker)}" title="View price history for ${esc(ticker)}">${esc(label)}</div>
+        <div class="sym-link" role="button" tabindex="0" data-price-symbol="${esc(ticker)}" title="View price history for ${esc(ticker)}">${esc(label)}</div>
         <div class="meta">Followed through ${esc(ticker)}${priced ? `, ${fmt(live.price)}` : ""}</div>
       </div>
       <span class="amt" style="text-align:right">${figure}</span>
     </div>`;
   }).join("");
 
-  const movers = topMarketMovers(moverSymbols(), marketIndexFindings, 3);
+  // Steps aside after the close for the same reason the pulse line above
+  // does: the recap in this same card lists the day's biggest moves among
+  // these companies with the coverage attached, and this would be that list
+  // again with less in it. While the market is open the two differ (live
+  // against the last close), so both earn their place.
+  const saidByRecap = !marketStatus().open && !!latestRecap(dailyRecaps);
+  const movers = saidByRecap ? [] : topMarketMovers(moverSymbols(), marketIndexFindings, 3);
   const moversSection = $("marketMoversSection");
   if (moversSection) moversSection.classList.toggle("hidden", !movers.length);
   renderPricesAsOf("marketMoversFreshness", latestFinnhubRefresh(marketIndexFindings));
   $("marketMoversList").innerHTML = movers.map((m) => `
     <div class="exp" style="cursor:default">
       <div>
-        <div class="sym-link" data-price-symbol="${esc(m.label)}" title="View price history for ${esc(m.label)}">${esc(m.label)}</div>
+        <div class="sym-link" role="button" tabindex="0" data-price-symbol="${esc(m.label)}" title="View price history for ${esc(m.label)}">${esc(m.label)}</div>
         ${m.explanation ? `<div class="meta">${esc(plainDashes(m.explanation))}</div>` : ""}
         ${m.headlines && m.headlines.length ? `<div class="meta"><a href="${esc(m.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headlines[0].title)}</a>${m.headlines[0].source ? " · " + esc(m.headlines[0].source) : ""}</div>` : ""}
       </div>
@@ -9341,11 +9357,14 @@ function renderMarketOverview() {
     // headlines below it are the real, free content and stand on their own.
     // Showing a neutral-grey dot with no label beats implying a read the
     // app doesn't actually have.
+    // With no read the row is hidden rather than labelled "Today's headlines":
+    // the section's own "In the news" heading already says what the list is.
     const hasSentiment = !!digest.sentiment;
+    $("marketSentimentRow").classList.toggle("hidden", !hasSentiment);
     $("marketSentimentDot").style.background = hasSentiment
       ? HEALTH_TONE_COLOR[SENTIMENT_TONE[digest.sentiment]]
       : "var(--border)";
-    $("marketSentimentLabel").textContent = hasSentiment ? SENTIMENT_LABEL[digest.sentiment] : "Today's headlines";
+    $("marketSentimentLabel").textContent = hasSentiment ? SENTIMENT_LABEL[digest.sentiment] : "";
     $("marketSentimentReason").textContent = hasSentiment ? plainDashes(digest.sentimentReason || "") : "";
     $("marketNewsList").innerHTML = digest.headlines.map((h) => `
       <div class="exp" style="cursor:default">
@@ -9356,10 +9375,11 @@ function renderMarketOverview() {
       </div>`).join("");
   }
 
-  // The card is three independently-hidden sections; with all three empty it
-  // would otherwise render as a title and a rule over nothing.
+  // The live section is two independently-hidden parts; with both empty it
+  // would otherwise render as a gap. Whether the CARD shows is decided by
+  // syncTrackedEmptyState(), which also sees the recap.
   const pulseShown = pulseEl && !pulseEl.classList.contains("hidden") && pulseEl.textContent;
-  if (trackedCard) trackedCard.classList.toggle("hidden", !(pulseShown || movers.length || digest));
+  if (liveSection) liveSection.classList.toggle("hidden", !(pulseShown || movers.length));
   syncTrackedEmptyState();
 }
 
@@ -10041,6 +10061,13 @@ $("saveContributionBtn").onclick = async () => {
   renderRecentTransactions();
   renderNetWorth();
   toast("Contribution logged");
+};
+
+$("investTargetSetBtn").onclick = () => {
+  investTargetOpened = true;
+  $("investTargetSetBtn").classList.add("hidden");
+  $("investTargetBody").classList.remove("hidden");
+  $("investTargetBucket").focus();
 };
 
 $("saveInvestTargetBtn").onclick = async () => {

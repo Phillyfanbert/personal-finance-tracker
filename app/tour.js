@@ -226,53 +226,45 @@ export const TOUR_STEPS = {
       placement: "bottom",
     },
     {
-      target: "investHealthCard",
-      title: "The short version",
-      body: "A few plain sentences summing up what the rest of this page says, so you do not have to read all of it. Every line comes from real numbers further down, never a made-up rating, and a line is left out entirely if there is nothing real behind it yet.",
+      target: "investTabBar",
+      title: "Two halves",
+      body: "Market is about the stock market generally: things that are true for everyone, whether or not you own any of it. My portfolio is only your own money. Each is one short page, and a card with nothing to show yet stays out of the way.",
       placement: "bottom",
     },
     {
-      target: "investTabBar",
-      title: "Two halves",
-      body: "Market is about the stock market generally: things that are true for everyone, whether or not you own any of it. My portfolio is only your own money. Each half splits into smaller tabs so you are not scrolling forever.",
+      // `subtab` names the top-level tab panel: visibleSteps() drops a step
+      // whose target has no client rects, and a hidden tab's children have
+      // none. The tour switches to it before pointing.
+      target: "marketOverviewCard",
+      subtab: "investTabMarket",
+      title: "The market today",
+      body: "How the big parts of the US stock market did today. Under it are the companies you track, and the largest moves anywhere in the market. Tapping any company name on this page opens a chart of its price.",
       placement: "bottom",
     },
     {
       target: "watchlistGearBtn",
+      subtab: "investTabMarket",
       title: "Choosing what to follow",
-      body: "The Companies you track tab, and the price history charts, are built from this list. Overview is the market as a whole and does not use it. Add any you want to keep an eye on. Anything you already own is added for you automatically. You can also put them in whatever order you like: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys. The ones you care about can sit at the top.",
+      body: "The Companies you track card, and the price charts, are built from this list. The rest of the Market tab is the market as a whole and does not use it. Add any you want to keep an eye on. Anything you already own is added for you automatically. You can also put them in whatever order you like: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys.",
       placement: "bottom",
     },
     {
-      target: "investSubTabsMarket",
-      title: "Getting around the Market side",
-      body: "Overview is the market as a whole: the big indexes, and the largest moves anywhere in the US market that day. Companies you track is your own list, with a short written recap of how they did and the stories published about them. Price history charts one company over time. Tapping any company name anywhere on this page opens its history.",
+      // Hidden until something is owned, which is the right call: a summary
+      // of nothing is not worth a step, and the next step covers getting
+      // started.
+      target: "investHealthCard",
+      subtab: "investTabPortfolio",
+      title: "The short version",
+      body: "What everything you own is worth, and what it has been worth over time. Under the chart, a few plain sentences built from real numbers, never a made-up rating. After the market closes, a short note on how your own things did that day. The figures are worked out by this app and the wording is written on your own machine, so nothing about what you own is sent anywhere.",
       placement: "bottom",
     },
     {
-      // Same sub-tab treatment as the step below. Targets the PANEL rather
-      // than investHoldingsCard: that card is empty until something is owned,
-      // which is exactly the state a first-run reader is in.
-      target: "investSubHoldings",
-      subtab: "investSubHoldings",
+      // Targets the card, which is always there: with nothing owned it says
+      // how to add an account, which is exactly the reader this is for.
+      target: "investHoldingsCard",
+      subtab: "investTabPortfolio",
       title: "What you own",
-      body: "One row per thing you own, under the account holding it: its short name, what it is worth now, a small picture of the last month, and how much it moved today. Tap a row to see what you have made or lost on it. You can put them in whatever order you like too: drag a row by the handle on its left, or tap that handle and use the up and down arrow keys. That only changes the order you see them in, never what anything is worth. In an account with a yearly limit on what you can put in, like an IRA, buying something counts towards that limit on its own and the app stops you going over it.",
-      placement: "bottom",
-    },
-    {
-      // Lives behind a sub-tab, so it carries `subtab` - visibleSteps() drops
-      // a step whose target has no client rects, and a hidden panel's
-      // children have none.
-      //
-      // Targets the PANEL, not portfolioRecapCard. That card stays hidden
-      // until a recap has actually been written, which is never true for
-      // someone taking a first-run tour - so pointing at it would drop this
-      // step for exactly the reader it is written for. The panel always holds
-      // either the card or its empty state.
-      target: "investSubDayRecap",
-      subtab: "investSubDayRecap",
-      title: "How your own money did today",
-      body: "Once the market has closed, this writes a short note about how the things you own did that day. The figures are worked out by this app from your own holdings; only the wording is written for you, and that happens on your own machine, so nothing about what you own is sent anywhere. It tells you what happened and never what to do about it.",
+      body: "One row per thing you own, under the account holding it: its short name, what it is worth now, a small picture of the last month, and how much it moved today. Tap a row to see what you have made or lost on it. Drag a row by its handle, or tap the handle and use the arrow keys, to change the order you see them in. In an account with a yearly limit on what you can put in, like an IRA, buying something counts towards that limit on its own and the app stops you going over it. What you have sold, and how much more a retirement account can take this year, appear under this card once there is something to show.",
       placement: "bottom",
     },
     {

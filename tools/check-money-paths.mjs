@@ -39,7 +39,7 @@ const PATHS = [
   { dir: "in",  event: "A one-off payment, gift or sale",  via: "Money received",                  marker: '$("moneyInConfirmBtn")' },
   { dir: "in",  event: "Interest on a deposit account",    via: "autoLogSavingsInterest",          marker: "async function autoLogSavingsInterest" },
   { dir: "in",  event: "A dividend from a holding",        via: "dividend modal",                  marker: '$("dividendConfirmBtn")' },
-  { dir: "in",  event: "Selling an investment",            via: "holding_sale",                    marker: 'logActivity("holding_sale"' },
+  { dir: "in",  event: "Selling an investment",            via: "holding_sale",                    marker: 'activityStep("holding_sale"' },
   { dir: "in",  event: "Money back on a purchase",         via: "negative expense",                marker: '$("refundConfirmBtn")' },
   { dir: "in",  event: "Imported pay from a bank file",    via: "CSV import, income rows",         marker: "csvLastImportedActivityIds" },
   { dir: "in",  event: "Correcting a balance upward",      via: "asset_adjust",                    marker: '$("adjustAddBtn")' },
@@ -53,7 +53,7 @@ const PATHS = [
   { dir: "out", event: "Everyday spending",                via: "expenses / Quick Add",            marker: '$("saveBtn")' },
   { dir: "out", event: "A bill or subscription falling due", via: "autoLogDueSubscriptions",       marker: "async function autoLogDueSubscriptions" },
   { dir: "out", event: "Paying down a debt",               via: "liability_payment",               marker: '"liability_payment", `Paid' },
-  { dir: "out", event: "A bill that pays down a debt",     via: "payBillTowardDebt",               marker: "async function payBillTowardDebt" },
+  { dir: "out", event: "A bill that pays down a debt",     via: "payBillTowardDebt",               marker: "function payBillTowardDebt(sub, occurredAt)" },
   { dir: "out", event: "Buying an investment",             via: "holding funding account",         marker: "const costBasisDelta" },
   { dir: "out", event: "Putting new money into an investment", via: "contribution",                marker: '"contribution", `Contributed' },
   { dir: "out", event: "Interest charged on a card",       via: "autoAccrueCardInterest",         marker: "async function autoAccrueCardInterest" },
@@ -115,7 +115,7 @@ ok(refund, "the refund handler has moved or gone");
 if (refund) {
   ok(/amount: -amount/.test(refund[0]), "a refund must be stored as a NEGATIVE expense, not as income");
   ok(!/"income"/.test(refund[0]), "a refund must never be logged as income");
-  ok(/applyLiabilityDelta/.test(refund[0]), "a refund onto a credit account must come off what is owed");
+  ok(/chargeSteps\(original\.account_id, amount, -1, \{ strict: true \}\)/.test(refund[0]), "a refund onto a credit account must come off what is owed, refused rather than floored past zero");
   console.log("  a refund reduces spending; it is never booked as income");
 }
 // A dividend is genuinely income and must be attributable to its holding.
@@ -142,13 +142,29 @@ for (const kind of ["asset_adjust", "owed_adjust", "liability_payment", "contrib
   const b = branchFor(kind);
   ok(b, `undoActivity has no branch for ${kind}, so it cannot be reversed`);
   // A reversal has to WRITE something back. Every branch here restores a
-  // balance, a quantity or an owed amount, so one of these calls must appear.
-  if (b) ok(/\.update\(|\.delete\(/.test(b), `undoActivity's ${kind} branch writes nothing, so it deletes the history row without reversing anything`);
+  // balance, a quantity or an owed amount (as a step in the transaction that
+  // also removes the row), so one of these must appear.
+  if (b) ok(/assetMove\(|debtMove\(|op: "update"|op: "delete"/.test(b), `undoActivity's ${kind} branch writes nothing, so it deletes the history row without reversing anything`);
 }
 ok(/async function undoExpense/.test(app), "an expense must be undoable");
 console.log(`  ${branches.length} undo branches, each writing a reversal, plus undoExpense`);
 
-section("E. Deliberately not modelled");
+section("E. Every balance change is one transaction");
+// 86_apply_money.sql exists because balances were written as finished figures
+// from a device's own copy, in requests nobody checked. Anything that moves a
+// balance must go through moneyTx(); a direct write would bring both failures
+// back without anything else noticing.
+const code = app.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+ok(!/\bapplyAssetDelta\(|\bapplyLiabilityDelta\(/.test(code), "applyAssetDelta/applyLiabilityDelta are back; balances must move through moneyTx()");
+ok(/sb\.rpc\("apply_money"/.test(code), "moneyTx() no longer calls apply_money");
+const direct = [...code.matchAll(/from\("(assets|liabilities)"\)\.update\(\{ ?(value|balance)\b/g)];
+// The two price syncs are the only writers allowed to set a value outright:
+// a holdings total follows live prices, it is not a movement of money.
+ok(direct.length === 2, `${direct.length} direct balance writes outside moneyTx() (expected only the two price syncs)`);
+ok(/raise exception using errcode = 'P0001', message = 'money_floor'/.test(read("supabase/86_apply_money.sql")), "apply_money no longer refuses a spend below the floor");
+console.log(`  balances move only through apply_money(), plus ${direct.length} price syncs`);
+
+section("F. Deliberately not modelled");
 for (const d of DEFERRED) console.log(`  ${d.event}`);
 ok(DEFERRED.every((d) => d.why && d.why.length > 40), "every deferred path must carry a real reason");
 

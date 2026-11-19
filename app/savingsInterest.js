@@ -93,7 +93,7 @@ function addMonthAnchored(iso, anchorDay) {
  * `today`, oldest first, plus the date the marker should move to and the total
  * to credit.
  *
- * `total` exists so the caller applies ONE balance write. applyAssetDelta
+ * `total` exists so the caller applies ONE balance write. The old applyAssetDelta
  * reads asset.value from the cached `assets` array and never writes back, so
  * calling it once per payment makes every call after the first read a stale
  * value and clobber its predecessor - the trap this repo already documents for

@@ -3,7 +3,7 @@
 // "Liabilities" here means tracked debt (the `liabilities` table) only -
 // what you actually owe right now. Subscriptions (a recurring cost, not
 // debt) and general expense totals (debit/cash spending already reduces
-// an asset directly via applyAssetDelta in app.js, so it's never a
+// an asset directly via chargeSteps() in app.js, so it's never a
 // liability) don't belong in this module - they're display concerns
 // handled in app.js's renderNetWorth, not part of the net-worth balance
 // itself.

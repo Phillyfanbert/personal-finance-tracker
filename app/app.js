@@ -872,7 +872,7 @@ function showView(v) {
 // refreshIfDue() runs one after a real absence or a new day, which is how
 // an installed icon picks up what another device changed and logs a bill that
 // came due overnight. Those run one after another, each reading what the last
-// one wrote. claimCycle() below covers the case this cannot, two devices at
+// one wrote. claimStep() below covers the case this cannot, two devices at
 // once.
 let initRunning = null;
 let autoFilledDate = null; // the Quick Add date this app set, as opposed to one the user chose
@@ -2411,10 +2411,9 @@ $("transferBtn").onclick = () => {
   $("transferForm").classList.toggle("hidden");
 };
 $("transferCancelBtn").onclick = closeTransferForm;
-// Asset-to-asset only (see transferForm's own comment in index.html) -
-// reuses assetDeltaError/applyAssetDelta exactly as Quick Add already
-// does for an expense, just applied twice (once per leg) instead of
-// once, since a transfer is symmetric rather than expense-shaped.
+// Asset-to-asset only (see transferForm's own comment in index.html). Both
+// legs and the history row are ONE transaction: if either leg fails, the
+// money neither leaves one account nor arrives in the other.
 $("transferConfirmBtn").onclick = async () => {
   const amount = parseFloat($("transferAmount").value);
   if (!amount || amount <= 0) { flagField("transferAmount"); return toast("Enter a valid amount"); }
@@ -2426,22 +2425,25 @@ $("transferConfirmBtn").onclick = async () => {
   const toAccount = accounts.find((a) => a.id === toId);
   if (!fromAccount || !toAccount) { flagField(["transferFrom", "transferTo"]); return toast("Choose valid accounts"); }
   // Compares the underlying ASSET, not just the account id - two accounts
-  // could in principle point at the same asset, and two applyAssetDelta
-  // calls against the same asset would net to zero silently instead of
-  // erroring.
+  // could in principle point at the same asset, and two moves against the
+  // same asset would net to zero silently instead of erroring.
   if (fromAccount.linked_asset_id === toAccount.linked_asset_id) {
     flagField(["transferFrom", "transferTo"]);
     return toast("Choose two different accounts");
   }
   const err = assetDeltaError([{ accountId: fromId, amount, sign: -1 }]);
   if (err) { flagField("transferFrom"); return toast(err); }
+  const fromAsset = assetOfAccount(fromId);
+  const toAsset = assetOfAccount(toId);
+  if (!fromAsset || !toAsset) { flagField(["transferFrom", "transferTo"]); return toast("Both accounts need a balance this app tracks", "error"); }
 
-  await applyAssetDelta(fromId, null, amount, -1);
-  await applyAssetDelta(toId, null, amount, +1);
-  await logActivity(
-    "transfer", `Transferred ${fmt(amount)} from ${acctName(fromId)} to ${acctName(toId)}`,
-    amount, undefined, fromId, toId
-  );
+  const { message } = await moneyTx([
+    assetMove(fromAsset, -amount, { floor: spendFloor(fromAsset) }),
+    assetMove(toAsset, amount),
+    activityStep("transfer", `Transferred ${fmt(amount)} from ${acctName(fromId)} to ${acctName(toId)}`,
+      amount, undefined, fromId, toId),
+  ]);
+  if (message) { flagField(["transferFrom", "transferAmount"]); return toast(message, "error"); }
   closeTransferForm();
   await loadAssets();
   renderRecentTransactions();
@@ -2521,8 +2523,11 @@ $("moneyInConfirmBtn").onclick = async () => {
   if (!(await confirmLargeAmount(amount, "money received"))) return;
 
   const description = $("moneyInDesc").value.trim() || "Money received";
-  await applyAssetDelta(accountId, null, amount, +1);
-  await logActivity("income", description, amount, date, accountId);
+  const { message } = await moneyTx([
+    assetMove(assetOfAccount(accountId), amount),
+    activityStep("income", description, amount, date, accountId),
+  ]);
+  if (message) { flagField("moneyInAmount"); return toast(message, "error"); }
   closeModal("moneyInModal");
   await loadAssets();
   renderRecentTransactions();
@@ -3049,7 +3054,7 @@ async function loadAccounts() {
   for (const id of ["fAccount", "eAccount", "sAccount"]) setOptionsKeepingChoice($(id), opts);
   // NOT the spendable list, for the same reason Transfer's pickers below
   // aren't: that list counts a credit account as spendable (you do pay
-  // WITH a card), but applyAssetDelta/assetDeltaError are silent no-ops
+  // WITH a card), but chargeSteps()/assetDeltaError are silent no-ops
   // for anything with no linked_asset_id. Funding a stock purchase from a
   // card therefore deducted nothing at all - the holding appeared, its
   // cost basis was recorded, and no money left any account. Asset-backed
@@ -3059,13 +3064,13 @@ async function loadAccounts() {
   setOptionsKeepingChoice($("holdingFundingAccount"), `<option value="">None</option>` +
     assetBacked.map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join(""));
   // Deliberately NOT the spendable list above - Transfer needs an
-  // asset-backed account specifically (applyAssetDelta/assetDeltaError
+  // asset-backed account specifically (chargeSteps()/assetDeltaError
   // are silent no-ops for a credit/liability-linked one, which the
   // spendable list above intentionally includes) - see transferForm's
   // own comment in index.html for why this would otherwise be a real,
   // silent balance-not-actually-changing bug.
   // ASSET-BACKED ONLY, and every picker below shares that one filter and one
-  // reason: applyAssetDelta/assetDeltaError are silent no-ops for an account
+  // reason: chargeSteps()/assetDeltaError are silent no-ops for an account
   // with no linked_asset_id, which every credit-type account is, so offering
   // one here would toast success and move no money at all. The spendable list
   // used by the expense pickers deliberately DOES include a card, because a
@@ -3288,25 +3293,34 @@ $("saveAssetBtn").onclick = async () => {
   const investment_bucket = isInvestment ? ($("assetInvestBucket").value.trim() || null) : null;
   const row = { name, type, value, purchase_price, purchase_date, depreciation_rate, price_symbol, quantity, investment_bucket };
 
-  const q = editingAsset
-    ? sb.from("assets").update(row).eq("id", editingAsset.id)
-    : sb.from("assets").insert(row);
-  const { error } = await q;
-  if (error) { flagField("assetName"); return toast(error.message); }
   const wasEditing = !!editingAsset;
-  // A value changed by hand is recorded like any other correction, so it is
-  // dated, shows in Recent History and can be undone. This form used to
-  // change what a house or a car was worth with no trace at all. Skipped
-  // where the typed value is not what counts: a priced investment (the price
-  // sync owns it) and a car the app works out the value of.
-  if (wasEditing) {
-    const delta = Math.round((value - Number(editingAsset.value)) * 100) / 100;
+  if (!wasEditing) {
+    const { error } = await sb.from("assets").insert(row);
+    if (error) { flagField("assetName"); return toast(error.message); }
+  } else {
+    // A value changed by hand is recorded like any other correction, so it is
+    // dated, shows in Recent History and can be undone. Skipped where the
+    // typed value is not what counts: a priced investment (the price sync owns
+    // it) and a car the app works out the value of.
+    //
+    // The value is only sent when it was CHANGED in this form. Sending it
+    // always meant that renaming a house on a device with an old copy wrote the
+    // old value back over a correction made elsewhere. And the change, its
+    // history row and the other fields are one transaction, with the row's
+    // amount taken from what the database really changed.
+    const valueChanged = !!cents(value - Number(editingAsset.value));
     const worksItOut = isVehicle && estimateValue(purchase_price, purchase_date, depreciation_rate) !== null;
-    if (delta && !worksItOut && !investmentLiveValues().has(editingAsset.id)) {
-      const acctId = accounts.find((a) => a.linked_asset_id === editingAsset.id)?.id ?? null;
-      await logActivity("asset_adjust", `Set ${name} value to ${fmt(value)}`, delta, undefined,
-        acctId, null, null, acctId ? null : editingAsset.id);
-    }
+    const typedCounts = valueChanged && !worksItOut && !investmentLiveValues().has(editingAsset.id);
+    const { value: _typedValue, ...otherFields } = row;
+    const acctId = accounts.find((a) => a.linked_asset_id === editingAsset.id)?.id ?? null;
+    const { message } = await moneyTx([
+      { op: "update", table: "assets", id: editingAsset.id, set: valueChanged && !typedCounts ? row : otherFields },
+      typedCounts ? { op: "asset_set", id: editingAsset.id, value, ref: "set" } : null,
+      typedCounts ? { op: "insert", table: "account_activity", amount_from: "set", skip_if_zero: true,
+        row: { kind: "asset_adjust", description: `Set ${name} value to ${fmt(value)}`, occurred_at: localDateISO(),
+          account_id: acctId, asset_id: acctId ? null : editingAsset.id } } : null,
+    ]);
+    if (message) { flagField("assetValue"); return toast(message, "error"); }
   }
   closeAssetForm();
   await loadAssets(); renderRecentTransactions(); toast(wasEditing ? "Asset updated" : "Added");
@@ -3325,7 +3339,7 @@ function upcomingMaturities(withinDays = 30, today = new Date()) {
     .sort((a, b) => a.days - b.days);
 }
 
-// Excludes cash/bank - those get touched by applyAssetDelta on every
+// Excludes cash/bank - those get touched by chargeSteps() on every
 // expense against them, so they're never realistically stale - and a
 // vehicle with full depreciation info, which is always fresh by
 // construction (effectiveAssetValue recomputes it live, so "when was this
@@ -3693,48 +3707,174 @@ function assetDeltaError(deltas) {
   return null;
 }
 
-// Draws down the linked asset for any account type backed by one (checking,
-// savings, money market, HSA, brokerage, ...) so assets stay in sync with
-// real spending. An account backed by a liability instead (credit card,
-// HELOC, mortgage, ...) has no linked_asset_id, so this is a no-op for it -
-// see applyLiabilityDelta below for that side.
-// sign: -1 to apply an expense (deduct), +1 to reverse one (edit/delete).
-// Callers must run assetDeltaError first and abort on a non-null result -
-// this function trusts that check and just writes the new value.
-async function applyAssetDelta(accountId, paymentType, amount, sign) {
-  if (!accountId) return;
-  const account = accounts.find((a) => a.id === accountId);
-  if (!account || !account.linked_asset_id) return;
-  const asset = assets.find((a) => a.id === account.linked_asset_id);
-  if (!asset) return;
-  const newValue = Math.round((Number(asset.value) + sign * Number(amount)) * 100) / 100;
-  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-  // The cached row follows what was just written. It used not to, so the
-  // NEXT delta in the same flow read the figure from before this one and
-  // overwrote it. Editing an expense reverses the old amount and then applies
-  // the new one: changing a $14 lunch to $20 on a $2,500 account left $2,480,
-  // not $2,494, because the second write never saw the first (measured
-  // 2026-11-16). The bill and income catch-up loops had each grown a private
-  // copy of this line to work around the same thing.
-  if (!error) asset.value = newValue;
-  return { error };
+// ---- ONE TRANSACTION PER MONEY ACTION --------------------------------------
+// Every money action goes to the database as ONE call to apply_money()
+// (86_apply_money.sql), which runs all of its steps as a single transaction:
+// the record and every balance it moves land together, or none of them do.
+//
+// This replaced applyAssetDelta()/applyLiabilityDelta(), and both of the ways
+// they lost money were reproduced against the stand-in database before the
+// change:
+// - A balance was written as a FINISHED FIGURE worked out from this device's
+//   copy. With a phone and a laptop both open, the second to save wrote its
+//   stale figure over the first: $100 and $20 off $2,500 left $2,480.
+// - An action was several requests and the later ones were never checked. A
+//   failed balance write left the expense saved, the balance unmoved and
+//   "Saved" on screen. None of the 30 call sites looked at the result.
+//
+// A balance step now carries an AMOUNT, applied by the database to the row as
+// it really is. The account's floor and the card's limit travel with the step
+// so they are judged against that real balance; assetDeltaError() and
+// creditLimitError() still run first, against this device's copy, because
+// they can say WHY in the user's terms, but they are no longer what makes the
+// refusal correct.
+
+const cents = (n) => Math.round(Number(n) * 100) / 100;
+
+function assetOfAccount(accountId) {
+  const account = accountId ? accounts.find((a) => a.id === accountId) : null;
+  return account?.linked_asset_id ? assets.find((a) => a.id === account.linked_asset_id) || null : null;
+}
+function debtOfAccount(accountId) {
+  const account = accountId ? accounts.find((a) => a.id === accountId) : null;
+  return account?.linked_liability_id ? debts.find((d) => d.id === account.linked_liability_id) || null : null;
 }
 
-// Accumulates onto the linked liability's running balance for any account
-// type backed by one (credit card, charge card, HELOC, mortgage, personal
-// loan, ...) - a charge is owed the moment it happens and stays owed
-// regardless of when (or how irregularly) the balance actually gets paid
-// down. Sign is the OPPOSITE of applyAssetDelta's: spending *increases*
-// what you owe, so sign: +1 to apply a charge (increase balance), -1 to
-// reverse one (edit/delete). Paying a balance down is a separate transfer
-// (see payConfirmBtn below), never routed through this function.
+// The lowest a spend may take an asset: zero, or minus its overdraft.
+const spendFloor = (asset) => -overdraftAllowance(asset);
+
+// The card's limit when it has one this app enforces, else null. The same
+// rule creditLimitError() applies, so the two cannot disagree.
+function creditCeiling(debt) {
+  if (!debt || !CREDIT_LIMIT_LIABILITY_TYPES.has(debt.type)) return null;
+  const limit = Number(debt.credit_limit);
+  return Number.isFinite(limit) && limit > 0 ? limit : null;
+}
+
+// Move an asset by a signed amount. A floor is only ever checked on money
+// going OUT; putting money back is never refused.
+function assetMove(asset, delta, { floor } = {}) {
+  const d = cents(delta);
+  if (!asset || !d) return null;
+  const step = { op: "asset", id: asset.id, delta: d };
+  if (d < 0 && Number.isFinite(floor)) step.floor = floor;
+  return step;
+}
+
+// Move what is owed by a signed amount. strict refuses a result below zero
+// instead of flooring it, for anything that pays real money in (a payment, a
+// refund): flooring there is how $484 once vanished.
+function debtMove(debt, delta, { ceiling, strict = false } = {}) {
+  const d = cents(delta);
+  if (!debt || !d) return null;
+  const step = { op: "liability", id: debt.id, delta: d };
+  if (d > 0 && Number.isFinite(ceiling)) step.ceiling = ceiling;
+  if (strict) step.strict = true;
+  return step;
+}
+
+// What an expense does to the account it was paid from, as steps. dir +1 is
+// the purchase happening, -1 is it being taken back. A real purchase carries
+// the account's floor and the card's limit; taking one back never does, so a
+// delete or an undo can never be refused for lack of room.
+function chargeSteps(accountId, amount, dir, { strict = false } = {}) {
+  const spend = dir > 0;
+  const asset = assetOfAccount(accountId);
+  const debt = debtOfAccount(accountId);
+  return [
+    assetMove(asset, -dir * Number(amount), spend ? { floor: spendFloor(asset) } : {}),
+    debtMove(debt, dir * Number(amount), { ceiling: spend ? creditCeiling(debt) ?? undefined : undefined, strict }),
+  ];
+}
+
+// A history row, written inside the same transaction as the money it
+// records. Same rounding and same zero rule as logActivity().
+function activityStep(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null, assetId = null, source = null) {
+  const rounded = cents(amount);
+  if (!rounded && kind !== "account_created") return null;
+  return {
+    op: "insert", table: "account_activity",
+    row: {
+      kind, description, amount: rounded, occurred_at: occurred_at || localDateISO(),
+      account_id: accountId ?? null, related_account_id: relatedAccountId, liability_id: liabilityId,
+      asset_id: assetId, source,
+    },
+  };
+}
+
+// Taking one cycle of a bill or pay day, so that it is logged ONCE however many
+// things try at the same moment: the date moves only while it is still the one
+// this run read. Two devices opening together would otherwise both read "due",
+// both log, and nothing afterwards could tell the same charge had been written
+// twice. In the same transaction as the charge, so a charge that cannot be
+// written leaves the cycle untaken with no separate release.
+const claimStep = (table, id, column, from, to) =>
+  ({ op: "update", table, id, set: { [column]: to }, expect: { [column]: from } });
+
+// The plain-words reason an action was refused or failed. A refusal from the
+// database can only mean the figures moved since this screen loaded (the
+// checks above already passed on this device's copy), so it says so.
+function moneyRefusal(error) {
+  if (!error) return null;
+  // No status at all means no answer came back, so whether it was saved is
+  // NOT known. "Nothing was saved" could be untrue, and someone who believed
+  // it would enter the same purchase twice.
+  if (!error.code) return "The connection dropped, so it is not certain this was saved. Check Recent History before trying again.";
+  let detail = {};
+  try { detail = JSON.parse(error.details || "{}"); } catch { detail = {}; }
+  const asset = detail.id ? assets.find((a) => a.id === detail.id) : null;
+  const debt = detail.id ? debts.find((d) => d.id === detail.id) : null;
+  switch (error.message) {
+    case "money_floor":
+      return `${asset?.name || "That account"} has ${fmt(detail.value)} now, which is not enough for this. It changed since this screen loaded, so nothing was saved.`;
+    case "money_ceiling":
+      return `${debt?.name || "That card"} owes ${fmt(detail.balance)} now, and this would take it past its ${creditLimitNoun(debt?.type)}. Nothing was saved.`;
+    case "money_below_zero":
+      return `${debt?.name || "That debt"} only owes ${fmt(detail.balance)} now, so this is more than is owed. Nothing was saved.`;
+    case "money_stale":
+      return "This changed on another device since this screen loaded, so nothing was saved. Close it and try again.";
+    case "money_not_found":
+      return "Something this needs is no longer there, so nothing was saved.";
+    default:
+      return `Nothing was saved. ${error.message}`;
+  }
+}
+
+// Runs one money action. Returns { data, error, message }: message is the
+// plain-words reason to show when it did not happen. On success the cached
+// balances take the figures the database actually wrote, so the next action
+// on this device starts from the truth. After a refusal they are reloaded,
+// because a refusal means this device's copy was out of date.
+async function moneyTx(steps, { reloadActivity = true } = {}) {
+  const real = steps.flat().filter(Boolean);
+  if (!real.length) return { data: [], error: null, message: null };
+  const { data, error } = await sb.rpc("apply_money", { steps: real });
+  if (error) {
+    if (error.code) await Promise.all([loadAssets(), loadDebts()]);
+    return { data: null, error, message: moneyRefusal(error) };
+  }
+  real.forEach((step, i) => {
+    const r = Array.isArray(data) ? data[i] : null;
+    if (!r || r.after == null) return;
+    if (step.op === "asset" || step.op === "asset_set") {
+      const a = assets.find((x) => x.id === step.id);
+      if (a) a.value = Number(r.after);
+    } else if (step.op === "liability" || step.op === "liability_set") {
+      const d = debts.find((x) => x.id === step.id);
+      if (d) d.balance = Number(r.after);
+    }
+  });
+  if (reloadActivity && real.some((st) => st.table === "account_activity")) await loadAccountActivity();
+  return { data, error: null, message: null };
+}
+
 // The credit-limit ceiling, mirroring assetDeltaError's "can't go below $0"
 // floor on the asset side. Until this existed, credit_limit was purely
 // decorative - it drew a utilization line on the Liabilities card and was
 // never checked, so a card with a $1,000 limit would happily accept a
 // $50,000 charge.
 //
-// Sign convention follows applyLiabilityDelta, NOT assetDeltaError: +1 is
+// Sign convention follows debtMove(), NOT assetDeltaError: +1 is
 // MORE owed. An expense on a credit account is +1 here and -1 there, so
 // don't copy a caller's asset sign across.
 //
@@ -3811,20 +3951,6 @@ function helocDrawPeriodError(deltas) {
   return null;
 }
 
-async function applyLiabilityDelta(accountId, paymentType, amount, sign) {
-  if (!accountId) return;
-  const account = accounts.find((a) => a.id === accountId);
-  if (!account || !account.linked_liability_id) return;
-  const debt = debts.find((d) => d.id === account.linked_liability_id);
-  if (!debt) return;
-  const newBalance = Math.max(0, Math.round((Number(debt.balance) + sign * Number(amount)) * 100) / 100);
-  const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-  // Same reason as applyAssetDelta: an edit that moves a charge on the same
-  // card takes the old amount off and puts the new one on, and the second
-  // write has to start from the first one's result.
-  if (!error) debt.balance = newBalance;
-  return { error };
-}
 
 // ---- ACCOUNT ACTIVITY (non-expense money movements) ---------------------
 // Expenses already show up in Recent History since they're rows in
@@ -4070,11 +4196,12 @@ $("adjustAddBtn").onclick = async () => {
   if (!amount || amount <= 0) { flagField("adjustAmount"); return toast("Enter a valid amount"); }
   const asset = assets.find((a) => a.id === adjustingAssetId);
   if (!asset) return;
-  const newValue = Math.round((Number(asset.value) + amount) * 100) / 100;
-  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-  if (error) { flagField("adjustAmount"); return toast(error.message); }
+  const { message } = await moneyTx([
+    assetMove(asset, amount),
+    activityStep("asset_adjust", `Added ${fmt(amount)} to ${asset.name}`, amount, undefined, adjustingAccountId),
+  ]);
+  if (message) { flagField("adjustAmount"); return toast(message, "error"); }
   $("adjustAmount").value = "";
-  await logActivity("asset_adjust", `Added ${fmt(amount)} to ${asset.name}`, amount, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Added");
 };
 
@@ -4090,11 +4217,12 @@ $("adjustSubtractBtn").onclick = async () => {
       ? `${asset.name} only has ${fmt(Number(asset.value) + subAllowance)} available, including its ${fmt(subAllowance)} overdraft.`
       : "Balance can't go negative, not enough in " + asset.name);
   }
-  const newValue = Math.round((Number(asset.value) - amount) * 100) / 100;
-  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-  if (error) { flagField("adjustAmount"); return toast(error.message); }
+  const { message } = await moneyTx([
+    assetMove(asset, -amount, { floor: -subAllowance }),
+    activityStep("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, -amount, undefined, adjustingAccountId),
+  ]);
+  if (message) { flagField("adjustAmount"); return toast(message, "error"); }
   $("adjustAmount").value = "";
-  await logActivity("asset_adjust", `Subtracted ${fmt(amount)} from ${asset.name}`, -amount, undefined, adjustingAccountId);
   await loadAssets(); renderRecentTransactions(); closeAssetAdjust(); toast("Subtracted");
 };
 
@@ -4133,21 +4261,23 @@ function assetBalanceRefusal(asset, newValue) {
 // profiles.balances_checked_at records.
 async function setAssetBalance(asset, newValue, accountId) {
   const rounded = Math.round(newValue * 100) / 100;
-  const delta = Math.round((rounded - Number(asset.value)) * 100) / 100;
-  if (!delta) return { changed: false };
-  const { error } = await sb.from("assets").update({ value: rounded }).eq("id", asset.id);
-  if (error) return { error: error.message };
-  // The cached row is brought into step at once, before any reload. Every
-  // caller reloads anyway, but the check-in sheet applies several of these in
-  // a row and can stop half way: without this, pressing Save again would
-  // measure the same difference from the stale figure and log the correction
-  // a second time, and undoing both would take the balance past where it
-  // started.
-  asset.value = rounded;
+  if (!cents(rounded - Number(asset.value))) return { changed: false };
   const acctId = accountId ?? accounts.find((a) => a.linked_asset_id === asset.id)?.id ?? null;
-  await logActivity("asset_adjust", `Set ${asset.name} ${acctId ? "balance" : "value"} to ${fmt(rounded)}`,
-    delta, undefined, acctId, null, null, acctId ? null : asset.id);
-  return { changed: true };
+  // The figure is set and its history row written in ONE transaction, and the
+  // row's amount is the change the DATABASE made (amount_from), not the one
+  // this device worked out. Measured from a stale copy it was wrong whenever
+  // another device had moved the balance first, and undoing it would then
+  // take the balance somewhere it never was. moneyTx() also brings the cached
+  // row into step, which is what lets the check-in sheet stop half way and
+  // retry without logging a correction twice.
+  const { data, message } = await moneyTx([
+    { op: "asset_set", id: asset.id, value: rounded, ref: "set" },
+    { op: "insert", table: "account_activity", amount_from: "set", skip_if_zero: true,
+      row: { kind: "asset_adjust", description: `Set ${asset.name} ${acctId ? "balance" : "value"} to ${fmt(rounded)}`,
+        occurred_at: localDateISO(), account_id: acctId, asset_id: acctId ? null : asset.id } },
+  ]);
+  if (message) return { error: message };
+  return { changed: Number(data?.[0]?.before) !== Number(data?.[0]?.after) };
 }
 
 $("adjustSetBtn").onclick = async () => {
@@ -4612,10 +4742,11 @@ $("debtBalanceClose").onclick = closeDebtBalanceForm;
 // correction raised or lowered the balance. Storing the typed total instead
 // would make a "set" impossible to reverse, which is the bug asset_adjust
 // already had once and had to be fixed for.
-async function logOwedAdjust(debt, delta, reason) {
-  if (!delta) return; // no actual change, nothing worth a history row
+// The history row for a change to what is owed, as a step inside the same
+// transaction as the change itself.
+function owedAdjustStep(debt, delta, reason) {
   const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
-  await logActivity("owed_adjust", reason, delta, undefined, debtAccountId, null, debt.id);
+  return activityStep("owed_adjust", reason, delta, undefined, debtAccountId, null, debt.id);
 }
 
 // The owed-side pair of assetBalanceRefusal()/setAssetBalance(), shared by
@@ -4627,19 +4758,24 @@ function owedBalanceRefusal(debt, newBalance) {
   if (newBalance < 0) return `What you owe on ${debt.name} can't be negative`;
   return null;
 }
-// Every change goes through logOwedAdjust(), so an owed balance still never
+// Every change writes an owed_adjust row in the same transaction, so an owed balance still never
 // moves without a row saying why. Deliberately not held to the credit limit:
 // a real balance can sit over its limit, and a correction has to be able to
 // record that.
 async function setOwedBalance(debt, newBalance) {
   const rounded = Math.round(newBalance * 100) / 100;
-  const delta = Math.round((rounded - Number(debt.balance)) * 100) / 100;
-  if (!delta) return { changed: false };
-  const { error } = await sb.from("liabilities").update({ balance: rounded }).eq("id", debt.id);
-  if (error) return { error: error.message };
-  debt.balance = rounded; // same reason as setAssetBalance: a retry must find nothing left to do
-  await logOwedAdjust(debt, delta, `Corrected ${debt.name} owed to ${fmt(rounded)}`);
-  return { changed: true };
+  if (!cents(rounded - Number(debt.balance))) return { changed: false };
+  // Same shape as setAssetBalance: one transaction, and the history amount is
+  // the change the database really made.
+  const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
+  const { data, message } = await moneyTx([
+    { op: "liability_set", id: debt.id, value: rounded, ref: "set" },
+    { op: "insert", table: "account_activity", amount_from: "set", skip_if_zero: true,
+      row: { kind: "owed_adjust", description: `Corrected ${debt.name} owed to ${fmt(rounded)}`,
+        occurred_at: localDateISO(), account_id: debtAccountId, liability_id: debt.id } },
+  ]);
+  if (message) return { error: message };
+  return { changed: Number(data?.[0]?.before) !== Number(data?.[0]?.after) };
 }
 
 $("debtOwedSetConfirm").onclick = async () => {
@@ -4661,10 +4797,11 @@ $("debtOwedConfirm").onclick = async () => {
   if (!amount || amount <= 0) { flagField("debtOwedAmount"); return toast("Enter a valid amount"); }
   const debt = debts.find((d) => d.id === activeDebtId);
   if (!debt) return;
-  const newBalance = Math.round((Number(debt.balance) + amount) * 100) / 100;
-  const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-  if (error) { flagField("debtOwedAmount"); return toast(error.message); }
-  await logOwedAdjust(debt, amount, `Added ${fmt(amount)} charge to ${debt.name}`);
+  const { message } = await moneyTx([
+    debtMove(debt, amount),
+    owedAdjustStep(debt, amount, `Added ${fmt(amount)} charge to ${debt.name}`),
+  ]);
+  if (message) { flagField("debtOwedAmount"); return toast(message, "error"); }
   $("debtOwedAmount").value = "";
   await loadDebts();
   renderRecentTransactions();
@@ -4692,13 +4829,12 @@ $("payConfirmBtn").onclick = async () => {
     return toast(`${debt.name} only owes ${fmt(debt.balance)}, paying more than that isn't possible here.`);
   }
 
-  const newAssetValue = Math.round((Number(asset.value) - amount) * 100) / 100;
-  const newBalance = Math.round((Number(debt.balance) - amount) * 100) / 100;
-
-  const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
-  if (assetErr) { flagField("payAmount"); return toast(assetErr.message); }
-  const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-  if (debtErr) { flagField("payAmount"); return toast(debtErr.message); }
+  // Money out of the account and off the debt, and its history row, as ONE
+  // transaction: a failure part-way used to leave money gone from the account
+  // with the debt unchanged. Both checks above are repeated by the database
+  // against the real figures, and the debt step is strict, so a payment made
+  // larger than what is owed by a change on another device is refused rather
+  // than floored.
 
   // account_id = the funding account (money actually left it, same as an
   // expense's account_id); related_account_id = the debt's own account,
@@ -4709,7 +4845,12 @@ $("payConfirmBtn").onclick = async () => {
   // at all - undoActivity() needs a reliable way to find it either way.
   const fundingAccountId = accounts.find((a) => a.linked_asset_id === asset.id)?.id ?? null;
   const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
-  await logActivity("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount, undefined, fundingAccountId, debtAccountId, debt.id);
+  const { message } = await moneyTx([
+    assetMove(asset, -amount, { floor: 0 }),
+    debtMove(debt, -amount, { strict: true }),
+    activityStep("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount, undefined, fundingAccountId, debtAccountId, debt.id),
+  ]);
+  if (message) { flagField("payAmount"); return toast(message, "error"); }
   $("payAmount").value = "";
   await loadAssets(); await loadDebts(); renderRecentTransactions();
   closeDebtBalanceForm();
@@ -4776,7 +4917,7 @@ function renderNetWorth() {
   // liability-linked account type (credit card, HELOC, mortgage, ...) - a
   // slice of Total, not a separate pool (Total already includes every such
   // charge ever made, this month's included). Debit/cash/asset-backed
-  // spending already reduces an asset directly (applyAssetDelta), so it's
+  // spending already reduces an asset directly (chargeSteps), so it's
   // never counted here; subscriptions are a recurring cost, not debt, so
   // they don't belong here either - see the Reports page for both instead.
   const ym = monthKey();
@@ -4991,11 +5132,16 @@ $("saveBtn").onclick = async () => {
     raw_input: fullText, source: entrySource,
   };
   $("saveBtn").disabled = true;
-  const { error } = await sb.from("expenses").insert(row);
+  // The expense and what it does to the account are ONE transaction, so a
+  // failure saves neither. They used to be three requests and only the first
+  // was checked: a failed balance write left the expense saved, the balance
+  // unmoved, and "Saved" on screen.
+  const { message } = await moneyTx([
+    { op: "insert", table: "expenses", row },
+    ...chargeSteps(row.account_id, amount, +1),
+  ]);
   $("saveBtn").disabled = false;
-  if (error) { flagField("fAmount"); return toast(error.message); }
-  await applyAssetDelta(row.account_id, row.payment_type, amount, -1);
-  await applyLiabilityDelta(row.account_id, row.payment_type, amount, +1);
+  if (message) { flagField(["fAccount", "fAmount"]); return toast(message, "error"); }
   $("quick").value = ""; $("confirm").classList.add("hidden"); $("parseStatus").textContent = "";
   entrySource = "manual";
   await loadAssets(); await loadDebts(); await loadExpenses();
@@ -5008,7 +5154,7 @@ $("saveBtn").onclick = async () => {
 // the same RLS-scoped sb.from("expenses").insert() every other expense
 // write already uses. The file itself never leaves the browser. See
 // index.html's csvImportModal comment for why this deliberately never
-// calls applyAssetDelta/applyLiabilityDelta - imported rows are history
+// moves a balance - imported rows are history
 // that already happened, not a new money movement to apply.
 const CSV_MAX_FILE_BYTES = 5 * 1024 * 1024;
 const CSV_MAX_ROWS = 10000;
@@ -5322,7 +5468,7 @@ $("csvImportConfirm").onclick = async () => {
   // writes to, so an imported paycheck shows up in Recent History and in
   // income-vs-expense exactly like one the app logged itself.
   //
-  // **Deliberately does NOT call applyAssetDelta**, for the identical reason
+  // **Deliberately does NOT move a balance**, for the identical reason
   // the expense side above does not: these already happened, and the
   // account's real balance already includes them. Crediting them again would
   // count the money twice. See the project notes' note on the import path.
@@ -5490,13 +5636,14 @@ $("bulkDeleteBtn").onclick = async () => {
   );
   if (!ok) return;
   $("bulkDeleteBtn").disabled = true;
-  const { error } = await sb.from("expenses").delete().in("id", [...selectedTxnIds]);
-  if (error) { $("bulkDeleteBtn").disabled = false; flagField("bulkCategorySelect"); return toast(error.message, "error"); }
-  for (const [accountId, amount] of netAmountByAccount(rows)) {
-    await applyAssetDelta(accountId, null, amount, +1);
-    await applyLiabilityDelta(accountId, null, amount, -1);
-  }
+  // Each delete expects the row to hold what this device shows, so an
+  // expense edited or removed elsewhere refuses the batch instead of putting
+  // the wrong amount back. The rows and the money move together or not at all.
+  const steps = rows.map((r) => ({ op: "delete", table: "expenses", id: r.id, expect: { amount: r.amount, account_id: r.account_id } }));
+  for (const [accountId, amount] of netAmountByAccount(rows)) steps.push(...chargeSteps(accountId, amount, -1));
+  const { message } = await moneyTx(steps);
   $("bulkDeleteBtn").disabled = false;
+  if (message) { flagField("bulkCategorySelect"); await loadExpenses(); return toast(message, "error"); }
   selectedTxnIds.clear();
   await loadAssets(); await loadDebts(); await loadExpenses();
   const what = `${n} expense${n === 1 ? "" : "s"}`;
@@ -5507,10 +5654,8 @@ $("bulkDeleteBtn").onclick = async () => {
 // same problem rather than N copies of the single-row one:
 //
 // The balance is NETTED per account, by the same netAmountByAccount() the
-// delete used - applyAssetDelta reads asset.value from the cached array and
-// does not write it back, so one call per row would make every call after the
-// first read a stale value and clobber its predecessor. Netting gives exactly
-// one write per asset, in both directions.
+// delete used, which gives exactly one balance step per account in both
+// directions.
 //
 // The GUARD is netted too, and for free: assetDeltaError() and
 // creditLimitError() each already net a whole deltas array per asset and per
@@ -5518,21 +5663,21 @@ $("bulkDeleteBtn").onclick = async () => {
 // it really is rather than row by row. Checked before anything goes back, same
 // ordering rule as the single-row restore.
 //
-// The re-insert is ONE statement, so it is all-or-nothing - there is no state
-// where half a batch came back. An all-imported batch nets to an empty map,
-// which correctly means no guard and no balance movement at all.
+// The rows and the money are ONE transaction, so a batch can never come back
+// half restored, or restored with its money left out. An all-imported batch
+// nets to an empty map, which correctly means no guard and no balance
+// movement at all.
 async function restoreDeletedExpenses(rows, what) {
   const net = [...netAmountByAccount(rows)];
   const blocked =
     assetDeltaError(net.map(([accountId, amount]) => ({ accountId, amount, sign: -1 })))
     || chargeRefusalReason(net.map(([accountId, amount]) => ({ accountId, amount, sign: +1 })));
   if (blocked) { toast(`Cannot undo. ${blocked}`, "error"); return; }
-  const { error } = await sb.from("expenses").insert(rows);
-  if (error) { toast(error.message, "error"); return; }
-  for (const [accountId, amount] of net) {
-    await applyAssetDelta(accountId, null, amount, -1);
-    await applyLiabilityDelta(accountId, null, amount, +1);
-  }
+  const { message } = await moneyTx([
+    { op: "insert", table: "expenses", rows },
+    ...net.flatMap(([accountId, amount]) => chargeSteps(accountId, amount, +1)),
+  ]);
+  if (message) { toast(`Cannot undo. ${message}`, "error"); return; }
   await loadAssets(); await loadDebts(); await loadExpenses();
   toast(`Restored ${what}`);
 }
@@ -5541,7 +5686,7 @@ $("bulkApplyBtn").onclick = async () => {
   const category = $("bulkCategorySelect").value;
   if (!category || !selectedTxnIds.size) return;
   $("bulkApplyBtn").disabled = true;
-  // Category never factors into applyAssetDelta/applyLiabilityDelta (see
+  // Category never factors into a balance (see
   // editSave above) - a plain category update needs no asset/liability
   // recalculation, unlike a full single-row edit.
   const { error } = await sb.from("expenses").update({ category }).in("id", [...selectedTxnIds]);
@@ -5574,30 +5719,23 @@ async function undoTransaction(row) {
 }
 
 async function undoExpense(row) {
-  const { error } = await sb.from("expenses").delete().eq("id", row.id);
-  if (error) return toast(error.message);
   // A CSV-imported row never applied a delta when it was created (see
   // csvImport: an imported row is history that already happened, so the real
   // balance already includes it). Reversing one here would ADD money that was
   // never subtracted, inventing it out of nothing.
-  if (!isImported(row)) {
-    await applyAssetDelta(row.account_id, row.payment_type, Number(row.amount), +1);
-    await applyLiabilityDelta(row.account_id, row.payment_type, Number(row.amount), -1);
-  }
+  const { message } = await moneyTx([
+    { op: "delete", table: "expenses", id: row.id, expect: { amount: row.amount, account_id: row.account_id } },
+    ...(isImported(row) ? [] : chargeSteps(row.account_id, Number(row.amount), -1)),
+  ]);
+  if (message) { await loadExpenses(); return toast(message, "error"); }
   await loadAssets(); await loadDebts(); await loadExpenses();
   toast("Expense undone");
 }
 
 const isImported = (row) => row.source === "import";
 
-// Sums the rows to reverse per ACCOUNT before touching any balance.
-//
-// applyAssetDelta reads `asset.value` from the cached `assets` array and does
-// not write the new value back into it, so calling it once per row in a loop
-// makes every call after the first read a stale value and clobber its
-// predecessor: deleting a $19 and a $14 expense on one account would restore
-// $14, not $33. Netting first means exactly one write per asset, which is
-// both correct and fewer round-trips.
+// Sums the rows to reverse per ACCOUNT before touching any balance, so a
+// batch makes one balance step per account rather than one per row.
 function netAmountByAccount(rows) {
   const net = new Map();
   for (const r of rows) {
@@ -5611,12 +5749,20 @@ function netAmountByAccount(rows) {
 // logActivity) so reversing one is always "subtract whatever the original
 // delta was from the current value" - correct regardless of whether the
 // original action was an add, a subtract, or a direct "set", and correct
-// regardless of what's happened to the balance since (same reasoning as
-// applyAssetDelta's sign param already relies on for expense edit/delete).
-// A liability_payment's amount is always positive and always moved money
-// the same direction (out of the asset, off the liability), so undoing it
-// is just adding that amount back to both.
+// regardless of what's happened to the balance since. A liability_payment's
+// amount is always positive and always moved money the same direction (out
+// of the asset, off the liability), so undoing it is just adding that amount
+// back to both.
+//
+// Every branch builds its reversal as STEPS and the history row's own delete
+// is the last of them, all ONE transaction. That delete EXPECTS the row's
+// amount, so an undo already done on another device, or by a second tap,
+// finds nothing to delete and reverses nothing. Before this, a reversal could
+// land while the row's delete failed, and undoing the row again reversed the
+// money twice.
 async function undoActivity(row) {
+  const steps = [];
+  let after = null; // work that reads the result, run once the transaction is in
   if (row.kind === "asset_adjust") {
     const account = accounts.find((a) => a.id === row.account_id);
     // Through the account when there is one; otherwise straight to the asset
@@ -5625,31 +5771,22 @@ async function undoActivity(row) {
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id)
       : row.asset_id ? assets.find((a) => a.id === row.asset_id) : null;
     if (!asset) return toast("Can't undo, what this changed is no longer here.");
-    const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
-    if (newValue < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
-    const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-    if (error) return toast(error.message);
+    if (cents(Number(asset.value) - Number(row.amount)) < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
+    steps.push(assetMove(asset, -Number(row.amount), { floor: 0 }));
   } else if (row.kind === "owed_adjust") {
     // Signed delta, same convention as asset_adjust - reversing is always
     // "subtract what was applied," correct whether the original correction
     // raised the balance (a missed charge, an interest charge) or lowered it.
     const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
     if (!debt) return toast("Cannot undo this, what you owed is no longer there.");
-    const newBalance = Math.round((Number(debt.balance) - Number(row.amount)) * 100) / 100;
-    if (newBalance < 0) return toast(`Can't undo, would take ${debt.name} below $0 owed.`);
-    const { error } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-    if (error) return toast(error.message);
+    if (cents(Number(debt.balance) - Number(row.amount)) < 0) return toast(`Can't undo, would take ${debt.name} below $0 owed.`);
+    steps.push(debtMove(debt, -Number(row.amount), { strict: true }));
   } else if (row.kind === "liability_payment") {
     const account = accounts.find((a) => a.id === row.account_id);
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
     const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
     if (!asset || !debt) return toast("Cannot undo this, the account or debt it belonged to is no longer there.");
-    const newAssetValue = Math.round((Number(asset.value) + Number(row.amount)) * 100) / 100;
-    const newBalance = Math.round((Number(debt.balance) + Number(row.amount)) * 100) / 100;
-    const { error: assetErr } = await sb.from("assets").update({ value: newAssetValue }).eq("id", asset.id);
-    if (assetErr) return toast(assetErr.message);
-    const { error: debtErr } = await sb.from("liabilities").update({ balance: newBalance }).eq("id", debt.id);
-    if (debtErr) return toast(debtErr.message);
+    steps.push(assetMove(asset, Number(row.amount)), debtMove(debt, Number(row.amount)));
   } else if (row.kind === "contribution") {
     // Unlike asset_adjust, this goes straight to asset_id - a contribution
     // is logged against the specific investment asset directly (most are
@@ -5673,18 +5810,15 @@ async function undoActivity(row) {
     // the parent's typed-in value, money that had already gone with the
     // holding.
     if (row.source === "holding_purchase") {
-      const { error: delErr } = await sb.from("account_activity").delete().eq("id", row.id);
-      if (delErr) return toast(delErr.message);
-      await loadAccountActivity();
+      const { message } = await moneyTx([{ op: "delete", table: "account_activity", id: row.id, expect: { amount: row.amount } }]);
+      if (message) return toast(undoRefusal(message), "error");
       renderRecentTransactions();
       renderInvestments();
       return toast("Removed from this year's total");
     }
-    const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
-    if (newValue < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
-    const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-    if (error) return toast(error.message);
-    await syncParentAssetValue(asset.parent_asset_id); // no-op unless asset is itself a holding
+    if (cents(Number(asset.value) - Number(row.amount)) < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
+    steps.push(assetMove(asset, -Number(row.amount), { floor: 0 }));
+    after = () => syncParentAssetValue(asset.parent_asset_id); // no-op unless asset is itself a holding
   } else if (row.kind === "transfer") {
     // Reverses both legs - money goes back from the receiving asset
     // (related_account_id) to the funding asset (account_id), the exact
@@ -5694,13 +5828,8 @@ async function undoActivity(row) {
     const fromAsset = fromAccount ? assets.find((a) => a.id === fromAccount.linked_asset_id) : null;
     const toAsset = toAccount ? assets.find((a) => a.id === toAccount.linked_asset_id) : null;
     if (!fromAsset || !toAsset) return toast("Can't undo, one of the accounts no longer exists.");
-    const newToValue = Math.round((Number(toAsset.value) - Number(row.amount)) * 100) / 100;
-    if (newToValue < 0) return toast(`Can't undo, would take ${toAsset.name} below $0.`);
-    const { error: toErr } = await sb.from("assets").update({ value: newToValue }).eq("id", toAsset.id);
-    if (toErr) return toast(toErr.message);
-    const newFromValue = Math.round((Number(fromAsset.value) + Number(row.amount)) * 100) / 100;
-    const { error: fromErr } = await sb.from("assets").update({ value: newFromValue }).eq("id", fromAsset.id);
-    if (fromErr) return toast(fromErr.message);
+    if (cents(Number(toAsset.value) - Number(row.amount)) < 0) return toast(`Can't undo, would take ${toAsset.name} below $0.`);
+    steps.push(assetMove(toAsset, -Number(row.amount), { floor: 0 }), assetMove(fromAsset, Number(row.amount)));
   } else if (row.kind === "holding_sale") {
     // Selling moved FOUR things: a holding_sales row recording the realized
     // gain, the holding's own quantity and blended cost basis, the proceeds
@@ -5708,7 +5837,8 @@ async function undoActivity(row) {
     // undo fell through the whole chain and deleted ONLY this row, so the
     // shares stayed sold, the proceeds stayed spent-able, the realized gain
     // stayed counted, and the one visible trace of it disappeared - an undo
-    // that made the record wrong instead of putting it back.
+    // that made the record wrong instead of putting it back. All four now go
+    // back in one transaction.
     //
     // account_activity does not carry the quantity or the basis removed, so
     // the matching holding_sales row is what makes a real reversal possible.
@@ -5734,39 +5864,32 @@ async function undoActivity(row) {
     const account = row.account_id ? accounts.find((a) => a.id === row.account_id) : null;
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
     if (row.account_id && !asset) return toast("Can't undo, the account the money went into no longer exists.");
-    let newValue = null;
-    if (asset) {
-      // Putting the shares back means taking the proceeds back out, and that
-      // money may already have been spent. Refused rather than floored, the
-      // same way every other reversal in this file refuses rather than
-      // destroying the difference.
-      newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
-      if (newValue < -overdraftAllowance(asset)) {
-        return toast(`Can't undo, ${asset.name} no longer holds the ${fmt(row.amount)} this sale paid in.`);
-      }
+    // Putting the shares back means taking the proceeds back out, and that
+    // money may already have been spent. Refused rather than floored, the same
+    // way every other reversal in this file refuses rather than destroying the
+    // difference.
+    if (asset && cents(Number(asset.value) - Number(row.amount)) < -overdraftAllowance(asset)) {
+      return toast(`Can't undo, ${asset.name} no longer holds the ${fmt(row.amount)} this sale paid in.`);
     }
-
     const restoredQty = Math.round((Number(holding.quantity || 0) + Number(sale.quantity)) * 1e6) / 1e6;
     const restoredBasis = Math.round((Number(holding.purchase_price || 0) + Number(sale.cost_basis_removed)) * 100) / 100;
-    const { error: holdErr } = await sb.from("assets")
-      .update({ quantity: restoredQty, purchase_price: restoredBasis }).eq("id", holding.id);
-    if (holdErr) return toast(holdErr.message);
-    if (asset) {
-      const { error: valErr } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-      if (valErr) return toast(valErr.message);
-    }
-    // Deleted last: while it exists the realized gain is still counted, which
-    // is the safe way round if anything above fails.
-    const { error: saleErr } = await sb.from("holding_sales").delete().eq("id", sale.id);
-    if (saleErr) return toast(saleErr.message);
+    steps.push(
+      { op: "update", table: "assets", id: holding.id,
+        set: { quantity: restoredQty, purchase_price: restoredBasis },
+        expect: { quantity: holding.quantity, purchase_price: holding.purchase_price } },
+      asset ? assetMove(asset, -Number(row.amount), { floor: spendFloor(asset) }) : null,
+      { op: "delete", table: "holding_sales", id: sale.id },
+    );
     // RELOADED BEFORE SYNCING, which is the order the sell flow itself uses.
     // syncParentAssetValue prices the parent from the CACHED assets array, so
-    // calling it straight after the write above rolled the parent up from the
-    // stale post-sale quantity and wrote a value understating the position by
-    // exactly the shares just restored.
-    await loadAssets();
-    await loadHoldingSales();
-    await syncParentAssetValue(holding.parent_asset_id);
+    // syncing before the reload rolled the parent up from the stale post-sale
+    // quantity and wrote a value understating the position by exactly the
+    // shares just restored.
+    after = async () => {
+      await loadAssets();
+      await loadHoldingSales();
+      await syncParentAssetValue(holding.parent_asset_id);
+    };
   } else if (row.kind === "income") {
     // Always a positive deposit, so undoing is always a straight
     // subtraction - never a sign-dependent reversal the way asset_adjust's
@@ -5774,13 +5897,17 @@ async function undoActivity(row) {
     const account = accounts.find((a) => a.id === row.account_id);
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
     if (!asset) return toast("Can't undo, the linked account no longer exists.");
-    const newValue = Math.round((Number(asset.value) - Number(row.amount)) * 100) / 100;
-    if (newValue < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
-    const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-    if (error) return toast(error.message);
+    if (cents(Number(asset.value) - Number(row.amount)) < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
+    steps.push(assetMove(asset, -Number(row.amount), { floor: 0 }));
   }
-  const { error } = await sb.from("account_activity").delete().eq("id", row.id);
-  if (error) return toast(error.message);
+  steps.push({ op: "delete", table: "account_activity", id: row.id, expect: { amount: row.amount } });
+  const { message } = await moneyTx(steps);
+  if (message) {
+    await loadAccountActivity();
+    renderRecentTransactions();
+    return toast(undoRefusal(message), "error");
+  }
+  if (after) await after();
   await loadAssets(); await loadDebts(); await loadAccountActivity();
   renderRecentTransactions();
   // Undoing a sale puts shares and cost basis back, which the Investments
@@ -5789,6 +5916,14 @@ async function undoActivity(row) {
   // the next full load.
   if (row.kind === "holding_sale") { renderInvestments(); renderRealizedGains(); renderNetWorth(); }
   toast("Undone");
+}
+
+// The one refusal an undo meets far more than any other is the row already
+// being gone, undone on another device or by a second tap, so it is named.
+function undoRefusal(message) {
+  return message === moneyRefusal({ code: "P0001", message: "money_stale" })
+    ? "This was already undone or changed somewhere else, so nothing was reversed."
+    : message;
 }
 
 // Merges expenses with account_activity for the Log page's Recent
@@ -5981,11 +6116,12 @@ $("dividendConfirmBtn").onclick = async () => {
   // Disabled across the awaits, the same guard saveBtn uses: a second tap on a
   // slow connection would otherwise record the dividend twice.
   $("dividendConfirmBtn").disabled = true;
-  await applyAssetDelta(accountId, null, amount, +1);
-  await logActivity(
-    "income", `Dividend from ${label}`, amount, date, accountId, null, null, dividendAsset.id
-  );
+  const { message } = await moneyTx([
+    assetMove(assetOfAccount(accountId), amount),
+    activityStep("income", `Dividend from ${label}`, amount, date, accountId, null, null, dividendAsset.id),
+  ]);
   $("dividendConfirmBtn").disabled = false;
+  if (message) { flagField("dividendAmount"); return toast(message, "error"); }
   closeModal("dividendModal");
   dividendAsset = null;
   await loadAssets();
@@ -6089,9 +6225,9 @@ $("refundConfirmBtn").onclick = async () => {
       return toast("That account is no longer available", "error");
     }
   }
-  // A refund onto a CREDIT account reduces what is owed, and
-  // applyLiabilityDelta floors at $0 - so refunding more than the current
-  // balance would silently destroy the difference, which is exactly how the
+  // A refund onto a CREDIT account reduces what is owed, and a plain debt
+  // step floors at $0 - so refunding more than the current balance would
+  // silently destroy the difference, which is exactly how the
   // overpayment bug vaporised $484. A real card would carry a credit balance;
   // this app has no concept to hold one, so it is refused rather than floored.
   if (account && account.linked_liability_id) {
@@ -6107,7 +6243,7 @@ $("refundConfirmBtn").onclick = async () => {
   // second tap during a slow round trip re-enters the whole handler with the
   // same amount still in the field and writes a second refund.
   $("refundConfirmBtn").disabled = true;
-  const { error } = await sb.from("expenses").insert({
+  const refundRow = {
     // user_id is left to the column default, the same as every other expense
     // insert in this file.
     // NEGATIVE: this is spending undone, not money earned.
@@ -6119,16 +6255,18 @@ $("refundConfirmBtn").onclick = async () => {
     account_id: original.account_id,
     occurred_at: date,
     refund_of: original.id,
-  });
-  $("refundConfirmBtn").disabled = false;
-  if (error) { flagField("refundAmount", error.message); return toast(error.message, "error"); }
-
-  // The same pair undoExpense() applies, and for the same reason: an imported
+  };
+  // The same steps undoExpense() takes, and for the same reason: an imported
   // row never moved a balance, so a refund against one must not move one back.
-  if (!isImported(original)) {
-    await applyAssetDelta(original.account_id, original.payment_type, amount, +1);
-    await applyLiabilityDelta(original.account_id, original.payment_type, amount, -1);
-  }
+  // strict: coming off a card, a refund larger than what is owed NOW is
+  // refused by the database rather than floored, even if this device's copy
+  // said there was room.
+  const { message } = await moneyTx([
+    { op: "insert", table: "expenses", row: refundRow },
+    ...(isImported(original) ? [] : chargeSteps(original.account_id, amount, -1, { strict: true })),
+  ]);
+  $("refundConfirmBtn").disabled = false;
+  if (message) { flagField("refundAmount", message); return toast(message, "error"); }
   closeModal("refundModal");
   closeModal("editModal");
   refunding = null; editing = null;
@@ -6192,11 +6330,12 @@ $("editSave").onclick = async () => {
   if (limitErr) { flagField(["eAccount", "eAmount"]); return toast(limitErr); }
 
   $("editSave").disabled = true;
-  const { error } = await sb.from("expenses").update(patch).eq("id", editing.id);
-  if (error) { $("editSave").disabled = false; flagField("eAmount"); return toast(error.message); }
-
   // Reverse the old asset/liability effect (if any), then apply the new one -
-  // covers amount/account/payment-type all changing in the same edit.
+  // covers amount/account/payment-type all changing in the same edit. The
+  // update, the reversal and the new charge are ONE transaction, and the
+  // update EXPECTS the amount and account this form opened with: if another
+  // device changed this expense meanwhile, reversing the amount shown here
+  // would put the wrong figure back, so the whole edit is refused instead.
   //
   // Skipped entirely for an IMPORTED row, which never applied a balance in the
   // first place (csvImport.js deliberately does not call the delta helpers,
@@ -6205,12 +6344,14 @@ $("editSave").onclick = async () => {
   // imported $50 to $60 shifted the account by -$10, for a charge the bank had
   // already settled at its true amount. The same check undoExpense() and
   // netAmountByAccount() already make.
-  if (!isImported(editing)) {
-    await applyAssetDelta(prevAccountId, prevPaymentType, prevAmount, +1);
-    await applyAssetDelta(patch.account_id, patch.payment_type, amount, -1);
-    await applyLiabilityDelta(prevAccountId, prevPaymentType, prevAmount, -1);
-    await applyLiabilityDelta(patch.account_id, patch.payment_type, amount, +1);
-  }
+  const { message } = await moneyTx([
+    { op: "update", table: "expenses", id: editing.id, set: patch, expect: { amount: editing.amount, account_id: editing.account_id } },
+    ...(isImported(editing) ? [] : [
+      ...chargeSteps(prevAccountId, prevAmount, -1),
+      ...chargeSteps(patch.account_id, amount, +1),
+    ]),
+  ]);
+  if (message) { $("editSave").disabled = false; flagField(["eAccount", "eAmount"]); await loadExpenses(); return toast(message, "error"); }
   await loadAssets(); await loadDebts();
 
   // Learning loop: on a category correction, remember keyword->category.
@@ -6240,20 +6381,18 @@ $("editSave").onclick = async () => {
 //
 // Deleting credits the amount back; undoing has to deduct it again. That
 // second deduction is a genuine spend against a balance that may have moved in
-// between, and applyAssetDelta() writes without consulting assetDeltaError(),
-// so an unguarded undo could push an account below its floor or a card past
-// its limit. restoreDeletedExpense() runs the same two checks the four real
-// spending paths use, BEFORE putting the row back.
+// between, so restoreDeletedExpense() runs the same two checks the real
+// spending paths use BEFORE putting the row back, and its balance steps carry
+// the floor and the limit so the database judges them on the real balance.
 //
 // An imported row skips both sides: it never applied a balance to begin with,
 // so neither the credit on delete nor the deduction on undo should happen.
 async function deleteExpenseWithUndo(row, desc) {
-  const { error } = await sb.from("expenses").delete().eq("id", row.id);
-  if (error) { toast(error.message, "error"); return false; }
-  if (!isImported(row)) {
-    await applyAssetDelta(row.account_id, row.payment_type, Number(row.amount), +1);
-    await applyLiabilityDelta(row.account_id, row.payment_type, Number(row.amount), -1);
-  }
+  const { message } = await moneyTx([
+    { op: "delete", table: "expenses", id: row.id, expect: { amount: row.amount, account_id: row.account_id } },
+    ...(isImported(row) ? [] : chargeSteps(row.account_id, Number(row.amount), -1)),
+  ]);
+  if (message) { await loadExpenses(); toast(message, "error"); return false; }
   await loadAssets(); await loadDebts(); await loadExpenses();
   toast(`Deleted ${desc}`, "info", { label: "Undo", onAction: () => restoreDeletedExpense(row) });
   return true;
@@ -6271,12 +6410,11 @@ async function restoreDeletedExpense(row) {
       || chargeRefusalReason([{ accountId: row.account_id, amount, sign: +1 }]);
     if (blocked) { toast(`Cannot undo. ${blocked}`, "error"); return; }
   }
-  const { error } = await sb.from("expenses").insert(row);
-  if (error) { toast(error.message, "error"); return; }
-  if (!isImported(row)) {
-    await applyAssetDelta(row.account_id, row.payment_type, amount, -1);
-    await applyLiabilityDelta(row.account_id, row.payment_type, amount, +1);
-  }
+  const { message } = await moneyTx([
+    { op: "insert", table: "expenses", row },
+    ...(isImported(row) ? [] : chargeSteps(row.account_id, amount, +1)),
+  ]);
+  if (message) { toast(`Cannot undo. ${message}`, "error"); return; }
   await loadAssets(); await loadDebts(); await loadExpenses();
   toast("Expense restored");
 }
@@ -7874,7 +8012,7 @@ function openSellModal(asset) {
 
   // Asset-backed accounts only - proceeds have to land somewhere that
   // actually holds a balance, the same filter Transfer's pickers use and
-  // for the same reason (applyAssetDelta is a silent no-op otherwise).
+  // for the same reason (assetOfAccount() finds no asset otherwise, so no balance would move).
   $("sellAccount").innerHTML = `<option value="">None</option>` + accounts
     .filter((a) => a.linked_asset_id && !a.archived_at)
     .map((a) => `<option value="${a.id}">${esc(acctLabel(a))}</option>`).join("");
@@ -7926,31 +8064,38 @@ $("sellConfirmBtn").onclick = async () => {
   const costOut = Math.round(basis * (qty / held) * 100) / 100;
   const realized = Math.round((proceeds - costOut) * 100) / 100;
 
-  const { error: saleErr } = await sb.from("holding_sales").insert({
+  const saleRow = {
     asset_id: sellingHolding.id,
     symbol: (sellingHolding.price_symbol || "").trim().toUpperCase(),
     quantity: qty, proceeds, cost_basis_removed: costOut, realized_gain: realized,
     sold_on: soldOn, account_id: accountId,
-  });
-  if (saleErr) { flagField("sellQuantity"); return toast(saleErr.message); }
+  };
 
   // Remaining position, average-cost: both quantity and the blended basis
   // shrink proportionally, so the per-share average is unchanged by a sale.
   const remainingQty = Math.round((held - qty) * 1e6) / 1e6;
   const remainingBasis = Math.round((basis - costOut) * 100) / 100;
-  const { error: assetErr } = await sb.from("assets")
-    .update({ quantity: remainingQty, purchase_price: remainingBasis })
-    .eq("id", sellingHolding.id);
-  if (assetErr) return toast(assetErr.message);
 
+  // The sale record, the smaller holding, the proceeds and the history row are
+  // ONE transaction. The holding update EXPECTS the quantity and basis this
+  // form read, so a sale already recorded on another device refuses this one
+  // instead of selling the same shares twice.
+  //
   // The balance only moves when an account was chosen, but the HISTORY row is
   // written either way. Gating the row on the account too meant a sale with
   // untracked proceeds reduced the holding and booked a realized gain with
   // nothing in Recent History, so it could never be undone: the shares were
   // gone for good and the gain counted permanently.
-  if (accountId) await applyAssetDelta(accountId, null, proceeds, +1);
-  await logActivity("holding_sale", `Sold ${qty} ${sellingHolding.price_symbol || ""}`.trim(),
-    proceeds, soldOn, accountId, null, null, sellingHolding.id);
+  const { message } = await moneyTx([
+    { op: "insert", table: "holding_sales", row: saleRow },
+    { op: "update", table: "assets", id: sellingHolding.id,
+      set: { quantity: remainingQty, purchase_price: remainingBasis },
+      expect: { quantity: sellingHolding.quantity, purchase_price: sellingHolding.purchase_price } },
+    accountId ? assetMove(assetOfAccount(accountId), proceeds) : null,
+    activityStep("holding_sale", `Sold ${qty} ${sellingHolding.price_symbol || ""}`.trim(),
+      proceeds, soldOn, accountId, null, null, sellingHolding.id),
+  ]);
+  if (message) { flagField("sellQuantity"); return toast(message, "error"); }
 
   const parentId = sellingHolding.parent_asset_id;
   closeModal("sellHoldingModal");
@@ -7962,6 +8107,10 @@ $("sellConfirmBtn").onclick = async () => {
   renderInvestments();
   renderRealizedGains();
   renderNetWorth();
+  // The sale writes a history row, and undoing it from Recent History is the
+  // only way to reverse a sale. Switching to Log does not redraw that list,
+  // so without this the row was not there to undo until something else did.
+  renderRecentTransactions();
   toast(`Sale recorded: ${fmt(realized)} realized${remainingQty === 0 ? ", position closed" : ""}`);
 };
 
@@ -9928,53 +10077,31 @@ $("saveHoldingBtn").onclick = async () => {
   // conditional on "Paid from" would leave the limit bypassable by leaving
   // that field alone.
   //
-  // Written BEFORE the holding, and its error checked, because of which way a
-  // partial failure should err. This row is what the limit is enforced
-  // against: lose it and the year reads low and the app lets the NEXT
-  // purchase through when it should not, which is the failure that actually
-  // costs someone money. An orphaned contribution errs the other way - it
-  // reads high, refuses too much, and is visible and undoable in Recent
-  // History. logActivity used to swallow the insert error entirely, so this
-  // failed silently and permanently.
-  let contributionId = null;
-  if (contributionAmount > 0 && contributionGroupFor(parent?.type)) {
-    const { error: contribErr, id } = await logActivity(
-      "contribution", `Put ${fmt(contributionAmount)} into ${parent.name} by buying ${symbol}`,
-      contributionAmount, undefined, accounts.find((a) => a.linked_asset_id === parentId)?.id ?? null,
-      null, null, parentId, "holding_purchase"
-    );
-    if (contribErr) {
-      flagField("holdingAccount", contribErr.message);
-      return toast(`Could not record this against your limit for the year, so nothing was saved: ${contribErr.message}`, "error");
-    }
-    contributionId = id;
-  }
-  const { error } = editingHolding
-    ? await sb.from("assets").update(row).eq("id", editingHolding.id)
-    : await sb.from("assets").insert(row);
-  if (error) {
-    // Put the contribution back rather than leave one standing for a holding
-    // that does not exist - the same compensating write payBillTowardDebt()
-    // does when the second of its two tables refuses.
-    if (contributionId) {
-      await sb.from("account_activity").delete().eq("id", contributionId);
-      await loadAccountActivity();
-    }
-    flagField("holdingSymbol");
-    return toast(error.message);
-  }
-  // Mirrors exactly where Quick Add calls applyAssetDelta after its own
-  // expenses.insert - re-checked against fundingAccountId/costBasisDelta
-  // (not just "was a funding account selected") since a decrease must
-  // never reach here even if a funding account happens to still be set.
-  if (fundingAccountId && costBasisDelta > 0) {
-    await applyAssetDelta(fundingAccountId, null, costBasisDelta, -1);
-    await logActivity(
-      "asset_adjust",
-      `Bought ${quantity} ${symbol}, funded from ${acctName(fundingAccountId)}`,
-      -costBasisDelta, undefined, fundingAccountId
-    );
-  }
+  // The contribution, the holding and the money that paid for it are ONE
+  // transaction. They used to be up to four requests with a hand-written undo
+  // for the second failing, and nothing at all for the third: a failed funding
+  // write left the holding bought and no money gone. Which way a partial
+  // failure erred was the whole question then (a lost contribution reads LOW
+  // and lets an over-limit purchase through); there is no partial failure now.
+  //
+  // The funding step is re-checked against the real balance, and only a
+  // POSITIVE cost-basis delta is ever charged, so an edit that lowers the
+  // quantity or price (a correction, not a sale) never moves money.
+  const fundingAsset = fundingAccountId && costBasisDelta > 0 ? assetOfAccount(fundingAccountId) : null;
+  const { message } = await moneyTx([
+    contributionAmount > 0 && contributionGroupFor(parent?.type)
+      ? activityStep("contribution", `Put ${fmt(contributionAmount)} into ${parent.name} by buying ${symbol}`,
+          contributionAmount, undefined, accounts.find((a) => a.linked_asset_id === parentId)?.id ?? null,
+          null, null, parentId, "holding_purchase")
+      : null,
+    editingHolding
+      ? { op: "update", table: "assets", id: editingHolding.id, set: row }
+      : { op: "insert", table: "assets", row },
+    fundingAsset ? assetMove(fundingAsset, -costBasisDelta, { floor: spendFloor(fundingAsset) }) : null,
+    fundingAsset ? activityStep("asset_adjust", `Bought ${quantity} ${symbol}, funded from ${acctName(fundingAccountId)}`,
+      -costBasisDelta, undefined, fundingAccountId) : null,
+  ]);
+  if (message) { flagField(fundingAsset ? "holdingFundingAccount" : "holdingSymbol"); return toast(message, "error"); }
   closeHoldingForm();
   await loadAssets();
   await syncParentAssetValue(parentId);
@@ -10084,19 +10211,18 @@ $("saveContributionBtn").onclick = async () => {
   const contribLimitErr = contributionRefusalReason(asset.id, amount);
   if (contribLimitErr) { flagField("contributionAmount", contribLimitErr); return toast(contribLimitErr, "error"); }
   const occurred_at = $("contributionDate").value || localDateISO();
-  const newValue = Math.round((Number(asset.value) + amount) * 100) / 100;
-  const { error } = await sb.from("assets").update({ value: newValue }).eq("id", asset.id);
-  if (error) { flagField("contributionAmount"); return toast(error.message); }
   // account_id: the linked account if this asset has one (most investment
   // assets are standalone and won't), purely so Recent History's account
   // filter can also surface a contribution the same way it already does
   // for asset_adjust - asset_id (not account_id) is what
   // contributionLimitUsage() actually reads.
   const linkedAccountId = accounts.find((a) => a.linked_asset_id === asset.id)?.id ?? null;
-  await logActivity(
-    "contribution", `Contributed ${fmt(amount)} to ${asset.name}`,
-    amount, occurred_at, linkedAccountId, null, null, asset.id
-  );
+  const { message } = await moneyTx([
+    assetMove(asset, amount),
+    activityStep("contribution", `Contributed ${fmt(amount)} to ${asset.name}`,
+      amount, occurred_at, linkedAccountId, null, null, asset.id),
+  ]);
+  if (message) { flagField("contributionAmount"); return toast(message, "error"); }
   await syncParentAssetValue(asset.parent_asset_id); // no-op unless asset is itself a holding
   closeContributionForm();
   await loadAssets();
@@ -10966,8 +11092,8 @@ async function loadIncome() {
 // A subscription's next_renewal reaching today means the real-world charge
 // already happened, so - unlike the manual markPaidBtn below, which this
 // shares its logic with - this runs unprompted on every app load and logs
-// it automatically: same expense insert, same applyAssetDelta/
-// applyLiabilityDelta, same assetDeltaError negative-balance guard. Catches
+// it automatically: same expense insert, same chargeSteps(), same
+// assetDeltaError negative-balance guard. Catches
 // up on however many cycles were missed since the app was last opened
 // (capped at 36, so a stale date can't loop forever), stopping a given
 // subscription's catch-up the moment a cycle would push its account
@@ -10978,13 +11104,10 @@ async function loadIncome() {
 // account is eligible; everything else is unchanged here, same as
 // before this existed.
 //
-// assetDeltaError/applyAssetDelta read the live assets/debts arrays, which
-// a DB write alone doesn't update - so after each successful cycle, the
-// affected asset's value or liability's balance is also patched in place
-// here, mirroring the same math, purely so the *next* cycle in this loop
-// (or another subscription sharing the same account) sees an accurate
-// balance without a full reload per iteration. loadAssets/loadDebts at the
-// end resync everything for real.
+// moneyTx() puts the figures the database wrote into the cached arrays after
+// every cycle, so the NEXT cycle in this loop (or another bill on the same
+// account) is checked against the real balance without a reload per
+// iteration. loadAssets/loadDebts at the end resync everything regardless.
 // A bill that pays down a debt is a PAYMENT, not spending: it lowers what is
 // owed and the account it leaves, and writes the same liability_payment the Pay
 // button does, never a row in expenses (so it cannot inflate spending, a
@@ -10996,69 +11119,38 @@ async function loadIncome() {
 // a loan is cleared must stop moving money rather than fail. Nothing owed means
 // nothing leaves the account.
 //
-// Two writes cannot be one statement here (an asset and a liability are
-// separate tables), so if the second fails the first is put back, otherwise
-// money would leave the account without lowering the debt.
+// Builds the payment as STEPS rather than writing it, so the caller puts the
+// cycle claim and the payment in one transaction: money leaves the account,
+// the debt goes down and the history row is written together, or none of it.
+// This used to be two writes with a hand-written undo of the first.
 //
-// Returns {paid} on success, {blocked} with the reason when the account cannot
-// cover it, or {error} on a failed write.
-async function payBillTowardDebt(sub, occurredAt) {
+// Returns {steps, paid}, {blocked} with the reason when the account cannot
+// cover it, or {error} when what it pays from or toward is gone.
+function payBillTowardDebt(sub, occurredAt) {
   const debt = debts.find((d) => d.id === sub.pays_liability_id);
   const account = accounts.find((a) => a.id === sub.account_id);
   const asset = account?.linked_asset_id ? assets.find((a) => a.id === account.linked_asset_id) : null;
   if (!debt) return { error: "The debt this bill pays down is no longer there." };
   if (!asset) return { error: "Pick a checking or savings account to pay from, a credit card cannot pay a debt." };
   const owed = Number(debt.balance);
-  if (!(owed > 0)) return { paid: 0 };
+  if (!(owed > 0)) return { steps: [], paid: 0 };
   const pay = Math.min(Number(sub.amount), owed);
   const blocked = assetDeltaError([{ accountId: sub.account_id, paymentType: account.type, amount: pay, sign: -1 }]);
   if (blocked) return { blocked };
-
-  const priorAsset = Number(asset.value);
-  const newAsset = Math.round((priorAsset - pay) * 100) / 100;
-  const newOwed = Math.round((owed - pay) * 100) / 100;
-  const first = await sb.from("assets").update({ value: newAsset }).eq("id", asset.id);
-  if (first.error) return { error: first.error.message };
-  const second = await sb.from("liabilities").update({ balance: newOwed }).eq("id", debt.id);
-  if (second.error) {
-    await sb.from("assets").update({ value: priorAsset }).eq("id", asset.id);
-    return { error: second.error.message };
-  }
-  asset.value = newAsset;
-  debt.balance = newOwed;
-
   const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
-  await logActivity("liability_payment", `Paid ${fmt(pay)} to ${debt.name} from ${asset.name} (${sub.name})`,
-    pay, occurredAt, account.id, debtAccountId, debt.id);
-  return { paid: pay };
+  // strict: if what is owed fell below `pay` on another device, the database
+  // refuses the payment rather than flooring the debt and losing the rest.
+  return {
+    paid: pay,
+    steps: [
+      assetMove(asset, -pay, { floor: spendFloor(asset) }),
+      debtMove(debt, -pay, { strict: true }),
+      activityStep("liability_payment", `Paid ${fmt(pay)} to ${debt.name} from ${asset.name} (${sub.name})`,
+        pay, occurredAt, account.id, debtAccountId, debt.id),
+    ],
+  };
 }
 
-// Taking one cycle of a bill or a pay day, so that it is logged ONCE however
-// many things try at the same moment.
-//
-// The date is moved forward FIRST, in a write that only succeeds while the
-// stored date is still the one this run read. Whoever gets that write owns the
-// cycle and goes on to log it; anyone else finds no row matched and stops.
-// This is the guard deposit interest and loan interest already carry, for the
-// same reason: two devices opening together would otherwise both read "due",
-// both log, and both move the date, and nothing afterwards could tell that the
-// same charge had been written twice. init() being single-flight covers one
-// tab; this covers two.
-//
-// `.select("id")` is what reports whether a row matched. supabase-js resolves
-// on a query error rather than rejecting, so both are checked.
-async function claimCycle(table, id, column, from, to) {
-  const { data, error } = await sb.from(table).update({ [column]: to }).eq("id", id).eq(column, from).select("id");
-  return !error && Array.isArray(data) && data.length === 1;
-}
-// Hands a cycle back when the thing it was taken for then could not be
-// written, so it is tried again on the next load instead of being skipped for
-// good. The same compensating write payBillTowardDebt() makes across its two
-// tables. Best effort: if this fails as well, one charge goes unlogged, which
-// is the survivable direction and shows up at the next balance check.
-async function releaseCycle(table, id, column, taken, back) {
-  await sb.from(table).update({ [column]: back }).eq("id", id).eq(column, taken);
-}
 
 async function autoLogDueSubscriptions() {
   const today = localDateISO();
@@ -11086,14 +11178,14 @@ async function autoLogDueSubscriptions() {
       const next = advanceRenewal(renewal, sub.billing_cycle);
       if (!next || next === renewal) break;
       if (sub.pays_liability_id) {
-        if (!(await claimCycle("subscriptions", sub.id, "next_renewal", renewal, next))) break;
-        const result = await payBillTowardDebt(sub, renewal);
-        if (result.blocked || result.error) {
-          await releaseCycle("subscriptions", sub.id, "next_renewal", next, renewal);
-          blockedNames.add(sub.name);
-          break;
-        }
-        if (result.paid) loggedCount++;
+        const plan = payBillTowardDebt(sub, renewal);
+        if (plan.blocked || plan.error) { blockedNames.add(sub.name); break; }
+        // The claim and the payment are one transaction, so a payment that
+        // cannot be made leaves the date where it was, with nothing to hand
+        // back. money_stale means another device took this cycle first.
+        const { error } = await moneyTx([claimStep("subscriptions", sub.id, "next_renewal", renewal, next), ...plan.steps], { reloadActivity: false });
+        if (error) { if (error.message !== "money_stale") blockedNames.add(sub.name); break; }
+        if (plan.paid) loggedCount++;
         renewal = next;
         sub.next_renewal = next;
         cycles++;
@@ -11111,21 +11203,24 @@ async function autoLogDueSubscriptions() {
         break;
       }
 
-      // Another tab or device already took this cycle, or the write failed.
-      // Either way it is not ours to log.
-      if (!(await claimCycle("subscriptions", sub.id, "next_renewal", renewal, next))) break;
-      const { error } = await sb.from("expenses").insert({
-        amount, description: sub.name, merchant: sub.name,
-        category: "Subscriptions", payment_type: paymentType,
-        account_id: sub.account_id, occurred_at: renewal, source: "manual",
-      });
+      // The claim, the charge and what it does to the account are ONE
+      // transaction. money_stale means another tab or device already took this
+      // cycle; any other refusal means the balance moved and it cannot be
+      // covered now. Either way nothing was written, the date included, so the
+      // next load tries again.
+      const { error } = await moneyTx([
+        claimStep("subscriptions", sub.id, "next_renewal", renewal, next),
+        { op: "insert", table: "expenses", row: {
+          amount, description: sub.name, merchant: sub.name,
+          category: "Subscriptions", payment_type: paymentType,
+          account_id: sub.account_id, occurred_at: renewal, source: "manual",
+        } },
+        ...chargeSteps(sub.account_id, amount, +1),
+      ], { reloadActivity: false });
       if (error) {
-        // Not logged, so the date goes back and the next load tries again.
-        await releaseCycle("subscriptions", sub.id, "next_renewal", next, renewal);
+        if (error.code && error.message !== "money_stale") blockedNames.add(sub.name);
         break;
       }
-      await applyAssetDelta(sub.account_id, paymentType, amount, -1);
-      await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
       loggedCount++;
       renewal = next;
       sub.next_renewal = next;
@@ -11134,7 +11229,7 @@ async function autoLogDueSubscriptions() {
     // No date write here any more: each cycle's claim already moved it.
   }
 
-  if (loggedCount) { await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions(); }
+  if (loggedCount) { await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions(); await loadAccountActivity(); }
   if (blockedNames.size) {
     toast(`Logged ${loggedCount} charge${loggedCount === 1 ? "" : "s"}, couldn't cover ${[...blockedNames].join(", ")}`);
   } else if (loggedCount) {
@@ -11146,7 +11241,7 @@ async function autoLogDueSubscriptions() {
 // unprompted on every app load, no confirm-first step (checked the real
 // subscription auto-logging behavior before assuming otherwise; there
 // isn't one). A received paycheck increases an asset, so this uses
-// applyAssetDelta(+1) instead of the expense-shaped insert + -1 delta
+// a +amount asset step instead of the expense-shaped insert and charge steps
 // subscriptions use, and logs to account_activity (kind: "income") rather
 // than expenses, since income isn't spending - everything else (the
 // per-source catch-up loop, the 36-cycle cap, updating next_expected only
@@ -11174,13 +11269,16 @@ async function autoLogDueIncome() {
     // stops that, not just the cap.
     if (src.cadence === "one_time") {
       if (src.next_expected > today) continue;
-      // Switched off FIRST, and only while it is still on: the same claim the
-      // recurring kinds make on their date, since this one has no date to move.
-      const { data: took, error: claimErr } = await sb.from("income").update({ is_active: false })
-        .eq("id", src.id).eq("is_active", true).select("id");
-      if (claimErr || !Array.isArray(took) || took.length !== 1) continue;
-      await applyAssetDelta(src.account_id, null, amount, +1);
-      await logActivity("income", src.source, amount, src.next_expected, src.account_id);
+      // Switched off only while it is still on: the same claim the recurring
+      // kinds make on their date, since this one has no date to move. In the
+      // same transaction as the deposit, so it is never switched off without
+      // the money arriving.
+      const { error } = await moneyTx([
+        claimStep("income", src.id, "is_active", true, false),
+        assetMove(assetOfAccount(src.account_id), amount),
+        activityStep("income", src.source, amount, src.next_expected, src.account_id),
+      ], { reloadActivity: false });
+      if (error) continue;
       loggedCount++;
       continue;
     }
@@ -11193,10 +11291,14 @@ async function autoLogDueIncome() {
       // not move past - which would re-log the same deposit on every load.
       const next = advanceIncomeDate(expected, src.cadence, src.semimonthly_day_1, src.semimonthly_day_2);
       if (next === expected) break;
-      // Claimed before the money is added, for the reason claimCycle() gives.
-      if (!(await claimCycle("income", src.id, "next_expected", expected, next))) break;
-      await applyAssetDelta(src.account_id, null, amount, +1);
-      await logActivity("income", src.source, amount, expected, src.account_id);
+      // The claim, the deposit and its history row are one transaction, for
+      // the reason claimStep() gives.
+      const { error } = await moneyTx([
+        claimStep("income", src.id, "next_expected", expected, next),
+        assetMove(assetOfAccount(src.account_id), amount),
+        activityStep("income", src.source, amount, expected, src.account_id),
+      ], { reloadActivity: false });
+      if (error) break;
       loggedCount++;
       expected = next;
       src.next_expected = next;
@@ -11208,6 +11310,7 @@ async function autoLogDueIncome() {
   if (loggedCount) {
     await loadAssets();
     await loadIncome();
+    await loadAccountActivity();
     toast(`Logged ${loggedCount} income deposit${loggedCount === 1 ? "" : "s"} automatically`);
   }
 }
@@ -11267,31 +11370,29 @@ async function autoLogSavingsInterest() {
     // cannot both credit the month, and a balance changed elsewhere in the
     // meantime is never overwritten with a stale total. Losing the race is not
     // an error - the next load recomputes from fresh data.
-    const { data: written, error } = await sb.from("assets")
-      .update({ value: newValue, interest_last_paid: lastPaid })
-      .eq("id", asset.id)
-      .eq("interest_last_paid", asset.interest_last_paid)
-      .eq("value", asset.value)
-      .select("id");
-    // Nothing moved and the marker did not advance, so the same months are
-    // retried on the next load. supabase-js RESOLVES on a query error instead
-    // of rejecting, so this has to be checked explicitly - a try/catch around
-    // it would catch nothing.
+    // The balance, the marker and this account's history rows are ONE
+    // transaction, so interest can no longer land without the rows saying
+    // so. The update EXPECTS the marker and balance this device read:
+    // money_stale means another device credited it first or the balance moved,
+    // which is not an error, the next load recomputes from fresh data.
+    const historyRows = payments.map((pmt) => ({
+      kind: "income",
+      description: `Interest from ${asset.name} (${asset.interest_rate}% a year)`,
+      amount: pmt.amount,
+      occurred_at: pmt.date,
+      account_id: account.id,
+    }));
+    const { error } = await moneyTx([
+      { op: "update", table: "assets", id: asset.id,
+        set: { value: newValue, interest_last_paid: lastPaid },
+        expect: { value: asset.value, interest_last_paid: asset.interest_last_paid } },
+      historyRows.length ? { op: "insert", table: "account_activity", rows: historyRows } : null,
+    ], { reloadActivity: false });
     if (error) {
-      toast(`Could not add interest to ${asset.name}: ${error.message}`, "error");
+      if (error.message !== "money_stale") toast(`Could not add interest to ${asset.name}. ${moneyRefusal(error)}`, "error");
       continue;
     }
-    if (!written || !written.length) continue; // changed elsewhere; retried next load
-
-    for (const pmt of payments) {
-      rows.push({
-        kind: "income",
-        description: `Interest from ${asset.name} (${asset.interest_rate}% a year)`,
-        amount: pmt.amount,
-        occurred_at: pmt.date,
-        account_id: account.id,
-      });
-    }
+    rows.push(...historyRows);
     if (payments.length) {
       accountsPaid++;
       paidTotal = Math.round((paidTotal + total) * 100) / 100;
@@ -11302,14 +11403,8 @@ async function autoLogSavingsInterest() {
 
   if (!rows.length) return;
 
-  // Inserted as ONE statement rather than through logActivity(), which
-  // refetches the whole activity table after every successful insert - a
-  // 36-month catch-up would otherwise mean 36 full reloads awaited one after
-  // another during startup. The balance is already correct at this point, so
-  // a failure here costs history rows rather than money, and it is surfaced.
-  const { error } = await sb.from("account_activity").insert(rows);
-  if (error) toast(`Interest was added, but its history could not be saved: ${error.message}`, "error");
-
+  // The history went in with each account's interest; one reload for all of
+  // them rather than one per account during startup.
   await loadAssets();
   await loadAccountActivity();
   renderRecentTransactions();
@@ -11361,29 +11456,28 @@ async function autoAccrueLoanInterest() {
     if (!lastPaid) continue;
 
     const newBalance = Math.round((Number(debt.balance) + total) * 100) / 100;
-    const { data: written, error } = await sb.from("liabilities")
-      .update({ balance: newBalance, interest_last_accrued: lastPaid })
-      .eq("id", debt.id)
-      .eq("interest_last_accrued", debt.interest_last_accrued)
-      .eq("balance", debt.balance)
-      .select("id");
+    // Balance, marker and history rows in one transaction, conditional on the
+    // marker and balance this device read: the same shape as deposit interest.
+    const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
+    const historyRows = payments.map((pmt) => ({
+      kind: "owed_adjust",
+      description: `Interest on ${debt.name} (${debt.interest_rate}% a year, estimated)`,
+      amount: pmt.amount,
+      occurred_at: pmt.date,
+      account_id: debtAccountId,
+      liability_id: debt.id,
+    }));
+    const { error } = await moneyTx([
+      { op: "update", table: "liabilities", id: debt.id,
+        set: { balance: newBalance, interest_last_accrued: lastPaid },
+        expect: { balance: debt.balance, interest_last_accrued: debt.interest_last_accrued } },
+      historyRows.length ? { op: "insert", table: "account_activity", rows: historyRows } : null,
+    ], { reloadActivity: false });
     if (error) {
-      toast(`Could not add interest to ${debt.name}: ${error.message}`, "error");
+      if (error.message !== "money_stale") toast(`Could not add interest to ${debt.name}. ${moneyRefusal(error)}`, "error");
       continue;
     }
-    if (!written || !written.length) continue; // changed elsewhere; retried next load
-
-    const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
-    for (const pmt of payments) {
-      rows.push({
-        kind: "owed_adjust",
-        description: `Interest on ${debt.name} (${debt.interest_rate}% a year, estimated)`,
-        amount: pmt.amount,
-        occurred_at: pmt.date,
-        account_id: debtAccountId,
-        liability_id: debt.id,
-      });
-    }
+    rows.push(...historyRows);
     if (payments.length) {
       loansCharged++;
       chargedTotal = Math.round((chargedTotal + total) * 100) / 100;
@@ -11393,11 +11487,6 @@ async function autoAccrueLoanInterest() {
   }
 
   if (!rows.length) return;
-
-  // The balance is already correct here, so a failure costs history rows, not
-  // money - and is surfaced.
-  const { error } = await sb.from("account_activity").insert(rows);
-  if (error) toast(`Interest was added, but its history could not be saved: ${error.message}`, "error");
 
   await loadDebts();
   await loadAccountActivity();
@@ -11447,36 +11536,32 @@ async function autoAccrueCardInterest() {
 
     const total = Math.round(charges.reduce((sum, c) => sum + c.amount, 0) * 100) / 100;
     const newBalance = Math.round((Number(debt.balance) + total) * 100) / 100;
-    const { data: written, error } = await sb.from("liabilities")
-      .update({ balance: newBalance, interest_last_accrued: lastAccrued })
-      .eq("id", debt.id)
-      .eq("interest_last_accrued", debt.interest_last_accrued)
-      .eq("balance", debt.balance)
-      .select("id");
+    // Same one-transaction shape as loan and deposit interest. A cycle that
+    // owed nothing still advances the marker, with no history rows.
+    const historyRows = charges.map((c) => ({
+      kind: "owed_adjust",
+      description: `Interest on ${debt.name} (${debt.interest_rate}% APR, estimated on ${fmt(c.remaining)} unpaid at the ${c.date} due date)`,
+      amount: c.amount,
+      occurred_at: c.date,
+      account_id: account?.id ?? null,
+      liability_id: debt.id,
+    }));
+    const { error } = await moneyTx([
+      { op: "update", table: "liabilities", id: debt.id,
+        set: { balance: newBalance, interest_last_accrued: lastAccrued },
+        expect: { balance: debt.balance, interest_last_accrued: debt.interest_last_accrued } },
+      historyRows.length ? { op: "insert", table: "account_activity", rows: historyRows } : null,
+    ], { reloadActivity: false });
     if (error) {
-      toast(`Could not add interest to ${debt.name}: ${error.message}`, "error");
+      if (error.message !== "money_stale") toast(`Could not add interest to ${debt.name}. ${moneyRefusal(error)}`, "error");
       continue;
     }
-    if (!written || !written.length) continue; // changed elsewhere; retried next load
-
-    for (const c of charges) {
-      rows.push({
-        kind: "owed_adjust",
-        description: `Interest on ${debt.name} (${debt.interest_rate}% APR, estimated on ${fmt(c.remaining)} unpaid at the ${c.date} due date)`,
-        amount: c.amount,
-        occurred_at: c.date,
-        account_id: account?.id ?? null,
-        liability_id: debt.id,
-      });
-    }
+    rows.push(...historyRows);
     if (charges.length) { cardsCharged++; chargedTotal = Math.round((chargedTotal + total) * 100) / 100; }
     if (capped) anyCapped = true;
   }
 
   if (!rows.length) return;
-
-  const { error } = await sb.from("account_activity").insert(rows);
-  if (error) toast(`Interest was added, but its history could not be saved: ${error.message}`, "error");
 
   await loadDebts();
   await loadAccountActivity();
@@ -11934,28 +12019,29 @@ $("markPaidBtn").onclick = async () => {
   // just logs.
   const nextRenewal = sub.next_renewal ? advanceRenewal(sub.next_renewal, sub.billing_cycle) : null;
   const claims = !!nextRenewal && nextRenewal !== sub.next_renewal;
-  const claim = async () => {
-    if (!claims) return true;
-    if (await claimCycle("subscriptions", sub.id, "next_renewal", sub.next_renewal, nextRenewal)) return true;
-    closeSubForm();
-    await loadSubscriptions();
-    toast("This bill was updated somewhere else, so nothing was logged. Open it again to see where it is now.", "error");
-    return false;
-  };
-  const release = () => (claims ? releaseCycle("subscriptions", sub.id, "next_renewal", nextRenewal, sub.next_renewal) : null);
-  if (sub.pays_liability_id) {
-    $("markPaidBtn").disabled = true;
-    if (!(await claim())) { $("markPaidBtn").disabled = false; return; }
-    const result = await payBillTowardDebt(sub, localDateISO());
-    $("markPaidBtn").disabled = false;
-    if (result.blocked || result.error) {
-      await release();
-      flagField("sAccount");
-      return toast(result.blocked || result.error, "error");
+  // The claim goes in the SAME transaction as the charge, so a charge that
+  // cannot be written leaves the date exactly where it was, and nothing has to
+  // be handed back afterwards.
+  const claimSteps = claims ? [claimStep("subscriptions", sub.id, "next_renewal", sub.next_renewal, nextRenewal)] : [];
+  const refused = async (error, message) => {
+    if (error?.message === "money_stale") {
+      closeSubForm();
+      await loadSubscriptions();
+      return toast("This bill was updated somewhere else, so nothing was logged. Open it again to see where it is now.", "error");
     }
+    flagField("sAccount");
+    return toast(message, "error");
+  };
+  if (sub.pays_liability_id) {
+    const plan = payBillTowardDebt(sub, localDateISO());
+    if (plan.blocked || plan.error) { flagField("sAccount"); return toast(plan.blocked || plan.error, "error"); }
+    $("markPaidBtn").disabled = true;
+    const { error, message } = await moneyTx([...claimSteps, ...plan.steps]);
+    $("markPaidBtn").disabled = false;
+    if (error) return refused(error, message);
     closeSubForm();
     await loadAssets(); await loadDebts(); await loadSubscriptions();
-    return toast(result.paid ? `Paid ${fmt(result.paid)} toward ${debts.find((d) => d.id === sub.pays_liability_id)?.name || "the debt"}` : "Nothing is owed on that debt, so nothing was paid");
+    return toast(plan.paid ? `Paid ${fmt(plan.paid)} toward ${debts.find((d) => d.id === sub.pays_liability_id)?.name || "the debt"}` : "Nothing is owed on that debt, so nothing was paid");
   }
   const assetErr = assetDeltaError([{ accountId: sub.account_id, paymentType, amount, sign: -1 }]);
   if (assetErr) { flagField("sAccount"); return toast(assetErr); }
@@ -11969,17 +12055,13 @@ $("markPaidBtn").onclick = async () => {
     source: "manual",
   };
   $("markPaidBtn").disabled = true;
-  if (!(await claim())) { $("markPaidBtn").disabled = false; return; }
-  const { error } = await sb.from("expenses").insert(row);
-  if (error) {
-    await release();
-    $("markPaidBtn").disabled = false;
-    flagField("sAccount");
-    return toast(error.message, "error");
-  }
-  await applyAssetDelta(sub.account_id, paymentType, amount, -1);
-  await applyLiabilityDelta(sub.account_id, paymentType, amount, +1);
+  const { error, message } = await moneyTx([
+    ...claimSteps,
+    { op: "insert", table: "expenses", row },
+    ...chargeSteps(sub.account_id, amount, +1),
+  ]);
   $("markPaidBtn").disabled = false;
+  if (error) return refused(error, message);
   closeSubForm();
   await loadAssets(); await loadDebts(); await loadExpenses(); await loadSubscriptions();
   toast(nextRenewal && nextRenewal !== sub.next_renewal ? `Logged, renews ${nextRenewal}` : "Logged");

@@ -7832,7 +7832,7 @@ function renderPortfolioRecap() {
   // recap's byline draws, and named as the LOCAL model so the privacy
   // position is visible rather than something the user has to take on trust.
   $("portfolioRecapSummary").innerHTML =
-    `<span class="muted" style="font-size:11px;display:block;margin-bottom:4px">Written on your own machine, from figures this app worked out</span>` +
+    `<span class="muted" style="font-size:11px;display:block;margin-bottom:4px">Written by an AI model on a computer in this household, from figures this app worked out</span>` +
     esc(plainDashes(row.summary)).replace(/\n+/g, "<br><br>");
 }
 
@@ -10494,7 +10494,7 @@ $("qaAskBtn").onclick = async () => {
     });
     if (relevantHistory.length) context.relevant_history = relevantHistory;
 
-    $("qaStatus").textContent = "Working it out… this usually takes about a minute, and the answer is written on your own machine.";
+    $("qaStatus").textContent = "Working it out… this usually takes about a minute, and the answer is written by an AI model on a computer in this household.";
     // Streams, but buffers: onProgress carries counts only, never the text,
     // so nothing unvalidated can reach the screen (see readStreamedAnswer()).
     let lastProgressAt = 0;
@@ -13287,7 +13287,11 @@ function loadSpreadsheetLib() {
   if (!xlsxLoader) {
     xlsxLoader = new Promise((resolve, reject) => {
       const s = document.createElement("script");
+      // Pinned with a hash for the same reason as the three libraries in
+      // index.html: it runs with the session in reach.
       s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+      s.integrity = "sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw";
+      s.crossOrigin = "anonymous";
       s.onload = () => (window.XLSX ? resolve(window.XLSX) : reject(new Error("loaded but were empty")));
       s.onerror = () => { xlsxLoader = null; reject(new Error("could not be downloaded")); };
       document.head.appendChild(s);

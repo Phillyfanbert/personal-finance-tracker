@@ -155,11 +155,14 @@ Each person sees only their own data. That is enforced by row-level security in
 Postgres on every table, so it holds even if the application code has a bug,
 and it is checked on every single request rather than trusted once at sign-in.
 
-Your transactions, balances and notes are never sent to an outside company. The
-questions you ask about your spending are answered on the home machine, not by
-a cloud service. What does leave is deliberately impersonal: share symbols sent
-to a price service, and the names of subscription services looked up against
-public pricing pages.
+Your transactions, balances and notes are never given to an AI company or
+anyone else to use. Questions about your spending, and the daily note on what
+you own, are written by a model on the home machine, not by a cloud AI service;
+they reach it through a Cloudflare tunnel, and the database itself is hosted by
+Supabase. What does leave is deliberately impersonal: share symbols (never
+amounts) sent to a price service and, pooled with everyone else's, to the AI
+that writes the daily market recap; and the names of subscription services
+looked up against public pricing pages.
 
 There is no analytics, no tracking, and nothing sets a cookie. The app itself
 has a plainer version of all this under **Profile → Your data and privacy**,

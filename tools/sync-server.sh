@@ -163,6 +163,31 @@ setup_checksum() {
   cksum < "$RUN_DIR/setup-server-machine.sh"
 }
 
+# The Gemma proxy is the one script here that runs ALL THE TIME rather than
+# on a schedule, so copying a new version in changes nothing until its
+# process restarts: the old code keeps answering until the next reboot. It is
+# compared against what the proxy was last restarted FOR, not against the
+# copy that was there before, because the sync that first delivers this
+# function is still the previous script and never sees the change happen.
+# Restarting takes a second and the secret lives in the job's own plist, so
+# nothing else changes. Not installed here means nothing to restart.
+PROXY_LABEL="com.gemma-auth-proxy"
+PROXY_STAMP="$RUN_DIR/.proxy-restarted-for"
+restart_proxy_if_changed() {
+  local file="$RUN_DIR/gemma-auth-proxy.js" domain now
+  [ -f "$file" ] || return 0
+  domain="gui/$(id -u)"
+  launchctl print "$domain/$PROXY_LABEL" >/dev/null 2>&1 || return 0
+  now="$(cksum < "$file")"
+  [ "$now" = "$(cat "$PROXY_STAMP" 2>/dev/null)" ] && return 0
+  if launchctl kickstart -k "$domain/$PROXY_LABEL" >/dev/null 2>&1; then
+    printf '%s\n' "$now" > "$PROXY_STAMP"
+    say "restarted $PROXY_LABEL so it runs the code just copied in"
+  else
+    say "could not restart $PROXY_LABEL, will try again on the next run"
+  fi
+}
+
 schedules_note() {
   [ -f "$SCHEDULES_NOTE" ] || return 0
   printf ' setup-server-machine.sh changed in %s: launchd schedules are not applied on their own, see sync-server.sh.' "$(short "$(cat "$SCHEDULES_NOTE" 2>/dev/null)")"
@@ -228,6 +253,7 @@ sync_once() {
 
   if [ "$target" = "$deployed" ]; then
     say "up to date at $(short "$target")"
+    restart_proxy_if_changed
     report ok "$(short "$target")$(schedules_note)"
     return 0
   fi
@@ -265,6 +291,7 @@ sync_once() {
 
   printf '%s\n' "$target" > "$STAMP.tmp" && mv -f "$STAMP.tmp" "$STAMP"
   say "deployed $(short "$target")"
+  restart_proxy_if_changed
   report ok "$(short "$target")$(schedules_note)"
   return 0
 }

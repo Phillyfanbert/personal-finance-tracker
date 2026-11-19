@@ -1861,9 +1861,9 @@
       <div class="card" id="insightsCard">
         <div class="card-head">
           <h2>Monthly report</h2>
-          <span class="info-icon" tabindex="0" role="button" aria-expanded="false" data-info="insightsExplainer" title="A plain-English write-up of a finished month, generated on your own machine once the month ends. The figures beside it are counted directly from your logged spending, so they are exact; the paragraph underneath is AI-written from those same figures and is labelled as such. It only covers what you actually logged, so a quiet month usually means less was recorded, not that nothing was spent.">i</span>
+          <span class="info-icon" tabindex="0" role="button" aria-expanded="false" data-info="insightsExplainer" title="A plain-English write-up of a finished month, written once the month ends by an AI model on a computer in this household. The figures beside it are counted directly from your logged spending, so they are exact; the paragraph underneath is AI-written from those same figures and is labelled as such. It only covers what you actually logged, so a quiet month usually means less was recorded, not that nothing was spent.">i</span>
         </div>
-        <p class="explainer hidden" id="insightsExplainer">A plain-English write-up of a finished month, generated on your own machine once the month ends. The figures beside it are counted directly from your logged spending, so they are exact; the paragraph underneath is AI-written from those same figures and is labelled as such. It only covers what you actually logged, so a quiet month usually means less was recorded, not that nothing was spent.</p>
+        <p class="explainer hidden" id="insightsExplainer">A plain-English write-up of a finished month, written once the month ends by an AI model on a computer in this household. The figures beside it are counted directly from your logged spending, so they are exact; the paragraph underneath is AI-written from those same figures and is labelled as such. It only covers what you actually logged, so a quiet month usually means less was recorded, not that nothing was spent.</p>
         <p class="muted" id="insightsPeriod" style="font-size:12px;margin:2px 0 10px"></p>
         <!-- Counted in code from the same month's expenses, never parsed back
              out of the AI paragraph below - so the numbers on show are exact
@@ -2344,10 +2344,10 @@
           <div id="portfolioRecapCard" class="hidden" style="margin-top:var(--sp-4)">
             <div class="card-head">
               <h3 style="font-size:13px">Today's note</h3>
-              <span class="info-icon" tabindex="0" role="button" data-info="portfolioRecapExplainer" title="A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app; the wording is written by a model running on your own machine, never sent anywhere. A day you don't open the app after the close simply has no note.">i</span>
+              <span class="info-icon" tabindex="0" role="button" data-info="portfolioRecapExplainer" title="A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app. The wording comes from an AI model on a computer in this household, not from an AI company. A day you don't open the app after the close simply has no note.">i</span>
             </div>
             <p class="muted" style="font-size:12px;margin:4px 0 2px" id="portfolioRecapDate"></p>
-            <p class="muted explainer hidden" id="portfolioRecapExplainer">A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app; the wording is written by a model running on your own machine, never sent anywhere. A day you don't open the app after the close simply has no note.</p>
+            <p class="muted explainer hidden" id="portfolioRecapExplainer">A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app. The wording comes from an AI model on a computer in this household, not from an AI company. A day you don't open the app after the close simply has no note.</p>
             <p style="font-size:15.5px;line-height:1.6;margin:8px 0 0" id="portfolioRecapSummary"></p>
           </div>
         </div>
@@ -3129,15 +3129,15 @@
       <p class="muted" style="font-size:13px;margin:0 0 6px">Other people using this app cannot see your money. The database checks who is asking on every single request and returns only your own rows, so this holds even if the app itself has a bug.</p>
       <p class="muted" style="font-size:13px;margin:0 0 10px"><strong>The person who set this app up can.</strong> Running it requires a key that reads the whole database, and they hold it. That is normal for a household app, but you should know it rather than assume otherwise: treat what you record here as visible to them.</p>
 
-      <h3 style="font-size:14px;margin:14px 0 4px">What never leaves</h3>
-      <p class="muted" style="font-size:13px;margin:0 0 10px">Your transactions, balances, account names and notes are never sent to an outside company. When you ask the app a question about your spending, the answer is written by a model running on a computer in this household, not by a cloud service.</p>
+      <h3 style="font-size:14px;margin:14px 0 4px">What is never shared</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Your transactions, balances, account names and notes are never given to an AI company, an advertiser or anyone else to use. When you ask the app a question, or it writes you a note, the words come from an AI model on a computer in this household. To reach that computer from your phone, the figures pass through Cloudflare, the same company that serves this app.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What does get sent out</h3>
       <p class="muted" style="font-size:13px;margin:0 0 6px">Three things leave, and none of them include who you are or what you spend:</p>
       <ul class="muted" style="font-size:13px;margin:0 0 10px;padding-left:18px">
-        <li>Stock and fund symbols you track, sent to a price service to fetch the current price.</li>
+        <li>Stock and fund symbols you track or own, never how much you hold. They go to a price service for the current price, and, mixed in with everyone else's, to an AI service that writes the daily market recap.</li>
         <li>The names of subscription services you record, used to search public pricing pages for a cheaper plan. The service name only, never your account or what you pay.</li>
-        <li>Your browser loads three shared code libraries from a public code network (jsDelivr) when the page opens, which is how it sees your IP address. That is the same for any site using a public library.</li>
+        <li>Your browser loads shared code libraries from a public code network (jsDelivr): three when the page opens, and one more the first time you use an Excel file. Each is fixed to an exact version and checked before it runs. Loading them is how that network sees your IP address, the same as for any site using a public library.</li>
       </ul>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What is stored on your device</h3>
@@ -3502,7 +3502,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-ask-about-your-spending-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Ask about your spending</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-ask-about-your-spending-body">
           <p>Ask in plain English, like "how much did I spend on groceries last month".</p>
-          <p>Most answers are counted straight from your records and labelled <strong>Exact</strong>. Harder ones are written by an assistant on your own machine, take about a minute, and are labelled <strong>AI-written</strong>.</p>
+          <p>Most answers are counted straight from your records and labelled <strong>Exact</strong>. Harder ones are written by an AI model on a computer in this household, take about a minute, and are labelled <strong>AI-written</strong>.</p>
           <p>It only answers questions about your own money, and nothing about your records leaves the app.</p>
           
           </div>
@@ -3657,7 +3657,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-how-it-s-going-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>How it's going</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-how-it-s-going-body">
           <p>Above it, what everything you own is worth with today&#39;s move, and your gain or loss with what you paid. The chart is what it has been worth, with one point for each day you opened the app, so it needs two days before a line appears.</p>
-          <p>Under the chart, a few plain sentences built from real numbers on this page, never a made-up score. After the market closes, a short note on how your own things did that day: every figure is worked out by this app, and only the wording is written for you, on your own machine. It never suggests buying or selling.</p>
+          <p>Under the chart, a few plain sentences built from real numbers on this page, never a made-up score. After the market closes, a short note on how your own things did that day: every figure is worked out by this app, and only the wording is written for you, by an AI model on a computer in this household. It never suggests buying or selling.</p>
           </div>
         </div>
 
@@ -3787,10 +3787,22 @@
        parses CSV imports (Log page) - correctly handles quoted fields with
        embedded commas/quotes, which a hand-rolled split(',') parser would
        silently misparse (a real correctness/data-integrity risk for
-       financial data, confirmed by testing before adopting it). -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js"></script>
+       financial data, confirmed by testing before adopting it).
+
+       EXACT VERSIONS AND INTEGRITY HASHES, never a floating "@2". These run
+       with the signed-in session in reach, so whatever the CDN serves can
+       read and change every figure. A floating range handed every user a new
+       release the moment it was published, unreviewed; a pinned file with a
+       hash cannot change at all, and a browser refuses to run one whose
+       bytes differ. Pinned 2026-11-18 to the versions "@2", "@4" and "@5"
+       resolved to that day, byte-identical, so nothing changed for anyone.
+       To upgrade: change the version, download the file, and replace the
+       hash with `openssl dgst -sha384 -binary FILE | openssl base64 -A`.
+       crossorigin is required, or the browser will not check a hash on a
+       file from another site. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.min.js" integrity="sha384-gnyZit14c5lnGcarmA166QQjjJXpucw25ogZXuwH3HxxY904zHkBqmxVpelsPorb" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.min.js" integrity="sha384-Emf5ZVIUiarAdhkgtqK+5/Z5qIvM6QoVrS+qAVtfyZVuD5lIHrac0me485+Antp0" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.7.1/papaparse.min.js" integrity="sha384-1p3fY0k54nd9NrUVt6Rvs3KpSxbtCo+IPIVV25jLrbd1J1YpXDZtyW32BkVBMHeC" crossorigin="anonymous"></script>
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>
   <script>

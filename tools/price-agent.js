@@ -3391,7 +3391,9 @@ async function main() {
     // Daily matches FUNDAMENTALS_MAX_AGE_MS - quarterly-filing data has no
     // business being re-fetched every 15 minutes.
     try {
-      await refreshFundamentals(publicSymbolList());
+      // The 20 companies, not the four index funds: a fund has no company
+      // profile, so asking would spend two calls a day on nothing.
+      await refreshFundamentals([...DEFAULT_MOVERS_WATCHLIST]);
       await refreshOwnFundamentals(follows);
     } catch (err) {
       console.warn(`Fundamentals refresh failed (non-fatal): ${err.message}`);

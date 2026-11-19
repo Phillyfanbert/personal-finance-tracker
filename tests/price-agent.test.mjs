@@ -132,6 +132,8 @@ test("each copy's headline comes from that account's own copies, never another's
   const stored = log.filter((e) => e.path === "/rest/v1/daily_prices" && e.method === "POST").flatMap((e) => e.body).filter((r) => r.headline);
   assert.deepEqual(stored.map((r) => [r.owner === A ? "A" : r.owner === B ? "B" : "shared", r.symbol]), [["A", "ZZS"]]);
 
+  const profiled = log.filter((e) => e.host === "finnhub.io" && e.path.endsWith("/stock/profile2")).map((e) => new URLSearchParams(e.query).get("symbol"));
+  assert.ok(!profiled.some((s) => ["SPY", "DIA", "QQQ", "IWM"].includes(s)), "a call was spent asking for an index fund's company profile");
   const funds = rowsOf(log, "symbol_fundamentals");
   assert.ok(funds.filter((r) => r.owner === SHARED).every((r) => PUBLIC.includes(r.symbol)));
   assert.deepEqual(funds.filter((r) => r.owner !== SHARED).map((r) => `${r.owner === A ? "A" : "B"}:${r.symbol}`).sort(),

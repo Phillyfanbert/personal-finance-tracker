@@ -1261,10 +1261,10 @@ are real restrictions worth stating plainly):
 | `roth_ira` (Roth IRA) | None | earned income | There is no minimum age for a Roth IRA. It requires earned income instead - you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial Roth IRA. |
 | `sep_ira` (SEP IRA) | 21 | earned income, plan-set | The IRS lets an employer require at most age 21, 3 of the last 5 years worked there, and a small minimum compensation - an employer can be more generous than all three, never stricter. |
 | `simple_ira` (SIMPLE IRA) | None | earned income, plan-set | No age minimum in law. It is an employer plan, so eligibility follows the employer's rules and your earnings there. |
-| `brokerage` (Brokerage) | 18 | - | 18 in most states to open one in your own name - 19 in Alabama and Nebraska, 21 in Mississippi, since it follows each state's legal age of majority. Under that age, the equivalent is a custodial account an adult controls. |
+| `brokerage` (Brokerage) | 18 | - | 18 in most states to open one in your own name, 19 in Alabama and Nebraska and 21 in Mississippi, since it follows each state's legal age of majority. Under that age, the equivalent is a custodial account an adult controls. |
 | `espp` (Employee Stock Purchase Plan) | None | plan-set | No age rule. It depends on being employed somewhere that offers the plan. |
 | `pension` (Pension (Defined Benefit)) | None | plan-set | No age rule of its own. Eligibility comes from your employment and the plan's own vesting rules. |
-| `custodial_utma` (UTMA / UGMA Custodial) | None | beneficiary must be a minor | This one works the other way around: an adult opens and controls it, and the beneficiary must be a minor. Control transfers permanently at an age set by state law - 21 in most UTMA states, though it can be as low as 18 or as high as 25 (30 in Wyoming) depending on the state and what the custodian chose when opening it. |
+| `custodial_utma` (UTMA / UGMA Custodial) | None | beneficiary must be a minor | This one works the other way around: an adult opens and controls it, and the beneficiary must be a minor. Control transfers permanently at an age set by state law: 21 in most UTMA states, though it can be as low as 18 or as high as 25 (30 in Wyoming) depending on the state and what the custodian chose when opening it. |
 | `plan_529` (529 Plan) | 18 | - | 18 to open one as the account owner. There is no age limit on the beneficiary. |
 | `tsp` (Thrift Savings Plan (TSP)) | None | plan-set | No age minimum. It requires federal employment or uniformed service. |
 | `solo_401k` (Solo 401(k)) | 18 | earned income | 18 to establish it, and it requires self-employment income with no employees other than a spouse. |
@@ -1281,7 +1281,7 @@ are real restrictions worth stating plainly):
 | `fsa` (FSA) | None | plan-set | No age rule. It requires an employer that offers one. |
 | `hra` (HRA) | None | plan-set | No age rule. It is funded and offered entirely by an employer. |
 | `dependent_care_fsa` (Dependent Care FSA) | None | plan-set | No age rule. It requires an employer plan and a qualifying dependent. |
-| `coverdell_esa` (Coverdell ESA) | None | beneficiary must be a minor | Contributions can normally only be made while the beneficiary is under 18, and the money generally has to be used by the time they turn 30 - both limits are waived entirely for a beneficiary with special needs. |
+| `coverdell_esa` (Coverdell ESA) | None | beneficiary must be a minor | Contributions can normally only be made while the beneficiary is under 18, and the money generally has to be used by the time they turn 30. Both limits are waived entirely for a beneficiary with special needs. |
 | `able_account` (ABLE Account) | 18 | - | 18 to open one in your own name. Eligibility depends on a disability that began before age 46, not on your age today. |
 | `prepaid_card` (Prepaid Card) | 18 | - | Generally 18, though some teen cards are available earlier with an adult attached. |
 | `payroll_card` (Payroll Card) | None | plan-set | No age rule of its own. It comes from an employer as a way to pay you. |

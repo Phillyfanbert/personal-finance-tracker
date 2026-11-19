@@ -1925,11 +1925,11 @@ const ACCOUNT_AGE_RULES = {
   roth_ira:               { minAge: null, earnedIncome: true, note: "There is no minimum age for a Roth IRA. It requires earned income instead, you cannot contribute more than you earned that year. A minor with a job can hold one as a custodial Roth IRA." },
   sep_ira:                { minAge: 21, earnedIncome: true, planSet: true, note: "The IRS lets an employer require at most age 21, 3 of the last 5 years worked there, and a small minimum compensation, an employer can be more generous than all three, never stricter." },
   simple_ira:             { minAge: null, earnedIncome: true, planSet: true, note: "No age minimum in law. It is an employer plan, so eligibility follows the employer's rules and your earnings there." },
-  brokerage:              { minAge: 18, note: "18 in most states to open one in your own name - 19 in Alabama and Nebraska, 21 in Mississippi, since it follows each state's legal age of majority. Under that age, the equivalent is a custodial account an adult controls." },
+  brokerage:              { minAge: 18, note: "18 in most states to open one in your own name, 19 in Alabama and Nebraska and 21 in Mississippi, since it follows each state's legal age of majority. Under that age, the equivalent is a custodial account an adult controls." },
   espp:                   { minAge: null, planSet: true, note: "No age rule. It depends on being employed somewhere that offers the plan." },
   pension:                { minAge: null, planSet: true, note: "No age rule of its own. Eligibility comes from your employment and the plan's own vesting rules." },
   // Inverted: the age limit applies to the beneficiary, not the opener.
-  custodial_utma:         { minAge: null, forMinor: true, note: "This one works the other way around: an adult opens and controls it, and the beneficiary must be a minor. Control transfers permanently at an age set by state law - 21 in most UTMA states, though it can be as low as 18 or as high as 25 (30 in Wyoming) depending on the state and what the custodian chose when opening it." },
+  custodial_utma:         { minAge: null, forMinor: true, note: "This one works the other way around: an adult opens and controls it, and the beneficiary must be a minor. Control transfers permanently at an age set by state law: 21 in most UTMA states, though it can be as low as 18 or as high as 25 (30 in Wyoming) depending on the state and what the custodian chose when opening it." },
   plan_529:               { minAge: 18, note: "18 to open one as the account owner. There is no age limit on the beneficiary." },
   tsp:                    { minAge: null, planSet: true, note: "No age minimum. It requires federal employment or uniformed service." },
   solo_401k:              { minAge: 18, earnedIncome: true, note: "18 to establish it, and it requires self-employment income with no employees other than a spouse." },
@@ -1944,7 +1944,7 @@ const ACCOUNT_AGE_RULES = {
   hra:                    { minAge: null, planSet: true, note: "No age rule. It is funded and offered entirely by an employer." },
   dependent_care_fsa:     { minAge: null, planSet: true, note: "No age rule. It requires an employer plan and a qualifying dependent." },
   // Contribution age limit is on the beneficiary, not the contributor.
-  coverdell_esa:          { minAge: null, forMinor: true, note: "Contributions can normally only be made while the beneficiary is under 18, and the money generally has to be used by the time they turn 30 - both limits are waived entirely for a beneficiary with special needs." },
+  coverdell_esa:          { minAge: null, forMinor: true, note: "Contributions can normally only be made while the beneficiary is under 18, and the money generally has to be used by the time they turn 30. Both limits are waived entirely for a beneficiary with special needs." },
   // SECURE 2.0's ABLE Age Adjustment Act raised onset from 26 to 46,
   // effective 2026 - the higher figure is the one that applies now.
   able_account:           { minAge: 18, note: "18 to open one in your own name. Eligibility depends on a disability that began before age 46, not on your age today." },
@@ -3254,6 +3254,9 @@ $("saveAssetBtn").onclick = async () => {
   const value = parseFloat($("assetValue").value);
   if (!name) { flagField("assetName"); return toast("Give it a name first"); }
   if (!Number.isFinite(value)) { flagField("assetValue"); return toast("Enter a value"); }
+  // Only a deposit account with an overdraft can go below zero, and those come
+  // from the Accounts card, never this form (which refuses "bank" below).
+  if (value < 0) { flagField("assetValue", "A value can't be below $0."); return toast("A value can't be below $0", "error"); }
   if (type === "cash") { flagField("assetType"); return toast("Cash is automatic, use the Cash account's +/- panel instead."); }
   if (type === "bank") { flagField("assetType"); return toast("Bank assets come from a Checking account, add one in the Accounts card instead."); }
 
@@ -3701,7 +3704,7 @@ function assetDeltaError(deltas) {
     if (newValue < -allowance) {
       return allowance > 0
         ? `${asset.name} only has ${fmt(Number(asset.value) + allowance)} available, including its ${fmt(allowance)} overdraft.`
-        : `${asset.name} can't go below $0 - not enough to cover this.`;
+        : `${asset.name} can't go below $0, so there is not enough to cover this.`;
     }
   }
   return null;
@@ -3775,14 +3778,21 @@ function debtMove(debt, delta, { ceiling, strict = false } = {}) {
 
 // What an expense does to the account it was paid from, as steps. dir +1 is
 // the purchase happening, -1 is it being taken back. A real purchase carries
-// the account's floor and the card's limit; taking one back never does, so a
-// delete or an undo can never be refused for lack of room.
+// the card's limit; taking one back never does, so deleting a charge can never
+// be refused for lack of room on the card.
+//
+// Money LEAVING an asset always carries its floor, whichever way round. For an
+// ordinary purchase that is the spend; taking one back puts money in, so the
+// floor never applies. The case it exists for is a refund (a negative amount):
+// deleting one takes that money back out, and the database refuses a balance
+// below its floor outright (89), so the floor travels with the step and the
+// refusal comes back in words instead of as a broken rule.
 function chargeSteps(accountId, amount, dir, { strict = false } = {}) {
   const spend = dir > 0;
   const asset = assetOfAccount(accountId);
   const debt = debtOfAccount(accountId);
   return [
-    assetMove(asset, -dir * Number(amount), spend ? { floor: spendFloor(asset) } : {}),
+    assetMove(asset, -dir * Number(amount), { floor: spendFloor(asset) }),
     debtMove(debt, dir * Number(amount), { ceiling: spend ? creditCeiling(debt) ?? undefined : undefined, strict }),
   ];
 }
@@ -3835,9 +3845,58 @@ function moneyRefusal(error) {
       return "This changed on another device since this screen loaded, so nothing was saved. Close it and try again.";
     case "money_not_found":
       return "Something this needs is no longer there, so nothing was saved.";
-    default:
-      return `Nothing was saved. ${error.message}`;
+    case "money_refund_too_large":
+      return "That is more than is left of the purchase to come back, so nothing was saved.";
+    case "money_refund_of_refund":
+      return "That row is already money back on something else, so it cannot be refunded. Nothing was saved.";
   }
+  // The rules the database holds itself (89). The checks above run first on
+  // this device's copy and say why in the user's terms, so reaching one of
+  // these means a figure moved elsewhere or a path missed a check; either
+  // way the database said no, and nothing was kept.
+  const said = `${error.message || ""} ${error.details || ""}`;
+  if (error.code === "23514") {
+    if (said.includes("assets_value_floor")) return "This would take an account below what it can hold (below $0, or past its overdraft), so nothing was saved.";
+    if (said.includes("liabilities_balance_check")) return "This would take what is owed below $0, so nothing was saved.";
+    if (said.includes("expenses_amount_check")) return "An amount has to be more than $0, and money back is recorded from the purchase it came back on. Nothing was saved.";
+    return "Nothing was saved, because it would break one of the rules that keep the books adding up.";
+  }
+  if (error.code === "23503" && said.includes("refund_of")) return REFUNDED_PURCHASE_MESSAGE;
+  return `Nothing was saved. ${error.message}`;
+}
+
+// Taking expenses back puts their money back, except money back itself: a
+// refund is negative, so deleting one takes that money out again, and the
+// account has to still hold it. Checked on this device's copy first so the
+// refusal can say which account and why; the step's floor (chargeSteps) is
+// what makes it hold.
+function takeBackError(rows) {
+  const deltas = rows.filter((r) => !isImported(r) && r.account_id)
+    .map((r) => ({ accountId: r.account_id, paymentType: r.payment_type, amount: Number(r.amount), sign: +1 }));
+  const err = deltas.length ? assetDeltaError(deltas) : null;
+  return err ? `Can't take this back. ${err}` : null;
+}
+
+// Why these expenses cannot be removed right now, or null. Asked BEFORE the
+// confirmation, so nobody is asked "are you sure?" about something that is
+// then refused; the removal paths ask again as a backstop.
+function expenseRemovalRefusal(rows) {
+  if (refundedPurchasesIn(rows).size) return REFUNDED_PURCHASE_MESSAGE;
+  return takeBackError(rows);
+}
+
+const REFUNDED_PURCHASE_MESSAGE =
+  "Money back is recorded against this purchase. Delete that first, or select both and delete them together. Nothing was deleted.";
+
+// The purchases among `rows` that have money back recorded against them which
+// is NOT also being deleted. Deleting one of those on its own would put its
+// whole amount back while the refund stayed counted, so the database refuses
+// it (89); this says so before trying. The database is still what makes it
+// hold: a refund outside the loaded months is not in allExpenses.
+function refundedPurchasesIn(rows) {
+  const deleting = new Set(rows.map((r) => r.id));
+  const kept = allExpenses.filter((e) => e.refund_of && deleting.has(e.refund_of) && !deleting.has(e.id));
+  return new Set(kept.map((e) => e.refund_of));
 }
 
 // Runs one money action. Returns { data, error, message }: message is the
@@ -4321,6 +4380,20 @@ function populateDebtTypeSelect() {
     .join("");
   sel.insertAdjacentHTML("beforeend", opts);
 }
+// A rate or a minimum payment below zero is not a real thing, and the
+// database refuses one (89), so both debt forms say so first. Null means not
+// stated and is fine.
+function debtFiguresError(rate, minimum, rateId, minimumId) {
+  if (rate !== null && (!Number.isFinite(rate) || rate < 0 || rate > 999.99)) {
+    flagField(rateId, "Enter a yearly rate from 0 to 999.99 percent.");
+    return "The interest rate must be between 0 and 999.99 percent";
+  }
+  if (minimum !== null && (!Number.isFinite(minimum) || minimum < 0)) {
+    flagField(minimumId, "The minimum payment can't be below $0.");
+    return "The minimum payment can't be below $0";
+  }
+  return null;
+}
 $("addDebtBtn").onclick = () => { $("debtForm").classList.toggle("hidden"); populateDebtTypeSelect(); };
 $("saveDebtBtn").onclick = async () => {
   const name = $("debtName").value.trim();
@@ -4328,12 +4401,15 @@ $("saveDebtBtn").onclick = async () => {
   const balance = parseFloat($("debtBalance").value);
   if (!name) { flagField("debtName"); return toast("Give it a name first"); }
   if (!Number.isFinite(balance)) { flagField("debtBalance"); return toast("Enter a balance"); }
+  if (balance < 0) { flagField("debtBalance", "What you owe can't be below $0."); return toast("What you owe can't be below $0", "error"); }
   const row = {
     name, type, balance,
     interest_rate: $("debtRate").value ? parseFloat($("debtRate").value) : null,
     minimum_payment: $("debtMinPay").value ? parseFloat($("debtMinPay").value) : null,
     due_date: $("debtDue").value || null,
   };
+  const debtFigureErr = debtFiguresError(row.interest_rate, row.minimum_payment, "debtRate", "debtMinPay");
+  if (debtFigureErr) return toast(debtFigureErr, "error");
   const { error } = await sb.from("liabilities").insert(row);
   if (error) { flagField("debtName"); return toast(error.message); }
   $("debtName").value = ""; $("debtBalance").value = ""; $("debtRate").value = "";
@@ -4606,6 +4682,8 @@ $("debtDetailsSaveBtn").onclick = async () => {
     minimum_payment: $("debtDetailsMinPay").value !== "" ? parseFloat($("debtDetailsMinPay").value) : null,
     due_date: $("debtDetailsDue").value || null,
   };
+  const detailsFigureErr = debtFiguresError(patch.interest_rate, patch.minimum_payment, "debtDetailsRate", "debtDetailsMinPay");
+  if (detailsFigureErr) return toast(detailsFigureErr, "error");
   if (editingDebtDetails.type === "heloc") {
     touchedIds.push("debtDetailsDrawEnd");
     patch.draw_period_end = $("debtDetailsDrawEnd").value || null;
@@ -5472,12 +5550,17 @@ $("csvImportConfirm").onclick = async () => {
   // the expense side above does not: these already happened, and the
   // account's real balance already includes them. Crediting them again would
   // count the money twice. See the project notes' note on the import path.
+  // source "import" is what tells undo (and the balance check) that this
+  // row moved nothing, the same marker the expense rows carry. Without it,
+  // undoing one imported paycheck from Recent History took its amount out of
+  // an account it had never been added to.
   const incomeRows = toImport.filter((r) => r.normalized.kind === "income").map((r) => ({
     kind: "income",
     description: r.normalized.description || "Imported income",
     amount: r.normalized.amount,
     occurred_at: r.normalized.occurred_at,
     account_id: accountId,
+    source: "import",
   }));
 
   $("csvImportConfirm").disabled = true;
@@ -5625,6 +5708,8 @@ $("bulkDeleteBtn").onclick = async () => {
   if (!selectedTxnIds.size) return;
   const rows = allExpenses.filter((e) => selectedTxnIds.has(e.id));
   if (!rows.length) return;
+  const refusal = expenseRemovalRefusal(rows);
+  if (refusal) return toast(refusal, "error");
   const total = rows.reduce((s, r) => s + Number(r.amount), 0);
   const n = rows.length;
   const imported = rows.filter(isImported).length;
@@ -5709,6 +5794,8 @@ $("bulkApplyBtn").onclick = async () => {
 async function undoTransaction(row) {
   const isActivity = !!row.kind;
   const desc = isActivity ? row.description : (row.description || row.merchant || "this expense");
+  const refusal = isActivity ? null : expenseRemovalRefusal([row]);
+  if (refusal) return toast(refusal, "error");
   const ok = await confirmModal(
     `This reverses "${desc}" (${fmt(Math.abs(row.amount))}). This can't be undone.`,
     { title: isActivity ? "Undo this activity?" : "Undo this expense?", confirmLabel: "Undo" }
@@ -5723,6 +5810,8 @@ async function undoExpense(row) {
   // csvImport: an imported row is history that already happened, so the real
   // balance already includes it). Reversing one here would ADD money that was
   // never subtracted, inventing it out of nothing.
+  const refusal = expenseRemovalRefusal([row]);
+  if (refusal) return toast(refusal, "error");
   const { message } = await moneyTx([
     { op: "delete", table: "expenses", id: row.id, expect: { amount: row.amount, account_id: row.account_id } },
     ...(isImported(row) ? [] : chargeSteps(row.account_id, Number(row.amount), -1)),
@@ -5893,12 +5982,16 @@ async function undoActivity(row) {
   } else if (row.kind === "income") {
     // Always a positive deposit, so undoing is always a straight
     // subtraction - never a sign-dependent reversal the way asset_adjust's
-    // undo is.
+    // undo is. Imported income is the exception: it never moved a balance
+    // (the real account already held it), so taking it back moves nothing
+    // and only the row goes.
     const account = accounts.find((a) => a.id === row.account_id);
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
-    if (!asset) return toast("Can't undo, the linked account no longer exists.");
-    if (cents(Number(asset.value) - Number(row.amount)) < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
-    steps.push(assetMove(asset, -Number(row.amount), { floor: 0 }));
+    if (!isImported(row)) {
+      if (!asset) return toast("Can't undo, the linked account no longer exists.");
+      if (cents(Number(asset.value) - Number(row.amount)) < 0) return toast(`Can't undo, would take ${asset.name} below $0.`);
+      steps.push(assetMove(asset, -Number(row.amount), { floor: 0 }));
+    }
   }
   steps.push({ op: "delete", table: "account_activity", id: row.id, expect: { amount: row.amount } });
   const { message } = await moneyTx(steps);
@@ -6277,6 +6370,13 @@ $("refundConfirmBtn").onclick = async () => {
 
 $("editSave").onclick = async () => {
   if (!editing) return;
+  // Money back is recorded from the purchase it came back on, and its amount
+  // is negative by rule (89). This form only takes a positive amount, so
+  // saving one here could only turn it into a purchase.
+  if (Number(editing.amount) < 0 || editing.refund_of) {
+    flagField("eAmount", "Money back cannot be edited here. Delete it, then record it again from the purchase.");
+    return toast("Money back cannot be edited. Delete it and record it again from the purchase.", "error");
+  }
   const amount = parseFloat($("eAmount").value);
   if (!amount || amount <= 0) { flagField("eAmount"); return toast("Enter a valid amount"); }
   const accountId = $("eAccount").value;
@@ -6388,6 +6488,8 @@ $("editSave").onclick = async () => {
 // An imported row skips both sides: it never applied a balance to begin with,
 // so neither the credit on delete nor the deduction on undo should happen.
 async function deleteExpenseWithUndo(row, desc) {
+  const refusal = expenseRemovalRefusal([row]);
+  if (refusal) { toast(refusal, "error"); return false; }
   const { message } = await moneyTx([
     { op: "delete", table: "expenses", id: row.id, expect: { amount: row.amount, account_id: row.account_id } },
     ...(isImported(row) ? [] : chargeSteps(row.account_id, Number(row.amount), -1)),
@@ -6410,9 +6512,12 @@ async function restoreDeletedExpense(row) {
       || chargeRefusalReason([{ accountId: row.account_id, amount, sign: +1 }]);
     if (blocked) { toast(`Cannot undo. ${blocked}`, "error"); return; }
   }
+  // A refund (negative) going back onto a card lowers what is owed, which is
+  // money coming in, so it is refused rather than floored at $0, the same as
+  // recording the refund was.
   const { message } = await moneyTx([
     { op: "insert", table: "expenses", row },
-    ...(isImported(row) ? [] : chargeSteps(row.account_id, amount, +1)),
+    ...(isImported(row) ? [] : chargeSteps(row.account_id, amount, +1, { strict: amount < 0 })),
   ]);
   if (message) { toast(`Cannot undo. ${message}`, "error"); return; }
   await loadAssets(); await loadDebts(); await loadExpenses();
@@ -6422,6 +6527,8 @@ async function restoreDeletedExpense(row) {
 $("editDelete").onclick = async () => {
   if (!editing) return;
   const desc = editing.description || editing.merchant || "this expense";
+  const refusal = expenseRemovalRefusal([editing]);
+  if (refusal) return toast(refusal, "error");
   const note = isImported(editing)
     ? "It came from an imported file, so no balance moves either way."
     : "Its amount goes back onto the account it came from.";

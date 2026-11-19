@@ -203,6 +203,16 @@ run_backup_if_due() {
   node "$RUN_DIR/backup-database.mjs" --if-due || say "backup did not complete, see its status row"
 }
 
+# The daily balance check (reconcile-balances.mjs) rides on this job for the
+# same reasons the backup does. --if-due makes every run but the first of the
+# day one small read. It reports to agent_run_status as "reconcile" and, like
+# the backup, never fails the sync.
+run_reconcile_if_due() {
+  [ -f "$RUN_DIR/reconcile-balances.mjs" ] || return 0
+  [ -f "$RUN_DIR/.env.deal-agent" ] || return 0
+  node "$RUN_DIR/reconcile-balances.mjs" --if-due || say "balance check did not complete, see its status row"
+}
+
 schedules_note() {
   [ -f "$SCHEDULES_NOTE" ] || return 0
   printf ' setup-server-machine.sh changed in %s: launchd schedules are not applied on their own, see sync-server.sh.' "$(short "$(cat "$SCHEDULES_NOTE" 2>/dev/null)")"
@@ -366,7 +376,10 @@ case "${1:-}" in
   "")
     sync_once
     rc=$?
-    [ "${HAVE_LOCK:-0}" = "1" ] && run_backup_if_due
+    if [ "${HAVE_LOCK:-0}" = "1" ]; then
+      run_backup_if_due
+      run_reconcile_if_due
+    fi
     exit "$rc" ;;
   *) echo "Unknown option: $1" >&2; exit 2 ;;
 esac

@@ -5,7 +5,7 @@
 -- rolls back everything the test wrote, so it cannot leave a row behind
 -- however it is run, autocommit included. Read the error's text:
 --
---   money tests: 57 passed, 0 failed
+--   money tests: 61 passed, 0 failed
 --
 -- and anything after "failed:" names what broke. Every row it writes is a
 -- test row (named "ZZ test ..."), written as the first signed-in user under
@@ -26,6 +26,8 @@
 --      behind it is caught.
 --   F  opening an account (91): the $0 asset or debt, the account and its
 --      history row land together, or none of them does.
+--   G  invitation and ownership (92): a sign-in account only for an invited
+--      email, and no row pointing at another person's.
 
 do $$
 declare
@@ -37,6 +39,7 @@ declare
   a_chk uuid; a_sav uuid; a_card uuid;
   e1 uuid; e2 uuid; p1 uuid; r1 uuid; act uuid; sub uuid; mc uuid;
   na uuid; nacc uuid; ncash uuid;
+  other uuid; o_acct uuid; o_exp uuid; invited uuid := gen_random_uuid();
   r jsonb;
   v numeric;
   n int;
@@ -45,6 +48,25 @@ begin
   if uid is null then
     raise exception 'money tests: no signed-in user exists to run as';
   end if;
+  -- G1, G2. Run before switching to the signed-in role, because they act as
+  -- the sign-in service does. Only an invited email gets an account.
+  begin
+    insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+      values (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'zz-stranger@example.invalid', now(), now());
+    failed := failed || 'G1 an uninvited email got an account'::text;
+  exception when others then
+    if sqlerrm = 'signup_not_invited' then passed := passed + 1; else failed := failed || format('G1 wrong error %s', sqlerrm); end if;
+  end;
+  insert into public.allowed_signups (email) values ('zz-invited@example.invalid');
+  insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+    values (invited, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ZZ-Invited@Example.invalid', now(), now());
+  select count(*) into n from public.profiles where id = invited;
+  if n = 1 then passed := passed + 1; else failed := failed || 'G2 an invited email did not get an account and profile'::text; end if;
+  -- Another person's account and purchase, for G3 and G4 below.
+  other := invited;
+  insert into public.accounts (user_id, name, type, bank_name) values (other, 'Theirs', 'debit', 'ZZ test') returning id into o_acct;
+  insert into public.expenses (user_id, amount, category, payment_type, description) values (other, 50, 'Food', 'cash', 'ZZ test theirs') returning id into o_exp;
+
   perform set_config('request.jwt.claims', json_build_object('sub', uid, 'role', 'authenticated')::text, true);
   perform set_config('role', 'authenticated', true);
 
@@ -77,7 +99,7 @@ begin
       jsonb_build_object('op', 'insert', 'table', 'expenses', 'row', jsonb_build_object('amount', 14, 'category', 'Food', 'payment_type', 'debit', 'account_id', a_chk, 'description', 'ZZ test A2 half')),
       jsonb_build_object('op', 'asset', 'id', chk, 'delta', -14, 'floor', 0),
       jsonb_build_object('op', 'liability', 'id', gen_random_uuid(), 'delta', 1)));
-    failed := failed || 'A2 a failing step was not refused';
+    failed := failed || 'A2 a failing step was not refused'::text;
   exception when others then
     if sqlerrm = 'money_not_found' then passed := passed + 1; else failed := failed || format('A2 wrong error %s', sqlerrm); end if;
   end;
@@ -88,7 +110,7 @@ begin
   -- A3. Spending past the floor is refused against the real balance.
   begin
     perform apply_money(jsonb_build_array(jsonb_build_object('op', 'asset', 'id', chk, 'delta', -5000, 'floor', 0)));
-    failed := failed || 'A3 overspend was not refused';
+    failed := failed || 'A3 overspend was not refused'::text;
   exception when others then
     if sqlerrm = 'money_floor' then passed := passed + 1; else failed := failed || format('A3 wrong error %s', sqlerrm); end if;
   end;
@@ -96,7 +118,7 @@ begin
   -- A4. A card charge past its limit is refused.
   begin
     perform apply_money(jsonb_build_array(jsonb_build_object('op', 'liability', 'id', card, 'delta', 1500, 'ceiling', 1000)));
-    failed := failed || 'A4 over-limit charge was not refused';
+    failed := failed || 'A4 over-limit charge was not refused'::text;
   exception when others then
     if sqlerrm = 'money_ceiling' then passed := passed + 1; else failed := failed || format('A4 wrong error %s', sqlerrm); end if;
   end;
@@ -108,7 +130,7 @@ begin
     perform apply_money(jsonb_build_array(
       jsonb_build_object('op', 'asset', 'id', chk, 'delta', -500, 'floor', 0),
       jsonb_build_object('op', 'liability', 'id', card, 'delta', -500, 'strict', true)));
-    failed := failed || 'A5 overpayment was not refused';
+    failed := failed || 'A5 overpayment was not refused'::text;
   exception when others then
     if sqlerrm = 'money_below_zero' then passed := passed + 1; else failed := failed || format('A5 wrong error %s', sqlerrm); end if;
   end;
@@ -130,7 +152,7 @@ begin
         'set', jsonb_build_object('next_renewal', current_date + 30), 'expect', jsonb_build_object('next_renewal', current_date)),
       jsonb_build_object('op', 'insert', 'table', 'expenses', 'row', jsonb_build_object('amount', 30, 'category', 'Subscriptions', 'payment_type', 'debit', 'account_id', a_chk, 'description', 'ZZ test bill')),
       jsonb_build_object('op', 'asset', 'id', chk, 'delta', -30, 'floor', 0)));
-    failed := failed || 'A6 a second claim on the same cycle was not refused';
+    failed := failed || 'A6 a second claim on the same cycle was not refused'::text;
   exception when others then
     if sqlerrm = 'money_stale' then passed := passed + 1; else failed := failed || format('A6 wrong error %s', sqlerrm); end if;
   end;
@@ -155,7 +177,7 @@ begin
     perform apply_money(jsonb_build_array(
       jsonb_build_object('op', 'update', 'table', 'expenses', 'id', e1, 'set', jsonb_build_object('amount', 25), 'expect', jsonb_build_object('amount', 14)),
       jsonb_build_object('op', 'asset', 'id', chk, 'delta', 14)));
-    failed := failed || 'A7 a stale edit was not refused';
+    failed := failed || 'A7 a stale edit was not refused'::text;
   exception when others then
     if sqlerrm = 'money_stale' then passed := passed + 1; else failed := failed || format('A7 wrong error %s', sqlerrm); end if;
   end;
@@ -172,7 +194,7 @@ begin
     perform apply_money(jsonb_build_array(
       jsonb_build_object('op', 'asset', 'id', sav, 'delta', -200, 'floor', 0),
       jsonb_build_object('op', 'delete', 'table', 'account_activity', 'id', act, 'expect', jsonb_build_object('amount', 200))));
-    failed := failed || 'A8 a second undo was not refused';
+    failed := failed || 'A8 a second undo was not refused'::text;
   exception when others then
     if sqlerrm = 'money_stale' then passed := passed + 1; else failed := failed || format('A8 wrong error %s', sqlerrm); end if;
   end;
@@ -192,7 +214,7 @@ begin
   r := apply_money(jsonb_build_array(jsonb_build_object('op', 'insert', 'table', 'expenses',
     'row', jsonb_build_object('amount', 1, 'category', 'Food', 'payment_type', 'cash', 'user_id', gen_random_uuid(), 'description', 'ZZ test forged'))));
   select count(*) into n from expenses where id = (r -> 0 ->> 'id')::uuid and user_id = uid;
-  if n = 1 then passed := passed + 1; else failed := failed || 'A10 a forged user_id was kept'; end if;
+  if n = 1 then passed := passed + 1; else failed := failed || 'A10 a forged user_id was kept'::text; end if;
 
   -- A11. Charge $100, pay the card off, then take the charge back as a
   -- mistake. 86 floored what was owed at $0 and the $100 simply went; 90
@@ -211,7 +233,7 @@ begin
     perform apply_money(jsonb_build_array(
       jsonb_build_object('op', 'delete', 'table', 'expenses', 'id', mc),
       jsonb_build_object('op', 'liability', 'id', card, 'delta', -100)));
-    failed := failed || 'A11 taking back a charge on a paid-off card was floored, not refused';
+    failed := failed || 'A11 taking back a charge on a paid-off card was floored, not refused'::text;
   exception when others then
     if sqlerrm = 'money_below_zero' then passed := passed + 1; else failed := failed || format('A11 wrong error %s', sqlerrm); end if;
   end;
@@ -224,75 +246,75 @@ begin
   -- B1. What is owed cannot go below zero, however it is written.
   begin
     update liabilities set balance = -5 where id = loan;
-    failed := failed || 'B1 a negative debt was stored';
+    failed := failed || 'B1 a negative debt was stored'::text;
   exception when check_violation then passed := passed + 1; end;
 
   -- B2. An expense is never $0.
   begin
     insert into expenses (amount, category, payment_type, description) values (0, 'Food', 'cash', 'ZZ test zero');
-    failed := failed || 'B2 a $0 expense was stored';
+    failed := failed || 'B2 a $0 expense was stored'::text;
   exception when check_violation then passed := passed + 1; end;
 
   -- B3. Below zero only with an overdraft, only that far, only on a deposit account.
   begin
     update assets set value = -1 where id = chk;
-    failed := failed || 'B3 checking went below zero with no overdraft';
+    failed := failed || 'B3 checking went below zero with no overdraft'::text;
   exception when check_violation then passed := passed + 1; end;
   update assets set overdraft_limit = 100 where id = chk;
   update assets set value = -50 where id = chk;
   passed := passed + 1;
   begin
     update assets set value = -150 where id = chk;
-    failed := failed || 'B3 checking went past its overdraft';
+    failed := failed || 'B3 checking went past its overdraft'::text;
   exception when check_violation then passed := passed + 1; end;
   begin
     update assets set overdraft_limit = 100, value = -1 where id = house;
-    failed := failed || 'B3 a house was overdrawn';
+    failed := failed || 'B3 a house was overdrawn'::text;
   exception when check_violation then passed := passed + 1; end;
   begin
     update assets set overdraft_limit = 40 where id = chk;
-    failed := failed || 'B3 an overdraft was lowered below what is already overdrawn';
+    failed := failed || 'B3 an overdraft was lowered below what is already overdrawn'::text;
   exception when check_violation then passed := passed + 1; end;
   update assets set value = 2330, overdraft_limit = null where id = chk;
 
   -- B4. A zero overdraft or a zero credit limit would store a number that does nothing.
   begin
     update assets set overdraft_limit = 0 where id = sav;
-    failed := failed || 'B4 a zero overdraft was stored';
+    failed := failed || 'B4 a zero overdraft was stored'::text;
   exception when check_violation then passed := passed + 1; end;
   begin
     update liabilities set credit_limit = 0 where id = card;
-    failed := failed || 'B4 a zero credit limit was stored';
+    failed := failed || 'B4 a zero credit limit was stored'::text;
   exception when check_violation then passed := passed + 1; end;
 
   -- B5. History rows carry the sign their kind implies.
   begin
     insert into account_activity (kind, description, amount, account_id) values ('liability_payment', 'ZZ test', -5, a_chk);
-    failed := failed || 'B5 a negative payment was stored';
+    failed := failed || 'B5 a negative payment was stored'::text;
   exception when check_violation then passed := passed + 1; end;
   begin
     insert into account_activity (kind, description, amount, account_id) values ('asset_adjust', 'ZZ test', 0, a_chk);
-    failed := failed || 'B5 a $0 correction was stored';
+    failed := failed || 'B5 a $0 correction was stored'::text;
   exception when check_violation then passed := passed + 1; end;
   insert into account_activity (kind, description, amount, account_id) values ('account_created', 'ZZ test opened', 0, a_chk);
   passed := passed + 1;
   begin
     insert into account_activity (kind, description, amount, account_id, related_account_id) values ('transfer', 'ZZ test', 5, a_chk, a_chk);
-    failed := failed || 'B5 a transfer to the same account was stored';
+    failed := failed || 'B5 a transfer to the same account was stored'::text;
   exception when check_violation then passed := passed + 1; end;
 
   -- B6. A bill, a pay source and a budget each need a real amount.
   begin
     insert into subscriptions (name, amount) values ('ZZ test free', 0);
-    failed := failed || 'B6 a $0 bill was stored';
+    failed := failed || 'B6 a $0 bill was stored'::text;
   exception when check_violation then passed := passed + 1; end;
   begin
     insert into income (source, amount) values ('ZZ test nothing', 0);
-    failed := failed || 'B6 $0 income was stored';
+    failed := failed || 'B6 $0 income was stored'::text;
   exception when check_violation then passed := passed + 1; end;
   begin
     insert into budgets (category, monthly_limit) values ('ZZ test', 0);
-    failed := failed || 'B6 a $0 budget was stored';
+    failed := failed || 'B6 a $0 budget was stored'::text;
   exception when check_violation then passed := passed + 1; end;
 
   -- ---- C. Refunds -------------------------------------------------------
@@ -310,7 +332,7 @@ begin
   -- C1. $30 has come back on $42, so $13 more is too much.
   begin
     insert into expenses (amount, category, payment_type, account_id, refund_of, description) values (-13, 'Shopping', 'credit', a_card, p1, 'ZZ test too much');
-    failed := failed || 'C1 a refund larger than what was left was stored';
+    failed := failed || 'C1 a refund larger than what was left was stored'::text;
   exception when others then
     if sqlerrm = 'money_refund_too_large' then passed := passed + 1; else failed := failed || format('C1 wrong error %s', sqlerrm); end if;
   end;
@@ -322,7 +344,7 @@ begin
   -- C2. Money back on money back is not a thing that happens.
   begin
     insert into expenses (amount, category, payment_type, account_id, refund_of, description) values (-1, 'Shopping', 'credit', a_card, r1, 'ZZ test refund of refund');
-    failed := failed || 'C2 a refund of a refund was stored';
+    failed := failed || 'C2 a refund of a refund was stored'::text;
   exception when others then
     if sqlerrm = 'money_refund_of_refund' then passed := passed + 1; else failed := failed || format('C2 wrong error %s', sqlerrm); end if;
   end;
@@ -331,11 +353,11 @@ begin
   -- below what has already come back on it.
   begin
     update expenses set amount = 30 where id = r1;
-    failed := failed || 'C3 a refund was made positive';
+    failed := failed || 'C3 a refund was made positive'::text;
   exception when check_violation then passed := passed + 1; end;
   begin
     update expenses set amount = 20 where id = p1;
-    failed := failed || 'C3 a purchase was edited below its refunds';
+    failed := failed || 'C3 a purchase was edited below its refunds'::text;
   exception when others then
     if sqlerrm = 'money_refund_too_large' then passed := passed + 1; else failed := failed || format('C3 wrong error %s', sqlerrm); end if;
   end;
@@ -346,7 +368,7 @@ begin
   begin
     delete from expenses where id = p1;
     set constraints expenses_refund_of_fkey immediate;
-    failed := failed || 'C4 a refunded purchase was deleted on its own';
+    failed := failed || 'C4 a refunded purchase was deleted on its own'::text;
   exception when foreign_key_violation then passed := passed + 1; end;
   set constraints expenses_refund_of_fkey deferred;
   begin
@@ -355,7 +377,7 @@ begin
     passed := passed + 1;
     raise exception 'C4 rollback';
   exception
-    when foreign_key_violation then failed := failed || 'C4 deleting a purchase with its refunds was refused';
+    when foreign_key_violation then failed := failed || 'C4 deleting a purchase with its refunds was refused'::text;
     when others then if sqlerrm <> 'C4 rollback' then failed := failed || format('C4 wrong error %s', sqlerrm); end if;
   end;
   set constraints expenses_refund_of_fkey deferred;
@@ -366,7 +388,7 @@ begin
   if n = 1 then passed := passed + 1; else failed := failed || format('D1 the edit kept %s earlier versions, want 1', n); end if;
   begin
     insert into record_history (user_id, table_name, action, old_row) values (uid, 'expenses', 'delete', '{}');
-    failed := failed || 'D2 a history row was forged';
+    failed := failed || 'D2 a history row was forged'::text;
   exception when insufficient_privilege then passed := passed + 1; end;
 
   -- ---- E. reconcile_balances --------------------------------------------
@@ -418,13 +440,13 @@ begin
   -- E4. Every kind that moves money has an effect; opening an account has none.
   select count(*) into n from money_effects('account_activity',
     jsonb_build_object('kind', 'account_created', 'amount', 0, 'account_id', a_chk));
-  if n = 0 then passed := passed + 1; else failed := failed || 'E4 opening an account moved money'; end if;
+  if n = 0 then passed := passed + 1; else failed := failed || 'E4 opening an account moved money'::text; end if;
   select count(*) into n from money_effects('account_activity',
     jsonb_build_object('kind', 'contribution', 'amount', 50, 'asset_id', house, 'source', 'holding_purchase'));
-  if n = 0 then passed := passed + 1; else failed := failed || 'E4 a purchase-recorded contribution moved its account'; end if;
+  if n = 0 then passed := passed + 1; else failed := failed || 'E4 a purchase-recorded contribution moved its account'::text; end if;
   select count(*) into n from money_effects('account_activity',
     jsonb_build_object('kind', 'income', 'amount', 50, 'account_id', a_chk, 'source', 'import'));
-  if n = 0 then passed := passed + 1; else failed := failed || 'E4 imported income moved its account'; end if;
+  if n = 0 then passed := passed + 1; else failed := failed || 'E4 imported income moved its account'::text; end if;
   select sum(delta) into v from money_effects('account_activity',
     jsonb_build_object('kind', 'holding_sale', 'amount', 75, 'account_id', a_chk));
   if v = 75 then passed := passed + 1; else failed := failed || format('E4 a sale moved %s, want 75', v); end if;
@@ -440,7 +462,7 @@ begin
     jsonb_build_object('op', 'insert', 'table', 'account_activity', 'row', jsonb_build_object('kind', 'account_created', 'description', 'ZZ test opened a card', 'amount', 0, 'account_id', nacc))));
   select count(*) into n from accounts a join liabilities l on l.id = a.linked_liability_id
     where a.id = nacc and a.user_id = uid and l.user_id = uid;
-  if n = 1 then passed := passed + 1; else failed := failed || 'F1 the new card and its account did not land together as the writer'; end if;
+  if n = 1 then passed := passed + 1; else failed := failed || 'F1 the new card and its account did not land together as the writer'::text; end if;
   select count(*) into n from account_activity where account_id = nacc and kind = 'account_created';
   if n = 1 then passed := passed + 1; else failed := failed || format('F1 opening the account wrote %s history rows, want 1', n); end if;
 
@@ -457,10 +479,29 @@ begin
     perform apply_money(jsonb_build_array(
       jsonb_build_object('op', 'insert', 'table', 'assets', 'row', jsonb_build_object('id', ncash, 'name', 'ZZ test second cash', 'type', 'cash', 'value', 0)),
       jsonb_build_object('op', 'insert', 'table', 'accounts', 'row', jsonb_build_object('name', 'Cash', 'type', 'cash', 'linked_asset_id', ncash))));
-    failed := failed || 'F2 a second Cash account was opened';
+    failed := failed || 'F2 a second Cash account was opened'::text;
   exception when unique_violation then passed := passed + 1; end;
   select count(*) into n from assets where id = ncash;
-  if n = 0 then passed := passed + 1; else failed := failed || 'F2 the refused Cash account left its asset behind'; end if;
+  if n = 0 then passed := passed + 1; else failed := failed || 'F2 the refused Cash account left its asset behind'::text; end if;
+
+  -- ---- G. Ownership -----------------------------------------------------
+
+  -- G3. An expense on another person's account is refused.
+  begin
+    perform apply_money(jsonb_build_array(jsonb_build_object('op', 'insert', 'table', 'expenses', 'row',
+      jsonb_build_object('amount', 5, 'category', 'Food', 'payment_type', 'debit', 'account_id', o_acct, 'description', 'ZZ test cross'))));
+    failed := failed || 'G3 an expense on another person''s account was saved'::text;
+  exception when others then
+    if sqlerrm = 'money_not_yours' then passed := passed + 1; else failed := failed || format('G3 wrong error %s', sqlerrm); end if;
+  end;
+  -- G4. Money back on another person's purchase is refused, which is what
+  -- stopped them deleting it.
+  begin
+    insert into expenses (amount, category, payment_type, refund_of, description) values (-5, 'Food', 'cash', o_exp, 'ZZ test cross refund');
+    failed := failed || 'G4 a refund of another person''s purchase was saved'::text;
+  exception when others then
+    if sqlerrm = 'money_not_yours' then passed := passed + 1; else failed := failed || format('G4 wrong error %s', sqlerrm); end if;
+  end;
 
   raise exception 'money tests: % passed, % failed%', passed, coalesce(array_length(failed, 1), 0),
     case when array_length(failed, 1) > 0 then ': ' || array_to_string(failed, ' | ') else '' end;

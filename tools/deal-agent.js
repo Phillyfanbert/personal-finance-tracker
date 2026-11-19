@@ -282,7 +282,21 @@ function buildQueries(service) {
   ];
 }
 
+// A link shown to every user, so only a web address may be stored. A
+// "javascript:" address can carry an allowed host ("javascript://cnbc.com/...")
+// and would run in the browser of whoever tapped it. The app refuses one
+// at display too (safeHref); this keeps it out of the database at all.
+function isWebUrl(urlStr) {
+  try {
+    const u = new URL(String(urlStr));
+    return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function hostAllowed(urlStr, domains) {
+  if (!isWebUrl(urlStr)) return false;
   try {
     const host = new URL(urlStr).hostname.replace(/^www\./, "");
     return domains.some((d) => host === d || host.endsWith(`.${d}`));

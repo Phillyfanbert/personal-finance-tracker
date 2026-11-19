@@ -2177,7 +2177,21 @@ function hostOf(urlStr) {
   }
 }
 
+// A link shown to every user, so only a web address may be stored. A
+// "javascript:" address can carry an allowed host ("javascript://cnbc.com/...")
+// and would run in the browser of whoever tapped it. The app refuses one
+// at display too (safeHref); this keeps it out of the database at all.
+function isWebUrl(urlStr) {
+  try {
+    const u = new URL(String(urlStr));
+    return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function hostAllowed(urlStr, domains) {
+  if (!isWebUrl(urlStr)) return false;
   try {
     const host = new URL(urlStr).hostname.replace(/^www\./, "");
     return domains.some((d) => host === d || host.endsWith(`.${d}`));
@@ -2868,7 +2882,7 @@ function newsSummary(raw, title) {
 function validateFinnhubNews(raw) {
   if (!Array.isArray(raw)) return null;
   const headlines = raw
-    .filter((a) => a && typeof a.headline === "string" && a.headline.trim() && typeof a.url === "string" && a.url.trim())
+    .filter((a) => a && typeof a.headline === "string" && a.headline.trim() && typeof a.url === "string" && isWebUrl(a.url.trim()))
     .sort((a, b) => Number(b.datetime || 0) - Number(a.datetime || 0))
     .slice(0, MAX_COMPANY_NEWS_HEADLINES)
     .map((a) => ({

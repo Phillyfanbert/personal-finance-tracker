@@ -55,6 +55,46 @@ function dailyFindingsForSymbol(findings, symbol) {
   return [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
+// A day with no price, filled from that day's close.
+//
+// The 15-minute price feed keeps a row for two days, and only runs while the
+// market is open (plus half an hour). So from Sunday afternoon until Monday's
+// open no symbol had any price at all, and every holding fell back to its own
+// stored value, which is what was PAID for it: production recorded exactly
+// the cost basis as the portfolio's value on two Sunday evenings running.
+// And all of Monday there was no Friday left to compare against, so every
+// day change read "no change yet". daily_prices keeps every close for good,
+// so the last two trading days with no price of their own get one from it.
+//
+// Stamped 21:00 UTC, which is 16:00 or 17:00 in New York, so dateKey() files
+// it under the trading day itself. extracted_by "daily_close" marks it as a
+// close; it is Finnhub's own figure, written by the same agent. Only the
+// symbols passed in are filled: daily_prices holds everyone's tracked
+// symbols, and a caller must not end up listing someone else's.
+const CLOSE_STAMP = "T21:00:00.000Z";
+export function withDailyCloses(findings, dailyPrices, symbols, days = 2) {
+  const want = new Set([...(symbols || [])].map((s) => String(s).trim().toUpperCase()).filter(Boolean));
+  if (!want.size || !dailyPrices || !dailyPrices.length) return findings;
+  const priced = new Set(findings.map((f) => `${(f.symbol || "").trim().toUpperCase()}|${dateKey(f.found_at)}`));
+  const closes = new Map();
+  for (const r of dailyPrices) {
+    const symbol = (r.symbol || "").trim().toUpperCase();
+    if (!want.has(symbol) || !r.trade_date || !(Number(r.close) > 0)) continue;
+    if (!closes.has(symbol)) closes.set(symbol, []);
+    closes.get(symbol).push(r);
+  }
+  const extra = [];
+  for (const [symbol, rows] of closes) {
+    rows.sort((a, b) => (a.trade_date < b.trade_date ? 1 : a.trade_date > b.trade_date ? -1 : 0));
+    for (const r of rows.slice(0, days)) {
+      const day = String(r.trade_date).slice(0, 10);
+      if (priced.has(`${symbol}|${day}`)) continue;
+      extra.push({ symbol, price: Number(r.close), found_at: `${day}${CLOSE_STAMP}`, extracted_by: "daily_close", explanation: null });
+    }
+  }
+  return extra.length ? [...findings, ...extra] : findings;
+}
+
 /**
  * One row per asset with a price_symbol set - the ticker-tracked holdings.
  * Symbol-less investment assets (a blended 401(k), say) are handled
@@ -494,7 +534,9 @@ export function recapBreadthDetail(dailyPrices, symbols, tradeDate) {
  * @param {object[]} findings rows from asset_price_findings or market_index_findings
  */
 export function latestFinnhubRefresh(findings) {
-  const finnhub = findings.filter((f) => f.extracted_by === "finnhub" && f.found_at);
+  // A filled-in close (withDailyCloses) is Finnhub's figure too, and on a
+  // weekend it is the price on screen, so the line must date it.
+  const finnhub = findings.filter((f) => (f.extracted_by === "finnhub" || f.extracted_by === "daily_close") && f.found_at);
   if (!finnhub.length) return null;
   return finnhub.reduce((latest, f) => (new Date(f.found_at) > new Date(latest) ? f.found_at : latest), finnhub[0].found_at);
 }

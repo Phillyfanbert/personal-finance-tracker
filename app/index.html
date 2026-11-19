@@ -2,6 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <!-- What this page may load and contact, and nothing else, so a script that
+       got in some other way could neither run nor send a sign-in token
+       anywhere. Scripts: this site, the two CDNs the libraries are pinned to
+       (each with an integrity hash), and the two inline scripts by their own
+       hashes. Connections: this site (/api/*), Supabase, and the AI tunnel.
+       Pointing GEMMA_ENDPOINT at a host outside *.trycloudflare.com needs
+       connect-src changed too. Editing either inline script changes its hash;
+       tests/security.test.mjs recomputes both and fails until this is updated.
+       frame-ancestors cannot be set from a meta tag; worker.js sends
+       X-Frame-Options: DENY for that. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdn.sheetjs.com 'sha256-EbOJowa0Wt2O0YyNcK7qe3MP6MuQw3gUtvYCRQPCiBI=' 'sha256-lGDD7hXNaCpcmsv9Ny7Dv6eUyEQ1qv0jb4GszAHVAPE='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.supabase.co https://*.trycloudflare.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
   <!-- The one script outside app.js, and only because a deferred ES module
@@ -357,6 +368,16 @@
     .budget-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
       text-overflow: ellipsis; white-space: nowrap; }
     .budget-row-figs { flex: 0 0 auto; white-space: nowrap; }
+    /* The category name on the Plan card is a button that loads the budget
+       into the form. It looks like the plain name it replaced; the ellipsis
+       lives on the span inside, because overflow:hidden on the button itself
+       would clip its 44px hit box down to the height of the text. */
+    .budget-edit { flex: 1 1 auto; min-width: 0; width: auto; min-height: 0; margin: 0;
+      padding: 0; border: 0; background: none; color: inherit; font: inherit;
+      text-align: left; cursor: pointer; position: relative; display: flex; }
+    .budget-edit::after { content: ""; position: absolute; left: 0; right: 0; top: 50%;
+      height: var(--target-min); transform: translateY(-50%); }
+    .budget-edit:hover .budget-row-name, .budget-edit:focus-visible .budget-row-name { text-decoration: underline; }
     /* Ties a split row to its segment in the summary bar above it. Carries
        IDENTITY, never status - kept small and square so it cannot be read as
        one of the status bars on the category rows below. */
@@ -2989,7 +3010,7 @@
       <label for="pEmail">Email</label>
       <input id="pEmail" disabled />
       <label for="pNewPassword">New password</label>
-      <input id="pNewPassword" type="password" autocomplete="new-password" placeholder="At least 6 characters" />
+      <input id="pNewPassword" type="password" autocomplete="new-password" minlength="12" placeholder="At least 12 characters" />
       <button class="secondary" id="setPasswordBtn">Set / change password</button>
       <p id="passwordSetMsg" class="muted" style="margin-top:8px;font-size:12px"></p>
       <div style="height:14px"></div>
@@ -3141,7 +3162,7 @@
       <ul class="muted" style="font-size:13px;margin:0 0 10px;padding-left:18px">
         <li>Stock and fund symbols you track or own, never how much you hold. They go to a price service for the current price, and, mixed in with everyone else's, to an AI service that writes the daily market recap.</li>
         <li>The names of subscription services you record, used to search public pricing pages for a cheaper plan. The service name only, never your account or what you pay.</li>
-        <li>Your browser loads shared code libraries from a public code network (jsDelivr): three when the page opens, and one more the first time you use an Excel file. Each is fixed to an exact version and checked before it runs. Loading them is how that network sees your IP address, the same as for any site using a public library.</li>
+        <li>Your browser loads shared code libraries from public code networks: three from jsDelivr when the page opens, and one from SheetJS, its maker, the first time you use an Excel file. Each is fixed to an exact version and checked before it runs. Loading them is how those networks see your IP address, the same as for any site using a public library.</li>
       </ul>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What is stored on your device</h3>
@@ -3454,7 +3475,7 @@
         <div class="help-topic" id="helpTopic-budgets">
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-budgets-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Budgets</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-budgets-body">
-          <p>A monthly spending limit per category, always for the month you are in.</p>
+          <p>A monthly spending limit per category, always for the month you are in. Tap a budget's name to change its limit or its tag.</p>
           <p>You can tag a category as a need, a want or savings. Untagged is a fine answer: some categories honestly hold both kinds of spending.</p>
           <p>The bar is a share of what you budgeted, not of what you earn.</p>
           

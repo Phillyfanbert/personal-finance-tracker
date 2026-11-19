@@ -384,7 +384,12 @@ export function normalizeRow(rawRow, mapping, { flipSign = false, rowKind = "exp
 
   const amount = Math.abs(signed);
   if (amount === 0) return null;
-  const description = mapping.descCol != null ? (rawRow[mapping.descCol] || "").trim() || null : null;
+  // An apostrophe in front of = + - @ is how this app's own export (and most
+  // spreadsheets) keeps text from being run as a formula; it is not part of
+  // the description.
+  const description = mapping.descCol != null
+    ? (rawRow[mapping.descCol] || "").trim().replace(/^'(?=[=+\-@])/, "") || null
+    : null;
   const category = mapping.categoryCol != null ? (rawRow[mapping.categoryCol] || "").trim() || null : null;
   return { occurred_at, amount, description, category, kind };
 }

@@ -163,6 +163,13 @@ const direct = [...code.matchAll(/from\("(assets|liabilities)"\)\.update\(\{ ?(v
 ok(direct.length === 2, `${direct.length} direct balance writes outside moneyTx() (expected only the two price syncs)`);
 // The LATEST definition is the one the database runs, so a later migration
 // that quietly brought the $0 floor back would be caught here.
+// A sale shrinks the holding's own stored value with its shares, and undoing
+// it puts the value back. That value is what counts for a holding with no
+// live price, so leaving it whole counted sold shares as still owned.
+ok(/set: \{ quantity: remainingQty, purchase_price: remainingBasis, value: remainingValue \}/.test(code),
+  "a sale no longer scales the holding's stored value with its shares");
+ok(/set: \{ quantity: restoredQty, purchase_price: restoredBasis, value: restoredValue \}/.test(code),
+  "undoing a sale no longer restores the holding's stored value");
 // An import is all or nothing. It was separate batches of 500, so a dropped
 // connection left part of a file in and a retry added that part twice. It
 // moves no balance either way: the bank's figure already includes it.

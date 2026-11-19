@@ -7,9 +7,19 @@
 
 // RFC 4180: a field containing a comma, quote, or newline must be quoted,
 // with any internal quotes doubled.
-function csvEscape(value) {
-  const s = String(value ?? "");
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+//
+// And a text field that starts like a formula (= + - @, or a tab or carriage
+// return) gets a leading apostrophe, so a spreadsheet shows it as text rather
+// than running it. A description can come from an imported bank file, so
+// "=HYPERLINK(...)" is not something only the user would type. A real number
+// such as "-30.00" is left alone, and csvImport.js drops the apostrophe again,
+// so this app still reads its own exports back unchanged.
+const FORMULA_START = /^[=+\-@\t\r]/;
+const PLAIN_NUMBER = /^[+-]?\d[\d,]*(\.\d+)?%?$/;
+export function csvEscape(value) {
+  let s = String(value ?? "");
+  if (FORMULA_START.test(s) && !PLAIN_NUMBER.test(s)) s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /**

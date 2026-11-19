@@ -15,7 +15,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, budgetSplit, budgetYearStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal, WARN_THRESHOLD_PCT } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, recapBreadthDetail, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, portfolioRecapFigures, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, recapBreadthDetail, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, portfolioRecapFigures, withDailyCloses, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers, loadSecTickers, storableName } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
 import {
@@ -82,6 +82,27 @@ const fmtNum = (n) => Number(n || 0).toLocaleString(undefined, { minimumFraction
 // about what gets written to Supabase.
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// A link to somewhere outside the app, only when the address is a web
+// address. esc() keeps an address from breaking out of the attribute, but a
+// "javascript:" address is perfectly well-formed and runs when tapped, and
+// these come from news feeds, web search and AI extraction, never from us. A
+// non-web address renders the same text with no link. Every outside link goes
+// through here; tests/security.test.mjs fails on one that does not.
+function safeHref(url) {
+  try {
+    const u = new URL(String(url ?? "").trim());
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+function extLink(url, innerHtml, style = "") {
+  const href = safeHref(url);
+  return href
+    ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer"${style ? ` style="${style}"` : ""}>${innerHtml}</a>`
+    : `<span>${innerHtml}</span>`;
+}
 // `severity` is "info" (default) or "error". An error switches the region to
 // role="alert"/assertive: a denial interrupts what the user was doing and
 // needs to be heard now, where a confirmation can wait for a pause.
@@ -702,7 +723,13 @@ $("signInBtn").onclick = async () => {
   const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
   $("signInBtn").disabled = false;
   $("signInBtn").textContent = "Send magic link instead";
-  $("authMsg").textContent = error ? error.message : "Link sent ✓ - check your email.";
+  // New accounts are by invitation (92): the database refuses one for an email
+  // nobody has added, and the sign-in service reports that only as a database
+  // error, which would read as the app being broken.
+  const notInvited = error && /database error saving new user/i.test(error.message || "");
+  $("authMsg").textContent = notInvited
+    ? "That email has not been invited to this app. Ask the person who set it up to add you."
+    : error ? error.message : "Link sent ✓. Check your email.";
   if (error) flagField("email");
   toast(error ? "Couldn't send link" : "Magic link sent ✓");
 };
@@ -1483,6 +1510,23 @@ const indexPriceSymbols = () => [...new Set(
 // symbol already chosen, recapBreadthDetail against moverSymbols()) is
 // already scoped by its own arguments. This is the one place that enumerated.
 const chartableSymbols = () => new Set([...indexPriceSymbols(), ...ownedPriceSymbols()]);
+
+// The two price feeds with any missing trading day filled from its close
+// (withDailyCloses). Every reader that turns a price into a figure goes
+// through these, so a holding, net worth, the export and the market cards
+// cannot disagree about whether a weekend has a price. Remembered against the
+// arrays they were built from, because one render asks many times.
+let pricedFindingsMemo = { asset: null, market: null };
+function filledFindings(slot, findings, symbols) {
+  const key = symbols.join(",");
+  const m = pricedFindingsMemo[slot];
+  if (m && m.findings === findings && m.daily === dailyPrices && m.key === key) return m.out;
+  const out = withDailyCloses(findings, dailyPrices, symbols);
+  pricedFindingsMemo[slot] = { findings, daily: dailyPrices, key, out };
+  return out;
+}
+const pricedAssetFindings = () => filledFindings("asset", assetPriceFindings, ownedPriceSymbols());
+const pricedMarketFindings = () => filledFindings("market", marketIndexFindings, indexPriceSymbols());
 
 async function fetchLiveQuotes(symbols) {
   if (!symbols.length) return null;
@@ -2727,7 +2771,7 @@ function renderAccountsList() {
         <div class="acct-circle" style="background:var(--series-${(i % SERIES_COUNT) + 1})">${a.type === "cash" ? "💵" : esc((bankLabel.trim()[0] || "?").toUpperCase())}</div>
         ${a.type === "cash" ? "" : `<button type="button" class="x" data-del-acct="${a.id}" aria-label="Delete ${esc(acctLabel(a))}">✕</button>`}
         <div class="name">${esc(bankLabel)}</div>
-        <div class="type">${a.name}</div>
+        <div class="type">${esc(a.name)}</div>
         ${balance != null ? `<div class="balance"${!a.linked_liability_id && balance < 0 ? ` style="color:var(--err)"` : ""}>${a.linked_liability_id ? "Owed " : ""}${fmt(balance)}</div>` : ""}
         ${!a.linked_liability_id && balance != null && balance < 0
           ? `<div class="type" style="color:var(--err)">Overdrawn</div>` : ""}
@@ -3442,7 +3486,7 @@ function topLevelAssets() {
 function parentRollupValue(parentAssetId) {
   const holdings = assets.filter((a) => a.parent_asset_id === parentAssetId);
   if (!holdings.length) return null;
-  const priced = investmentHoldings(holdings, assetPriceFindings);
+  const priced = investmentHoldings(holdings, pricedAssetFindings());
   const total = holdings.reduce((sum, h) => {
     const live = priced.find((p) => p.asset.id === h.id);
     return sum + (live ? live.currentValue : Number(h.value || 0));
@@ -3466,7 +3510,7 @@ function investmentLiveValues() {
   }
   const standalone = assets.filter((a) =>
     a.price_symbol && a.quantity && !a.parent_asset_id && !parentIds.has(a.id));
-  for (const h of investmentHoldings(standalone, assetPriceFindings)) {
+  for (const h of investmentHoldings(standalone, pricedAssetFindings())) {
     if (h.currentValue != null) values.set(h.asset.id, Math.round(h.currentValue * 100) / 100);
   }
   return values;
@@ -3541,7 +3585,7 @@ async function loadAssets() {
   const investmentRows = listedAssets.filter((a) => INVESTMENT_ASSET_TYPES.has(a.type));
   const otherRows = listedAssets.filter((a) => !INVESTMENT_ASSET_TYPES.has(a.type));
   const countable = countableInvestmentAssets();
-  const investTotal = portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable).totalValue;
+  const investTotal = portfolioTotals(investmentHoldings(countable, pricedAssetFindings()), countable).totalValue;
 
   // A negative value here is an overdraft, and it is labelled in WORDS as
   // well as coloured - a bare red "-$120.00" in a list of positive balances
@@ -3867,6 +3911,10 @@ function moneyRefusal(error) {
       return "That is more than is left of the purchase to come back, so nothing was saved.";
     case "money_refund_of_refund":
       return "That row is already money back on something else, so it cannot be refunded. Nothing was saved.";
+    case "money_not_yours":
+      // Only reachable by a request the app never makes (92): a row may only
+      // point at the same person's accounts, assets, debts and purchases.
+      return "That refers to something that is not in your records, so nothing was saved.";
   }
   // The rules the database holds itself (89). The checks above run first on
   // this device's copy and say why in the user's terms, so reaching one of
@@ -4956,7 +5004,7 @@ function renderNetWorthCaveats() {
   if (!el) return;
   const live = investmentLiveValues();
   const held = countableInvestmentAssets();
-  const priced = investmentHoldings(held, assetPriceFindings);
+  const priced = investmentHoldings(held, pricedAssetFindings());
   const unpriced = priced.filter((h) => h.latestPrice == null || h.quantity == null).map((h) => h.asset.name);
 
   // A priced holding or its parent is kept current by the price sync and
@@ -4967,7 +5015,7 @@ function renderNetWorthCaveats() {
     .map((a) => ({ name: a.name, months: a.monthsSince }));
 
   let priceAge = null;
-  const newest = priced.length ? latestFinnhubRefresh(assetPriceFindings) : null;
+  const newest = priced.length ? latestFinnhubRefresh(pricedAssetFindings()) : null;
   if (newest) {
     const minutes = (Date.now() - new Date(newest).getTime()) / 60000;
     // Same rule renderPricesAsOf uses: inside the session a price older than
@@ -5991,9 +6039,15 @@ async function undoActivity(row) {
     }
     const restoredQty = Math.round((Number(holding.quantity || 0) + Number(sale.quantity)) * 1e6) / 1e6;
     const restoredBasis = Math.round((Number(holding.purchase_price || 0) + Number(sale.cost_basis_removed)) * 100) / 100;
+    // The stored value comes back at the position's value per share, the
+    // inverse of what the sale did to it. A position sold outright has no
+    // shares left to read that from, so the sale's own price stands in.
+    const heldNow = Number(holding.quantity || 0);
+    const perShare = heldNow > 0 ? Number(holding.value || 0) / heldNow : Number(sale.proceeds) / Number(sale.quantity);
+    const restoredValue = Math.round((Number(holding.value || 0) + perShare * Number(sale.quantity)) * 100) / 100;
     steps.push(
       { op: "update", table: "assets", id: holding.id,
-        set: { quantity: restoredQty, purchase_price: restoredBasis },
+        set: { quantity: restoredQty, purchase_price: restoredBasis, value: restoredValue },
         expect: { quantity: holding.quantity, purchase_price: holding.purchase_price } },
       asset ? assetMove(asset, -Number(row.amount), { floor: spendFloor(asset) }) : null,
       { op: "delete", table: "holding_sales", id: sale.id },
@@ -6948,6 +7002,22 @@ function renderBudgets(byCat = sumBy(allExpenses, "category", monthKey())) {
   $("budgetsList").innerHTML = statuses.length
     ? statuses.map((s) => budgetRowHtml(s, { removable: true })).join("")
     : `<p class="muted" style="font-size:13px">No budgets set yet. Set one below to cap what you spend on a category each month.</p>`;
+  // Tapping a budget's name loads it into the form below, limit and tag
+  // included, ready to change. Changing one used to mean finding its category
+  // again in the dropdown, which nothing on the card said.
+  document.querySelectorAll("[data-edit-budget]").forEach((el) => {
+    el.onclick = () => {
+      const category = el.dataset.editBudget;
+      $("budgetCategory").value = category;
+      if ($("budgetCategory").value !== category) {
+        return toast(`${category} is no longer one of the categories, so remove this budget and set it again under another one`, "error");
+      }
+      $("budgetCategory").onchange();
+      $("budgetLimit").scrollIntoView({ block: "center", behavior: "smooth" });
+      $("budgetLimit").focus({ preventScroll: true });
+      $("budgetLimit").select();
+    };
+  });
   document.querySelectorAll("[data-del-budget]").forEach((el) => {
     el.onclick = async () => {
       // Removing a budget threw away the limit AND its needs/wants/savings tag
@@ -7004,7 +7074,9 @@ function budgetRowHtml(s, { removable = false } = {}) {
   return `
       <div class="budget-row${removable ? " budget-row-removable" : ""}">
         <div class="budget-row-head">
-          <span class="budget-row-name">${esc(s.category)}${tag}</span>
+          ${removable
+            ? `<button type="button" class="budget-edit" data-edit-budget="${esc(s.category)}" aria-label="Change the ${esc(s.category)} budget"><span class="budget-row-name">${esc(s.category)}${tag}</span></button>`
+            : `<span class="budget-row-name">${esc(s.category)}${tag}</span>`}
           <span class="budget-row-figs">${fmt(s.spent)} / ${fmt(s.limit)}${state}</span>
           ${remove}
         </div>
@@ -7327,7 +7399,7 @@ async function loadInvestmentTargets() {
 // trigger exists for a static PWA.
 async function snapshotPortfolioIfNeeded() {
   const investmentAssets = countableInvestmentAssets();
-  const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
+  const holdings = investmentHoldings(investmentAssets, pricedAssetFindings());
   const totals = portfolioTotals(holdings, investmentAssets);
   const snapshot_date = localDateISO();
   await sb.from("portfolio_snapshots").upsert(
@@ -7389,7 +7461,7 @@ async function buildPortfolioRecapIfNeeded() {
   if (marketStatus().open) return;
 
   const investmentAssets = countableInvestmentAssets();
-  const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
+  const holdings = investmentHoldings(investmentAssets, pricedAssetFindings());
   const figures = portfolioRecapFigures({
     tradeDate,
     holdings,
@@ -7679,8 +7751,8 @@ let investTargetOpenedFor = null;
 function renderInvestments() {
   const investmentAssets = allInvestmentAssets();          // display: parents + holdings
   const countable = countableInvestmentAssets();           // maths: never both
-  const holdings = investmentHoldings(investmentAssets, assetPriceFindings);
-  const totals = portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable);
+  const holdings = investmentHoldings(investmentAssets, pricedAssetFindings());
+  const totals = portfolioTotals(investmentHoldings(countable, pricedAssetFindings()), countable);
 
   // The two tiles and How it's going describe the user's own money, so
   // with no investments at all they are zeros. Hidden then, which
@@ -7776,7 +7848,7 @@ function renderInvestments() {
           <span style="color:${gainColor(h.gainLoss)}">${h.gainLoss != null ? `${fmt(h.gainLoss)} (${signedPct(h.gainLossPct)}) all time` : "no cost basis set"}</span>
           ${h.quantity ? `<button type="button" class="link-action" data-sell-holding="${a.id}" style="color:var(--accent);margin-left:12px" aria-label="Sell ${esc(h.symbol)}">Sell</button><button type="button" class="link-action muted" data-dividend-holding="${a.id}" style="margin-left:var(--sp-6)" aria-label="Record a dividend from ${esc(h.symbol)}">Dividend</button>` : ""}
           ${h.explanation ? `<div class="muted">${esc(plainDashes(h.explanation))}</div>` : ""}
-          ${h.headlines && h.headlines.length ? `<div class="muted"><a href="${esc(h.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(h.headlines[0].title)}</a>${h.headlines[0].source ? " · " + esc(h.headlines[0].source) : ""}</div>` : ""}
+          ${h.headlines && h.headlines.length ? `<div class="muted">${extLink(h.headlines[0].url, esc(h.headlines[0].title), "color:var(--accent)")}${h.headlines[0].source ? " · " + esc(h.headlines[0].source) : ""}</div>` : ""}
         </div>
       </div>`;
   };
@@ -8217,6 +8289,13 @@ $("sellConfirmBtn").onclick = async () => {
   // shrink proportionally, so the per-share average is unchanged by a sale.
   const remainingQty = Math.round((held - qty) * 1e6) / 1e6;
   const remainingBasis = Math.round((basis - costOut) * 100) / 100;
+  // The holding's own stored value shrinks with it, at the same value per
+  // share. It is what counts for a holding with no live price (a mutual fund
+  // the price feed does not cover), and leaving it whole counted the shares
+  // just sold as still owned, while their proceeds sat in the account too.
+  const remainingValue = held > 0
+    ? Math.round(Number(sellingHolding.value || 0) * (remainingQty / held) * 100) / 100
+    : Number(sellingHolding.value || 0);
 
   // The sale record, the smaller holding, the proceeds and the history row are
   // ONE transaction. The holding update EXPECTS the quantity and basis this
@@ -8231,7 +8310,7 @@ $("sellConfirmBtn").onclick = async () => {
   const { message } = await moneyTx([
     { op: "insert", table: "holding_sales", row: saleRow },
     { op: "update", table: "assets", id: sellingHolding.id,
-      set: { quantity: remainingQty, purchase_price: remainingBasis },
+      set: { quantity: remainingQty, purchase_price: remainingBasis, value: remainingValue },
       expect: { quantity: sellingHolding.quantity, purchase_price: sellingHolding.purchase_price } },
     accountId ? assetMove(assetOfAccount(accountId), proceeds) : null,
     activityStep("holding_sale", `Sold ${qty} ${sellingHolding.price_symbol || ""}`.trim(),
@@ -8498,7 +8577,7 @@ function renderMarketMovers() {
       <div>
         <div class="sym-link" role="button" tabindex="0" data-price-symbol="${esc(m.symbol)}" title="View price history for ${esc(m.symbol)}">${esc(m.company_name || m.symbol)}${m.company_name ? ` <span class="muted">(${esc(m.symbol)})</span>` : ""}</div>
         ${m.headline
-          ? `<div class="meta"><a href="${esc(m.headline.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headline.title)}</a>${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>`
+          ? `<div class="meta">${extLink(m.headline.url, esc(m.headline.title), "color:var(--accent)")}${m.headline.source ? " · " + esc(m.headline.source) : ""}</div>`
           : `<div class="meta muted">No news coverage found for this move</div>`}
       </div>
       <span class="amt" style="text-align:right">
@@ -9494,7 +9573,7 @@ function renderDailyRecap() {
   if (ctx.length) {
     $("dailyRecapContextList").innerHTML = ctx.map((h) => `
       <div style="margin-bottom:6px">
-        <a href="${esc(h.url)}" target="_blank" rel="noopener noreferrer" style="font-size:13px">${esc(h.title)}</a>
+        ${extLink(h.url, esc(h.title), "font-size:13px")}
         ${h.source ? `<span class="muted" style="font-size:11px">, ${esc(h.source)}</span>` : ""}
       </div>`).join("");
   }
@@ -9542,7 +9621,7 @@ function renderDailyRecap() {
             <span style="font-weight:700;font-size:13px;color:${gainColor(m.change_pct)}">${signedPct(m.change_pct)}</span>
             ${name ? `<span class="muted" style="font-size:12px">${esc(name)}</span>` : ""}
           </div>
-          ${h ? `<a href="${esc(h.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px;line-height:1.45">${esc(h.title)}</a>` : `<div class="muted" style="font-size:12px">Nothing was published about this one today.</div>`}
+          ${h ? extLink(h.url, esc(h.title), "color:var(--accent);font-size:13px;line-height:1.45") : `<div class="muted" style="font-size:12px">Nothing was published about this one today.</div>`}
           ${h && h.summary ? `<p class="recap-why">${esc(plainDashes(h.summary))}</p>` : ""}
           ${h && h.source ? `<div class="muted" style="font-size:12px;margin-top:2px">${esc(h.source)}</div>` : ""}
         </div>`;
@@ -9594,14 +9673,14 @@ function renderMarketOverview() {
   // old. It moved to the tracked card, where that agent's remaining output
   // (the news digest, the per-symbol explanations) actually lands.
   const etfTickers = Object.values(MARKET_INDEX_ETF_PROXIES);
-  const etfByTicker = new Map(marketIndexSummary(etfTickers, marketIndexFindings).map((e) => [e.label, e]));
-  renderPricesAsOf("marketOverviewLiveFreshness", latestFinnhubRefresh(marketIndexFindings));
+  const etfByTicker = new Map(marketIndexSummary(etfTickers, pricedMarketFindings()).map((e) => [e.label, e]));
+  renderPricesAsOf("marketOverviewLiveFreshness", latestFinnhubRefresh(pricedMarketFindings()));
 
   // A real, computed fact from the same already-loaded live data below -
   // never an AI-inferred read, so it's available exactly as often as
   // real prices are, with zero rate-limit exposure. Plain "X of Y up"
   // wording, not a bullish/bearish label - a count isn't an opinion.
-  const pulse = marketBreadth(moverSymbols(), etfTickers, marketIndexFindings);
+  const pulse = marketBreadth(moverSymbols(), etfTickers, pricedMarketFindings());
   const pulseEl = $("marketPulse");
   if (pulseEl) {
     // The recap further down this same card states breadth at the last
@@ -9665,16 +9744,16 @@ function renderMarketOverview() {
   // again with less in it. While the market is open the two differ (live
   // against the last close), so both earn their place.
   const saidByRecap = !marketStatus().open && !!latestRecap(dailyRecaps);
-  const movers = saidByRecap ? [] : topMarketMovers(moverSymbols(), marketIndexFindings, 3);
+  const movers = saidByRecap ? [] : topMarketMovers(moverSymbols(), pricedMarketFindings(), 3);
   const moversSection = $("marketMoversSection");
   if (moversSection) moversSection.classList.toggle("hidden", !movers.length);
-  renderPricesAsOf("marketMoversFreshness", latestFinnhubRefresh(marketIndexFindings));
+  renderPricesAsOf("marketMoversFreshness", latestFinnhubRefresh(pricedMarketFindings()));
   $("marketMoversList").innerHTML = movers.map((m) => `
     <div class="exp" style="cursor:default">
       <div>
         <div class="sym-link" role="button" tabindex="0" data-price-symbol="${esc(m.label)}" title="View price history for ${esc(m.label)}">${esc(m.label)}</div>
         ${m.explanation ? `<div class="meta">${esc(plainDashes(m.explanation))}</div>` : ""}
-        ${m.headlines && m.headlines.length ? `<div class="meta"><a href="${esc(m.headlines[0].url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(m.headlines[0].title)}</a>${m.headlines[0].source ? " · " + esc(m.headlines[0].source) : ""}</div>` : ""}
+        ${m.headlines && m.headlines.length ? `<div class="meta">${extLink(m.headlines[0].url, esc(m.headlines[0].title), "color:var(--accent)")}${m.headlines[0].source ? " · " + esc(m.headlines[0].source) : ""}</div>` : ""}
       </div>
       <span class="amt" style="text-align:right">
         ${fmtNum(m.price)}
@@ -9702,10 +9781,7 @@ function renderMarketOverview() {
     $("marketSentimentReason").textContent = hasSentiment ? plainDashes(digest.sentimentReason || "") : "";
     $("marketNewsList").innerHTML = digest.headlines.map((h) => `
       <div class="exp" style="cursor:default">
-        <a href="${esc(h.url)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
-          <div>${esc(h.title)}</div>
-          ${h.source ? `<div class="meta">${esc(h.source)}</div>` : ""}
-        </a>
+        ${extLink(h.url, `<div>${esc(h.title)}</div>${h.source ? `<div class="meta">${esc(h.source)}</div>` : ""}`, "text-decoration:none;color:inherit")}
       </div>`).join("");
   }
 
@@ -9873,7 +9949,7 @@ $("holdingSymbol").addEventListener("input", () => { holdingSymbolOverrideConfir
 // the latter. No new network call - both are already in module state.
 function findLivePrice(symbol) {
   const upper = symbol.trim().toUpperCase();
-  const rows = [...assetPriceFindings, ...marketIndexFindings]
+  const rows = [...pricedAssetFindings(), ...pricedMarketFindings()]
     .filter((f) => (f.symbol || "").trim().toUpperCase() === upper);
   if (!rows.length) return null;
   const latest = rows.sort((a, b) => new Date(b.found_at) - new Date(a.found_at))[0];
@@ -10121,6 +10197,10 @@ $("saveHoldingBtn").onclick = async () => {
   // Captured before any await below: closeHoldingForm() clears editingHolding,
   // and the confirmations in between yield to the event loop.
   const wasEditingHolding = !!editingHolding;
+  // The row being edited, held for the save below: the same reason as above,
+  // an edit must not turn into an insert because the form closed while a
+  // confirmation was open.
+  const holdingBeingEdited = editingHolding;
   // Moving a holding between accounts changes BOTH totals, so the old parent
   // is resynced too, not just the new one.
   const previousParentId = editingHolding?.parent_asset_id ?? null;
@@ -10236,8 +10316,14 @@ $("saveHoldingBtn").onclick = async () => {
           contributionAmount, undefined, accounts.find((a) => a.linked_asset_id === parentId)?.id ?? null,
           null, null, parentId, "holding_purchase")
       : null,
-    editingHolding
-      ? { op: "update", table: "assets", id: editingHolding.id, set: row }
+    // EXPECTS the shares and cost this form opened with. The amount charged
+    // to the paying account and the contribution recorded are both worked out
+    // from them, so if another device bought, sold or edited this holding in
+    // the meantime, this edit is refused rather than charging the wrong
+    // amount and writing over that change.
+    holdingBeingEdited
+      ? { op: "update", table: "assets", id: holdingBeingEdited.id, set: row,
+          expect: { quantity: holdingBeingEdited.quantity, purchase_price: holdingBeingEdited.purchase_price } }
       : { op: "insert", table: "assets", row },
     fundingAsset ? assetMove(fundingAsset, -costBasisDelta, { floor: spendFloor(fundingAsset) }) : null,
     fundingAsset ? activityStep("asset_adjust", `Bought ${quantity} ${symbol}, funded from ${acctName(fundingAccountId)}`,
@@ -11767,7 +11853,7 @@ function renderDeals() {
   const parts = [];
 
   for (const d of deals) {
-    const link = d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--accent)">view plan →</a>` : "";
+    const link = safeHref(d.url) ? extLink(d.url, "view plan →", "color:var(--accent)") : "";
     parts.push(`
       <div class="exp" style="cursor:default">
         <div>
@@ -11883,7 +11969,7 @@ function renderDealFindings() {
   }
   $("dealFindingsList").innerHTML = best.map((d) => {
     const f = d.finding;
-    const link = f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:var(--accent)">check source →</a>` : "";
+    const link = safeHref(f.url) ? extLink(f.url, "check source →", "color:var(--accent)") : "";
     // No Promote/Reject buttons any more. Reviewing a finding is a
     // maintainer action through service_role now (tools/deal-review.mjs),
     // because deal_findings holds shared public pricing with no owner: the
@@ -13567,9 +13653,15 @@ const EXPORT_FORMATS = {
   json: { ext: "json", type: "application/json", note: "For feeding into another program. Not meant to be read by eye." },
 };
 
-// SheetJS is ~316KB over the wire, far too much to load on every visit for a
+// SheetJS is ~320KB over the wire, far too much to load on every visit for a
 // format most people will never pick. Fetched the first time someone actually
 // chooses Excel, then reused.
+//
+// 0.20.3, from SheetJS's own CDN, because the last version on npm (0.18.5)
+// carries two published flaws in reading a file: CVE-2023-30533, where a
+// crafted workbook can tamper with the page's JavaScript objects, and
+// CVE-2024-22363, where one can freeze the page. Importing reads a file the
+// person was sent, so that is exactly the input to worry about. Same API.
 let xlsxLoader = null;
 function loadSpreadsheetLib() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
@@ -13578,8 +13670,8 @@ function loadSpreadsheetLib() {
       const s = document.createElement("script");
       // Pinned with a hash for the same reason as the three libraries in
       // index.html: it runs with the session in reach.
-      s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
-      s.integrity = "sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw";
+      s.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
+      s.integrity = "sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT";
       s.crossOrigin = "anonymous";
       s.onload = () => (window.XLSX ? resolve(window.XLSX) : reject(new Error("loaded but were empty")));
       s.onerror = () => { xlsxLoader = null; reject(new Error("could not be downloaded")); };
@@ -13699,13 +13791,13 @@ $("exportInvestBtn").onclick = async () => {
       // its ticker, so without this the file's Account column read "AAPL"
       // beside a Symbol column that also read "AAPL", and never said where
       // the position is held.
-      const holdings = exportOrderedHoldings(investmentHoldings(allInvestmentAssets(), assetPriceFindings))
+      const holdings = exportOrderedHoldings(investmentHoldings(allInvestmentAssets(), pricedAssetFindings()))
         .map((h) => {
           const parent = h.asset?.parent_asset_id ? assets.find((a) => a.id === h.asset.parent_asset_id) : null;
           return { ...h, accountName: (parent || h.asset || {}).name || "" };
         });
       return investmentsSections({
-        totals: portfolioTotals(investmentHoldings(countable, assetPriceFindings), countable),
+        totals: portfolioTotals(investmentHoldings(countable, pricedAssetFindings()), countable),
         holdings,
         snapshots,
         realized: holdingSales,
@@ -13848,9 +13940,12 @@ $("downloadExpensesCsvBtn").onclick = async () => {
 // time, or change it later - see index.html's authView/Account security
 // comments for why a password is what actually keeps an installed
 // home-screen icon signed in.
+const MIN_PASSWORD_LENGTH = 12;
 $("setPasswordBtn").onclick = async () => {
   const pw = $("pNewPassword").value;
-  if (!pw || pw.length < 6) { flagField("pNewPassword"); return toast("Password must be at least 6 characters"); }
+  // Twelve, not the sign-in service's own minimum of six: this password is
+  // all that stands between someone and a household's whole financial record.
+  if (!pw || pw.length < MIN_PASSWORD_LENGTH) { flagField("pNewPassword"); return toast(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`); }
   // Manages its own label, so wireBusyButtons() leaves it alone (dataset.busy
   // is already set by the time the wrapper would swap it).
   $("setPasswordBtn").disabled = true;

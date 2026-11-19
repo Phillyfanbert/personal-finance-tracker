@@ -13569,9 +13569,19 @@ $("exportReportsBtn").onclick = async () => {
     { page: "Reports", month: ym });
 };
 
+// EVERY table holding something this person entered or the app worked out for
+// them, so the file is what its confirmation says it is: everything. It used to
+// list ten and leave out income, sales, savings goals, the budget history, the
+// target mix, snapshots, notes, feedback and the tracked list. Left out on
+// purpose: expense_embeddings and qa_cache, which are rebuilt from the rest.
+// record_history carries the earlier versions of anything changed or deleted
+// (87_record_history.sql), so a mistake can still be traced from the file.
 const USER_DATA_TABLES = [
-  "profiles", "accounts", "expenses", "category_rules", "subscriptions",
-  "assets", "liabilities", "account_activity", "budgets", "net_worth_snapshots",
+  "profiles", "accounts", "assets", "liabilities", "expenses", "account_activity",
+  "subscriptions", "income", "budgets", "budget_periods", "sinking_funds",
+  "holding_sales", "investment_targets", "category_rules", "watchlist_symbols",
+  "net_worth_snapshots", "portfolio_snapshots", "portfolio_recaps",
+  "spending_insights", "feedback_tickets", "record_history",
 ];
 $("downloadDataBtn").onclick = async () => {
   // Confirm first. This writes a file containing every account balance,
@@ -13586,10 +13596,17 @@ $("downloadDataBtn").onclick = async () => {
   if (!ok) return;
   $("downloadDataBtn").disabled = true;
   const dump = { exported_at: new Date().toISOString() };
+  // Paged, on the primary key so a page boundary cannot repeat or skip a row.
+  // One unpaged select was capped silently by the server at 1,000 rows, so a
+  // long history would have been saved short with nothing saying so.
   for (const table of USER_DATA_TABLES) {
-    const { data, error } = await sb.from(table).select("*");
-    if (error) { $("downloadDataBtn").disabled = false; return toast(`Export failed on ${table}: ${error.message}`); }
-    dump[table] = data || [];
+    try {
+      dump[table] = await fetchAllPages(() => sb.from(table).select("*").order("id"),
+        `There is more in ${table} than one download can hold. Nothing was saved.`);
+    } catch (error) {
+      $("downloadDataBtn").disabled = false;
+      return toast(`Nothing was saved: the download failed on ${table}. ${error.message}`, "error");
+    }
   }
   $("downloadDataBtn").disabled = false;
   const rowCount = USER_DATA_TABLES.reduce((n, t) => n + (dump[t]?.length || 0), 0);

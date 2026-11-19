@@ -188,6 +188,21 @@ restart_proxy_if_changed() {
   fi
 }
 
+# The daily database backup (backup-database.mjs) rides on this job rather
+# than getting a launchd job of its own: this already runs every 15 minutes
+# with the key it needs, and installing a new job would mean someone running
+# setup-server-machine.sh by hand, which mints a new proxy secret. --if-due
+# makes every run but the first of the day a quick file-exists check. It runs
+# whether or not the code sync itself worked, since a backup has nothing to do
+# with whether GitHub was reachable, but only while this run holds the lock,
+# so two backups can never overlap. Its own failures are reported to
+# agent_run_status as "backup" and never fail the sync.
+run_backup_if_due() {
+  [ -f "$RUN_DIR/backup-database.mjs" ] || return 0
+  [ -f "$RUN_DIR/.env.deal-agent" ] || return 0
+  node "$RUN_DIR/backup-database.mjs" --if-due || say "backup did not complete, see its status row"
+}
+
 schedules_note() {
   [ -f "$SCHEDULES_NOTE" ] || return 0
   printf ' setup-server-machine.sh changed in %s: launchd schedules are not applied on their own, see sync-server.sh.' "$(short "$(cat "$SCHEDULES_NOTE" 2>/dev/null)")"
@@ -214,6 +229,7 @@ sync_once() {
     fi
   fi
   trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+  HAVE_LOCK=1
 
   local deployed target bad
   deployed="$(cat "$STAMP" 2>/dev/null || true)"
@@ -347,6 +363,10 @@ case "${1:-}" in
   --ack-schedules)
     rm -f "$SCHEDULES_NOTE"
     echo "Cleared. The next sync reports without the note." ;;
-  "") sync_once ;;
+  "")
+    sync_once
+    rc=$?
+    [ "${HAVE_LOCK:-0}" = "1" ] && run_backup_if_due
+    exit "$rc" ;;
   *) echo "Unknown option: $1" >&2; exit 2 ;;
 esac

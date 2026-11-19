@@ -1143,7 +1143,7 @@
       <div class="card quickadd" id="quickAddCard">
         <h2>Quick Add</h2>
         <label for="quick" class="hidden">Quick add</label>
-        <input id="quick" placeholder="$14 lunch chipotle debit" autocomplete="off" style="margin-top:8px" />
+        <input id="quick" maxlength="1000" placeholder="$14 lunch chipotle debit" autocomplete="off" style="margin-top:8px" />
         <p class="muted" style="font-size:12px;margin:8px 0 0">Type it however you would say it, like "14 lunch chipotle debit". The app fills in the rest for you to check before saving.</p>
 
         <div id="confirm" class="hidden" style="margin-top:12px">
@@ -1155,7 +1155,7 @@
           <!-- Amount/Account/Category/Date are all required (see saveBtn,
                app.js) - Description is the only optional field here. -->
           <label for="fDesc">Description / merchant (optional)</label>
-          <input id="fDesc" />
+          <input id="fDesc" maxlength="500" />
           <div class="row">
             <div><label for="fCategory">Category</label><select id="fCategory"></select></div>
             <div><label for="fDate">Date</label><input id="fDate" type="date" /></div>
@@ -1321,12 +1321,12 @@
       <div class="card hidden" id="subForm">
         <div class="topbar" style="margin-bottom:6px"><h2 id="subFormTitle">New subscription/bill</h2></div>
         <label for="sName">Service name</label>
-        <input id="sName" placeholder="Spotify" />
+        <input id="sName" maxlength="200" placeholder="Spotify" />
         <!-- Free text with suggestions, not a fixed dropdown - same pattern
              as acctBank below: pick a common category or type any label of
              your own (see docs/subscription-bill-types-research.md). -->
         <label for="sCategory">Category</label>
-        <input id="sCategory" placeholder="Streaming & Media" list="subCategorySuggestions" autocomplete="off" />
+        <input id="sCategory" maxlength="100" placeholder="Streaming & Media" list="subCategorySuggestions" autocomplete="off" />
         <datalist id="subCategorySuggestions"></datalist>
         <div class="row">
           <div><label for="sAmount">Amount</label><input id="sAmount" type="number" step="0.01" inputmode="decimal" /></div>
@@ -1353,7 +1353,7 @@
         <!-- Just the flag - no "what could I cut" view reads it yet (the project notes). -->
         <label><input type="checkbox" id="sEssential" style="width:auto;margin-right:8px" />Essential (something you need, not just nice to have)</label>
         <label for="sNotes">Notes</label>
-        <input id="sNotes" placeholder="e.g. shared family plan" />
+        <input id="sNotes" maxlength="2000" placeholder="e.g. shared family plan" />
         <div style="height:12px"></div>
         <!-- Logs today's charge as a real expense against the linked account
              (same asset/liability effect as any other expense) and rolls
@@ -1441,7 +1441,7 @@
                administrator) this still accepts free text, just without
                the strict FDIC-bank-name check - see BANK_VALIDATED_
                CATEGORIES in app.js. -->
-          <input id="acctBank" placeholder="Start typing a bank..." list="bankSuggestions" autocomplete="off" />
+          <input id="acctBank" maxlength="200" placeholder="Start typing a bank..." list="bankSuggestions" autocomplete="off" />
           <datalist id="bankSuggestions"></datalist>
           <!-- Which CARD this is, shown only for the three types where a card
                product is a real thing (credit / charge card / store card).
@@ -1454,7 +1454,7 @@
                issuers and not exhaustive, so an unlisted card still saves. -->
           <div id="acctCardRow" class="hidden">
             <label for="acctCard">Card (optional)</label>
-            <input id="acctCard" placeholder="Start typing a card..." list="cardSuggestions" autocomplete="off" />
+            <input id="acctCard" maxlength="200" placeholder="Start typing a card..." list="cardSuggestions" autocomplete="off" />
             <datalist id="cardSuggestions"></datalist>
             <p class="muted" style="font-size:11px;margin:2px 0 0">Which card this is, so two cards from the same bank are tellable apart. Leave blank if you would rather not say.</p>
           </div>
@@ -1571,7 +1571,7 @@
         <button class="secondary btn-xs" id="addAssetBtn" aria-label="Add something you have" style="margin-top:var(--sp-3)">+ Add</button>
         <div id="assetForm" class="hidden" style="margin-top:10px">
           <div class="row">
-            <input id="assetName" aria-label="Asset name" placeholder="Vanguard Brokerage" />
+            <input id="assetName" maxlength="200" aria-label="Asset name" placeholder="Vanguard Brokerage" />
             <!-- The base 4 are standalone-only, no account-type equivalent.
                  Retirement/investment and specialty groups are appended in
                  JS (populateAssetTypeSelect, app.js) from the same
@@ -1608,7 +1608,7 @@
                #4). Quantity is required before a live price can be applied,
                since price alone isn't a total value - see app.js. -->
           <div class="row" style="margin-top:8px">
-            <div style="position:relative"><label for="assetPriceSymbol">Ticker symbol (optional)</label><input id="assetPriceSymbol" placeholder="AAPL, BTC, or company name" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="assetPriceSymbolSuggest" /><div id="assetPriceSymbolSuggest" class="suggest hidden" role="listbox"></div></div>
+            <div style="position:relative"><label for="assetPriceSymbol">Ticker symbol (optional)</label><input id="assetPriceSymbol" maxlength="100" placeholder="AAPL, BTC, or company name" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="assetPriceSymbolSuggest" /><div id="assetPriceSymbolSuggest" class="suggest hidden" role="listbox"></div></div>
             <div><label for="assetQuantity">Quantity (optional)</label><input id="assetQuantity" type="number" step="any" inputmode="decimal" /></div>
           </div>
 
@@ -1666,7 +1666,7 @@
         <button class="secondary btn-xs" id="addDebtBtn" aria-label="Add something you owe" style="margin-top:var(--sp-3)">+ Add</button>
         <div id="debtForm" class="hidden" style="margin-top:10px">
           <div class="row">
-            <input id="debtName" aria-label="Name of what you owe" placeholder="Chase Sapphire" />
+            <input id="debtName" maxlength="200" aria-label="Name of what you owe" placeholder="Chase Sapphire" />
             <!-- 'loan'/'mortgage'/'other' are the original generic values;
                  the specific loan types are appended in JS
                  (populateDebtTypeSelect, app.js) from ACCOUNT_TYPES' Loans
@@ -1775,7 +1775,7 @@
       <div class="card hidden" id="incomeForm">
         <div class="topbar" style="margin-bottom:6px"><h2 id="incomeFormTitle">New income source</h2></div>
         <label for="incSource">Source (required)</label>
-        <input id="incSource" placeholder="Employer paycheck" />
+        <input id="incSource" maxlength="200" placeholder="Employer paycheck" />
         <div class="row">
           <div><label for="incAmount">Amount (required)</label><input id="incAmount" type="number" step="0.01" inputmode="decimal" /></div>
           <div><label for="incCadence">How often it arrives</label>
@@ -1800,7 +1800,7 @@
         <button class="secondary btn-sm hidden" id="incomeUseNextDateBtn" type="button" style="margin-top:var(--sp-2)"></button>
         <label><input type="checkbox" id="incActive" style="width:auto;margin-right:8px" checked />Active</label>
         <label for="incNotes">Notes</label>
-        <input id="incNotes" placeholder="e.g. every 2 weeks on Fridays" />
+        <input id="incNotes" maxlength="2000" placeholder="e.g. every 2 weeks on Fridays" />
         <div style="height:12px"></div>
         <div class="row">
           <button id="saveIncomeBtn">Save</button>
@@ -1866,7 +1866,7 @@
       <div class="card" id="qaCard">
         <h2>Ask about your spending</h2>
         <div class="row" style="margin-top:8px">
-          <input id="qaQuestion" aria-label="Your question about your spending" placeholder="e.g. How much did I spend on food last month?" />
+          <input id="qaQuestion" maxlength="2000" aria-label="Your question about your spending" placeholder="e.g. How much did I spend on food last month?" />
         </div>
         <button id="qaAskBtn" style="margin-top:8px">Ask</button>
         <p class="muted" id="qaStatus" aria-live="polite" style="font-size:12px;margin:8px 0 0"></p>
@@ -2076,7 +2076,7 @@
       <div class="card hidden" id="fundForm">
         <div class="topbar" style="margin-bottom:6px"><h2 id="fundFormTitle">New thing to save for</h2></div>
         <label for="fundName">What is it for (required)</label>
-        <input id="fundName" placeholder="Car registration" />
+        <input id="fundName" maxlength="200" placeholder="Car registration" />
         <div class="row">
           <div><label for="fundTarget">Total needed (required)</label><input id="fundTarget" type="number" step="0.01" min="0" inputmode="decimal" /></div>
           <div><label for="fundSaved">Set aside so far</label><input id="fundSaved" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0" /></div>
@@ -2085,7 +2085,7 @@
         <input id="fundDate" type="date" />
         <p class="muted text-xs" id="fundDateNote" style="margin:4px 0 0">Add a date and the app can tell you how much to put aside each month. Without one it just tracks progress.</p>
         <label for="fundNotes">Notes</label>
-        <input id="fundNotes" placeholder="e.g. renewal is every October" />
+        <input id="fundNotes" maxlength="2000" placeholder="e.g. renewal is every October" />
         <div class="stack-3"></div>
         <div class="row">
           <button id="saveFundBtn">Save</button>
@@ -2419,7 +2419,7 @@
               <label for="holdingAccount">Account this sits in</label>
               <select id="holdingAccount"></select>
               <div class="row">
-                <div style="position:relative"><label for="holdingSymbol">Ticker / symbol</label><input id="holdingSymbol" placeholder="AAPL or company name" autocapitalize="characters" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="holdingSymbolSuggest" /><div id="holdingSymbolSuggest" class="suggest hidden" role="listbox"></div></div>
+                <div style="position:relative"><label for="holdingSymbol">Ticker / symbol</label><input id="holdingSymbol" maxlength="100" placeholder="AAPL or company name" autocapitalize="characters" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="holdingSymbolSuggest" /><div id="holdingSymbolSuggest" class="suggest hidden" role="listbox"></div></div>
                 <div><label for="holdingQuantity">Shares / units</label><input id="holdingQuantity" type="number" step="any" inputmode="decimal" placeholder="10" /></div>
               </div>
               <div class="help-pills hidden" id="holdingBuyModePills">
@@ -2618,7 +2618,7 @@
       <!-- Amount/Account/Category/Date are all required (see editSave,
            app.js) - Description is the only optional field here. -->
       <label for="eDesc">Description / merchant (optional)</label>
-      <input id="eDesc" />
+      <input id="eDesc" maxlength="500" />
       <div class="row">
         <div><label for="eCategory">Category</label><select id="eCategory"></select></div>
         <div><label for="eAccount">Account</label><select id="eAccount"></select></div>
@@ -2632,7 +2632,7 @@
            to stop. Surfaces on the Reports page under the monthly report,
            attached to the month it explains. -->
       <label for="eNote">Why was this? (optional)</label>
-      <input id="eNote" placeholder="e.g. car repair, one-off, not normal spending" />
+      <input id="eNote" maxlength="2000" placeholder="e.g. car repair, one-off, not normal spending" />
       <p class="muted" style="font-size:11px;margin:2px 0 0">If this was unusual, say why. It shows up with the monthly report on the Reports page, so an odd month explains itself later.</p>
       <label style="margin-top:12px"><input type="checkbox" id="eLearn" style="width:auto;margin-right:8px" checked />Remember this category for similar merchants</label>
       <!-- A refund belongs against the purchase it reverses, which is why it
@@ -2684,10 +2684,10 @@
       <div class="row">
       <div style="position:relative">
         <label for="watchlistNewSymbol">Add a symbol</label>
-        <input id="watchlistNewSymbol" placeholder="AAPL or company name" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="watchlistSuggest" />
+        <input id="watchlistNewSymbol" maxlength="100" placeholder="AAPL or company name" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="watchlistSuggest" />
         <div id="watchlistSuggest" class="suggest hidden" role="listbox"></div>
       </div>
-      <div><label for="watchlistNewName">Company name (optional)</label><input id="watchlistNewName" placeholder="apple" autocomplete="off" /></div>
+      <div><label for="watchlistNewName">Company name (optional)</label><input id="watchlistNewName" maxlength="200" placeholder="apple" autocomplete="off" /></div>
       </div>
       <p class="muted" style="font-size:11px;margin:2px 0 8px">Start typing a ticker or company name to pick from known symbols, the name fills in for you. Any real ticker can still be typed in by hand if it isn't suggested. A company name helps match news headlines to the right stock; left blank, headline matching falls back to the ticker alone.</p>
       <button id="watchlistAddBtn">Add symbol</button>
@@ -2829,7 +2829,7 @@
       <label for="moneyInAccount">Paid into (required)</label>
       <select id="moneyInAccount"></select>
       <label for="moneyInDesc">What was it for (optional)</label>
-      <input id="moneyInDesc" placeholder="Sold my old bike" />
+      <input id="moneyInDesc" maxlength="500" placeholder="Sold my old bike" />
       <div style="height:12px"></div>
       <button id="moneyInConfirmBtn">Add money received</button>
     </div>
@@ -3017,7 +3017,7 @@
 
       <p class="muted" style="font-size:12px;margin:0 0 8px">Used to match you to better subscription deals and to give sharper answers in Reports' Q&A. Only you can see this.</p>
       <label for="pName">Display name</label>
-      <input id="pName" placeholder="Your name" />
+      <input id="pName" maxlength="200" placeholder="Your name" />
       <label for="pStatus">Status</label>
       <select id="pStatus">
         <option value="working">Working</option>
@@ -3055,14 +3055,14 @@
       <label for="pBirthYear">Birth year</label>
       <input id="pBirthYear" type="number" inputmode="numeric" placeholder="1995" />
       <div class="row">
-        <div><label for="pOccupation">Occupation</label><input id="pOccupation" placeholder="e.g. Teacher, Nurse" /></div>
-        <div><label for="pEmployer">Employer</label><input id="pEmployer" placeholder="e.g. Lincoln High School" /></div>
+        <div><label for="pOccupation">Occupation</label><input id="pOccupation" maxlength="200" placeholder="e.g. Teacher, Nurse" /></div>
+        <div><label for="pEmployer">Employer</label><input id="pEmployer" maxlength="200" placeholder="e.g. Lincoln High School" /></div>
       </div>
       <p class="muted" style="font-size:11px;margin:2px 0 0">Teaching and healthcare jobs qualify for pricing plenty of services offer but do not advertise. A school, university or hospital as your employer counts too.</p>
       <div id="pStudentFields" class="hidden">
         <div class="row">
           <div><label for="pGradYear">Graduation year</label><input id="pGradYear" type="number" inputmode="numeric" placeholder="2027" /></div>
-          <div><label for="pSchool">School</label><input id="pSchool" placeholder="e.g. NYU" /></div>
+          <div><label for="pSchool">School</label><input id="pSchool" maxlength="200" placeholder="e.g. NYU" /></div>
         </div>
         <p class="muted" style="font-size:11px;margin:2px 0 0">Graduation year stops student deals being suggested after you have finished. School is only kept for when a service asks you to verify; it does not affect which deals show.</p>
       </div>
@@ -3096,10 +3096,10 @@
         <div><label for="pDependents">Dependents</label><input id="pDependents" type="number" inputmode="numeric" placeholder="0" /></div>
       </div>
       <label for="pGoals">Financial goals</label>
-      <input id="pGoals" placeholder="e.g. paying down credit card debt" />
+      <input id="pGoals" maxlength="2000" placeholder="e.g. paying down credit card debt" />
 
       <label for="pNotes">Notes</label>
-      <input id="pNotes" placeholder="anything else that helps" />
+      <input id="pNotes" maxlength="2000" placeholder="anything else that helps" />
       <div style="height:14px"></div>
       <button id="profileSave">Save profile</button>
       <div style="height:8px"></div>
@@ -3158,12 +3158,12 @@
       <p class="muted" style="font-size:13px;margin:0 0 10px">Your transactions, balances, account names and notes are never given to an AI company, an advertiser or anyone else to use. When you ask the app a question, or it writes you a note, the words come from an AI model on a computer belonging to the person who runs this app. To reach that computer from your phone, the figures pass through Cloudflare, the same company that serves this app.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What does get sent out</h3>
-      <p class="muted" style="font-size:13px;margin:0 0 6px">Three things leave, and none of them include who you are or what you spend:</p>
+      <p class="muted" style="font-size:13px;margin:0 0 6px">Two things leave, and neither includes who you are or what you spend:</p>
       <ul class="muted" style="font-size:13px;margin:0 0 10px;padding-left:18px">
-        <li>Stock and fund symbols you track or own, never how much you hold. They go to a price service for the current price, and, mixed in with everyone else's, to an AI service that writes a short line on why a stock moved. Nobody else using the app can see which ones are yours, and the shared daily market recap is written only about 20 well-known companies, never from what anyone tracks.</li>
-        <li>The names of subscription services you record, used to search public pricing pages for a cheaper plan. The service name only, never your account or what you pay, and nobody else using the app sees which services are yours.</li>
+        <li>Stock and fund symbols you track or own, never how much you hold. They go to a price service for the current price and the day's news, fetched and stored for your account on its own, so nobody else using the app can tell which ones are yours. They are not sent to any AI company: the shared daily market recap and its short written lines are only about 20 well-known companies.</li>
         <li>Your browser loads shared code libraries from public code networks: three from jsDelivr when the page opens, and one from SheetJS, its maker, the first time you use an Excel file. Each is fixed to an exact version and checked before it runs. Loading them is how those networks see your IP address, the same as for any site using a public library.</li>
       </ul>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Your subscriptions stay here. The app checks public prices for a short list of well-known services for everyone, whatever anyone subscribes to, and shows you what it found for the ones you record.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What is stored on your device</h3>
       <p class="muted" style="font-size:13px;margin:0 0 10px">Your sign-in, so you stay signed in, and a handful of small display preferences: which tabs you had open, which breakdown you last chose, and whether you picked the light or dark look. There are no cookies and no advertising or tracking code of any kind.</p>

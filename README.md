@@ -162,22 +162,26 @@ Postgres on every table, so it holds even if the application code has a bug,
 and it is checked on every single request rather than trusted once at sign-in.
 Because anyone can make an account, this covers more than balances and
 transactions: no account can see which stocks or funds anyone else owns or
-follows, or which subscriptions they pay for. Shared market data such as
-prices, news and company facts is readable only for symbols you own or track
-yourself, plus four index funds everyone sees. The daily market recap is
-written only about 20 well-known companies, never from what anyone tracks,
-and each person's own "biggest moves" are worked out from their own prices. A
-record can only point at its owner's own accounts and purchases, so nobody can
-attach anything to someone else's.
+follows, or which subscriptions they pay for. Market data is shared only for
+20 well-known companies and four index funds, which are fetched every time
+whoever follows them. Any other company's prices, news and facts are fetched
+and stored separately for each account that follows it, so nothing you see
+depends on, or reveals, what anyone else follows. The daily market recap is
+written only about those 20 companies, and each person's own "biggest moves"
+are worked out from their own prices. A record can only point at its owner's
+own accounts and purchases, so nobody can attach anything to someone else's.
+Each account also has limits on how much it can store and how many companies
+it can follow, so no single account can fill the shared free database or use
+up the free price service for everyone.
 
 Your transactions, balances and notes are never given to an AI company or
 anyone else to use. Questions about your spending, and the daily note on what
 you own, are written by a model on the home machine, not by a cloud AI service;
 they reach it through a Cloudflare tunnel, and the database itself is hosted by
 Supabase. What does leave is deliberately impersonal: share symbols (never
-amounts) sent to a price service and, pooled with everyone else's, to an AI
-that writes a short line on why a stock moved; and the names of subscription
-services looked up against public pricing pages.
+amounts) sent to a price service, and the names of a short, fixed list of
+well-known subscription services looked up against public pricing pages for
+everyone, whatever anyone subscribes to.
 
 There is no analytics, no tracking, and nothing sets a cookie. The app itself
 has a plainer version of all this under **Profile → Your data and privacy**,

@@ -98,25 +98,48 @@ test("anyone may sign up: the invitation gate from 92 is removed by 93", () => {
 });
 
 // Anyone may make an account, so the shared market data must not show one
-// person's choices to another (93). Each per-symbol table is limited to the
-// reader's own symbols plus the four index funds, and those four are written
-// in three places that must agree.
-test("each per-symbol table is limited to the reader's own symbols and the four index funds", () => {
-  const sql = read("supabase/93_open_signup_private_market_data.sql");
+// person's choices to another. 93 limited each per-symbol table to symbols on
+// the reader's own list, and a probe showed that was not enough: rows were
+// shared, so listing every ticker revealed which ones had rows. Since 94 a
+// symbol outside the public list exists only as each follower's own copy.
+test("a symbol outside the public list is readable only as the reader's own copy", () => {
+  const sql = read("supabase/94_own_copies_of_private_market_data.sql");
   for (const table of ["asset_price_findings", "market_index_findings", "daily_prices", "symbol_fundamentals"]) {
     const policy = sql.match(new RegExp(`create policy "[^"]+" on public\\.${table} for select\\s+using \\(([\\s\\S]*?)\\);`));
-    assert.ok(policy, `${table} has no select policy in 93`);
-    assert.match(policy[1], /upper\(btrim\(symbol\)\) in \(select public\.my_symbols\(\)\)/, `${table} is not limited to the reader's symbols`);
+    assert.ok(policy, `${table} has no select policy in 94`);
+    assert.match(policy[1], /owner = \(select auth\.uid\(\)\)/, `${table} does not show the reader its own copies`);
+    assert.match(policy[1], /owner = '00000000-0000-0000-0000-000000000000'::uuid\s+and upper\(btrim\(symbol\)\) in \(select public\.public_symbols\(\)\)/,
+      `${table} shows shared rows outside the public list`);
+    assert.doesNotMatch(policy[1], /my_symbols/, `${table} still decides by the reader's list, which is what leaked`);
   }
-  assert.match(sql, /lower\(btrim\(service\)\) in \(\s*select lower\(btrim\(name\)\) from public\.subscriptions where user_id = auth\.uid\(\)\)/,
+  assert.match(read("supabase/93_open_signup_private_market_data.sql"),
+    /lower\(btrim\(service\)\) in \(\s*select lower\(btrim\(name\)\) from public\.subscriptions where user_id = auth\.uid\(\)\)/,
     "deal findings are not limited to the reader's own subscription names");
-  const sqlFunds = [...sql.match(/select unnest\(array\[([^\]]+)\]\)/)[1].matchAll(/'([A-Z]+)'/g)].map((m) => m[1]).sort();
-  const proxies = (src) => {
-    const block = src.slice(src.indexOf("const MARKET_INDEX_ETF_PROXIES = {"), src.indexOf("};", src.indexOf("const MARKET_INDEX_ETF_PROXIES = {")));
-    return [...block.matchAll(/:\s*"([A-Z]+)"/g)].map((m) => m[1]).sort();
-  };
-  assert.deepEqual(proxies(APP), sqlFunds);
-  assert.deepEqual(proxies(read("tools/price-agent.js")), sqlFunds);
+});
+
+test("the public list is the same in the database, the price job, the app and the live-price route", () => {
+  const words = (text) => [...text.matchAll(/"([A-Z]+)"|'([A-Z]+)'/g)].map((m) => m[1] || m[2]).sort();
+  const sql = read("supabase/94_own_copies_of_private_market_data.sql");
+  const fromSql = words(sql.match(/select unnest\(array\[([^\]]+)\]\)/)[1]);
+  const agent = read("tools/price-agent.js");
+  const proxies = (src) => src.slice(src.indexOf("const MARKET_INDEX_ETF_PROXIES = {"), src.indexOf("};", src.indexOf("const MARKET_INDEX_ETF_PROXIES = {")));
+  const valuesOf = (block) => [...block.matchAll(/:\s*"([A-Z]+)"/g)].map((m) => m[1]);
+  const agentList = [...words(agent.slice(agent.indexOf("const DEFAULT_MOVERS_WATCHLIST = ["), agent.indexOf("];", agent.indexOf("const DEFAULT_MOVERS_WATCHLIST = [")))),
+    ...valuesOf(proxies(agent))].sort();
+  const appSeed = APP.slice(APP.indexOf("const DEFAULT_WATCHLIST = {"), APP.indexOf("};", APP.indexOf("const DEFAULT_WATCHLIST = {")));
+  const appList = [...[...appSeed.matchAll(/\b([A-Z]+):/g)].map((m) => m[1]), ...valuesOf(proxies(APP))].sort();
+  const worker = read("worker.js");
+  const workerList = words(worker.slice(worker.indexOf("const PUBLIC_SYMBOLS = new Set(["), worker.indexOf("]);", worker.indexOf("const PUBLIC_SYMBOLS = new Set(["))));
+  assert.equal(fromSql.length, 24);
+  assert.deepEqual(agentList, fromSql);
+  assert.deepEqual(appList, fromSql);
+  assert.deepEqual(workerList, fromSql);
+});
+
+test("the deal job searches every service it knows, not the ones people subscribe to", () => {
+  const deal = read("tools/deal-agent.js");
+  assert.doesNotMatch(deal, /subscriptions\?select/, "the deal job reads people's subscriptions again, so a finding says someone pays for it");
+  assert.match(deal, /sbGet\("service_domains\?select=service,domains&order=service"\)/);
 });
 
 test("the shared recap and news digest are built from the public list, never everyone's", () => {

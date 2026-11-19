@@ -9,7 +9,7 @@
 // not as a fallback alongside it. Confirmed by reading this whole file end
 // to end: buildQueries() generates the same 5 generic angles ("pricing
 // plans", "student discount", "promo code", "annual plan discount", "family
-// plan price") for EVERY subscribed service, regardless of whether any
+// plan price") for EVERY known service, regardless of whether any
 // specific user actually qualifies for any of them - this script never
 // reads a profile's eligibility fields (employer/school/military status/
 // etc) at all. Per-user eligibility matching happens entirely separately,
@@ -37,7 +37,8 @@
 // SearXNG+local-Gemma pipeline always had, just with different providers
 // for each half.
 //
-// What it does, per active-subscription service:
+// What it does, per service with a domain on file (every one, whoever
+// subscribes - see loadDomainMap):
 //   1. Look up the service's allowlisted domain(s) in service_domains. No
 //      entry -> skip and log (see the project notes's Option C
 //      decision - we never guess a domain).
@@ -123,6 +124,12 @@ const MAX_429_RETRIES = 2;          // per call, exponential backoff (3s, 6s)
 // constant in tools/price-agent.js for the full reasoning (same
 // combined-monthly-budget math applies to both scripts together).
 const MAX_TAVILY_CALLS_PER_RUN = 100;
+
+// Gemini reads a page only when the price pattern found nothing on it. Every
+// service is searched now, about 40 angles a week, and the free allowance is
+// 20 requests a day shared with price-agent, so this run takes at most 8.
+const MAX_GEMINI_FALLBACKS_PER_RUN = 8;
+let geminiFallbackCount = 0;
 let tavilyCallCount = 0;
 
 function requireEnv() {
@@ -243,17 +250,17 @@ async function writeRunStatus(crashError) {
   }
 }
 
-// ---- Watchlist: only services the user actually subscribes to --------------
-async function loadWatchlist() {
-  const rows = await sbGet("subscriptions?select=name&is_active=eq.true");
-  return [...new Set(rows.map((r) => r.name).filter(Boolean))];
-}
-
-async function loadDomainMap(services) {
-  if (!services.length) return new Map();
-  const filter = `in.(${services.map((s) => `"${s.replace(/"/g, '\\"')}"`).join(",")})`;
-  const rows = await sbGet(`service_domains?select=service,domains&service=${filter}`);
-  return new Map(rows.map((r) => [r.service, r.domains]));
+// ---- Every service this job knows how to search ---------------------------
+// Every service with a domain on file, WHOEVER subscribes to it (94). This
+// used to be the services people subscribe to, which made a finding's
+// existence say that somebody pays for that service: an account naming a
+// subscription after each one could read which. Searching all of them every
+// week costs about 40 Tavily searches, and the services are a short list the
+// maintainer keeps; each account still sees only findings for services it
+// has a subscription of that exact name to.
+async function loadDomainMap() {
+  const rows = await sbGet("service_domains?select=service,domains&order=service");
+  return new Map(rows.filter((r) => r.service && Array.isArray(r.domains) && r.domains.length).map((r) => [r.service, r.domains]));
 }
 
 // ---- Query generation: multiple angles, not just "pricing" -----------------
@@ -541,6 +548,12 @@ async function processService(service, domains) {
     // Regex found nothing on this angle - fall back to Gemini, reusing
     // the SAME trusted results already fetched above (never re-searching
     // Tavily, which would double-count tavilyCallCount/queryAttempts).
+    // Capped: the allowance is 20 a day, shared with price-agent.
+    if (geminiFallbackCount >= MAX_GEMINI_FALLBACKS_PER_RUN) {
+      console.warn(`[${service}] no price by pattern for "${query}", and this run's ${MAX_GEMINI_FALLBACKS_PER_RUN} AI fallbacks are used - skipping`);
+      continue;
+    }
+    geminiFallbackCount++;
     let text;
     try {
       const prompt = [
@@ -581,23 +594,16 @@ async function processService(service, domains) {
 async function main() {
   requireEnv();
 
-  const watchlist = await loadWatchlist();
-  if (!watchlist.length) {
-    console.log("No active subscriptions - nothing to search for. Exiting.");
+  const domainMap = await loadDomainMap();
+  const services = [...domainMap.keys()];
+  if (!services.length) {
+    console.log("No service has a domain on file - nothing to search for. Exiting.");
     return;
   }
-  console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
-
-  const domainMap = await loadDomainMap(watchlist);
-  const skipped = watchlist.filter((s) => !domainMap.has(s));
-  if (skipped.length) {
-    console.log(
-      `Skipping (no service_domains entry - add one to search these): ${skipped.join(", ")}`
-    );
-  }
+  console.log(`Services (${services.length}): ${services.join(", ")}`);
 
   const allFindings = [];
-  for (const service of watchlist) {
+  for (const service of services) {
     if (tavilyCallCount >= MAX_TAVILY_CALLS_PER_RUN) {
       console.warn(`Tavily call budget (${MAX_TAVILY_CALLS_PER_RUN}/run) reached - stopping early, writing what was already found.`);
       break;

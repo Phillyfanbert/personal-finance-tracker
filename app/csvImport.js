@@ -387,10 +387,12 @@ export function normalizeRow(rawRow, mapping, { flipSign = false, rowKind = "exp
   // An apostrophe in front of = + - @ is how this app's own export (and most
   // spreadsheets) keeps text from being run as a formula; it is not part of
   // the description.
+  // Trimmed to what the database keeps (95), so one long memo line in a
+  // bank's file cannot refuse the whole import.
   const description = mapping.descCol != null
-    ? (rawRow[mapping.descCol] || "").trim().replace(/^'(?=[=+\-@])/, "") || null
+    ? (rawRow[mapping.descCol] || "").trim().replace(/^'(?=[=+\-@])/, "").slice(0, 500).trim() || null
     : null;
-  const category = mapping.categoryCol != null ? (rawRow[mapping.categoryCol] || "").trim() || null : null;
+  const category = mapping.categoryCol != null ? (rawRow[mapping.categoryCol] || "").trim().slice(0, 100).trim() || null : null;
   return { occurred_at, amount, description, category, kind };
 }
 

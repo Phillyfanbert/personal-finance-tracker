@@ -82,9 +82,15 @@
 // over the real search-result content Tavily already fetched - never its
 // own general knowledge.
 //
-// What it does, per distinct assets.price_symbol in use across all users
-// (a symbol's price is a public fact, not user-specific - same reasoning
-// deal_findings already uses for service prices):
+// WHO GETS WHAT (94, 2026-11-19). The public list (the 20 starter companies
+// and the four index funds) is priced every run and stored once, shared.
+// Every other symbol is priced only within each following account's own
+// share of the budget (planShares) and stored as that account's own copy,
+// so nothing one account sees depends on what another follows. The written
+// explanation below is for the public list only.
+//
+// What it does, per symbol (the steps below predate 94; the explanation in
+// step 2 is now the public list's biggest movers only):
 //   1. Fetch the current price directly from Finnhub (fetchFinnhubFinding()).
 //      No search, no LLM extraction, no domain-trust filtering needed - this
 //      is a direct, authoritative numeric API response, not scraped text a
@@ -430,11 +436,20 @@ let tavilyCallCount = 0;
 
 // Separate cap/counter from Tavily's above - two independent services
 // with independent free-tier budgets, conflating their counters would
-// make the cap meaningless for either one. Finnhub's 60/min free limit
-// is generous relative to this project's ~25-symbol watchlist, so this
-// is future-growth headroom, same reasoning as MAX_TAVILY_CALLS_PER_RUN.
-const MAX_FINNHUB_CALLS_PER_RUN = 100;
+// make the cap meaningless for either one. The public list takes 24 of
+// these every run; the rest is shared between accounts by planShares(),
+// each at most 50 companies outside the public list (94). Calls are spaced
+// FINNHUB_MIN_GAP_MS apart, so a full run is under three minutes and stays
+// below Finnhub's 60 a minute with room left for the app's live quotes.
+const MAX_FINNHUB_CALLS_PER_RUN = 150;
 let finnhubCallCount = 0;
+const FINNHUB_MIN_GAP_MS = 1100;
+let lastFinnhubCallAt = 0;
+async function finnhubPace() {
+  const wait = lastFinnhubCallAt + FINNHUB_MIN_GAP_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastFinnhubCallAt = Date.now();
+}
 
 // Separate again from both counters above - company-news is a different
 // Finnhub endpoint that may have its own rate limit, not independently
@@ -443,7 +458,7 @@ let finnhubCallCount = 0;
 // unlikely to matter in practice, but keeping its own counter means a
 // tighter real limit on this endpoint specifically degrades gracefully
 // without touching the (already-verified) /quote budget.
-const MAX_FINNHUB_NEWS_CALLS_PER_RUN = 30;
+const MAX_FINNHUB_NEWS_CALLS_PER_RUN = 40;
 let finnhubNewsCallCount = 0;
 
 // FAST_ONLY runs every 900s (15 min, tools/setup-server-machine.sh) - four
@@ -623,6 +638,19 @@ async function sbGet(path) {
   return res.json();
 }
 
+// Every row, a page at a time. PostgREST stops at its row limit without
+// saying so, which would quietly drop accounts from the price plan once
+// there are enough of them. `order` must be unique so no row repeats or is
+// skipped between pages.
+async function sbGetAll(path, order, pageSize = 1000) {
+  const rows = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await sbGet(`${path}${path.includes("?") ? "&" : "?"}order=${order}&limit=${pageSize}&offset=${offset}`);
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
+}
+
 async function sbInsert(table, rows) {
   if (DRY_RUN) {
     console.log(`[dry-run] would insert ${rows.length} row(s) into ${table}:`);
@@ -694,17 +722,17 @@ async function sbUpsertRows(table, rows, conflictColumns) {
 //
 // Best-effort like the purge: a rollup failure must never crash a run or
 // mask the real findings already written.
-async function writeDailyCandles(results) {
-  const candles = results.map((r) => r.dailyCandle).filter(Boolean);
+// One row per symbol, day and owner (94): the shared row for the public
+// list, an account's own copy for anything else.
+async function writeDailyCandles(candles) {
+  candles = candles.filter(Boolean);
   if (!candles.length) return;
-  // One symbol can appear in more than one loop (a user's own watchlist
-  // symbol that's also a tracked mover), and PostgREST rejects a payload
-  // containing two rows with the same conflict key - "ON CONFLICT DO
-  // UPDATE command cannot affect row a second time."
+  // PostgREST rejects a payload holding two rows with the same conflict key
+  // ("ON CONFLICT DO UPDATE command cannot affect row a second time").
   const byKey = new Map();
-  for (const candle of candles) byKey.set(`${candle.symbol}|${candle.trade_date}`, candle);
+  for (const candle of candles) byKey.set(`${candle.symbol}|${candle.trade_date}|${candle.owner}`, candle);
   try {
-    await sbUpsertRows("daily_prices", [...byKey.values()], "symbol,trade_date");
+    await sbUpsertRows("daily_prices", [...byKey.values()], "symbol,trade_date,owner");
     console.log(`${DRY_RUN ? "Would have rolled up" : "Rolled up"} ${byKey.size} daily candle(s) into daily_prices.`);
   } catch (err) {
     console.warn(`Daily candle rollup failed (non-fatal): ${err.message}`);
@@ -925,10 +953,11 @@ const RECAP_MOVER_COUNT = 5;
 // sane size against a 20-request DAILY Gemini quota.
 const RECAP_NEWS_POOL_MAX = 40;
 const RECAP_NEWS_PER_SYMBOL_MAX = 3;
-// Headlines land on roughly one run in four for ~20 symbols at a time, so
-// this covers several batches - enough that every symbol resolves even
-// when the most recent batch was partial.
-const RECAP_HEADLINE_SCAN_LIMIT = 150;
+// Headlines land on roughly one run in four, and since 94 an account's own
+// copies carry them too, so this covers the last two days of every owner's
+// batches. PostgREST's own row limit is the same 1,000; the newest come
+// first, so anything cut is the oldest.
+const RECAP_HEADLINE_SCAN_LIMIT = 1000;
 const r2 = (n) => (Number.isFinite(Number(n)) ? Math.round(Number(n) * 100) / 100 : null);
 
 // Newest headlines per symbol across both findings tables. Deliberately
@@ -937,18 +966,33 @@ const r2 = (n) => (Number.isFinite(Number(n)) ? Math.round(Number(n) * 100) / 10
 // app/investments.js's latestHeadlinesForSymbol() makes, and for the same
 // reason: a price-only row from five minutes ago would otherwise hide a
 // perfectly good set from an hour ago.
-async function latestHeadlinesBySymbol() {
-  const bySymbol = new Map();
+// Keyed by owner and symbol (headlineKey), because an account's copy only
+// carries headlines fetched within its own share (94): a headline on one
+// account's copy must never be read as another account's.
+async function latestHeadlines() {
+  const latest = new Map();
+  const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
   for (const table of ["market_index_findings", "asset_price_findings"]) {
     const rows = await sbGet(
-      `${table}?select=symbol,headlines,found_at&headlines=not.is.null&order=found_at.desc&limit=${RECAP_HEADLINE_SCAN_LIMIT}`
+      `${table}?select=symbol,owner,headlines,found_at&headlines=not.is.null&found_at=gte.${since}&order=found_at.desc&limit=${RECAP_HEADLINE_SCAN_LIMIT}`
     );
     for (const row of rows) {
       if (!Array.isArray(row.headlines) || !row.headlines.length) continue;
-      const key = (row.symbol || "").trim().toUpperCase();
-      const existing = bySymbol.get(key);
-      if (!existing || row.found_at > existing.found_at) bySymbol.set(key, row);
+      const key = headlineKey(row.owner || PUBLIC_OWNER, row.symbol);
+      const existing = latest.get(key);
+      if (!existing || row.found_at > existing.found_at) latest.set(key, row);
     }
+  }
+  return latest;
+}
+const headlineKey = (owner, symbol) => `${owner}|${String(symbol || "").trim().toUpperCase()}`;
+// The shared rows' headlines only, by symbol: what the recap and the digest,
+// which every account reads, are allowed to draw on.
+function sharedHeadlines(latest) {
+  const bySymbol = new Map();
+  for (const [key, row] of latest) {
+    const [owner, symbol] = key.split("|");
+    if (owner === PUBLIC_OWNER) bySymbol.set(symbol, row);
   }
   return bySymbol;
 }
@@ -977,6 +1021,7 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 async function fetchFinnhubJson(url, label) {
   if (finnhubCallCount >= MAX_FINNHUB_CALLS_PER_RUN) return null;
   finnhubCallCount++;
+  await finnhubPace();
   const res = await fetchWithRetry(url, {}, SEARCH_TIMEOUT_MS);
   if (res.status === 401 || res.status === 403) {
     // The whole point of the latch: one definitive "not on your tier"
@@ -1033,11 +1078,14 @@ async function fetchFundamentals(symbol) {
 // Only for symbols whose stored row is missing or a day old. Best-effort
 // throughout: this must never crash a run or delay the real price writes,
 // which are the job that actually matters.
+// The SHARED rows: the public list and the whole-market movers, which
+// belong to nobody. An account's own companies get their own copies from
+// refreshOwnFundamentals() below.
 async function refreshFundamentals(symbols) {
   if (!symbols.length) return;
   let existing = [];
   try {
-    existing = await sbGet("symbol_fundamentals?select=symbol,fetched_at");
+    existing = await sbGet(`symbol_fundamentals?select=symbol,fetched_at&owner=eq.${PUBLIC_OWNER}`);
   } catch (err) {
     console.warn(`Could not read symbol_fundamentals (${err.message}) - skipping fundamentals this run.`);
     return;
@@ -1056,18 +1104,17 @@ async function refreshFundamentals(symbols) {
   const rows = [];
   for (const symbol of stale) {
     if (fundamentalsUnavailable) break;
-    const row = await fetchFundamentals(symbol);
-    if (row) rows.push(row);
-    await sleep(REQUEST_DELAY_MS);
+    const row = await fundamentalsOnce(symbol);
+    if (row) rows.push({ ...row, owner: PUBLIC_OWNER });
   }
   if (!rows.length) {
     console.log("No fundamentals rows written this run.");
     return;
   }
   try {
-    await sbUpsertRows("symbol_fundamentals", rows, "symbol");
+    await sbUpsertRows("symbol_fundamentals", rows, "symbol,owner");
     console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${rows.length} fundamentals row(s).`);
-    await backfillWatchlistCompanyNames(rows);
+    await backfillWatchlistCompanyNames(rows.map((r) => ({ symbol: r.symbol, company_name: r.company_name })));
   } catch (err) {
     console.warn(`Fundamentals write failed (non-fatal): ${err.message}`);
   }
@@ -1076,13 +1123,17 @@ async function refreshFundamentals(symbols) {
 // A real company name from the profile lets pickRelevantHeadline() judge
 // relevance for a user-added symbol that was never in the seeded defaults.
 // Only fills a NULL - never overwrites a name the user set themselves.
+// `user_id` limits it to one account, for a company only that account's own
+// share fetched; without it every account's row for that symbol is filled,
+// which is only done for the public list and the whole-market movers.
 async function backfillWatchlistCompanyNames(rows) {
   if (DRY_RUN) return;
   for (const row of rows) {
     if (!row.company_name) continue;
+    const who = row.user_id ? `user_id=eq.${encodeURIComponent(row.user_id)}&` : "";
     try {
       await fetchWithTimeout(
-        `${SUPABASE_URL}/rest/v1/watchlist_symbols?symbol=eq.${encodeURIComponent(row.symbol)}&company_name=is.null`,
+        `${SUPABASE_URL}/rest/v1/watchlist_symbols?${who}symbol=eq.${encodeURIComponent(row.symbol)}&company_name=is.null`,
         {
           method: "PATCH",
           headers: {
@@ -1429,7 +1480,7 @@ function acceptSummary(prompt) {
 // "no trusted-domain result" out of queryFailures, so this deliberately
 // does not touch those counters and won't turn the card's status amber.
 // Proper-cased company names for PROSE ("Walmart Inc"), distinct from the
-// lowercase ones loadMoversWatchlist() returns - those are lowercased on
+// lowercase ones watchlist_symbols stores - those are lowercased on
 // purpose for case-insensitive headline matching and would read wrong in a
 // sentence. Falls back to the watchlist's own name so a symbol with no
 // fundamentals row still gets named rather than showing a bare ticker.
@@ -1440,7 +1491,7 @@ async function loadDisplayCompanyNames(fallbackNames) {
     names[symbol] = String(name).replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
   }
   try {
-    const rows = await sbGet("symbol_fundamentals?select=symbol,company_name");
+    const rows = await sbGet(`symbol_fundamentals?select=symbol,company_name&owner=eq.${PUBLIC_OWNER}`);
     for (const row of rows) {
       const symbol = (row.symbol || "").trim().toUpperCase();
       if (symbol && row.company_name) names[symbol] = String(row.company_name).trim();
@@ -1457,7 +1508,7 @@ async function loadDisplayCompanyNames(fallbackNames) {
 // nothing had ever read it. Costs no API call.
 async function loadIndustries() {
   try {
-    const rows = await sbGet("symbol_fundamentals?select=symbol,industry&industry=not.is.null");
+    const rows = await sbGet(`symbol_fundamentals?select=symbol,industry&industry=not.is.null&owner=eq.${PUBLIC_OWNER}`);
     return Object.fromEntries(
       rows.map((r) => [(r.symbol || "").trim().toUpperCase(), String(r.industry).trim()])
         .filter(([symbol, industry]) => symbol && industry)
@@ -1610,7 +1661,7 @@ async function attachMoverContext(movers) {
 
   let names = {};
   try {
-    const rows = await sbGet("symbol_fundamentals?select=symbol,company_name");
+    const rows = await sbGet(`symbol_fundamentals?select=symbol,company_name&owner=eq.${PUBLIC_OWNER}`);
     for (const row of rows) {
       const symbol = (row.symbol || "").trim().toUpperCase();
       if (symbol && row.company_name) names[symbol] = String(row.company_name).trim();
@@ -1833,36 +1884,51 @@ function trendForSymbols(rowsByDate, dates, symbols) {
 // company (pickRelevantHeadline, the recap's own check). The app builds each
 // person's "biggest moves" from their own prices with this attached, so it
 // reads exactly as the shared recap used to, without that recap ever naming a
-// company only one person follows. daily_prices is readable only for your own
-// symbols (93), which is what keeps this private.
+// company only one person follows.
+//
+// Per row, and so per owner (94): an account's copy takes its headline from
+// that account's own copies and its own name for the company, never from
+// another account's, so the headline it reads would be the same if nobody
+// else followed the stock. A shared row is only ever a public-list symbol.
 //
 // Upserted on the row's own key with its own close, so the merge changes only
 // the headline. A stock with nothing relevant is left as it is rather than
 // given a headline about something else.
-async function storeSymbolHeadlines(tradeDate, todayRows, headlines, etfTickers) {
-  const { names: trackedNames } = await loadMoversWatchlist();
-  const names = { ...DEFAULT_MOVER_COMPANY_NAMES, ...trackedNames };
+async function storeSymbolHeadlines(tradeDate, headlines, etfTickers, follows) {
+  const publicSet = new Set(publicSymbolList());
+  const namesByOwner = new Map(follows.map((a) => [a.id, a.names]));
+  const dayRows = await sbGetAll(`daily_prices?select=symbol,owner,close&trade_date=eq.${tradeDate}`, "symbol,owner");
   const rows = [];
-  for (const row of todayRows) {
+  for (const row of dayRows) {
     const symbol = (row.symbol || "").trim().toUpperCase();
+    const owner = row.owner || PUBLIC_OWNER;
     if (!symbol || etfTickers.has(symbol)) continue;
-    const found = headlines.get(symbol);
+    if (owner === PUBLIC_OWNER && !publicSet.has(symbol)) continue;
+    const names = owner === PUBLIC_OWNER
+      ? DEFAULT_MOVER_COMPANY_NAMES
+      : { ...DEFAULT_MOVER_COMPANY_NAMES, ...(namesByOwner.get(owner) || {}) };
+    const found = headlines.get(headlineKey(owner, symbol));
     const top = pickRelevantHeadline(symbol, found && found.headlines, new Set(), names);
     if (!top) continue;
     rows.push({
       symbol: row.symbol,
       trade_date: tradeDate,
+      owner,
       close: row.close,
       headline: { title: top.title, url: top.url, source: top.source || null, summary: top.summary || null },
     });
   }
-  await sbUpsertRows("daily_prices", rows, "symbol,trade_date");
+  await sbUpsertRows("daily_prices", rows, "symbol,trade_date,owner");
   console.log(`${DRY_RUN ? "Would have stored" : "Stored"} the day's headline for ${rows.length} stock(s) on ${tradeDate}.`);
 }
 
-async function buildDailyRecap(contextHeadlines = []) {
+// Built from the SHARED rows only (owner = PUBLIC_OWNER): the public list,
+// which the price job prices every run whoever follows what. `follows` is
+// passed through to storeSymbolHeadlines() for each account's own copies.
+async function buildDailyRecap(contextHeadlines = [], follows = []) {
   queryAttempts++;
-  const dateRows = await sbGet("daily_prices?select=trade_date&order=trade_date.desc&limit=200");
+  const shared = `owner=eq.${PUBLIC_OWNER}`;
+  const dateRows = await sbGet(`daily_prices?select=trade_date&${shared}&order=trade_date.desc&limit=200`);
   const days = [...new Set(dateRows.map((r) => r.trade_date))];
   if (!days.length) {
     queryFailures++;
@@ -1871,9 +1937,9 @@ async function buildDailyRecap(contextHeadlines = []) {
   }
   const [tradeDate, priorDate] = days;
 
-  const todayRows = await sbGet(`daily_prices?select=symbol,close,previous_close&trade_date=eq.${tradeDate}`);
+  const todayRows = await sbGet(`daily_prices?select=symbol,close,previous_close&trade_date=eq.${tradeDate}&${shared}`);
   const priorRows = priorDate
-    ? await sbGet(`daily_prices?select=symbol,close&trade_date=eq.${priorDate}`)
+    ? await sbGet(`daily_prices?select=symbol,close&trade_date=eq.${priorDate}&${shared}`)
     : [];
   const priorClose = new Map(priorRows.map((r) => [(r.symbol || "").toUpperCase(), Number(r.close)]));
 
@@ -1895,7 +1961,7 @@ async function buildDailyRecap(contextHeadlines = []) {
   let trends = {};
   try {
     const trendRows = trendDates.length > 1
-      ? await sbGet(`daily_prices?select=symbol,close,trade_date&trade_date=in.(${trendDates.join(",")})`)
+      ? await sbGet(`daily_prices?select=symbol,close,trade_date&trade_date=in.(${trendDates.join(",")})&${shared}`)
       : [];
     const byDate = new Map();
     for (const r of trendRows) {
@@ -1911,7 +1977,8 @@ async function buildDailyRecap(contextHeadlines = []) {
     console.warn(`Could not build the multi-day trend (non-fatal): ${err.message}`);
   }
 
-  const headlines = await latestHeadlinesBySymbol();
+  const allHeadlines = await latestHeadlines();
+  const headlines = sharedHeadlines(allHeadlines);
   const etfTickers = new Set(Object.values(MARKET_INDEX_ETF_PROXIES));
   // The public list, never the union of everyone's (see publicMoversList()).
   const { symbols: moverSymbols, names: companyNames } = publicMoversList();
@@ -1920,7 +1987,7 @@ async function buildDailyRecap(contextHeadlines = []) {
   // Every owned or tracked stock's own headline for the day, on its own row.
   // Separate from the shared recap below and never fatal to it.
   try {
-    await storeSymbolHeadlines(tradeDate, todayRows, headlines, etfTickers);
+    await storeSymbolHeadlines(tradeDate, allHeadlines, etfTickers, follows);
   } catch (err) {
     console.warn(`Could not store each stock's headline for ${tradeDate} (non-fatal): ${err.message}`);
   }
@@ -2173,55 +2240,186 @@ async function writeRunStatus(crashError) {
   }
 }
 
-// ---- Watchlist: every symbol in use across all users -----------------------
-async function loadWatchlist() {
-  const rows = await sbGet("assets?select=price_symbol&price_symbol=not.is.null");
-  return [...new Set(rows.map((r) => (r.price_symbol || "").trim()).filter(Boolean))];
+// ---- Who follows what, per account (94) ------------------------------------
+
+// The all-zero id marks a SHARED row: the public list, priced every run
+// whoever follows what. Every other symbol is stored only as an account's
+// own copy (owner = that account), so its existence says nothing about who
+// else follows it. Must match the column default in 94.
+const PUBLIC_OWNER = "00000000-0000-0000-0000-000000000000";
+
+// The 20 starter companies and the four index funds, the only symbols stored
+// as shared rows. Must match public_symbols() in 94, app/app.js and
+// worker.js; tests/security.test.mjs compares them.
+function publicSymbolList() {
+  return [...DEFAULT_MOVERS_WATCHLIST, ...Object.values(MARKET_INDEX_ETF_PROXIES)];
 }
 
-// The movers watchlist, now read from watchlist_symbols (56_watchlist_and_
-// fundamentals.sql) instead of a hardcoded constant that had to be kept in
-// sync by hand with app/app.js. Reads the union across ALL users the same
-// way loadWatchlist() above does for assets.price_symbol, to decide what to
-// FETCH and to write per-symbol rows, which the database shows only to people
-// who own or track that symbol (93). Nothing built from this union may go into
-// a row every account can read: the shared recap and digest use
-// publicMoversList() instead.
-//
-// Falls back to the built-in defaults if the table is empty or unreachable,
-// so a fetch failure degrades to today's behavior rather than pricing
-// nothing at all.
 // What the SHARED recap and news digest are built from: the 20 large
 // companies every new account starts with, which are in this public
 // repository. Anyone can sign up, and those two rows are readable by every
 // account, so they must never be built from the union of everyone's tracked
 // list: that named other people's companies (93). Each person's own movers
 // are worked out in the app from their own prices, with the headline this
-// job stores on each stock's own daily_prices row (storeSymbolHeadlines),
-// where row-level security limits it to people who own or track that stock.
+// job stores on each stock's own daily_prices row (storeSymbolHeadlines).
 function publicMoversList() {
   return { symbols: [...DEFAULT_MOVERS_WATCHLIST], names: { ...DEFAULT_MOVER_COMPANY_NAMES } };
 }
 
-async function loadMoversWatchlist() {
-  try {
-    const rows = await sbGet("watchlist_symbols?select=symbol,company_name");
-    const symbols = [...new Set(
-      rows.map((r) => (r.symbol || "").trim().toUpperCase()).filter(Boolean)
-    )];
-    const names = {};
-    for (const row of rows) {
-      const symbol = (row.symbol || "").trim().toUpperCase();
-      if (symbol && row.company_name) names[symbol] = String(row.company_name).toLowerCase();
-    }
-    if (symbols.length) return { symbols, names };
-    console.warn("watchlist_symbols is empty - falling back to the built-in default watchlist.");
-  } catch (err) {
-    console.warn(`Could not read watchlist_symbols (${err.message}) - using the built-in default watchlist.`);
-  }
-  return { symbols: [...DEFAULT_MOVERS_WATCHLIST], names: { ...DEFAULT_MOVER_COMPANY_NAMES } };
+// The same shape the database checks (94), uppercased.
+const SYMBOL_SHAPE = /^[A-Z0-9][A-Z0-9.\-]{0,14}$/;
+function normSymbol(raw) {
+  const s = String(raw || "").trim().toUpperCase();
+  return SYMBOL_SHAPE.test(s) ? s : null;
 }
 
+// Each account's own companies outside the public list: what it owns (a
+// holding's price symbol) and what it tracks, plus its own names for them,
+// which decide whether a headline is about the company. Kept apart per
+// account on purpose: nothing priced or stored for one may depend on what
+// another follows.
+async function loadFollows() {
+  const [held, tracked] = await Promise.all([
+    sbGetAll("assets?select=id,user_id,price_symbol&price_symbol=not.is.null", "id"),
+    sbGetAll("watchlist_symbols?select=id,user_id,symbol,company_name", "id"),
+  ]);
+  const publicSet = new Set(publicSymbolList());
+  const byAccount = new Map();
+  const entry = (id) => {
+    if (!byAccount.has(id)) byAccount.set(id, { id, owned: new Set(), tracked: new Set(), names: {} });
+    return byAccount.get(id);
+  };
+  for (const row of held) {
+    const s = normSymbol(row.price_symbol);
+    if (s && row.user_id && !publicSet.has(s)) entry(row.user_id).owned.add(s);
+  }
+  for (const row of tracked) {
+    const s = normSymbol(row.symbol);
+    if (!s || !row.user_id) continue;
+    if (row.company_name) entry(row.user_id).names[s] = String(row.company_name).toLowerCase();
+    if (!publicSet.has(s)) entry(row.user_id).tracked.add(s);
+  }
+  return [...byAccount.values()].map((a) => ({ ...a, symbols: [...new Set([...a.owned, ...a.tracked])].sort() }));
+}
+
+// How many of `budget` calls each account gets this run, and which of its
+// own symbols they go to. Every account gets the same share where it can
+// (an account with fewer symbols takes only what it has); what cannot be
+// split evenly goes one call each in a turn that moves every run, and an
+// account with more symbols than its share is served a window of its own
+// list that moves every run too. So each account's result depends on its
+// own list, how many symbols each account has, and the clock, and never
+// on WHICH symbols another account follows: overlap between two accounts
+// saves a call but changes nothing either one sees.
+//
+// accounts: [{ id, symbols }]. Returns Map(id -> Set of symbols).
+function planShares(accounts, budget, runIndex) {
+  const served = new Map();
+  const live = accounts.filter((a) => a.symbols.length).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  if (!live.length) return served;
+  const cap = Math.max(0, Math.floor(budget));
+  const used = (level) => live.reduce((n, a) => n + Math.min(a.symbols.length, level), 0);
+  const longest = Math.max(...live.map((a) => a.symbols.length));
+  let level = 0;
+  while (level < longest && used(level + 1) <= cap) level++;
+  const quota = new Map(live.map((a) => [a.id, Math.min(a.symbols.length, level)]));
+  let spare = cap - used(level);
+  const start = ((runIndex % live.length) + live.length) % live.length;
+  for (let i = 0; i < live.length && spare > 0; i++) {
+    const a = live[(start + i) % live.length];
+    if (a.symbols.length > quota.get(a.id)) { quota.set(a.id, quota.get(a.id) + 1); spare--; }
+  }
+  for (const a of live) served.set(a.id, new Set(rotatingWindow(a.symbols, runIndex, quota.get(a.id))));
+  return served;
+}
+
+function rotatingWindow(list, runIndex, count) {
+  const sorted = [...list].sort();
+  if (count >= sorted.length) return sorted;
+  if (count <= 0) return [];
+  const offset = (((runIndex * count) % sorted.length) + sorted.length) % sorted.length;
+  return Array.from({ length: count }, (_, i) => sorted[(offset + i) % sorted.length]);
+}
+
+// Changes every 15 minutes, the fast run's cadence, so a window moves on
+// each run.
+const runIndexNow = () => Math.floor(Date.now() / (15 * 60 * 1000));
+
+// One Finnhub call per symbol per run however many accounts it was planned
+// for. The result is copied to each of them; the call is shared, the stored
+// row never is.
+const quoteMemo = new Map();
+async function quoteOnce(symbol) {
+  if (!quoteMemo.has(symbol)) quoteMemo.set(symbol, await fetchFinnhubFinding(symbol, false));
+  return quoteMemo.get(symbol);
+}
+const newsMemo = new Map();
+async function newsOnce(symbol) {
+  if (!newsMemo.has(symbol)) {
+    let headlines = null;
+    try {
+      headlines = validateFinnhubNews(await fetchFinnhubCompanyNews(symbol));
+    } catch (err) {
+      console.warn(`[${symbol}] Finnhub company-news failed: ${err.message}`);
+    }
+    newsMemo.set(symbol, headlines);
+  }
+  return newsMemo.get(symbol);
+}
+const fundamentalsMemo = new Map();
+async function fundamentalsOnce(symbol) {
+  if (!fundamentalsMemo.has(symbol)) fundamentalsMemo.set(symbol, await fetchFundamentals(symbol));
+  return fundamentalsMemo.get(symbol);
+}
+
+// A stored finding and candle for one owner, from one quote.
+function storedFor(result, owner, headlines, explanation) {
+  return {
+    finding: { ...result.finding, owner, headlines: headlines || null, explanation: explanation || null },
+    candle: result.dailyCandle ? { ...result.dailyCandle, owner } : null,
+  };
+}
+
+// Each account's own fundamentals copies, missing or a day old, within its
+// share of what the run's budget has left (two calls a company).
+async function refreshOwnFundamentals(follows) {
+  let existing = [];
+  try {
+    existing = await sbGetAll(`symbol_fundamentals?select=symbol,owner,fetched_at&owner=neq.${PUBLIC_OWNER}`, "symbol,owner");
+  } catch (err) {
+    console.warn(`Could not read account fundamentals (${err.message}) - skipping them this run.`);
+    return;
+  }
+  const freshUntil = Date.now() - FUNDAMENTALS_MAX_AGE_MS;
+  const fresh = new Set(existing
+    .filter((r) => r.fetched_at && Date.parse(r.fetched_at) > freshUntil)
+    .map((r) => `${r.owner}|${r.symbol}`));
+  const accounts = follows.map((a) => ({
+    id: a.id,
+    symbols: a.symbols.filter((s) => !MUTUAL_FUND_SYMBOL.test(s) && !fresh.has(`${a.id}|${s}`)),
+  }));
+  const budget = Math.floor((MAX_FINNHUB_CALLS_PER_RUN - finnhubCallCount) / 2);
+  const plan = planShares(accounts, budget, runIndexNow());
+  const rows = [];
+  const names = [];
+  for (const [owner, symbols] of plan) {
+    for (const symbol of symbols) {
+      if (fundamentalsUnavailable) break;
+      const row = await fundamentalsOnce(symbol);
+      if (!row) continue;
+      rows.push({ ...row, owner });
+      names.push({ symbol, company_name: row.company_name, user_id: owner });
+    }
+  }
+  if (!rows.length) return;
+  try {
+    await sbUpsertRows("symbol_fundamentals", rows, "symbol,owner");
+    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${rows.length} account fundamentals copy(ies).`);
+    await backfillWatchlistCompanyNames(names);
+  } catch (err) {
+    console.warn(`Account fundamentals write failed (non-fatal): ${err.message}`);
+  }
+}
 
 // The publisher name shown under a headline. Bare hostname on purpose - it
 // is what the URL actually says, with no mapping table to drift.
@@ -2632,7 +2830,7 @@ function validateExplanation(raw) {
 // only spend, which matters because that 20/day quota is shared with the
 // daily recap summary.
 //
-// Headlines are passed IN rather than read here, so one latestHeadlinesBySymbol()
+// Headlines are passed IN rather than read here, so one latestHeadlines()
 // round trip serves every symbol in a run instead of one query each.
 async function findExplanation(symbol, headlines, companyName) {
   // Only headlines that actually name this company. /company-news guarantees
@@ -2713,7 +2911,7 @@ async function fetchTrackedStockNews() {
   // can read this digest (see publicMoversList()).
   const { symbols: publicSymbols, names: companyNames } = publicMoversList();
   const allowed = new Set(publicSymbols);
-  const bySymbol = new Map([...(await latestHeadlinesBySymbol()).entries()].filter(([symbol]) => allowed.has(symbol)));
+  const bySymbol = new Map([...sharedHeadlines(await latestHeadlines()).entries()].filter(([symbol]) => allowed.has(symbol)));
   const seen = new Set();
   const items = [];
   // Newest symbol-batch first, so the digest leads with the freshest news.
@@ -2845,6 +3043,7 @@ async function fetchFinnhubQuote(symbol) {
     throw new Error(`Finnhub call budget (${MAX_FINNHUB_CALLS_PER_RUN}/run) exceeded - skipping`);
   }
   finnhubCallCount++;
+  await finnhubPace();
   const url = `${FINNHUB_URL}?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_API_KEY}`;
   const res = await fetchWithRetry(url, {}, SEARCH_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Finnhub HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -2913,6 +3112,7 @@ async function fetchFinnhubCompanyNews(symbol) {
     throw new Error(`Finnhub company-news call budget (${MAX_FINNHUB_NEWS_CALLS_PER_RUN}/run) exceeded - skipping`);
   }
   finnhubNewsCallCount++;
+  await finnhubPace();
   const to = new Date();
   const from = new Date(to.getTime() - 2 * 24 * 60 * 60 * 1000); // last 2 days
   const fmt = (d) => d.toISOString().slice(0, 10);
@@ -3048,15 +3248,6 @@ async function fetchFinnhubFinding(symbol, fetchNews) {
   };
 }
 
-async function fetchFinnhubFindings(symbols, checkBudgetFn, fetchNews) {
-  const results = [];
-  for (const symbol of symbols) {
-    if (checkBudgetFn && checkBudgetFn()) break;
-    const result = await fetchFinnhubFinding(symbol, fetchNews);
-    if (result) results.push(result);
-  }
-  return results;
-}
 
 // Only the biggest movers get a real Gemini explanation call - a stock
 // that barely moved usually has no "why" story worth finding anyway, so
@@ -3072,18 +3263,24 @@ const MAX_EXPLANATION_HEADLINES = 6;
 
 const MAX_GEMINI_EXPLANATIONS_PER_RUN = 5;
 
-async function attachTopMoverExplanations(results) {
+// The public list's biggest movers only (94). An account's own companies get
+// no written explanation: choosing which of them to explain would depend on
+// how everyone else's companies moved, and the Gemini allowance is 20 a day
+// shared with deal-agent. Their own headlines, with the publisher's lede,
+// still say what the coverage was.
+async function explainTopPublicMovers(results) {
+  const explained = new Map();
   const ranked = [...results].sort((a, b) => b.absDayChangePercent - a.absDayChangePercent);
   const slice = ranked.slice(0, MAX_GEMINI_EXPLANATIONS_PER_RUN);
-  if (!slice.length) return;
-  // One round trip for every symbol in the slice, not one each.
-  const [bySymbol, { names }] = await Promise.all([latestHeadlinesBySymbol(), loadMoversWatchlist()]);
+  if (!slice.length) return explained;
+  const bySymbol = sharedHeadlines(await latestHeadlines());
   for (const { finding } of slice) {
     const sym = (finding.symbol || "").toUpperCase();
     const stored = bySymbol.get(sym);
-    const explanation = await findExplanation(finding.symbol, stored && stored.headlines, names[sym]);
-    if (explanation) finding.explanation = explanation;
+    const explanation = await findExplanation(finding.symbol, stored && stored.headlines, DEFAULT_MOVER_COMPANY_NAMES[sym]);
+    if (explanation) explained.set(sym, explanation);
   }
+  return explained;
 }
 
 
@@ -3156,7 +3353,15 @@ async function main() {
     // is handed in. An empty array means buildDailyRecap behaves exactly as
     // it did before this feature existed.
     const contextHeadlines = await findMarketContext();
-    await buildDailyRecap(contextHeadlines);
+    let follows = [];
+    try {
+      follows = await loadFollows();
+    } catch (err) {
+      queryAttempts++;
+      queryFailures++;
+      console.warn(`Could not read who follows what (${err.message}) - only shared rows get headlines today.`);
+    }
+    await buildDailyRecap(contextHeadlines, follows);
 
     // Moved here from the weekly run: a DAILY news digest on a weekly
     // cadence was never the right shape, and it only sat in the weekly job
@@ -3186,10 +3391,8 @@ async function main() {
     // Daily matches FUNDAMENTALS_MAX_AGE_MS - quarterly-filing data has no
     // business being re-fetched every 15 minutes.
     try {
-      const [ownSymbols, { symbols: moverSymbols }] = await Promise.all([
-        loadWatchlist(), loadMoversWatchlist(),
-      ]);
-      await refreshFundamentals([...new Set([...ownSymbols.map((s) => s.toUpperCase()), ...moverSymbols])]);
+      await refreshFundamentals(publicSymbolList());
+      await refreshOwnFundamentals(follows);
     } catch (err) {
       console.warn(`Fundamentals refresh failed (non-fatal): ${err.message}`);
     }
@@ -3211,121 +3414,101 @@ async function main() {
   const fetchNewsThisRun = shouldFetchNewsThisRun();
   if (fetchNewsThisRun) console.log("Also fetching real per-symbol news headlines this run (Finnhub company-news, roughly hourly).");
 
-  const watchlist = await loadWatchlist();
-  const { symbols: moversWatchlist } = await loadMoversWatchlist();
-  console.log(`Watchlist (${watchlist.length}): ${watchlist.join(", ")}`);
-  console.log(`Market movers watchlist (${moversWatchlist.length}): ${moversWatchlist.join(", ")}`);
+  let follows = [];
+  try {
+    follows = await loadFollows();
+  } catch (err) {
+    queryAttempts++;
+    queryFailures++;
+    console.warn(`Could not read who follows what (${err.message}) - pricing the public list only this run.`);
+  }
+  const publicList = publicSymbolList();
+  const etfTickers = new Set(Object.values(MARKET_INDEX_ETF_PROXIES));
+  console.log(`Public list (${publicList.length}), always priced. ${follows.length} account(s) follow ${new Set(follows.flatMap((a) => a.symbols)).size} other company(ies).`);
 
-  if (!watchlist.length && !moversWatchlist.length) {
-    console.log("Nothing to search for. Exiting.");
-    return;
+  // 1. The public list, every run, whoever follows what. Shared rows: one in
+  // market_index_findings and one in asset_price_findings for each, so the
+  // existence of a holding-price row never says that somebody owns it.
+  const publicPriced = [];
+  for (const symbol of publicList) {
+    if (finnhubCallCount >= MAX_FINNHUB_CALLS_PER_RUN) break;
+    const result = await quoteOnce(symbol);
+    if (result) publicPriced.push(result);
+  }
+  const publicStocks = publicPriced.filter((r) => !etfTickers.has(r.finding.symbol));
+  const explained = FAST_ONLY ? new Map() : await explainTopPublicMovers(publicStocks);
+  if (FAST_ONLY) console.log("FAST_ONLY: skipping explanations (Gemini) this run.");
+  const sharedMarket = [];
+  const sharedAsset = [];
+  const candles = [];
+  for (const result of publicPriced) {
+    const sym = result.finding.symbol;
+    const heads = fetchNewsThisRun && !etfTickers.has(sym) ? await newsOnce(sym) : null;
+    const stored = storedFor(result, PUBLIC_OWNER, heads, explained.get(sym));
+    sharedMarket.push(stored.finding);
+    sharedAsset.push({ ...stored.finding });
+    candles.push(stored.candle);
   }
 
-  // Shared across all three loops below - once the run-wide Tavily budget
-  // is hit, stop starting new symbols anywhere and write whatever findings
-  // already exist rather than letting every remaining symbol fail
-  // one-by-one with the same error.
-  let budgetHit = false;
-  function checkBudget() {
-    if (tavilyCallCount >= MAX_TAVILY_CALLS_PER_RUN) {
-      if (!budgetHit) {
-        console.warn(`Tavily call budget (${MAX_TAVILY_CALLS_PER_RUN}/run) reached - stopping early, writing what was already found.`);
-        budgetHit = true;
-      }
-      return true;
-    }
-    return false;
-  }
-
-  // Separate from checkBudget() above (Tavily) - the watchlist/movers
-  // findings below run on Finnhub as their primary resource now, a fully
-  // independent budget. Tavily exhaustion is still handled gracefully
-  // inside findExplanation() itself (returns null, logs a warning, doesn't
-  // block the price write), so it doesn't need a second gate here too.
-  let finnhubBudgetHit = false;
-  function checkFinnhubBudget() {
-    if (finnhubCallCount >= MAX_FINNHUB_CALLS_PER_RUN) {
-      if (!finnhubBudgetHit) {
-        console.warn(`Finnhub call budget (${MAX_FINNHUB_CALLS_PER_RUN}/run) reached - stopping early, writing what was already found.`);
-        finnhubBudgetHit = true;
-      }
-      return true;
-    }
-    return false;
-  }
-
-  // A user's own tracked symbols get a Gemini explanation unconditionally
-  // (not ranked against MAX_GEMINI_EXPLANATIONS_PER_RUN below) - this list
-  // is personal and, realistically, small (today: 1 symbol across all
-  // users), unlike the fixed 20-symbol movers watchlist the ranking below
-  // exists for. If this ever grows large, redo this math the same way the
-  // header comment already asks for future watchlist growth generally.
-  const watchlistPriced = await fetchFinnhubFindings(watchlist, checkFinnhubBudget, fetchNewsThisRun);
-  if (FAST_ONLY) {
-    console.log("FAST_ONLY: skipping watchlist explanations (Gemini) this run.");
-  } else {
-    const [bySymbol, { names }] = await Promise.all([latestHeadlinesBySymbol(), loadMoversWatchlist()]);
-    for (const { finding } of watchlistPriced) {
-      const sym = (finding.symbol || "").toUpperCase();
-      const stored = bySymbol.get(sym);
-      const explanation = await findExplanation(finding.symbol, stored && stored.headlines, names[sym]);
-      if (explanation) finding.explanation = explanation;
+  // 2. Each account's own companies, within its share of what is left. A
+  // mutual fund costs no call (Finnhub has no quote for one), so it is left
+  // out of the plan and counted the way fetchFinnhubFinding() counts it.
+  const runIndex = runIndexNow();
+  const accounts = follows.map((a) => ({ id: a.id, symbols: a.symbols.filter((s) => !MUTUAL_FUND_SYMBOL.test(s)) }));
+  outcomes.unpriceable += new Set(follows.flatMap((a) => a.symbols).filter((s) => MUTUAL_FUND_SYMBOL.test(s))).size;
+  const quotePlan = planShares(accounts, MAX_FINNHUB_CALLS_PER_RUN - finnhubCallCount, runIndex);
+  const priced = new Map();
+  for (const [, symbols] of quotePlan) {
+    for (const symbol of symbols) {
+      if (!priced.has(symbol)) priced.set(symbol, await quoteOnce(symbol));
     }
   }
-  const allFindings = watchlistPriced.map((r) => r.finding);
-  if (allFindings.length) {
-    await sbInsert("asset_price_findings", allFindings);
-    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allFindings.length} finding(s) to asset_price_findings.`);
-  } else {
-    console.log("No asset findings this run.");
+  const newsPlan = fetchNewsThisRun
+    ? planShares(
+        [...quotePlan].map(([id, symbols]) => ({ id, symbols: [...symbols].filter((s) => priced.get(s)) })),
+        MAX_FINNHUB_NEWS_CALLS_PER_RUN - finnhubNewsCallCount,
+        runIndex)
+    : new Map();
+  const ownMarket = [];
+  const ownAsset = [];
+  const byId = new Map(follows.map((a) => [a.id, a]));
+  for (const [owner, symbols] of quotePlan) {
+    const account = byId.get(owner);
+    const newsFor = newsPlan.get(owner) || new Set();
+    for (const symbol of symbols) {
+      const result = priced.get(symbol);
+      if (!result) continue;
+      const heads = newsFor.has(symbol) ? await newsOnce(symbol) : null;
+      const stored = storedFor(result, owner, heads, null);
+      if (account.owned.has(symbol)) ownAsset.push(stored.finding);
+      if (account.tracked.has(symbol)) ownMarket.push({ ...stored.finding });
+      candles.push(stored.candle);
+    }
   }
+  const served = [...quotePlan.values()].reduce((n, set) => n + set.size, 0);
+  const wanted = accounts.reduce((n, a) => n + a.symbols.length, 0);
+  console.log(`Accounts' own companies: ${served} of ${wanted} served this run, ${priced.size} quote(s).`);
 
-  // No index-level search any more. It ran weekly, spent a Tavily search per
-  // index per query angle plus a Gemini extraction, and across the whole life
-  // of market_index_findings never wrote one row - measured 2026-10-06, where
-  // every row in that table came from Finnhub. The card follows each index
-  // through its tracking fund instead, which Finnhub prices for free every 15
-  // minutes. Retiring it hands that Gemini request back to the daily recap
-  // summary, which production shows absent on 13 of 22 days.
-  const allIndexFindings = [];
-
-  console.log(`Fetching movers (Finnhub): ${moversWatchlist.join(", ")}`);
-  const moversPriced = await fetchFinnhubFindings(moversWatchlist, checkFinnhubBudget, fetchNewsThisRun);
-  if (FAST_ONLY) {
-    console.log(`  -> ${moversPriced.length} priced. FAST_ONLY: skipping mover explanations (Gemini) this run.`);
-  } else {
-    console.log(`  -> ${moversPriced.length} priced, explaining the top ${MAX_GEMINI_EXPLANATIONS_PER_RUN} movers by day change`);
-    await attachTopMoverExplanations(moversPriced);
+  const assetRows = [...sharedAsset, ...ownAsset];
+  if (assetRows.length) {
+    await sbInsert("asset_price_findings", assetRows);
+    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${assetRows.length} finding(s) to asset_price_findings.`);
   }
-  allIndexFindings.push(...moversPriced.map((r) => r.finding));
-
-  // ETF proxies for the 4 indexes - real Finnhub quotes, no search/LLM
-  // step, runs every time (FAST_ONLY and full) since it's the same cheap
-  // per-symbol Finnhub cost as any real ticker. No news headlines for
-  // these - out of scope for "does the market overview number update,"
-  // and an ETF isn't a "company" Finnhub's company-news product covers
-  // meaningfully anyway.
-  const etfTickers = Object.values(MARKET_INDEX_ETF_PROXIES);
-  console.log(`Fetching index ETF proxies (Finnhub): ${etfTickers.join(", ")}`);
-  const etfPriced = await fetchFinnhubFindings(etfTickers, checkFinnhubBudget, false);
-  console.log(`  -> ${etfPriced.length} priced`);
-  allIndexFindings.push(...etfPriced.map((r) => r.finding));
-  if (allIndexFindings.length) {
-    await sbInsert("market_index_findings", allIndexFindings);
-    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${allIndexFindings.length} finding(s) to market_index_findings (indexes + movers watchlist).`);
+  const marketRows = [...sharedMarket, ...ownMarket];
+  if (marketRows.length) {
+    await sbInsert("market_index_findings", marketRows);
+    console.log(`${DRY_RUN ? "Would have written" : "Wrote"} ${marketRows.length} finding(s) to market_index_findings.`);
   } else {
-    console.log("No market index or movers findings this run.");
+    console.log("No market findings this run.");
   }
 
   // The market news digest deliberately does NOT run here any more - it
   // moved to the daily RECAP_ONLY job above, where a daily digest belongs.
-  // Leaving it here too would just write a duplicate row every Wednesday.
 
-  // Every Finnhub-quoted symbol from all three loops above, rolled into
-  // the durable daily series. Runs before the purge, which only ever
-  // touches the short-lived findings tables - this is the data that has
-  // to outlive them.
-  await writeDailyCandles([...watchlistPriced, ...moversPriced, ...etfPriced]);
+  // Every quote above, shared and copied, rolled into the durable daily
+  // series. Runs before the purge, which only ever touches the short-lived
+  // findings tables - this is the data that has to outlive them.
+  await writeDailyCandles(candles);
 
   await purgeExpiredFindings();
   await writeRunStatus();

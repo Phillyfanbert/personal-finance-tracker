@@ -35,8 +35,13 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
 
-    if (url.pathname === "/api/price") return handlePriceRequest(url, request, env);
-    if (url.pathname === "/api/quotes") return handleQuotesRequest(url, request, env);
+    if (url.pathname === "/api/price" || url.pathname === "/api/quotes") {
+      const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+      if (!spend(counters.ip, ip, PER_ADDRESS)) return json({ error: "rate limited" }, 429);
+      return url.pathname === "/api/price"
+        ? handlePriceRequest(url, request, env)
+        : handleQuotesRequest(url, request, env);
+    }
     return withSecurityHeaders(await env.ASSETS.fetch(request));
   },
 };
@@ -71,16 +76,12 @@ const SYMBOL_RE = /^[A-Z.\-]{1,10}$/;
 // check below.
 const MAX_SYMBOLS_PER_REQUEST = 40;
 
-// Finnhub's free tier allows 60 calls/minute and the Investments page
-// refreshes once a minute for ~25 symbols, so without this even two people
-// with the app open at once would sit right at that ceiling. A Worker
-// isolate is reused across requests, so caching here means every viewer
-// shares one upstream call per symbol per TTL instead of each paying for
-// their own - the movers watchlist and index proxies are the same symbols
-// for every user, so this is what keeps the route's real cost close to flat
-// as viewers are added (at this app's ~4-5-user scale, each viewer mostly
-// only adds their own small set of individually-tracked tickers on top of
-// that shared, already-cached core).
+// Finnhub's free tier allows 60 calls/minute. A Worker isolate is reused
+// across requests, so caching here means every viewer shares one upstream
+// call per PUBLIC symbol per TTL instead of each paying for their own - the
+// starter companies and index funds are the same for every user, so this
+// keeps the route's cost close to flat as viewers are added. Each account's
+// other symbols are cached for that account alone (cacheKey, below).
 //
 // Deliberately NOT the Cache API: wrangler.jsonc declares no route or
 // custom domain, so this Worker is served from a workers.dev hostname,
@@ -90,15 +91,78 @@ const MAX_SYMBOLS_PER_REQUEST = 40;
 const QUOTE_TTL_MS = 60000;
 const quoteCache = new Map();
 
-async function cachedQuote(symbol, env) {
-  const hit = quoteCache.get(symbol);
+// The 20 starter companies and the four index funds. Their quotes are the
+// same for everyone, so one cached copy serves every account. Anything else
+// is cached PER ACCOUNT (94): a shared cache answers faster when somebody
+// else asked for the same symbol a moment ago, and that difference is enough
+// to tell that somebody follows it. Must match public_symbols() in
+// supabase/94; tests/security.test.mjs compares them.
+const PUBLIC_SYMBOLS = new Set([
+  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "UNH",
+  "XOM", "JNJ", "WMT", "PG", "MA", "HD", "DIS", "NFLX", "AMD", "KO",
+  "SPY", "DIA", "QQQ", "IWM",
+]);
+
+// Anyone may make an account, so the free Finnhub key (60 calls a minute,
+// shared with the server's price job) and the Worker's free 100,000 daily
+// requests need limits a script cannot walk past:
+//   - per address, every /api request, before anything is spent on it;
+//   - per account, the Finnhub calls its requests cause (a cached answer
+//     costs nothing). The app asks for at most ~75 symbols every 5 minutes;
+//   - per Worker instance, Finnhub calls overall, so no mix of accounts
+//     takes the whole key.
+// A refused lookup is simply left out, and the app falls back to the prices
+// it already has. Counted per instance: Cloudflare runs several, so these
+// bound each one rather than the whole service, which is enough to keep one
+// person from emptying the key.
+const PER_ADDRESS = { max: 30, windowMs: 60_000 };
+const PER_ACCOUNT = { max: 120, windowMs: 5 * 60_000 };
+const UPSTREAM = { max: 40, windowMs: 60_000 };
+const counters = { ip: new Map(), account: new Map(), upstream: new Map() };
+
+// A fixed window: up to `limit.max` in each `limit.windowMs`.
+function spend(map, key, limit, now = Date.now()) {
+  let c = map.get(key);
+  if (!c || now - c.start >= limit.windowMs) {
+    c = { start: now, n: 0 };
+    map.set(key, c);
+  }
+  if (c.n >= limit.max) return false;
+  c.n++;
+  if (map.size > 5000) {
+    for (const [k, v] of map) if (now - v.start >= limit.windowMs) map.delete(k);
+  }
+  return true;
+}
+function refund(map, key) {
+  const c = map.get(key);
+  if (c && c.n > 0) c.n--;
+}
+
+const cacheKey = (symbol, account) => (PUBLIC_SYMBOLS.has(symbol) ? symbol : `${account}|${symbol}`);
+
+// undefined means "not asked: over a limit", null "couldn't ask" (upstream
+// error), { price: null } "asked, and this symbol isn't real".
+async function cachedQuote(symbol, account, env) {
+  const key = cacheKey(symbol, account);
+  const hit = quoteCache.get(key);
   if (hit && Date.now() - hit.at < QUOTE_TTL_MS) return hit.quote;
+  if (MUTUAL_FUND_SYMBOL.test(symbol)) return { price: null };
+  if (!spend(counters.account, account, PER_ACCOUNT)) return undefined;
+  if (!spend(counters.upstream, "all", UPSTREAM)) {
+    refund(counters.account, account);
+    return undefined;
+  }
   const quote = await fetchQuote(symbol, env);
   // A transient upstream failure is deliberately not cached - pinning a
   // null onto this symbol for the rest of the TTL would turn one bad
   // moment into a minute of missing prices. An unknown symbol IS cached,
   // since that's a real, stable answer rather than a failure.
-  if (quote !== null) quoteCache.set(symbol, { at: Date.now(), quote });
+  if (quote !== null) quoteCache.set(key, { at: Date.now(), quote });
+  if (quoteCache.size > 5000) {
+    const now = Date.now();
+    for (const [k, v] of quoteCache) if (now - v.at >= QUOTE_TTL_MS) quoteCache.delete(k);
+  }
   return quote;
 }
 
@@ -119,7 +183,6 @@ async function cachedQuote(symbol, env) {
 const MUTUAL_FUND_SYMBOL = /^[A-Z]{4}X$/;
 
 async function fetchQuote(symbol, env) {
-  if (MUTUAL_FUND_SYMBOL.test(symbol)) return { price: null };
   const res = await fetch(
     `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${env.FINNHUB_API_KEY}`
   );
@@ -140,16 +203,29 @@ async function fetchQuote(symbol, env) {
   };
 }
 
-// Confirms the caller is a real signed-in user of this app before spending
-// a Finnhub call on their behalf - the only real abuse concern at this
-// app's ~4-5-user scale, no separate rate-limiting product needed.
-async function isSignedIn(request) {
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader) return false;
+// The signed-in account making the request, or null. Confirmed with
+// Supabase before a Finnhub call is spent, and remembered for a minute so
+// the app's polling does not cost a sign-in check every time. The limits
+// above are kept per account, so this has to return WHO, not just yes.
+const SESSION_TTL_MS = 60_000;
+const sessions = new Map();
+async function signedInAccount(request) {
+  const authHeader = request.headers.get("Authorization") || "";
+  if (!authHeader.startsWith("Bearer ")) return null;
+  const now = Date.now();
+  const hit = sessions.get(authHeader);
+  if (hit && now - hit.at < SESSION_TTL_MS) return hit.id;
   const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
     headers: { Authorization: authHeader, apikey: SUPABASE_ANON_KEY },
   });
-  return userRes.ok;
+  if (!userRes.ok) return null;
+  const user = await userRes.json().catch(() => null);
+  if (!user || typeof user.id !== "string" || !user.id) return null;
+  sessions.set(authHeader, { id: user.id, at: now });
+  if (sessions.size > 5000) {
+    for (const [k, v] of sessions) if (now - v.at >= SESSION_TTL_MS) sessions.delete(k);
+  }
+  return user.id;
 }
 
 // Single-symbol lookup for the Holdings form's "Buying now" mode. Response
@@ -158,9 +234,11 @@ async function isSignedIn(request) {
 async function handlePriceRequest(url, request, env) {
   const symbol = (url.searchParams.get("symbol") || "").trim().toUpperCase();
   if (!symbol || !SYMBOL_RE.test(symbol)) return json({ error: "invalid symbol" }, 400);
-  if (!(await isSignedIn(request))) return json({ error: "unauthorized" }, 401);
+  const account = await signedInAccount(request);
+  if (!account) return json({ error: "unauthorized" }, 401);
 
-  const quote = await cachedQuote(symbol, env);
+  const quote = await cachedQuote(symbol, account, env);
+  if (quote === undefined) return json({ error: "rate limited" }, 429);
   if (quote === null) return json({ error: "upstream error" }, 502);
   return json({ price: quote.price });
 }
@@ -175,10 +253,11 @@ async function handleQuotesRequest(url, request, env) {
   if (!symbols.length) return json({ error: "no symbols" }, 400);
   if (symbols.length > MAX_SYMBOLS_PER_REQUEST) return json({ error: "too many symbols" }, 400);
   if (!symbols.every((s) => SYMBOL_RE.test(s))) return json({ error: "invalid symbol" }, 400);
-  if (!(await isSignedIn(request))) return json({ error: "unauthorized" }, 401);
+  const account = await signedInAccount(request);
+  if (!account) return json({ error: "unauthorized" }, 401);
 
   const results = await Promise.all(
-    symbols.map(async (symbol) => [symbol, await cachedQuote(symbol, env)])
+    symbols.map(async (symbol) => [symbol, await cachedQuote(symbol, account, env)])
   );
   const quotes = {};
   for (const [symbol, quote] of results) {
@@ -190,6 +269,6 @@ async function handleQuotesRequest(url, request, env) {
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 }

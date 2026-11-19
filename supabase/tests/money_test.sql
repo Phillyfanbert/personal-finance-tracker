@@ -5,7 +5,7 @@
 -- rolls back everything the test wrote, so it cannot leave a row behind
 -- however it is run, autocommit included. Read the error's text:
 --
---   money tests: 61 passed, 0 failed
+--   money tests: 67 passed, 0 failed
 --
 -- and anything after "failed:" names what broke. Every row it writes is a
 -- test row (named "ZZ test ..."), written as the first signed-in user under
@@ -26,9 +26,13 @@
 --      behind it is caught.
 --   F  opening an account (91): the $0 asset or debt, the account and its
 --      history row land together, or none of them does.
---   G  anyone may sign up, and sees nobody else's information (92, 93): a new
---      account reads only the four index funds of the shared market data, no
---      one else's deals, and cannot point a row at another person's.
+--   G  anyone may sign up, and sees nobody else's information (92, 93, 94): a
+--      new account reads only the shared rows for the public list, none of
+--      anyone's own copies even after listing every symbol that has rows,
+--      no one else's deals, cannot point a row at another person's, and can
+--      follow at most 50 companies outside the public list.
+--   H  one account cannot fill the database (95): rows per account, text
+--      length, the shape of a ticker, and saved earlier versions per day.
 
 do $$
 declare
@@ -41,6 +45,7 @@ declare
   e1 uuid; e2 uuid; p1 uuid; r1 uuid; act uuid; sub uuid; mc uuid;
   na uuid; nacc uuid; ncash uuid;
   other uuid; o_acct uuid; o_exp uuid; newcomer uuid := gen_random_uuid();
+  dict text[]; n_exp uuid;
   r jsonb;
   v numeric;
   n int;
@@ -59,6 +64,15 @@ begin
   other := newcomer;
   insert into public.accounts (user_id, name, type, bank_name) values (other, 'Theirs', 'debit', 'ZZ test') returning id into o_acct;
   insert into public.expenses (user_id, amount, category, payment_type, description) values (other, 50, 'Food', 'cash', 'ZZ test theirs') returning id into o_exp;
+  -- For G5: a private copy belonging to the first user, and every symbol that
+  -- has a stored row of any owner, which is the most an outsider could guess.
+  insert into public.daily_prices (symbol, trade_date, close, owner) values ('ZZPRIV', current_date - 30, 12, uid);
+  select array_agg(distinct s) into dict from (
+    select symbol s from public.daily_prices union select symbol from public.symbol_fundamentals
+    union select symbol from public.market_index_findings union select symbol from public.asset_price_findings) x;
+  -- For H4: the newcomer has already saved as many earlier versions today as
+  -- an account may.
+  insert into public.history_usage (user_id, day, today, total) values (newcomer, current_date, 15000, 15000);
 
   perform set_config('request.jwt.claims', json_build_object('sub', uid, 'role', 'authenticated')::text, true);
   perform set_config('role', 'authenticated', true);
@@ -497,16 +511,67 @@ begin
   end;
 
   -- G2. The newcomer, signed in, sees none of anyone else's choices: of the
-  -- per-symbol market data only the four index funds, and no deals at all.
-  -- Checked last, because it changes who the test is signed in as.
+  -- per-symbol market data only the shared rows for the public list, and no
+  -- deals at all. Checked last, because it changes who the test is signed in as.
   perform set_config('request.jwt.claims', json_build_object('sub', newcomer, 'role', 'authenticated')::text, true);
   select count(*) into n from (
-    select symbol from daily_prices union all select symbol from asset_price_findings
-    union all select symbol from market_index_findings union all select symbol from symbol_fundamentals) x
-   where upper(btrim(symbol)) not in ('SPY', 'DIA', 'QQQ', 'IWM');
+    select symbol, owner from daily_prices union all select symbol, owner from asset_price_findings
+    union all select symbol, owner from market_index_findings union all select symbol, owner from symbol_fundamentals) x
+   where owner <> '00000000-0000-0000-0000-000000000000' or upper(btrim(symbol)) not in (select public_symbols());
   select count(*) into v from deal_findings;
   if n = 0 and v = 0 then passed := passed + 1;
   else failed := failed || format('G2 a new account saw %s rows of other people''s symbols and %s of their deals', n, v); end if;
+
+  -- G5. Listing every symbol that has rows, the attack 93 did not stop, still
+  -- shows nothing: a copy belongs to its owner whatever the reader follows.
+  insert into watchlist_symbols (symbol) select s from unnest(dict) s where s ~ '^[A-Za-z0-9][A-Za-z0-9.\-]{0,14}$' on conflict do nothing;
+  insert into watchlist_symbols (symbol) values ('ZZPRIV') on conflict do nothing;
+  select count(*) into n from (
+    select symbol, owner from daily_prices union all select symbol, owner from asset_price_findings
+    union all select symbol, owner from market_index_findings union all select symbol, owner from symbol_fundamentals) x
+   where owner <> '00000000-0000-0000-0000-000000000000' or upper(btrim(symbol)) not in (select public_symbols());
+  if n = 0 then passed := passed + 1;
+  else failed := failed || format('G5 after listing every symbol a new account saw %s rows that are not shared', n); end if;
+
+  -- G6. At most 50 companies outside the public list, owned and tracked
+  -- together, so one account cannot take the price job's whole budget.
+  begin
+    insert into watchlist_symbols (symbol) select 'ZZCAP' || g from generate_series(1, 51) g;
+    failed := failed || 'G6 an account followed more than 50 private companies'::text;
+  exception when others then
+    if sqlerrm = 'symbol_limit' then passed := passed + 1; else failed := failed || format('G6 wrong error %s', sqlerrm); end if;
+  end;
+
+  -- ---- H. Storage limits ---------------------------------------------------
+
+  -- H1. Rows per account, checked once per statement.
+  begin
+    insert into investment_targets (bucket, target_percent) select 'ZZ test ' || g, 0 from generate_series(1, 101) g;
+    failed := failed || 'H1 an account saved more target buckets than the limit'::text;
+  exception when others then
+    if sqlerrm = 'row_limit' then passed := passed + 1; else failed := failed || format('H1 wrong error %s', sqlerrm); end if;
+  end;
+  -- H2. Text longer than the app keeps.
+  begin
+    insert into expenses (amount, category, payment_type, description) values (5, 'Food', 'cash', repeat('x', 501));
+    failed := failed || 'H2 a 501-character description was saved'::text;
+  exception when check_violation then
+    if sqlerrm like '%expenses_description_length%' then passed := passed + 1; else failed := failed || format('H2 wrong check %s', sqlerrm); end if;
+  end;
+  -- H3. A ticker has to look like one.
+  begin
+    insert into watchlist_symbols (symbol) values ('ZZ BAD');
+    failed := failed || 'H3 a ticker with a space was saved'::text;
+  exception when check_violation then passed := passed + 1; end;
+  -- H4. Past the day's allowance of earlier versions, an edit is refused
+  -- rather than history being thrown away.
+  insert into expenses (amount, category, payment_type, description) values (5, 'Food', 'cash', 'ZZ test newcomer') returning id into n_exp;
+  begin
+    update expenses set description = 'ZZ test newcomer edited' where id = n_exp;
+    failed := failed || 'H4 an edit past the history allowance was saved'::text;
+  exception when others then
+    if sqlerrm = 'history_limit' then passed := passed + 1; else failed := failed || format('H4 wrong error %s', sqlerrm); end if;
+  end;
 
   raise exception 'money tests: % passed, % failed%', passed, coalesce(array_length(failed, 1), 0),
     case when array_length(failed, 1) > 0 then ': ' || array_to_string(failed, ' | ') else '' end;

@@ -69,7 +69,10 @@ if (existsSync(ENV_FILE)) {
 
 const CHUNK = 500;
 // Never written through the API; see the header.
-const NOT_RESTORABLE = { record_history: "only its own trigger writes it, so it is SQL editor work" };
+const NOT_RESTORABLE = {
+  record_history: "only its own trigger writes it, so it is SQL editor work",
+  history_usage: "a counter the database keeps for itself",
+};
 // The foreign keys between public tables as of 91. The target's description
 // adds any newer ones; these hold even if it describes none.
 const KNOWN_FKS = {

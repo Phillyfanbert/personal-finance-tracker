@@ -61,7 +61,9 @@ const BACKUP_DIR = process.env.BACKUP_DIR || join(homedir(), "personal-finance-b
 const KEEP = Math.max(1, Number(process.env.BACKUP_KEEP || 60));
 const IF_DUE = process.argv.includes("--if-due");
 const PAGE = 1000;
-const SKIP = new Set(["asset_price_findings", "market_index_findings", "market_news_findings", "expense_embeddings", "qa_cache"]);
+// history_usage is a counter the database keeps for itself (95), and only
+// the database may write it, so it could not be restored anyway.
+const SKIP = new Set(["asset_price_findings", "market_index_findings", "market_news_findings", "expense_embeddings", "qa_cache", "history_usage"]);
 const NAME = /^finance-backup-(\d{4}-\d{2}-\d{2})\.json\.gz$/;
 
 // Used only if the server will not describe its own tables. Every table as of
@@ -70,13 +72,13 @@ const NAME = /^finance-backup-(\d{4}-\d{2}-\d{2})\.json\.gz$/;
 // here is caught by the description, which is the normal path.
 const KNOWN_TABLES = {
   account_activity: ["id"], accounts: ["id"], agent_run_status: ["agent"], assets: ["id"],
-  budget_periods: ["id"], budgets: ["id"], category_rules: ["id"], daily_prices: ["symbol", "trade_date"],
+  budget_periods: ["id"], budgets: ["id"], category_rules: ["id"], daily_prices: ["symbol", "trade_date", "owner"],
   daily_recaps: ["trade_date"], deal_findings: ["id"], expenses: ["id"], feedback_tickets: ["id"],
   holding_sales: ["id"], income: ["id"], investment_targets: ["id"], liabilities: ["id"],
   market_mover_summaries: ["trade_date"], market_movers: ["trade_date", "category", "symbol"],
   net_worth_snapshots: ["id"], portfolio_recaps: ["id"], portfolio_snapshots: ["id"], profiles: ["id"],
   record_history: ["id"], service_domains: ["service"], sinking_funds: ["id"], spending_insights: ["id"],
-  subscription_catalog: ["id"], subscriptions: ["id"], symbol_fundamentals: ["symbol"], watchlist_symbols: ["id"],
+  subscription_catalog: ["id"], subscriptions: ["id"], symbol_fundamentals: ["symbol", "owner"], watchlist_symbols: ["id"],
 };
 
 const say = (msg) => console.log(`${new Date().toISOString()} backup: ${msg}`);
@@ -93,6 +95,32 @@ async function rest(path, headers = {}) {
     });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// How full the database is, from database_size_bytes() (95). Anyone may sign
+// up and the free plan stops taking writes at 500 MB, so this is how a
+// filling database shows up while there is still room to act. A size belongs
+// to nobody, so it is safe in a status every account can read. Null if the
+// server will not say; the backup does not depend on it.
+const DATABASE_LIMIT_BYTES = 500 * 1048576;
+const DATABASE_WARN_BYTES = 0.8 * DATABASE_LIMIT_BYTES;
+async function databaseSize() {
+  try {
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), 15000);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/database_size_bytes`, {
+      method: "POST",
+      signal: stop.signal,
+      headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const n = Number(await res.json());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
   }
 }
 
@@ -203,9 +231,12 @@ async function main() {
   const rowCount = Object.values(out.tables).reduce((n, t) => n + t.count, 0);
   const kb = Math.round(body.length / 1024);
   const kept = Math.min(files.length, KEEP);
-  const detail = `${tables.length} tables, ${rowCount} rows, ${kb} KB, ${kept} kept${described ? "" : ", table list was the built-in one"}`;
+  const size = await databaseSize();
+  const full = size != null && size >= DATABASE_WARN_BYTES;
+  const sizeNote = size == null ? "" : `, database ${Math.round(size / 1048576)} MB of ${Math.round(DATABASE_LIMIT_BYTES / 1048576)} MB${full ? ", nearly full" : ""}`;
+  const detail = `${tables.length} tables, ${rowCount} rows, ${kb} KB, ${kept} kept${described ? "" : ", table list was the built-in one"}${sizeNote}`;
   say(`wrote ${target}: ${detail}`);
-  await report(described ? "ok" : "degraded", detail);
+  await report(described && !full ? "ok" : "degraded", detail);
 }
 
 main().catch(async (err) => {

@@ -1432,8 +1432,8 @@ async function loadDailyRecaps() {
 }
 
 // The headline the server chose for each of THIS person's stocks on the
-// recap's day, stored on that stock's own daily_prices row (93), which only
-// people who own or track it can read. A failed load is remembered rather
+// recap's day, stored on this person's own copy of that stock's daily_prices
+// row (94), which nobody else can read. A failed load is remembered rather
 // than treated as "nothing was published": the card must not state that about
 // a company when it simply could not find out.
 let recapHeadlines = { date: null, bySymbol: new Map(), loaded: false };
@@ -1513,19 +1513,14 @@ const indexPriceSymbols = () => [...new Set(
 // Every symbol THIS user's app has a reason to chart: their own tracked list,
 // anything they own, and the four index proxies the Overview card links to.
 //
-// daily_prices is deliberately NOT user-scoped - a close on a given day is a
-// public fact with no owner - so it holds the union across every user, and
-// price-agent's loadMoversWatchlist() reads that union on purpose. Reading it
-// back unfiltered therefore put symbols only SOMEONE ELSE tracks into this
-// user's picker. Measured on production 2026-10-14: three symbols were each
-// tracked by exactly one of four users and listed for all four. Because
-// syncHoldingsIntoWatchlist() adds anything you own, that disclosed holdings
-// rather than only interests.
-//
-// The scoping lives here rather than in the query: the rows themselves are
-// shared and cheap, and every other reader of daily_prices (priceSeries for a
-// symbol already chosen, recapBreadthDetail against moverSymbols()) is
-// already scoped by its own arguments. This is the one place that enumerated.
+// The database decides who reads what (94): the shared rows for the public
+// list and this person's own copies, nothing else. Before that, daily_prices
+// held every user's symbols and reading it back unfiltered put symbols only
+// SOMEONE ELSE tracks into this user's picker (measured 2026-10-14), which,
+// because syncHoldingsIntoWatchlist() adds anything you own, disclosed
+// holdings. This narrowing stays as a second line, and because the shared
+// public rows are readable by everyone, it also keeps the picker to what this
+// person follows.
 const chartableSymbols = () => new Set([...indexPriceSymbols(), ...ownedPriceSymbols()]);
 
 // The two price feeds with any missing trading day filled from its close
@@ -1545,20 +1540,32 @@ function filledFindings(slot, findings, symbols) {
 const pricedAssetFindings = () => filledFindings("asset", assetPriceFindings, ownedPriceSymbols());
 const pricedMarketFindings = () => filledFindings("market", marketIndexFindings, indexPriceSymbols());
 
+// In batches of QUOTE_BATCH, the most worker.js takes in one request. An
+// account can follow up to 50 companies beyond the 24 starter symbols, and a
+// single request over the limit was refused whole, which left every price on
+// the page without its live figure. A batch that fails just leaves its own
+// symbols to the stored prices.
+const QUOTE_BATCH = 40;
 async function fetchLiveQuotes(symbols) {
   if (!symbols.length) return null;
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return null;
-  try {
-    const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols.join(","))}`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.quotes || null;
-  } catch {
-    return null;
-  }
+  const batches = [];
+  for (let i = 0; i < symbols.length; i += QUOTE_BATCH) batches.push(symbols.slice(i, i + QUOTE_BATCH));
+  const answers = await Promise.all(batches.map(async (batch) => {
+    try {
+      const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(batch.join(","))}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.quotes || null;
+    } catch {
+      return null;
+    }
+  }));
+  if (answers.every((a) => a == null)) return null;
+  return Object.assign({}, ...answers.filter(Boolean));
 }
 
 // Two rows per symbol, not one. The live price is today's; Finnhub's own
@@ -2826,7 +2833,7 @@ function renderAccountsList() {
       const { error } = await sb.from("accounts")
         .update({ archived_at: new Date().toISOString() })
         .eq("id", acctId);
-      if (error) return toast(error.message, "error");
+      if (error) return toast(dbMessage(error), "error");
       await loadAccounts();
       // The same Unarchive the archived-accounts modal offers, put where the
       // action just happened. That modal is still the permanent route, which
@@ -2856,7 +2863,7 @@ function renderAccountsList() {
 // come back with it.
 async function unarchiveAccount(acctId) {
   const { error } = await sb.from("accounts").update({ archived_at: null }).eq("id", acctId);
-  if (error) return toast(error.message, "error");
+  if (error) return toast(dbMessage(error), "error");
   await loadAccounts();
   toast("Account unarchived");
 }
@@ -2887,7 +2894,7 @@ function deferRowDelete({ pending, id, table, label, restoredMsg, reload }) {
   pending.set(id, setTimeout(async () => {
     pending.delete(id);
     const { error } = await sb.from(table).delete().eq("id", id);
-    if (error) toast(error.message, "error");
+    if (error) toast(dbMessage(error), "error");
     // loadAccounts too: the delete nulls accounts.linked_asset_id /
     // linked_liability_id, and a stale cache would leave an account pointing
     // at a row that no longer exists.
@@ -2921,7 +2928,7 @@ function deferRowDelete({ pending, id, table, label, restoredMsg, reload }) {
 // do to real financial data.
 async function deleteLeafRowWithUndo({ table, row, label, restoredMsg, after }) {
   const { error } = await sb.from(table).delete().eq("id", row.id);
-  if (error) { toast(error.message, "error"); return false; }
+  if (error) { toast(dbMessage(error), "error"); return false; }
   await after();
   toast(`Deleted ${label}`, "info", {
     label: "Undo",
@@ -2969,7 +2976,7 @@ async function commitAccountDelete(acctId) {
   const { error } = await sb.from("accounts").delete().eq("id", acctId);
   // Nothing is lost on a failure: the row is still archived, so it simply
   // reappears under View archived where Delete can be pressed again.
-  if (error) toast(error.message, "error");
+  if (error) toast(dbMessage(error), "error");
   // loadAssets/loadDebts refresh so a deleted linked asset or liability
   // disappears from its own card too, not just the account from its own;
   // loadAccounts refreshes both the main circle list and the archived
@@ -2986,7 +2993,7 @@ async function undoAccountDelete(acctId) {
   // archived, not to the main list - undo returns things to where they were.
   if (!pending.wasArchived) {
     const { error } = await sb.from("accounts").update({ archived_at: null }).eq("id", acctId);
-    if (error) { toast(error.message, "error"); return; }
+    if (error) { toast(dbMessage(error), "error"); return; }
   }
   await loadAccounts();
   toast("Account restored");
@@ -3027,7 +3034,7 @@ async function deleteAccount(acctId) {
   if (!wasArchived) {
     const { error } = await sb.from("accounts")
       .update({ archived_at: new Date().toISOString() }).eq("id", acctId);
-    if (error) { toast(error.message, "error"); return false; }
+    if (error) { toast(dbMessage(error), "error"); return false; }
   }
   pendingAccountDeletes.set(acctId, {
     wasArchived,
@@ -3362,7 +3369,7 @@ $("saveAssetBtn").onclick = async () => {
   const wasEditing = !!editingAsset;
   if (!wasEditing) {
     const { error } = await sb.from("assets").insert(row);
-    if (error) { flagField("assetName"); return toast(error.message); }
+    if (error) { flagField("assetName"); return toast(dbMessage(error)); }
   } else {
     // A value changed by hand is recorded like any other correction, so it is
     // dated, shows in Recent History and can be undone. Skipped where the
@@ -3903,12 +3910,37 @@ const claimStep = (table, id, column, from, to) =>
 // The plain-words reason an action was refused or failed. A refusal from the
 // database can only mean the figures moved since this screen loaded (the
 // checks above already passed on this device's copy), so it says so.
+// The limits that keep one account from filling the shared database or the
+// price job's budget (94, 95), in plain words, or null for anything else.
+function limitRefusal(error) {
+  if (!error) return null;
+  const said = `${error.message || ""} ${error.details || ""}`;
+  switch (error.message) {
+    case "symbol_limit":
+      return "You can follow up to 50 companies outside the starter list, counting holdings and tracked companies together. Remove one first. Nothing was saved.";
+    case "row_limit":
+      return "This account holds as many of these as the app allows, so nothing was saved. Use Feedback if you need more room.";
+    case "history_limit":
+      return "This account has made more changes than the app can keep earlier versions of, so nothing was changed. Use Feedback if you need more room.";
+  }
+  if (error.code === "23514" && /_length\b/.test(said)) return "Some of that text is longer than the app keeps, so nothing was saved. Shorten it and try again.";
+  if (error.code === "23514" && /_symbol_shape\b/.test(said)) return "A ticker can only use letters, numbers, dots and dashes, up to 15 characters. Nothing was saved.";
+  return null;
+}
+// What a refused write says on screen: the limit in words when it is one,
+// otherwise the database's own message.
+function dbMessage(error) {
+  return limitRefusal(error) || error.message;
+}
+
 function moneyRefusal(error) {
   if (!error) return null;
   // No status at all means no answer came back, so whether it was saved is
   // NOT known. "Nothing was saved" could be untrue, and someone who believed
   // it would enter the same purchase twice.
   if (!error.code) return "The connection dropped, so it is not certain this was saved. Check Recent History before trying again.";
+  const limit = limitRefusal(error);
+  if (limit) return limit;
   let detail = {};
   try { detail = JSON.parse(error.details || "{}"); } catch { detail = {}; }
   const asset = detail.id ? assets.find((a) => a.id === detail.id) : null;
@@ -4256,7 +4288,7 @@ $("adjustOverdraftSaveBtn").onclick = async () => {
     return toast("Can't remove the overdraft while the account is overdrawn", "error");
   }
   const { error } = await sb.from("assets").update({ overdraft_limit: limit }).eq("id", asset.id);
-  if (error) { flagField("adjustOverdraftLimit", error.message); return toast(error.message, "error"); }
+  if (error) { flagField("adjustOverdraftLimit", dbMessage(error)); return toast(dbMessage(error), "error"); }
   await loadAssets();
   toast(limit === null ? "Overdraft removed" : `Overdraft allowance set to ${fmt(limit)}`);
 }
@@ -4302,7 +4334,7 @@ $("adjustInterestSaveBtn").onclick = async () => {
     ? { interest_rate: null, interest_last_paid: null }
     : { interest_rate: rate, interest_last_paid: asset.interest_last_paid || localDateISO() };
   const { error } = await sb.from("assets").update(patch).eq("id", asset.id);
-  if (error) { flagField("adjustInterestRate", error.message); return toast(error.message, "error"); }
+  if (error) { flagField("adjustInterestRate", dbMessage(error)); return toast(dbMessage(error), "error"); }
   await loadAssets();
   const updated = assets.find((a) => a.id === adjustingAssetId);
   if (updated) renderInterestNote(updated);
@@ -4432,7 +4464,7 @@ $("adjustMaturitySaveBtn").onclick = async () => {
   if (!adjustingAssetId) return;
   const maturity_date = $("adjustMaturityDate").value || null;
   const { error } = await sb.from("assets").update({ maturity_date }).eq("id", adjustingAssetId);
-  if (error) { flagField("adjustMaturityDate"); return toast(error.message); }
+  if (error) { flagField("adjustMaturityDate"); return toast(dbMessage(error)); }
   await loadAssets();
   toast("Date saved");
 };
@@ -4484,7 +4516,7 @@ $("saveDebtBtn").onclick = async () => {
   const debtFigureErr = debtFiguresError(row.interest_rate, row.minimum_payment, "debtRate", "debtMinPay");
   if (debtFigureErr) return toast(debtFigureErr, "error");
   const { error } = await sb.from("liabilities").insert(row);
-  if (error) { flagField("debtName"); return toast(error.message); }
+  if (error) { flagField("debtName"); return toast(dbMessage(error)); }
   $("debtName").value = ""; $("debtBalance").value = ""; $("debtRate").value = "";
   $("debtMinPay").value = ""; $("debtDue").value = ""; $("debtForm").classList.add("hidden");
   await loadDebts(); toast("Added");
@@ -4812,7 +4844,7 @@ $("debtDetailsSaveBtn").onclick = async () => {
       ? (editingDebtDetails.interest_last_accrued || localDateISO()) : null;
   }
   const { error } = await sb.from("liabilities").update(patch).eq("id", editingDebtDetails.id);
-  if (error) { flagField(touchedIds); return toast(error.message); }
+  if (error) { flagField(touchedIds); return toast(dbMessage(error)); }
   closeDebtDetailsForm();
   await loadDebts();
   toast("Details saved");
@@ -5870,7 +5902,7 @@ $("bulkApplyBtn").onclick = async () => {
   // recalculation, unlike a full single-row edit.
   const { error } = await sb.from("expenses").update({ category }).in("id", [...selectedTxnIds]);
   $("bulkApplyBtn").disabled = false;
-  if (error) return toast(error.message);
+  if (error) return toast(dbMessage(error));
   const n = selectedTxnIds.size;
   selectedTxnIds.clear();
   await loadExpenses();
@@ -7305,7 +7337,7 @@ $("fundContributeConfirmBtn").onclick = async () => {
   if (!Number.isFinite(amount) || amount <= 0) { flagField("fundContributeAmount", "Enter an amount greater than zero"); return toast("Enter an amount greater than zero", "error"); }
   const saved = Math.round((Number(contributingFund.saved || 0) + amount) * 100) / 100;
   const { error } = await sb.from("sinking_funds").update({ saved }).eq("id", contributingFund.id);
-  if (error) { flagField("fundContributeAmount", error.message); return toast(error.message, "error"); }
+  if (error) { flagField("fundContributeAmount", dbMessage(error)); return toast(dbMessage(error), "error"); }
   const name = contributingFund.name;
   closeModal("fundContributeModal");
   contributingFund = null;
@@ -7345,7 +7377,7 @@ $("saveFundBtn").onclick = async () => {
   const { error } = editingFund
     ? await sb.from("sinking_funds").update(row).eq("id", editingFund.id)
     : await sb.from("sinking_funds").insert(row);
-  if (error) { flagField("fundName", error.message); return toast(error.message, "error"); }
+  if (error) { flagField("fundName", dbMessage(error)); return toast(dbMessage(error), "error"); }
   closeFundForm();
   await loadSinkingFunds();
   renderSinkingFunds();
@@ -7392,7 +7424,7 @@ $("saveBudgetBtn").onclick = async () => {
   const classification = $("budgetClass").value || null;
   const { error } = await sb.from("budgets")
     .upsert({ category, monthly_limit, classification }, { onConflict: "user_id,category" });
-  if (error) { flagField("budgetLimit"); return toast(error.message); }
+  if (error) { flagField("budgetLimit"); return toast(dbMessage(error)); }
   $("budgetLimit").value = "";
   $("budgetCategory").value = "";
   $("budgetClass").value = "";
@@ -7961,7 +7993,7 @@ function renderInvestments() {
         { title: "Delete this holding?" }))) return;
       const parentId = holding.parent_asset_id;
       const { error } = await sb.from("assets").delete().eq("id", holding.id);
-      if (error) return toast(error.message);
+      if (error) return toast(dbMessage(error));
       await loadAssets();
       await syncParentAssetValue(parentId);
       await loadAssets();
@@ -8070,7 +8102,7 @@ function renderInvestments() {
   document.querySelectorAll("[data-del-invest-target]").forEach((el) => {
     el.onclick = async () => {
       const { error } = await sb.from("investment_targets").delete().eq("bucket", el.dataset.delInvestTarget);
-      if (error) return toast(error.message);
+      if (error) return toast(dbMessage(error));
       // Someone removing a target is working in this form, so deleting the
       // last one must not fold it shut under them.
       investTargetOpenedFor = loadedForUser;
@@ -8943,7 +8975,7 @@ function renderWatchlistEditor() {
       if (!(await confirmModal(`${row.symbol} stops being tracked in the market overview, breadth count and daily recap. Prices already recorded are kept.`,
         { title: `Stop tracking ${row.symbol}?` }))) return;
       const { error } = await sb.from("watchlist_symbols").delete().eq("id", row.id);
-      if (error) return toast(error.message, "error");
+      if (error) return toast(dbMessage(error), "error");
       await loadWatchlistSymbols();
       renderMarketOverview();
       toast(`${row.symbol} removed`);
@@ -9477,7 +9509,7 @@ $("watchlistAddBtn").onclick = async () => {
   const company = typed || TICKER_NAMES[symbol] || null;
   const { error } = await sb.from("watchlist_symbols")
     .insert({ symbol, company_name: company, sort_order: nextWatchlistOrder() });
-  if (error) { flagField("watchlistNewSymbol"); return toast(error.message); }
+  if (error) { flagField("watchlistNewSymbol"); return toast(dbMessage(error)); }
   $("watchlistNewSymbol").value = "";
   $("watchlistNewName").value = "";
   await loadWatchlistSymbols();
@@ -9794,7 +9826,7 @@ function renderMarketOverview() {
 
   renderAgentFreshness("price-agent", "trackedAgentFreshness", "trackedAgentWarning");
   // The stored digest is built over the public list of 20 large companies
-  // (93), so it is narrowed here to the ones this person tracks or owns. Its
+  // (93, 94), so it is narrowed here to the ones this person tracks or owns. Its
   // sentiment line was written about the whole set, so it is shown only when
   // nothing was left out.
   const fullDigest = latestNewsDigest(marketNewsFindings);
@@ -10517,7 +10549,7 @@ $("saveInvestTargetBtn").onclick = async () => {
   if (!Number.isFinite(target_percent) || target_percent < 0 || target_percent > 100) { flagField("investTargetPercent"); return toast("Enter a valid target percent (0-100)"); }
   const { error } = await sb.from("investment_targets")
     .upsert({ bucket, target_percent }, { onConflict: "user_id,bucket" });
-  if (error) { flagField("investTargetPercent"); return toast(error.message); }
+  if (error) { flagField("investTargetPercent"); return toast(dbMessage(error)); }
   $("investTargetPercent").value = "";
   await loadInvestmentTargets();
   renderInvestments();
@@ -10532,7 +10564,7 @@ $("saveInvestTargetBtn").onclick = async () => {
 $("investRiskLabel").onchange = async () => {
   const risk_label = $("investRiskLabel").value || null;
   const { error } = await sb.from("profiles").upsert({ id: userId, risk_label }, { onConflict: "id" });
-  if (error) { flagField("investRiskLabel"); return toast(error.message); }
+  if (error) { flagField("investRiskLabel"); return toast(dbMessage(error)); }
   profile = { ...(profile || {}), risk_label };
   toast("Risk label saved");
 };
@@ -12257,7 +12289,7 @@ $("saveSubBtn").onclick = async () => {
     : sb.from("subscriptions").insert(row);
   const { error } = await q;
   $("saveSubBtn").disabled = false;
-  if (error) { flagField("sName"); return toast(error.message); }
+  if (error) { flagField("sName"); return toast(dbMessage(error)); }
   // Read BEFORE closing: closeSubForm() clears editingSub, so the toast below
   // tested a value that was always null and said "added" after every edit.
   const wasEdit = !!editingSub;
@@ -12574,7 +12606,7 @@ $("saveIncomeBtn").onclick = async () => {
     : sb.from("income").insert(row);
   const { error } = await q;
   $("saveIncomeBtn").disabled = false;
-  if (error) { flagField("incSource"); return toast(error.message); }
+  if (error) { flagField("incSource"); return toast(dbMessage(error)); }
   // Read before closing, for the reason saveSubBtn records: the close clears
   // editingIncome, so this toast said "added" after every edit.
   const wasEdit = !!editingIncome;
@@ -13649,7 +13681,7 @@ $("profileSave").onclick = async () => {
   $("profileSave").disabled = true;
   const { error } = await sb.from("profiles").upsert(row, { onConflict: "id" });
   $("profileSave").disabled = false;
-  if (error) { flagField("pName"); return toast(error.message); }
+  if (error) { flagField("pName"); return toast(dbMessage(error)); }
   profile = row;
   closeModal("profileModal");
   renderDeals(); // eligibility may have changed (e.g. now a student, or military)
@@ -13819,7 +13851,7 @@ $("exportPlanBtn").onclick = () => exportPage(
 // prevent, and a saved file outlives the toast that would have explained it.
 $("exportInvestBtn").onclick = async () => {
   const { data, error } = await sb.from("portfolio_snapshots").select("*").order("snapshot_date", { ascending: true });
-  if (error) return toast(error.message, "error");
+  if (error) return toast(dbMessage(error), "error");
   const snapshots = data || [];
   exportPage(
     "your investments",

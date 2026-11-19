@@ -971,10 +971,15 @@ async function ensureCashAccount() {
   // refused by the one-per-user index, leaving a stray $0 "Cash" under Things
   // you have. A reload on a flaky connection is exactly when this ran.
   if (error || (data && data.length)) return;
-  const { data: asset, error: assetErr } = await sb.from("assets")
-    .insert({ name: "Cash", type: "cash", value: 0 }).select().single();
-  if (assetErr) return; // best-effort - don't block app load on this
-  await sb.from("accounts").insert({ name: "Cash", type: "cash", linked_asset_id: asset.id });
+  // The asset and the account in ONE transaction (91). As two inserts, a
+  // second device creating Cash at the same moment had its account refused
+  // by the one-per-user index and its asset left behind as a stray $0 Cash.
+  // Best effort: a failure leaves nothing and the next load tries again.
+  const assetId = crypto.randomUUID();
+  await moneyTx([
+    { op: "insert", table: "assets", row: { id: assetId, name: "Cash", type: "cash", value: 0 } },
+    { op: "insert", table: "accounts", row: { name: "Cash", type: "cash", linked_asset_id: assetId } },
+  ], { reloadActivity: false });
 }
 
 async function loadCatalog() {
@@ -2584,36 +2589,33 @@ $("saveAcctBtn").onclick = async () => {
     if (!ok) { flagField("acctType"); return; }
   }
 
+  // The $0 asset or debt, the account that points at it, and the history row
+  // are ONE transaction (91). As three requests, a failure after the first
+  // left a stray $0 item under Things you have or Things you owe with no
+  // account behind it. The ids are made here so the account can name its
+  // asset or debt inside the same call.
   let linked_asset_id = null;
   let linked_liability_id = null;
   let autoMsg = null;
+  const accountId = crypto.randomUUID();
+  const steps = [];
   if (AUTO_LIABILITY_TYPE[type]) {
-    const { data: newDebt, error: debtErr } = await sb.from("liabilities")
-      .insert({ name: bank_name, type: AUTO_LIABILITY_TYPE[type], balance: 0 })
-      .select().single();
-    if (debtErr) { flagField("acctBank"); return toast(debtErr.message); }
-    linked_liability_id = newDebt.id;
+    linked_liability_id = crypto.randomUUID();
+    steps.push({ op: "insert", table: "liabilities", row: { id: linked_liability_id, name: bank_name, type: AUTO_LIABILITY_TYPE[type], balance: 0 } });
     autoMsg = "Account added, linked to a new $0 balance liability";
   } else if (AUTO_ASSET_TYPE[type]) {
-    const { data: newAsset, error: assetErr } = await sb.from("assets")
-      .insert({ name: bank_name, type: AUTO_ASSET_TYPE[type], value: 0 })
-      .select().single();
-    if (assetErr) { flagField("acctBank"); return toast(assetErr.message); }
-    linked_asset_id = newAsset.id;
+    linked_asset_id = crypto.randomUUID();
+    steps.push({ op: "insert", table: "assets", row: { id: linked_asset_id, name: bank_name, type: AUTO_ASSET_TYPE[type], value: 0 } });
     autoMsg = "Account added, linked to a new $0 asset, edit its value below";
   }
-
-  const { data: newAccount, error } = await sb.from("accounts")
-    .insert({ name, bank_name, type, linked_asset_id, linked_liability_id, card_product: card_product || null })
-    .select().single();
-  if (error) { flagField("acctBank"); return toast(error.message); }
+  steps.push({ op: "insert", table: "accounts", row: { id: accountId, name, bank_name, type, linked_asset_id, linked_liability_id, card_product: card_product || null } });
   // Opening an account is the one history entry that moves no money - it's
   // there so the log can explain where an account came from, rather than a
   // balance appearing to materialise from nowhere. Amount 0, no undo (see
   // NON_UNDOABLE_ACTIVITY_KINDS).
-  await logActivity(
-    "account_created", `Opened ${bank_name} ${name}`, 0, undefined, newAccount.id
-  );
+  steps.push(activityStep("account_created", `Opened ${bank_name} ${name}`, 0, undefined, accountId));
+  const { message } = await moneyTx(steps);
+  if (message) { flagField("acctBank"); return toast(message, "error"); }
   $("acctBank").value = ""; $("acctCard").value = ""; $("acctForm").classList.add("hidden");
   // loadAccounts first - loadDebts reads `accounts` to know which
   // liabilities are now account-linked (hides their delete button).
@@ -3764,22 +3766,25 @@ function assetMove(asset, delta, { floor } = {}) {
   return step;
 }
 
-// Move what is owed by a signed amount. strict refuses a result below zero
-// instead of flooring it, for anything that pays real money in (a payment, a
-// refund): flooring there is how $484 once vanished.
-function debtMove(debt, delta, { ceiling, strict = false } = {}) {
+// Move what is owed by a signed amount. Anything that lowers it is refused,
+// never floored, when the result would be below zero: flooring is how $484
+// once vanished on an overpayment, and how taking back a charge on a card
+// already paid off made the difference disappear. The database refuses it
+// either way (90); strict is still sent so a database without 90 does too.
+function debtMove(debt, delta, { ceiling } = {}) {
   const d = cents(delta);
   if (!debt || !d) return null;
   const step = { op: "liability", id: debt.id, delta: d };
   if (d > 0 && Number.isFinite(ceiling)) step.ceiling = ceiling;
-  if (strict) step.strict = true;
+  if (d < 0) step.strict = true;
   return step;
 }
 
 // What an expense does to the account it was paid from, as steps. dir +1 is
 // the purchase happening, -1 is it being taken back. A real purchase carries
 // the card's limit; taking one back never does, so deleting a charge can never
-// be refused for lack of room on the card.
+// be refused for lack of room on the card. It CAN be refused for taking what
+// is owed below zero, when the card has been paid down since (debtMove).
 //
 // Money LEAVING an asset always carries its floor, whichever way round. For an
 // ordinary purchase that is the spend; taking one back puts money in, so the
@@ -3787,18 +3792,31 @@ function debtMove(debt, delta, { ceiling, strict = false } = {}) {
 // deleting one takes that money back out, and the database refuses a balance
 // below its floor outright (89), so the floor travels with the step and the
 // refusal comes back in words instead of as a broken rule.
-function chargeSteps(accountId, amount, dir, { strict = false } = {}) {
+function chargeSteps(accountId, amount, dir) {
   const spend = dir > 0;
   const asset = assetOfAccount(accountId);
   const debt = debtOfAccount(accountId);
   return [
     assetMove(asset, -dir * Number(amount), { floor: spendFloor(asset) }),
-    debtMove(debt, dir * Number(amount), { ceiling: spend ? creditCeiling(debt) ?? undefined : undefined, strict }),
+    debtMove(debt, dir * Number(amount), { ceiling: spend ? creditCeiling(debt) ?? undefined : undefined }),
   ];
 }
 
+// What editing an expense does to the accounts, as ONE step per account. The
+// old amount comes off and the new one goes on, netted first: done as two
+// steps on the same card, the first could take what is owed below zero on its
+// way to a perfectly good end state. $100 edited to $120 on a card owing $50
+// ends at $70, and changing only the description moves nothing at all.
+function editChargeSteps(prevAccountId, prevAmount, accountId, amount) {
+  const net = new Map();
+  if (prevAccountId) net.set(prevAccountId, -Number(prevAmount));
+  if (accountId) net.set(accountId, (net.get(accountId) || 0) + Number(amount));
+  return [...net].flatMap(([id, change]) => chargeSteps(id, change, +1));
+}
+
 // A history row, written inside the same transaction as the money it
-// records. Same rounding and same zero rule as logActivity().
+// records. A zero amount means nothing changed, so it gets no row, except
+// opening an account, which moves no money and is still worth recording.
 function activityStep(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null, assetId = null, source = null) {
   const rounded = cents(amount);
   if (!rounded && kind !== "account_created") return null;
@@ -3867,13 +3885,17 @@ function moneyRefusal(error) {
 
 // Taking expenses back puts their money back, except money back itself: a
 // refund is negative, so deleting one takes that money out again, and the
-// account has to still hold it. Checked on this device's copy first so the
-// refusal can say which account and why; the step's floor (chargeSteps) is
-// what makes it hold.
+// account has to still hold it. On a card it runs the other way: taking a
+// charge back lowers what is owed, which cannot go below zero. Checked on this
+// device's copy first so the refusal can say which account and why; the
+// steps' floor and the database (90) are what make it hold.
 function takeBackError(rows) {
-  const deltas = rows.filter((r) => !isImported(r) && r.account_id)
-    .map((r) => ({ accountId: r.account_id, paymentType: r.payment_type, amount: Number(r.amount), sign: +1 }));
-  const err = deltas.length ? assetDeltaError(deltas) : null;
+  const counted = rows.filter((r) => !isImported(r) && r.account_id);
+  if (!counted.length) return null;
+  // Taking a charge back puts the money back on an account (asset sign +1)
+  // and takes it off what a card owes (debt sign -1).
+  const err = assetDeltaError(counted.map((r) => ({ accountId: r.account_id, paymentType: r.payment_type, amount: Number(r.amount), sign: +1 })))
+    || owedFloorError(counted.map((r) => ({ accountId: r.account_id, amount: Number(r.amount), sign: -1 })));
   return err ? `Can't take this back. ${err}` : null;
 }
 
@@ -3927,6 +3949,37 @@ async function moneyTx(steps, { reloadActivity = true } = {}) {
   return { data, error: null, message: null };
 }
 
+// Each debt the deltas touch, with how much MORE is owed on it once they are
+// all netted (negative means less). Shared by the floor and the limit
+// below, so both judge the same end state.
+function netByLiability(deltas) {
+  const byDebt = new Map();
+  for (const { accountId, amount, sign } of deltas) {
+    const debt = debtOfAccount(accountId);
+    if (!debt) continue;
+    const entry = byDebt.get(debt.id) || { debt, net: 0 };
+    entry.net += sign * Number(amount);
+    byDebt.set(debt.id, entry);
+  }
+  return [...byDebt.values()];
+}
+
+// The floor on what is owed, the mirror of the limit: nothing can take a debt
+// below zero, because a card owing YOU money (a credit balance) is something
+// this app has no way to record. Taking a charge back after the card was paid
+// down is how this is reached: charge $100, pay the card off, then delete the
+// charge as a mistake. The database refuses it regardless (90); this says why
+// and what to do about it.
+function owedFloorError(deltas) {
+  for (const { debt, net } of netByLiability(deltas)) {
+    const after = cents(Number(debt.balance) + net);
+    if (net < 0 && after < 0) {
+      return `${debt.name} only owes ${fmt(debt.balance)} now, and taking off ${fmt(-net)} would leave it owing less than nothing, which this app can't record. If a payment covered this, undo that payment first.`;
+    }
+  }
+  return null;
+}
+
 // The credit-limit ceiling, mirroring assetDeltaError's "can't go below $0"
 // floor on the asset side. Until this existed, credit_limit was purely
 // decorative - it drew a utilization line on the Liabilities card and was
@@ -3941,18 +3994,7 @@ async function moneyTx(steps, { reloadActivity = true } = {}) {
 // between two cards (or just changes its amount on one) is judged on the
 // real end state rather than on an intermediate one.
 function creditLimitError(deltas) {
-  const netByLiability = new Map();
-  for (const { accountId, amount, sign } of deltas) {
-    if (!accountId) continue;
-    const account = accounts.find((a) => a.id === accountId);
-    if (!account || !account.linked_liability_id) continue;
-    const debt = debts.find((d) => d.id === account.linked_liability_id);
-    if (!debt) continue;
-    const entry = netByLiability.get(debt.id) || { debt, net: 0 };
-    entry.net += sign * Number(amount);
-    netByLiability.set(debt.id, entry);
-  }
-  for (const { debt, net } of netByLiability.values()) {
+  for (const { debt, net } of netByLiability(deltas)) {
     // Only types that genuinely have a ceiling a cardholder can hit. See
     // CREDIT_LIMIT_LIABILITY_TYPES for which, and why charge cards and BNPL
     // are in that set rather than exempt from it.
@@ -4050,40 +4092,6 @@ async function loadAccountActivity() {
   accountActivity = data || [];
 }
 
-// accountId is the account whose own balance changed (required, so this
-// always shows up when filtering Recent History by that account -
-// omitting it was a real bug caught live: adjusting Cash's balance didn't
-// show up when filtering by the Cash account, since nothing recorded
-// which account it was). relatedAccountId is only for a liability_payment
-// where the liability itself is account-linked (a credit card), so the
-// payment also shows up when filtering by the card, not just the account
-// the money came from. liabilityId is the liability actually paid down -
-// needed for undoActivity() to find a STANDALONE liability (no linked
-// account, so relatedAccountId is null for it) well enough to reverse it.
-// assetId (trailing, optional) is for 'contribution' rows specifically -
-// most investment assets are standalone (STANDALONE_ONLY_ASSET_CATEGORIES),
-// no linked account at all, so accountId alone can't say WHICH investment
-// asset a contribution belongs to. See 42_contribution_tracking.sql.
-async function logActivity(kind, description, amount, occurred_at, accountId, relatedAccountId = null, liabilityId = null, assetId = null, source = null) {
-  const rounded = Math.round(Number(amount) * 100) / 100;
-  // A zero amount normally means nothing actually changed (a "set" to the
-  // same value), so there is nothing worth a history row. account_created is
-  // the deliberate exception - it is an audit breadcrumb, not a money
-  // movement, so its amount is always 0 and it must still be recorded.
-  if (!rounded && kind !== "account_created") return { error: null, id: null };
-  const { data, error } = await sb.from("account_activity").insert({
-    kind, description, amount: rounded, occurred_at: occurred_at || localDateISO(),
-    account_id: accountId, related_account_id: relatedAccountId, liability_id: liabilityId, asset_id: assetId,
-    source,
-  }).select("id").maybeSingle();
-  if (!error) await loadAccountActivity();
-  // Returned so a caller that CANNOT tolerate a silent failure can check it,
-  // and so one that needs to undo its own write has the id. Every existing
-  // caller ignores this and is unaffected - the ones that must not ignore it
-  // are the ones writing a figure something else is then enforced against.
-  return { error, id: data?.id ?? null };
-}
-
 // ---- ADJUST AN ACCOUNT'S LINKED ASSET -----------------------------------
 // Tapping any account circle with a linked asset opens this - every type
 // (Checking, Cash) gets both a direct "set the full balance" field (look
@@ -4092,7 +4100,7 @@ async function logActivity(kind, description, amount, occurred_at, accountId, re
 // with an error rather than floored, so the user knows the edit didn't
 // go through.
 let adjustingAssetId = null;
-let adjustingAccountId = null; // tracked alongside the asset so logActivity can attribute the change to it
+let adjustingAccountId = null; // tracked alongside the asset so its history row can name the account
 
 function findLinkedAsset(accountId) {
   const acct = accounts.find((a) => a.id === accountId);
@@ -4925,7 +4933,7 @@ $("payConfirmBtn").onclick = async () => {
   const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
   const { message } = await moneyTx([
     assetMove(asset, -amount, { floor: 0 }),
-    debtMove(debt, -amount, { strict: true }),
+    debtMove(debt, -amount),
     activityStep("liability_payment", `Paid ${fmt(amount)} to ${debt.name} from ${asset.name}`, amount, undefined, fundingAccountId, debtAccountId, debt.id),
   ]);
   if (message) { flagField("payAmount"); return toast(message, "error"); }
@@ -5236,7 +5244,14 @@ $("saveBtn").onclick = async () => {
 // that already happened, not a new money movement to apply.
 const CSV_MAX_FILE_BYTES = 5 * 1024 * 1024;
 const CSV_MAX_ROWS = 10000;
-const CSV_INSERT_CHUNK_SIZE = 500;
+// The most rows one import saves. The whole import is ONE transaction, and
+// measured on the live database 5,000 rows take under 3 seconds against the
+// 8-second limit a request gets, so this leaves real room on a busy day. A
+// year of bank statements is far below it.
+const CSV_MAX_IMPORT_ROWS = 5000;
+// What an imported payment with no description is saved as, so the duplicate
+// check compares a file's row against the form it was actually stored in.
+const IMPORTED_INCOME_DESCRIPTION = "Imported income";
 
 let csvHeaders = [];
 let csvDataRows = []; // raw string[][], header row excluded
@@ -5256,7 +5271,7 @@ let csvLastImportedActivityIds = [];
 function resetCsvImportState() {
   csvHeaders = []; csvDataRows = []; csvWorkbook = null;
   csvMapping = { dateCol: null, amountCol: null, descCol: null, categoryCol: null };
-  csvPreviewRows = []; csvSkippedCount = 0; csvLastImportedIds = [];
+  csvPreviewRows = []; csvSkippedCount = 0; csvLastImportedIds = []; csvLastImportedActivityIds = [];
   $("csvFileInput").value = "";
   $("csvFileError").textContent = "";
   $("csvSheetPicker").classList.add("hidden");
@@ -5464,9 +5479,14 @@ $("csvStep2Next").onclick = () => {
   for (const raw of csvDataRows) {
     const normalized = normalizeRow(raw, csvMapping, { flipSign, rowKind, convention: csvConvention });
     if (!normalized) { csvSkippedCount++; continue; }
-    // Only expenses can duplicate an existing expense; an income row is
-    // checked against nothing, so it never starts unticked for that reason.
-    const duplicate = normalized.kind === "expense" && isLikelyDuplicate(normalized, allExpenses);
+    // Each kind is checked against its own table: spending against expenses,
+    // money in against the income already recorded. Income was once checked
+    // against nothing, so importing the same statement twice doubled every
+    // paycheck on it with nothing flagged.
+    const duplicate = normalized.kind === "income"
+      ? isLikelyDuplicate({ ...normalized, description: normalized.description || IMPORTED_INCOME_DESCRIPTION },
+          accountActivity.filter((a) => a.kind === "income"))
+      : isLikelyDuplicate(normalized, allExpenses);
     // Resolve the category HERE, not at commit. The confirm step used to
     // auto-categorize silently, so someone importing 200 bank rows - which
     // usually carry no category column at all - reviewed a list with no
@@ -5526,8 +5546,18 @@ $("csvImportConfirm").onclick = async () => {
   const toImport = csvPreviewRows.filter((_, i) => checkedIdx.has(i));
   if (!toImport.length) return toast("Nothing checked to import");
 
+  if (toImport.length > CSV_MAX_IMPORT_ROWS) {
+    return toast(`That is ${toImport.length.toLocaleString()} rows. Import at most ${CSV_MAX_IMPORT_ROWS.toLocaleString()} at a time, for example a year at a time.`, "error");
+  }
+
   const accountId = $("csvAccount").value;
   const importAccount = accounts.find((a) => a.id === accountId);
+  // Same stale-picker guard as Quick Add: an account deleted or archived on
+  // another device would otherwise throw on .type and Import would look dead.
+  if (!importAccount || importAccount.archived_at) {
+    flagField("csvAccount", "That account is no longer available. Pick another one.");
+    return toast("That account is no longer available", "error");
+  }
   const paymentType = importAccount.type;
 
   const rows = toImport.filter((r) => r.normalized.kind === "expense").map((r) => ({
@@ -5556,36 +5586,37 @@ $("csvImportConfirm").onclick = async () => {
   // an account it had never been added to.
   const incomeRows = toImport.filter((r) => r.normalized.kind === "income").map((r) => ({
     kind: "income",
-    description: r.normalized.description || "Imported income",
+    description: r.normalized.description || IMPORTED_INCOME_DESCRIPTION,
     amount: r.normalized.amount,
     occurred_at: r.normalized.occurred_at,
     account_id: accountId,
     source: "import",
   }));
 
+  // The spending and the money in are saved as ONE transaction: all of it, or
+  // none of it. They were separate batches of 500, so a dropped connection
+  // part way through left some of a file imported, and trying again added the
+  // part that had already landed a second time.
   $("csvImportConfirm").disabled = true;
   csvLastImportedIds = [];
   csvLastImportedActivityIds = [];
-  for (let i = 0; i < rows.length; i += CSV_INSERT_CHUNK_SIZE) {
-    const chunk = rows.slice(i, i + CSV_INSERT_CHUNK_SIZE);
-    const { data, error } = await sb.from("expenses").insert(chunk).select("id");
-    if (error) {
-      $("csvImportConfirm").disabled = false;
-      flagField("csvAccount");
-      return toast(`Import stopped partway (${csvLastImportedIds.length} rows saved): ${error.message}`);
-    }
-    csvLastImportedIds.push(...(data || []).map((r) => r.id));
+  const steps = [];
+  if (rows.length) steps.push({ op: "insert", table: "expenses", rows });
+  if (incomeRows.length) steps.push({ op: "insert", table: "account_activity", rows: incomeRows });
+  // Activity is reloaded below with everything else, so not twice.
+  const { data, message } = await moneyTx(steps, { reloadActivity: false });
+  if (message) {
+    // moneyRefusal() already says whether anything was saved, including the
+    // one case where that is not known (no answer came back).
+    $("csvImportConfirm").disabled = false;
+    flagField("csvAccount");
+    return toast(message, "error");
   }
-  for (let i = 0; i < incomeRows.length; i += CSV_INSERT_CHUNK_SIZE) {
-    const chunk = incomeRows.slice(i, i + CSV_INSERT_CHUNK_SIZE);
-    const { data, error } = await sb.from("account_activity").insert(chunk).select("id");
-    if (error) {
-      $("csvImportConfirm").disabled = false;
-      flagField("csvAccount");
-      return toast(`Import stopped partway (${csvLastImportedIds.length + csvLastImportedActivityIds.length} rows saved): ${error.message}`);
-    }
-    csvLastImportedActivityIds.push(...(data || []).map((r) => r.id));
-  }
+  steps.forEach((step, i) => {
+    const ids = data?.[i]?.ids || [];
+    if (step.table === "expenses") csvLastImportedIds = ids;
+    else csvLastImportedActivityIds = ids;
+  });
   $("csvImportConfirm").disabled = false;
 
   await loadExpenses();
@@ -5605,20 +5636,17 @@ $("csvImportConfirm").onclick = async () => {
 $("csvUndoImportBtn").onclick = async () => {
   if (!csvLastImportedIds.length && !csvLastImportedActivityIds.length) return;
   if (!(await confirmModal("This takes back out everything this import added.", { title: "Undo this import?" }))) return;
-  if (csvLastImportedIds.length) {
-    const { error } = await sb.from("expenses").delete().in("id", csvLastImportedIds);
-    if (error) return toast(error.message);
-    csvLastImportedIds = [];
-  }
-  // Undoing income needs no balance correction, because importing it never
-  // applied one - the same reason the expense side above just deletes rows.
-  if (csvLastImportedActivityIds.length) {
-    const { error } = await sb.from("account_activity").delete().in("id", csvLastImportedActivityIds);
-    if (error) return toast(error.message);
-    csvLastImportedActivityIds = [];
-  }
+  // One transaction, the same as the import. Nothing needs a balance
+  // correction, because importing never applied one. The ids travel in the
+  // request body rather than the address, which a long import's ids outgrew.
+  const steps = [];
+  if (csvLastImportedIds.length) steps.push({ op: "delete", table: "expenses", ids: csvLastImportedIds });
+  if (csvLastImportedActivityIds.length) steps.push({ op: "delete", table: "account_activity", ids: csvLastImportedActivityIds });
+  const { message } = await moneyTx(steps);
+  if (message) return toast(`Cannot undo the import. ${message}`, "error");
+  csvLastImportedIds = [];
+  csvLastImportedActivityIds = [];
   await loadExpenses();
-  await loadAccountActivity();
   closeModal("csvImportModal");
   toast("Import undone");
 };
@@ -5756,7 +5784,8 @@ async function restoreDeletedExpenses(rows, what) {
   const net = [...netAmountByAccount(rows)];
   const blocked =
     assetDeltaError(net.map(([accountId, amount]) => ({ accountId, amount, sign: -1 })))
-    || chargeRefusalReason(net.map(([accountId, amount]) => ({ accountId, amount, sign: +1 })));
+    || chargeRefusalReason(net.map(([accountId, amount]) => ({ accountId, amount, sign: +1 })))
+    || owedFloorError(net.map(([accountId, amount]) => ({ accountId, amount, sign: +1 })));
   if (blocked) { toast(`Cannot undo. ${blocked}`, "error"); return; }
   const { message } = await moneyTx([
     { op: "insert", table: "expenses", rows },
@@ -5835,7 +5864,7 @@ function netAmountByAccount(rows) {
 }
 
 // account_activity rows carry a SIGNED amount for asset_adjust (see
-// logActivity) so reversing one is always "subtract whatever the original
+// activityStep) so reversing one is always "subtract whatever the original
 // delta was from the current value" - correct regardless of whether the
 // original action was an add, a subtract, or a direct "set", and correct
 // regardless of what's happened to the balance since. A liability_payment's
@@ -5869,7 +5898,7 @@ async function undoActivity(row) {
     const debt = row.liability_id ? debts.find((d) => d.id === row.liability_id) : null;
     if (!debt) return toast("Cannot undo this, what you owed is no longer there.");
     if (cents(Number(debt.balance) - Number(row.amount)) < 0) return toast(`Can't undo, would take ${debt.name} below $0 owed.`);
-    steps.push(debtMove(debt, -Number(row.amount), { strict: true }));
+    steps.push(debtMove(debt, -Number(row.amount)));
   } else if (row.kind === "liability_payment") {
     const account = accounts.find((a) => a.id === row.account_id);
     const asset = account ? assets.find((a) => a.id === account.linked_asset_id) : null;
@@ -6351,12 +6380,12 @@ $("refundConfirmBtn").onclick = async () => {
   };
   // The same steps undoExpense() takes, and for the same reason: an imported
   // row never moved a balance, so a refund against one must not move one back.
-  // strict: coming off a card, a refund larger than what is owed NOW is
-  // refused by the database rather than floored, even if this device's copy
-  // said there was room.
+  // Coming off a card, a refund larger than what is owed NOW is refused by
+  // the database rather than floored, even if this device's copy said there
+  // was room.
   const { message } = await moneyTx([
     { op: "insert", table: "expenses", row: refundRow },
-    ...(isImported(original) ? [] : chargeSteps(original.account_id, amount, -1, { strict: true })),
+    ...(isImported(original) ? [] : chargeSteps(original.account_id, amount, -1)),
   ]);
   $("refundConfirmBtn").disabled = false;
   if (message) { flagField("refundAmount", message); return toast(message, "error"); }
@@ -6428,12 +6457,20 @@ $("editSave").onclick = async () => {
     { accountId: patch.account_id, amount, sign: +1 },
   ]);
   if (limitErr) { flagField(["eAccount", "eAmount"]); return toast(limitErr); }
+  // And the floor under what is owed: lowering a charge on a card that has
+  // since been paid down can take it below zero.
+  const owedErr = isImported(editing) ? null : owedFloorError([
+    { accountId: prevAccountId, amount: prevAmount, sign: -1 },
+    { accountId: patch.account_id, amount, sign: +1 },
+  ]);
+  if (owedErr) { flagField(["eAccount", "eAmount"]); return toast(owedErr, "error"); }
 
   $("editSave").disabled = true;
-  // Reverse the old asset/liability effect (if any), then apply the new one -
-  // covers amount/account/payment-type all changing in the same edit. The
-  // update, the reversal and the new charge are ONE transaction, and the
-  // update EXPECTS the amount and account this form opened with: if another
+  // Reverse the old asset/liability effect (if any) and apply the new one,
+  // netted to one step per account (editChargeSteps), which covers
+  // amount/account/payment-type all changing in the same edit. The update and
+  // the money are ONE transaction, and the update EXPECTS the amount and
+  // account this form opened with: if another
   // device changed this expense meanwhile, reversing the amount shown here
   // would put the wrong figure back, so the whole edit is refused instead.
   //
@@ -6446,10 +6483,7 @@ $("editSave").onclick = async () => {
   // netAmountByAccount() already make.
   const { message } = await moneyTx([
     { op: "update", table: "expenses", id: editing.id, set: patch, expect: { amount: editing.amount, account_id: editing.account_id } },
-    ...(isImported(editing) ? [] : [
-      ...chargeSteps(prevAccountId, prevAmount, -1),
-      ...chargeSteps(patch.account_id, amount, +1),
-    ]),
+    ...(isImported(editing) ? [] : editChargeSteps(prevAccountId, prevAmount, patch.account_id, amount)),
   ]);
   if (message) { $("editSave").disabled = false; flagField(["eAccount", "eAmount"]); await loadExpenses(); return toast(message, "error"); }
   await loadAssets(); await loadDebts();
@@ -6509,7 +6543,8 @@ async function restoreDeletedExpense(row) {
   if (!isImported(row)) {
     const blocked =
       assetDeltaError([{ accountId: row.account_id, paymentType: row.payment_type, amount, sign: -1 }])
-      || chargeRefusalReason([{ accountId: row.account_id, amount, sign: +1 }]);
+      || chargeRefusalReason([{ accountId: row.account_id, amount, sign: +1 }])
+      || owedFloorError([{ accountId: row.account_id, amount, sign: +1 }]);
     if (blocked) { toast(`Cannot undo. ${blocked}`, "error"); return; }
   }
   // A refund (negative) going back onto a card lowers what is owed, which is
@@ -6517,7 +6552,7 @@ async function restoreDeletedExpense(row) {
   // recording the refund was.
   const { message } = await moneyTx([
     { op: "insert", table: "expenses", row },
-    ...(isImported(row) ? [] : chargeSteps(row.account_id, amount, +1, { strict: amount < 0 })),
+    ...(isImported(row) ? [] : chargeSteps(row.account_id, amount, +1)),
   ]);
   if (message) { toast(`Cannot undo. ${message}`, "error"); return; }
   await loadAssets(); await loadDebts(); await loadExpenses();
@@ -10274,7 +10309,7 @@ function contributionRefusalReason(parentAssetId, amount) {
 // ---- CONTRIBUTIONS (Investments tab) -------------------------------------
 // One shared panel, retargeted per account - same pattern assetAdjustForm
 // already uses for Checking/Cash (openAssetAdjust). Writing 'contribution'
-// through logActivity (rather than a plain assets.update) is the whole
+// as a history row (rather than a plain assets.update) is the whole
 // point - it's what lets contributionLimitUsage() later tell "new money in"
 // apart from a market gain or a manual correction.
 let contributingAssetId = null;
@@ -11245,13 +11280,13 @@ function payBillTowardDebt(sub, occurredAt) {
   const blocked = assetDeltaError([{ accountId: sub.account_id, paymentType: account.type, amount: pay, sign: -1 }]);
   if (blocked) return { blocked };
   const debtAccountId = accounts.find((a) => a.linked_liability_id === debt.id)?.id ?? null;
-  // strict: if what is owed fell below `pay` on another device, the database
-  // refuses the payment rather than flooring the debt and losing the rest.
+  // If what is owed fell below `pay` on another device, the database refuses
+  // the payment rather than flooring the debt and losing the rest.
   return {
     paid: pay,
     steps: [
       assetMove(asset, -pay, { floor: spendFloor(asset) }),
-      debtMove(debt, -pay, { strict: true }),
+      debtMove(debt, -pay),
       activityStep("liability_payment", `Paid ${fmt(pay)} to ${debt.name} from ${asset.name} (${sub.name})`,
         pay, occurredAt, account.id, debtAccountId, debt.id),
     ],
@@ -12474,7 +12509,33 @@ $("profileBtn").onclick = () => {
   openModal("profileModal");
 };
 $("profileClose").onclick = () => closeModal("profileModal");
-$("openPrivacyBtn").onclick = () => openModal("privacyModal");
+$("openPrivacyBtn").onclick = () => {
+  openModal("privacyModal");
+  renderBackupLine();
+  // Fresh, because the sheet states a fact about last night and the copy
+  // loaded at startup may be from yesterday on an icon left open.
+  loadAgentRunStatus().then(renderBackupLine);
+};
+
+// The backup job (tools/backup-database.mjs) reports to agent_run_status as
+// "backup": ok, degraded (it fell back to its built-in table list, so a table
+// added recently could be missing) or failed. A failed run records when it
+// failed, not when the last good copy was made, so it says only that.
+const BACKUP_LATE_MS = 36 * 3600 * 1000; // daily, with room for a late night
+function backupLineText(row, now = Date.now()) {
+  if (!row?.ran_at) return "";
+  const when = timeAgo(row.ran_at);
+  if (row.status === "failed") return `The latest daily copy, ${when}, did not finish, so the newest complete copy is older than that.`;
+  const late = now - new Date(row.ran_at).getTime() > BACKUP_LATE_MS;
+  if (late) return `The latest copy was saved ${when}, so the daily copy seems to have stopped.`;
+  if (row.status === "degraded") return `The latest copy was saved ${when}, though it may have missed something added to the app recently.`;
+  return `The latest copy was saved ${when}.`;
+}
+function renderBackupLine() {
+  const el = $("privacyBackupLine");
+  el.textContent = backupLineText(agentRunStatus.backup);
+  el.classList.toggle("hidden", !el.textContent);
+}
 $("privacyClose").onclick = () => closeModal("privacyModal");
 $("openTermsBtn").onclick = () => openModal("termsModal");
 $("termsClose").onclick = () => closeModal("termsModal");
@@ -12732,6 +12793,45 @@ async function openCheckin() {
   await Promise.all([loadAssets(), loadDebts()]);
   drawCheckinRows();
   openModal("checkinModal");
+  // Not awaited: the sheet is usable at once, and the line arrives after.
+  loadCheckinBooks();
+}
+
+// Whether each balance adds up with its history: what it was when the app
+// started keeping earlier versions, plus every record since, against what it
+// is now. The database works it out (reconcile_balances, 89), as the person
+// asking, so only their own balances come back. The server runs the same
+// check every night for everyone, but only a count reaches the status table
+// every user can read; this is where a person can see their own.
+//
+// A difference means a balance changed with nothing recorded to explain it.
+// Correcting the figure here would not fix that, because a correction is
+// itself recorded, so the line asks for a report instead of suggesting one.
+async function loadCheckinBooks() {
+  const el = $("checkinBooks");
+  el.classList.remove("hidden");
+  el.innerHTML = `<p class="muted">Checking your history...</p>`;
+  const { data, error } = await sb.rpc("reconcile_balances");
+  if (error) { renderLoadError("checkinBooks", error, loadCheckinBooks); return; }
+  el.innerHTML = checkinBooksHtml(data || []);
+  el.classList.toggle("hidden", !el.innerHTML);
+}
+
+function checkinBooksHtml(rows) {
+  if (!rows.length) return "";
+  const off = rows.filter((r) => Math.abs(Number(r.difference)) >= 0.005);
+  if (!off.length) {
+    return `<p class="muted">Your history checks out: every balance here matches what your records say happened to it.</p>`;
+  }
+  const nameOf = (r) => (r.balance_table === "assets" ? assets : debts).find((x) => x.id === r.balance_id)?.name || "A balance";
+  const lines = off.map((r) => {
+    const d = Number(r.difference);
+    const owed = r.balance_table === "liabilities";
+    return `<li>${esc(nameOf(r))} ${owed ? "owes" : "holds"} ${fmt(Math.abs(d))} ${d > 0 ? "more" : "less"} than its history adds up to.</li>`;
+  }).join("");
+  return `<p><strong>${off.length === 1 ? "One balance does not" : `${off.length} balances do not`} match ${off.length === 1 ? "its" : "their"} history.</strong></p>`
+    + `<ul style="margin:var(--sp-1) 0;padding-left:var(--sp-6)">${lines}</ul>`
+    + `<p class="muted">Something changed ${off.length === 1 ? "it" : "them"} without a record, which should not happen. Please report it with Feedback, at the top of any page. Correcting the figure here will not clear this.</p>`;
 }
 $("checkinOpenBtn").onclick = () => openCheckin();
 $("checkinClose").onclick = () => closeModal("checkinModal");

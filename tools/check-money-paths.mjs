@@ -19,7 +19,7 @@
 // money really can move that this app deliberately does not model; it carries
 // the reason, and it is listed rather than omitted so the gap stays visible.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 const app = read("app/app.js");
@@ -115,7 +115,7 @@ ok(refund, "the refund handler has moved or gone");
 if (refund) {
   ok(/amount: -amount/.test(refund[0]), "a refund must be stored as a NEGATIVE expense, not as income");
   ok(!/"income"/.test(refund[0]), "a refund must never be logged as income");
-  ok(/chargeSteps\(original\.account_id, amount, -1, \{ strict: true \}\)/.test(refund[0]), "a refund onto a credit account must come off what is owed, refused rather than floored past zero");
+  ok(/chargeSteps\(original\.account_id, amount, -1\)/.test(refund[0]), "a refund onto a credit account must come off what is owed");
   console.log("  a refund reduces spending; it is never booked as income");
 }
 // A dividend is genuinely income and must be attributable to its holding.
@@ -161,7 +161,24 @@ const direct = [...code.matchAll(/from\("(assets|liabilities)"\)\.update\(\{ ?(v
 // The two price syncs are the only writers allowed to set a value outright:
 // a holdings total follows live prices, it is not a movement of money.
 ok(direct.length === 2, `${direct.length} direct balance writes outside moneyTx() (expected only the two price syncs)`);
-ok(/raise exception using errcode = 'P0001', message = 'money_floor'/.test(read("supabase/86_apply_money.sql")), "apply_money no longer refuses a spend below the floor");
+// The LATEST definition is the one the database runs, so a later migration
+// that quietly brought the $0 floor back would be caught here.
+// An import is all or nothing. It was separate batches of 500, so a dropped
+// connection left part of a file in and a retry added that part twice. It
+// moves no balance either way: the bank's figure already includes it.
+const csvImport = code.match(/\$\("csvImportConfirm"\)\.onclick[\s\S]*?\n\};/);
+ok(csvImport && /await moneyTx\(steps/.test(csvImport[0]) && !/sb\.from\(/.test(csvImport[0]),
+  "the CSV import no longer saves as one transaction through moneyTx()");
+ok(csvImport && !/op: "(asset|liability)"|chargeSteps\(/.test(csvImport[0]), "the CSV import moves a balance, which counts imported history twice");
+const moneyFn = readdirSync(new URL("../supabase/", import.meta.url))
+  .filter((f) => /^\d+_.*\.sql$/.test(f)).sort((a, b) => parseInt(a) - parseInt(b))
+  .map((f) => read(`supabase/${f}`)).filter((sql) => sql.includes("function public.apply_money")).at(-1) || "";
+ok(/raise exception using errcode = 'P0001', message = 'money_floor'/.test(moneyFn), "apply_money no longer refuses a spend below the floor");
+// Flooring what is owed at $0 is how money vanished: an overpayment, then a
+// charge taken back after the card was paid off. Refused, never floored (90).
+ok(!/nxt := 0;/.test(moneyFn), "apply_money floors what is owed at $0 again instead of refusing");
+const debtMoveFn = code.match(/function debtMove\([\s\S]*?\n\}/);
+ok(debtMoveFn && /if \(d < 0\) step\.strict = true/.test(debtMoveFn[0]), "debtMove() no longer marks every lowering of a debt strict");
 console.log(`  balances move only through apply_money(), plus ${direct.length} price syncs`);
 
 section("F. Deliberately not modelled");

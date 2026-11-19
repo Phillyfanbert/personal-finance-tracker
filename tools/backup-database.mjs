@@ -33,8 +33,10 @@
 // (beside this file) or the environment; BACKUP_DIR (default
 // ~/personal-finance-backups); BACKUP_KEEP (default 60 files).
 //
-// Restoring is deliberately by hand: it means writing into a live database
-// that holds real money, which should never be one command. Each file is
+// Restoring is restore-backup.mjs, beside this file. It only CHECKS a file
+// unless it is given a target, puts back missing rows without ever changing an
+// existing one, and will not write into the real database without
+// --production, because that database holds real money. Each file is
 // { format, created_at, source, tables: { name: { primary_key, count, rows } } }
 // and every row is exactly as PostgREST returned it.
 

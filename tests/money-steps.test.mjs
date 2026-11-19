@@ -2,7 +2,7 @@
 //
 // Each balance step travels to the database with the limits that should judge
 // it: the account's floor on money going out, the card's limit on a real
-// purchase, and "strict" on anything that pays money into a debt. Getting one
+// purchase, and "strict" on anything that lowers a debt. Getting one
 // of those wrong is how this app has lost money before, so the shapes are
 // pinned here.
 
@@ -10,8 +10,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { APP, slice, evaluate } from "./source.mjs";
 
-const helpers = slice(APP, "const OVERDRAFT_ELIGIBLE_ASSET_TYPES = new Set([", "function assetDeltaError(deltas)")
-  + slice(APP, "const cents = (n) =>", "// Runs one money action.");
+const helpers = slice(APP, "const OVERDRAFT_ELIGIBLE_ASSET_TYPES = new Set([", "// ---- ONE TRANSACTION PER MONEY ACTION")
+  + slice(APP, "const cents = (n) =>", "// Runs one money action.")
+  + slice(APP, "function netByLiability(deltas)", "function creditLimitError(deltas)");
 
 function load({ assets = [], debts = [], accounts = [], allExpenses = [] } = {}) {
   return evaluate(helpers, {
@@ -20,8 +21,9 @@ function load({ assets = [], debts = [], accounts = [], allExpenses = [] } = {})
     creditLimitNoun: () => "credit limit",
     localDateISO: () => "2026-11-19",
     fmt: (n) => (Number(n) < 0 ? "-$" : "$") + Math.abs(Number(n)).toFixed(2),
-  }, ["assetMove", "debtMove", "chargeSteps", "activityStep", "claimStep", "moneyRefusal",
-      "refundedPurchasesIn", "spendFloor", "REFUNDED_PURCHASE_MESSAGE"]);
+    isImported: (row) => row.source === "import",
+  }, ["assetMove", "debtMove", "chargeSteps", "editChargeSteps", "activityStep", "claimStep", "moneyRefusal",
+      "refundedPurchasesIn", "spendFloor", "takeBackError", "owedFloorError", "REFUNDED_PURCHASE_MESSAGE"]);
 }
 
 const world = () => ({
@@ -66,13 +68,51 @@ test("a card purchase carries the limit; taking one back does not", () => {
   assert.deepEqual(m.chargeSteps("a-visa", 50, +1).filter(Boolean),
     [{ op: "liability", id: "visa", delta: 50, ceiling: 1000 }]);
   assert.deepEqual(m.chargeSteps("a-visa", 50, -1).filter(Boolean),
-    [{ op: "liability", id: "visa", delta: -50 }]);
+    [{ op: "liability", id: "visa", delta: -50, strict: true }]);
 });
 
-test("money back onto a card is strict, so more than is owed is refused, not floored", () => {
+test("anything that lowers what is owed is strict, so below zero is refused, never floored", () => {
   const m = load(world());
-  assert.deepEqual(m.chargeSteps("a-visa", 42, -1, { strict: true }).filter(Boolean),
+  const { debts } = world();
+  // Money back onto a card, a payment, and taking a charge back alike.
+  assert.deepEqual(m.chargeSteps("a-visa", -42, +1).filter(Boolean),
     [{ op: "liability", id: "visa", delta: -42, strict: true }]);
+  assert.equal(m.debtMove(debts[0], -10).strict, true);
+  assert.equal(m.debtMove(debts[0], 10).strict, undefined);
+});
+
+test("an edit is one netted step per account, so a paid-down card is judged on where it ends", () => {
+  const w = world();
+  w.debts[0].balance = 50;
+  const m = load(w);
+  // $100 to $120 on a card now owing $50 ends at $70: one +20, not -100 then +120.
+  assert.deepEqual(m.editChargeSteps("a-visa", 100, "a-visa", 120).filter(Boolean),
+    [{ op: "liability", id: "visa", delta: 20, ceiling: 1000 }]);
+  // Changing only the description moves nothing at all.
+  assert.deepEqual(m.editChargeSteps("a-visa", 100, "a-visa", 100).filter(Boolean), []);
+  // Moved from the card to checking: off the card, out of checking.
+  assert.deepEqual(m.editChargeSteps("a-visa", 30, "a-chk", 30).filter(Boolean), [
+    { op: "liability", id: "visa", delta: -30, strict: true },
+    { op: "asset", id: "chk", delta: -30, floor: -100 },
+  ]);
+});
+
+test("taking back a charge on a card paid down since is refused in words, never floored", () => {
+  const w = world();
+  w.debts[0].balance = 30;
+  const m = load(w);
+  // Charge $100, pay the card down to $30, delete the charge as a mistake.
+  const said = m.takeBackError([{ id: "e1", account_id: "a-visa", amount: 100 }]);
+  assert.match(said, /^Can't take this back\. Visa only owes \$30\.00 now, and taking off \$100\.00/);
+  assert.match(said, /undo that payment first/);
+  assert.doesNotMatch(said, /[–—]| - /);
+  assert.equal(m.takeBackError([{ id: "e2", account_id: "a-visa", amount: 30 }]), null);
+  // An imported charge never moved the card, so taking it back moves nothing.
+  assert.equal(m.takeBackError([{ id: "e3", account_id: "a-visa", amount: 100, source: "import" }]), null);
+  // Netted: a charge and its own refund leave nothing to take off.
+  assert.equal(m.owedFloorError([
+    { accountId: "a-visa", amount: 100, sign: -1 }, { accountId: "a-visa", amount: 90, sign: +1 },
+  ]), null);
 });
 
 test("amounts are rounded to the cent, and a zero move is no step at all", () => {

@@ -5,18 +5,18 @@
 -- rolls back everything the test wrote, so it cannot leave a row behind
 -- however it is run, autocommit included. Read the error's text:
 --
---   money tests: 51 passed, 0 failed
+--   money tests: 57 passed, 0 failed
 --
 -- and anything after "failed:" names what broke. Every row it writes is a
 -- test row (named "ZZ test ..."), written as the first signed-in user under
 -- row-level security exactly as the app writes them, and none survives.
 --
 -- What it covers, and why each is here:
---   A  apply_money (86): the two critical audit findings (a stale device
+--   A  apply_money (86, 90): the two critical audit findings (a stale device
 --      overwriting a balance, a half-finished save) plus the refusals that
 --      replaced bugs found after shipping: a $484 overpayment, a bill logged
 --      three times on one load, an undo reversing money twice, an edit that
---      left the wrong balance.
+--      left the wrong balance, a charge taken back off a paid-off card.
 --   B  the row rules (89): no negative debt, no $0 expense, no balance below
 --      its overdraft, and the rest.
 --   C  refunds (89): never more than what is left of the purchase, and a
@@ -24,6 +24,8 @@
 --   D  record_history (87): an edit keeps the old version; nobody can forge one.
 --   E  reconcile_balances (89): normal actions add up, a change with no record
 --      behind it is caught.
+--   F  opening an account (91): the $0 asset or debt, the account and its
+--      history row land together, or none of them does.
 
 do $$
 declare
@@ -33,7 +35,8 @@ declare
   err text;
   chk uuid; sav uuid; house uuid; card uuid; loan uuid;
   a_chk uuid; a_sav uuid; a_card uuid;
-  e1 uuid; e2 uuid; p1 uuid; r1 uuid; act uuid; sub uuid;
+  e1 uuid; e2 uuid; p1 uuid; r1 uuid; act uuid; sub uuid; mc uuid;
+  na uuid; nacc uuid; ncash uuid;
   r jsonb;
   v numeric;
   n int;
@@ -190,6 +193,31 @@ begin
     'row', jsonb_build_object('amount', 1, 'category', 'Food', 'payment_type', 'cash', 'user_id', gen_random_uuid(), 'description', 'ZZ test forged'))));
   select count(*) into n from expenses where id = (r -> 0 ->> 'id')::uuid and user_id = uid;
   if n = 1 then passed := passed + 1; else failed := failed || 'A10 a forged user_id was kept'; end if;
+
+  -- A11. Charge $100, pay the card off, then take the charge back as a
+  -- mistake. 86 floored what was owed at $0 and the $100 simply went; 90
+  -- refuses it even from a step not marked strict, which is what an older copy
+  -- of the app still sends.
+  r := apply_money(jsonb_build_array(
+    jsonb_build_object('op', 'insert', 'table', 'expenses', 'row', jsonb_build_object('amount', 100, 'category', 'Shopping', 'payment_type', 'credit', 'account_id', a_card, 'description', 'ZZ test mistaken charge')),
+    jsonb_build_object('op', 'liability', 'id', card, 'delta', 100, 'ceiling', 1000)));
+  mc := (r -> 0 ->> 'id')::uuid;
+  perform apply_money(jsonb_build_array(
+    jsonb_build_object('op', 'asset', 'id', sav, 'delta', -100, 'floor', 0),
+    jsonb_build_object('op', 'liability', 'id', card, 'delta', -100, 'strict', true),
+    jsonb_build_object('op', 'insert', 'table', 'account_activity', 'row', jsonb_build_object('kind', 'liability_payment', 'amount', 100,
+      'account_id', a_sav, 'related_account_id', a_card, 'liability_id', card, 'description', 'ZZ test pay the card off'))));
+  begin
+    perform apply_money(jsonb_build_array(
+      jsonb_build_object('op', 'delete', 'table', 'expenses', 'id', mc),
+      jsonb_build_object('op', 'liability', 'id', card, 'delta', -100)));
+    failed := failed || 'A11 taking back a charge on a paid-off card was floored, not refused';
+  exception when others then
+    if sqlerrm = 'money_below_zero' then passed := passed + 1; else failed := failed || format('A11 wrong error %s', sqlerrm); end if;
+  end;
+  select balance into v from liabilities where id = card;
+  select count(*) into n from expenses where id = mc;
+  if v = 0 and n = 1 then passed := passed + 1; else failed := failed || format('A11 the refused take-back still left the card at %s with %s charge', v, n); end if;
 
   -- ---- B. Row rules -----------------------------------------------------
 
@@ -400,6 +428,39 @@ begin
   select sum(delta) into v from money_effects('account_activity',
     jsonb_build_object('kind', 'holding_sale', 'amount', 75, 'account_id', a_chk));
   if v = 75 then passed := passed + 1; else failed := failed || format('E4 a sale moved %s, want 75', v); end if;
+
+  -- ---- F. Opening an account -------------------------------------------
+
+  -- F1. The $0 debt, the account pointing at it and its history row, in one
+  -- call, all belonging to whoever wrote them.
+  na := gen_random_uuid(); nacc := gen_random_uuid();
+  perform apply_money(jsonb_build_array(
+    jsonb_build_object('op', 'insert', 'table', 'liabilities', 'row', jsonb_build_object('id', na, 'name', 'ZZ test new card', 'type', 'credit_card', 'balance', 0)),
+    jsonb_build_object('op', 'insert', 'table', 'accounts', 'row', jsonb_build_object('id', nacc, 'name', 'Credit', 'bank_name', 'ZZ test', 'type', 'credit', 'linked_liability_id', na)),
+    jsonb_build_object('op', 'insert', 'table', 'account_activity', 'row', jsonb_build_object('kind', 'account_created', 'description', 'ZZ test opened a card', 'amount', 0, 'account_id', nacc))));
+  select count(*) into n from accounts a join liabilities l on l.id = a.linked_liability_id
+    where a.id = nacc and a.user_id = uid and l.user_id = uid;
+  if n = 1 then passed := passed + 1; else failed := failed || 'F1 the new card and its account did not land together as the writer'; end if;
+  select count(*) into n from account_activity where account_id = nacc and kind = 'account_created';
+  if n = 1 then passed := passed + 1; else failed := failed || format('F1 opening the account wrote %s history rows, want 1', n); end if;
+
+  -- F2. A second Cash account is refused by the one-per-person index, and the
+  -- Cash asset made for it goes too, rather than staying behind as a stray $0.
+  if not exists (select 1 from accounts where type = 'cash' and user_id = uid) then
+    ncash := gen_random_uuid();
+    perform apply_money(jsonb_build_array(
+      jsonb_build_object('op', 'insert', 'table', 'assets', 'row', jsonb_build_object('id', ncash, 'name', 'ZZ test first cash', 'type', 'cash', 'value', 0)),
+      jsonb_build_object('op', 'insert', 'table', 'accounts', 'row', jsonb_build_object('name', 'Cash', 'type', 'cash', 'linked_asset_id', ncash))));
+  end if;
+  ncash := gen_random_uuid();
+  begin
+    perform apply_money(jsonb_build_array(
+      jsonb_build_object('op', 'insert', 'table', 'assets', 'row', jsonb_build_object('id', ncash, 'name', 'ZZ test second cash', 'type', 'cash', 'value', 0)),
+      jsonb_build_object('op', 'insert', 'table', 'accounts', 'row', jsonb_build_object('name', 'Cash', 'type', 'cash', 'linked_asset_id', ncash))));
+    failed := failed || 'F2 a second Cash account was opened';
+  exception when unique_violation then passed := passed + 1; end;
+  select count(*) into n from assets where id = ncash;
+  if n = 0 then passed := passed + 1; else failed := failed || 'F2 the refused Cash account left its asset behind'; end if;
 
   raise exception 'money tests: % passed, % failed%', passed, coalesce(array_length(failed, 1), 0),
     case when array_length(failed, 1) > 0 then ': ' || array_to_string(failed, ' | ') else '' end;

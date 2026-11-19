@@ -2829,6 +2829,10 @@
       <p class="text-sm" style="margin:var(--sp-2) 0 var(--sp-3)">Open your bank's app or your latest statement and compare. Type a new figure only where one is different, and leave the rest blank.</p>
       <div id="checkinList"></div>
       <p class="muted text-sm hidden" id="checkinLeftOut" style="margin:var(--sp-3) 0 0"></p>
+      <!-- Whether each balance adds up with the history behind it, from the
+           database's own check (reconcile_balances, 89). Filled by
+           loadCheckinBooks() each time the sheet opens. -->
+      <div id="checkinBooks" class="text-sm hidden" style="margin:var(--sp-3) 0 0"></div>
       <div style="height:12px"></div>
       <button id="checkinSave" type="button">Save</button>
     </div>
@@ -3148,6 +3152,10 @@
 
       <h3 style="font-size:14px;margin:14px 0 4px">Backups</h3>
       <p class="muted" style="font-size:13px;margin:0 0 10px">A full copy of the database is saved once a day to a computer in this household, so the records can be recovered if something goes wrong. Those copies are kept for two months.</p>
+      <!-- When the last copy was actually made, from the backup job's own
+           status row, so the sentence above can be checked rather than taken
+           on trust. Filled by renderBackupLine() when the sheet opens. -->
+      <p class="muted hidden" id="privacyBackupLine" style="font-size:13px;margin:0 0 10px"></p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">Getting a copy, or deleting it</h3>
       <p class="muted" style="font-size:13px;margin:0 0 10px">The two buttons above this one download everything you have recorded, earlier versions included, as a file saved to your own device. Deleting a single record keeps its earlier version. To have all of your information deleted, earlier versions included, ask the person who set this app up; copies already in a backup are removed as those backups age out.</p>

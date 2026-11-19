@@ -1233,7 +1233,7 @@ function buildRecapSummaryPrompt(tradeDate, movers, breadth, indexMoves, company
     "",
     `Trading day: ${tradeDate}`,
     breadth
-      ? `Of the ${breadth.total} companies this person tracks, ${breadth.up} finished the day higher and ${breadth.down} finished lower.`
+      ? `Of ${breadth.total} large US companies, ${breadth.up} finished the day higher and ${breadth.down} finished lower.`
       : "",
     indexLines.length ? "How the wider market did:" : "",
     ...indexLines,
@@ -1828,6 +1828,38 @@ function trendForSymbols(rowsByDate, dates, symbols) {
   return out;
 }
 
+// The day's coverage for EVERY stock someone owns or tracks, stored on that
+// stock's own daily_prices row: the first stored headline that names the
+// company (pickRelevantHeadline, the recap's own check). The app builds each
+// person's "biggest moves" from their own prices with this attached, so it
+// reads exactly as the shared recap used to, without that recap ever naming a
+// company only one person follows. daily_prices is readable only for your own
+// symbols (93), which is what keeps this private.
+//
+// Upserted on the row's own key with its own close, so the merge changes only
+// the headline. A stock with nothing relevant is left as it is rather than
+// given a headline about something else.
+async function storeSymbolHeadlines(tradeDate, todayRows, headlines, etfTickers) {
+  const { names: trackedNames } = await loadMoversWatchlist();
+  const names = { ...DEFAULT_MOVER_COMPANY_NAMES, ...trackedNames };
+  const rows = [];
+  for (const row of todayRows) {
+    const symbol = (row.symbol || "").trim().toUpperCase();
+    if (!symbol || etfTickers.has(symbol)) continue;
+    const found = headlines.get(symbol);
+    const top = pickRelevantHeadline(symbol, found && found.headlines, new Set(), names);
+    if (!top) continue;
+    rows.push({
+      symbol: row.symbol,
+      trade_date: tradeDate,
+      close: row.close,
+      headline: { title: top.title, url: top.url, source: top.source || null, summary: top.summary || null },
+    });
+  }
+  await sbUpsertRows("daily_prices", rows, "symbol,trade_date");
+  console.log(`${DRY_RUN ? "Would have stored" : "Stored"} the day's headline for ${rows.length} stock(s) on ${tradeDate}.`);
+}
+
 async function buildDailyRecap(contextHeadlines = []) {
   queryAttempts++;
   const dateRows = await sbGet("daily_prices?select=trade_date&order=trade_date.desc&limit=200");
@@ -1881,8 +1913,17 @@ async function buildDailyRecap(contextHeadlines = []) {
 
   const headlines = await latestHeadlinesBySymbol();
   const etfTickers = new Set(Object.values(MARKET_INDEX_ETF_PROXIES));
-  const { symbols: moverSymbols, names: companyNames } = await loadMoversWatchlist();
+  // The public list, never the union of everyone's (see publicMoversList()).
+  const { symbols: moverSymbols, names: companyNames } = publicMoversList();
   const watchlist = new Set(moverSymbols);
+
+  // Every owned or tracked stock's own headline for the day, on its own row.
+  // Separate from the shared recap below and never fatal to it.
+  try {
+    await storeSymbolHeadlines(tradeDate, todayRows, headlines, etfTickers);
+  } catch (err) {
+    console.warn(`Could not store each stock's headline for ${tradeDate} (non-fatal): ${err.message}`);
+  }
 
   const scored = [];
   for (const row of todayRows) {
@@ -2141,12 +2182,27 @@ async function loadWatchlist() {
 // The movers watchlist, now read from watchlist_symbols (56_watchlist_and_
 // fundamentals.sql) instead of a hardcoded constant that had to be kept in
 // sync by hand with app/app.js. Reads the union across ALL users the same
-// way loadWatchlist() above does for assets.price_symbol - a symbol's price
-// is a public fact, and market_index_findings has never been user-scoped.
+// way loadWatchlist() above does for assets.price_symbol, to decide what to
+// FETCH and to write per-symbol rows, which the database shows only to people
+// who own or track that symbol (93). Nothing built from this union may go into
+// a row every account can read: the shared recap and digest use
+// publicMoversList() instead.
 //
 // Falls back to the built-in defaults if the table is empty or unreachable,
 // so a fetch failure degrades to today's behavior rather than pricing
 // nothing at all.
+// What the SHARED recap and news digest are built from: the 20 large
+// companies every new account starts with, which are in this public
+// repository. Anyone can sign up, and those two rows are readable by every
+// account, so they must never be built from the union of everyone's tracked
+// list: that named other people's companies (93). Each person's own movers
+// are worked out in the app from their own prices, with the headline this
+// job stores on each stock's own daily_prices row (storeSymbolHeadlines),
+// where row-level security limits it to people who own or track that stock.
+function publicMoversList() {
+  return { symbols: [...DEFAULT_MOVERS_WATCHLIST], names: { ...DEFAULT_MOVER_COMPANY_NAMES } };
+}
+
 async function loadMoversWatchlist() {
   try {
     const rows = await sbGet("watchlist_symbols?select=symbol,company_name");
@@ -2653,9 +2709,11 @@ const MARKET_NEWS_SOURCES = new Set([
 ]);
 
 async function fetchTrackedStockNews() {
-  const [bySymbol, { names: companyNames }] = await Promise.all([
-    latestHeadlinesBySymbol(), loadMoversWatchlist(),
-  ]);
+  // The public list only, for the same reason as the recap: every account
+  // can read this digest (see publicMoversList()).
+  const { symbols: publicSymbols, names: companyNames } = publicMoversList();
+  const allowed = new Set(publicSymbols);
+  const bySymbol = new Map([...(await latestHeadlinesBySymbol()).entries()].filter(([symbol]) => allowed.has(symbol)));
   const seen = new Set();
   const items = [];
   // Newest symbol-batch first, so the digest leads with the freshest news.

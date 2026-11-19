@@ -90,9 +90,42 @@ test("every link between tables is held to one owner, the same list the restore 
   assert.deepEqual(owned, known);
 });
 
-test("a new account is by invitation, and the sign-in screen says so in words", () => {
-  const sql = read("supabase/92_invite_only_and_same_owner.sql");
-  assert.match(sql, /create trigger aa_signup_by_invite before insert on auth\.users/);
-  assert.match(sql, /revoke all on public\.allowed_signups from public, anon, authenticated;/);
-  assert.match(APP, /database error saving new user/i);
+test("anyone may sign up: the invitation gate from 92 is removed by 93", () => {
+  const sql = read("supabase/93_open_signup_private_market_data.sql");
+  assert.match(sql, /drop trigger if exists aa_signup_by_invite on auth\.users;/);
+  assert.match(sql, /drop table if exists public\.allowed_signups;/);
+  assert.doesNotMatch(APP, /has not been invited/, "the sign-in screen still talks about invitations");
+});
+
+// Anyone may make an account, so the shared market data must not show one
+// person's choices to another (93). Each per-symbol table is limited to the
+// reader's own symbols plus the four index funds, and those four are written
+// in three places that must agree.
+test("each per-symbol table is limited to the reader's own symbols and the four index funds", () => {
+  const sql = read("supabase/93_open_signup_private_market_data.sql");
+  for (const table of ["asset_price_findings", "market_index_findings", "daily_prices", "symbol_fundamentals"]) {
+    const policy = sql.match(new RegExp(`create policy "[^"]+" on public\\.${table} for select\\s+using \\(([\\s\\S]*?)\\);`));
+    assert.ok(policy, `${table} has no select policy in 93`);
+    assert.match(policy[1], /upper\(btrim\(symbol\)\) in \(select public\.my_symbols\(\)\)/, `${table} is not limited to the reader's symbols`);
+  }
+  assert.match(sql, /lower\(btrim\(service\)\) in \(\s*select lower\(btrim\(name\)\) from public\.subscriptions where user_id = auth\.uid\(\)\)/,
+    "deal findings are not limited to the reader's own subscription names");
+  const sqlFunds = [...sql.match(/select unnest\(array\[([^\]]+)\]\)/)[1].matchAll(/'([A-Z]+)'/g)].map((m) => m[1]).sort();
+  const proxies = (src) => {
+    const block = src.slice(src.indexOf("const MARKET_INDEX_ETF_PROXIES = {"), src.indexOf("};", src.indexOf("const MARKET_INDEX_ETF_PROXIES = {")));
+    return [...block.matchAll(/:\s*"([A-Z]+)"/g)].map((m) => m[1]).sort();
+  };
+  assert.deepEqual(proxies(APP), sqlFunds);
+  assert.deepEqual(proxies(read("tools/price-agent.js")), sqlFunds);
+});
+
+test("the shared recap and news digest are built from the public list, never everyone's", () => {
+  const agent = read("tools/price-agent.js");
+  const body = (name) => agent.slice(agent.indexOf(`async function ${name}(`), agent.indexOf("\n}\n", agent.indexOf(`async function ${name}(`)));
+  for (const name of ["buildDailyRecap", "fetchTrackedStockNews"]) {
+    assert.match(body(name), /publicMoversList\(\)/, `${name} no longer uses the public list`);
+    assert.doesNotMatch(body(name), /loadMoversWatchlist\(\)/, `${name} reads everyone's tracked list into a row every account can read`);
+  }
+  // The public list is the one in this public repository.
+  assert.match(agent, /function publicMoversList\(\) \{\n  return \{ symbols: \[\.\.\.DEFAULT_MOVERS_WATCHLIST\], names: \{ \.\.\.DEFAULT_MOVER_COMPANY_NAMES \} \};/);
 });

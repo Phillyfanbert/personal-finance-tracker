@@ -34,7 +34,7 @@
     } catch (e) { /* storage blocked; dark is the default anyway */ }
   </script>
   <!-- Describes the app to a browser or a link preview. Deliberately says
-       nothing about the household using it: the app is behind sign-in, so a
+       nothing about the people using it: the app is behind sign-in, so a
        description is read by whoever finds the URL, not by a user. -->
   <meta name="description" content="A private personal finance tracker for expenses, accounts, net worth and investments. Sign-in required." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1882,9 +1882,9 @@
       <div class="card" id="insightsCard">
         <div class="card-head">
           <h2>Monthly report</h2>
-          <span class="info-icon" tabindex="0" role="button" aria-expanded="false" data-info="insightsExplainer" title="A plain-English write-up of a finished month, written once the month ends by an AI model on a computer in this household. The figures beside it are counted directly from your logged spending, so they are exact; the paragraph underneath is AI-written from those same figures and is labelled as such. It only covers what you actually logged, so a quiet month usually means less was recorded, not that nothing was spent.">i</span>
+          <span class="info-icon" tabindex="0" role="button" aria-expanded="false" data-info="insightsExplainer" title="A plain-English write-up of a finished month, written once the month ends by an AI model on a computer belonging to the person who runs this app. The figures beside it are counted directly from your logged spending, so they are exact; the paragraph underneath is AI-written from those same figures and is labelled as such. It only covers what you actually logged, so a quiet month usually means less was recorded, not that nothing was spent.">i</span>
         </div>
-        <p class="explainer hidden" id="insightsExplainer">A plain-English write-up of a finished month, written once the month ends by an AI model on a computer in this household. The figures beside it are counted directly from your logged spending, so they are exact; the paragraph underneath is AI-written from those same figures and is labelled as such. It only covers what you actually logged, so a quiet month usually means less was recorded, not that nothing was spent.</p>
+        <p class="explainer hidden" id="insightsExplainer">A plain-English write-up of a finished month, written once the month ends by an AI model on a computer belonging to the person who runs this app. The figures beside it are counted directly from your logged spending, so they are exact; the paragraph underneath is AI-written from those same figures and is labelled as such. It only covers what you actually logged, so a quiet month usually means less was recorded, not that nothing was spent.</p>
         <p class="muted" id="insightsPeriod" style="font-size:12px;margin:2px 0 10px"></p>
         <!-- Counted in code from the same month's expenses, never parsed back
              out of the AI paragraph below - so the numbers on show are exact
@@ -2365,10 +2365,10 @@
           <div id="portfolioRecapCard" class="hidden" style="margin-top:var(--sp-4)">
             <div class="card-head">
               <h3 style="font-size:13px">Today's note</h3>
-              <span class="info-icon" tabindex="0" role="button" data-info="portfolioRecapExplainer" title="A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app. The wording comes from an AI model on a computer in this household, not from an AI company. A day you don't open the app after the close simply has no note.">i</span>
+              <span class="info-icon" tabindex="0" role="button" data-info="portfolioRecapExplainer" title="A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app. The wording comes from an AI model on a computer belonging to the person who runs this app, not from an AI company. A day you don't open the app after the close simply has no note.">i</span>
             </div>
             <p class="muted" style="font-size:12px;margin:4px 0 2px" id="portfolioRecapDate"></p>
-            <p class="muted explainer hidden" id="portfolioRecapExplainer">A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app. The wording comes from an AI model on a computer in this household, not from an AI company. A day you don't open the app after the close simply has no note.</p>
+            <p class="muted explainer hidden" id="portfolioRecapExplainer">A short written note about how the things you own did on the last day the market was open. Every figure is worked out by this app. The wording comes from an AI model on a computer belonging to the person who runs this app, not from an AI company. A day you don't open the app after the close simply has no note.</p>
             <p style="font-size:15.5px;line-height:1.6;margin:8px 0 0" id="portfolioRecapSummary"></p>
           </div>
         </div>
@@ -3152,16 +3152,16 @@
 
       <h3 style="font-size:14px;margin:14px 0 4px">Who can see it</h3>
       <p class="muted" style="font-size:13px;margin:0 0 6px">Other people using this app cannot see your money. The database checks who is asking on every single request and returns only your own rows, so this holds even if the app itself has a bug.</p>
-      <p class="muted" style="font-size:13px;margin:0 0 10px"><strong>The person who set this app up can.</strong> Running it requires a key that reads the whole database, and they hold it. That is normal for a household app, but you should know it rather than assume otherwise: treat what you record here as visible to them.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 10px"><strong>The person who set this app up can.</strong> Running it requires a key that reads the whole database, and they hold it. That is normal for a small app run by one person, but you should know it rather than assume otherwise: treat what you record here as visible to them.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What is never shared</h3>
-      <p class="muted" style="font-size:13px;margin:0 0 10px">Your transactions, balances, account names and notes are never given to an AI company, an advertiser or anyone else to use. When you ask the app a question, or it writes you a note, the words come from an AI model on a computer in this household. To reach that computer from your phone, the figures pass through Cloudflare, the same company that serves this app.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Your transactions, balances, account names and notes are never given to an AI company, an advertiser or anyone else to use. When you ask the app a question, or it writes you a note, the words come from an AI model on a computer belonging to the person who runs this app. To reach that computer from your phone, the figures pass through Cloudflare, the same company that serves this app.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What does get sent out</h3>
       <p class="muted" style="font-size:13px;margin:0 0 6px">Three things leave, and none of them include who you are or what you spend:</p>
       <ul class="muted" style="font-size:13px;margin:0 0 10px;padding-left:18px">
-        <li>Stock and fund symbols you track or own, never how much you hold. They go to a price service for the current price, and, mixed in with everyone else's, to an AI service that writes the daily market recap.</li>
-        <li>The names of subscription services you record, used to search public pricing pages for a cheaper plan. The service name only, never your account or what you pay.</li>
+        <li>Stock and fund symbols you track or own, never how much you hold. They go to a price service for the current price, and, mixed in with everyone else's, to an AI service that writes a short line on why a stock moved. Nobody else using the app can see which ones are yours, and the shared daily market recap is written only about 20 well-known companies, never from what anyone tracks.</li>
+        <li>The names of subscription services you record, used to search public pricing pages for a cheaper plan. The service name only, never your account or what you pay, and nobody else using the app sees which services are yours.</li>
         <li>Your browser loads shared code libraries from public code networks: three from jsDelivr when the page opens, and one from SheetJS, its maker, the first time you use an Excel file. Each is fixed to an exact version and checked before it runs. Loading them is how those networks see your IP address, the same as for any site using a public library.</li>
       </ul>
 
@@ -3172,7 +3172,7 @@
       <p class="muted" style="font-size:13px;margin:0 0 10px">When you change or delete something, the app keeps what it said before, so a mistake can always be traced. Other people using the app cannot see yours, and nobody can edit or remove them from inside the app.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">Backups</h3>
-      <p class="muted" style="font-size:13px;margin:0 0 10px">A full copy of the database is saved once a day to a computer in this household, so the records can be recovered if something goes wrong. Those copies are kept for two months.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">A full copy of the database is saved once a day to a computer belonging to the person who runs this app, so the records can be recovered if something goes wrong. Those copies are kept for two months.</p>
       <!-- When the last copy was actually made, from the backup job's own
            status row, so the sentence above can be checked rather than taken
            on trust. Filled by renderBackupLine() when the sheet opens. -->
@@ -3203,7 +3203,7 @@
       </div>
 
       <h3 style="font-size:14px;margin:14px 0 4px">What this app is</h3>
-      <p class="muted" style="font-size:13px;margin:0 0 10px">A private record of money you enter yourself, shared by a small household. It is not a bank and it never moves, holds or transfers real money. Changing a balance here changes a note about your money, not the money.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">A private record of money you enter yourself. Anyone can make an account, and each account sees only its own records. It is not a bank and it never moves, holds or transfers real money. Changing a balance here changes a note about your money, not the money.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">It only knows what you tell it</h3>
       <p class="muted" style="font-size:13px;margin:0 0 10px">Every total, chart and answer is worked out from what has been recorded. If something was not entered, it is not counted, and figures will read low without saying so. Checking the numbers against your real statements is on you.</p>
@@ -3215,10 +3215,10 @@
       <p class="muted" style="font-size:13px;margin:0 0 10px">Share prices come from an outside service and can be delayed, missing or wrong, and some kinds of investment have no live price at all. Written recaps and answers are produced by a computer from figures the app calculated, and are labelled where they appear. Treat both as a helpful guide, not as a record of fact.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">Availability, and keeping your own copy</h3>
-      <p class="muted" style="font-size:13px;margin:0 0 10px">This runs on free services and, for some features, on a computer in this household. When that machine is off or the internet is down, parts of the app stop working and prices stop updating. There is no guarantee it will be available, and no promise that data cannot be lost. Use the download buttons in Profile now and then so you have your own copy.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">This runs on free services and, for some features, on a computer belonging to the person who runs this app. When that machine is off or the internet is down, parts of the app stop working and prices stop updating. There is no guarantee it will be available, and no promise that data cannot be lost. Use the download buttons in Profile now and then so you have your own copy.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">Using it</h3>
-      <p class="muted" style="font-size:13px;margin:0 0 10px">Accounts are for members of this household, given out by the person who runs it, and can be withdrawn by them. Record your own money, not anyone else's, and do not try to reach another person's records.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 10px">Anyone can make an account, and the person who runs this app can close one that is misused. Record your own money, not anyone else's, and do not try to reach another person's records.</p>
 
       <h3 style="font-size:14px;margin:14px 0 4px">Changes</h3>
       <p class="muted" style="font-size:13px;margin:0 0 4px">These terms can change as the app does. There is no notification when they do, so re-read them if it matters to you. How your information is handled is covered separately, under "Your data and privacy".</p>
@@ -3537,7 +3537,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-ask-about-your-spending-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>Ask about your spending</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-ask-about-your-spending-body">
           <p>Ask in plain English, like "how much did I spend on groceries last month".</p>
-          <p>Most answers are counted straight from your records and labelled <strong>Exact</strong>. Harder ones are written by an AI model on a computer in this household, take about a minute, and are labelled <strong>AI-written</strong>.</p>
+          <p>Most answers are counted straight from your records and labelled <strong>Exact</strong>. Harder ones are written by an AI model on a computer belonging to the person who runs this app, take about a minute, and are labelled <strong>AI-written</strong>.</p>
           <p>It only answers questions about your own money, and nothing about your records leaves the app.</p>
           
           </div>
@@ -3692,7 +3692,7 @@
           <h3 class="help-topic-h"><button type="button" class="help-topic-head" aria-expanded="false" aria-controls="helpTopic-how-it-s-going-body"><span class="help-chevron" aria-hidden="true">&#9656;</span>How it's going</button></h3>
           <div class="help-topic-body hidden" id="helpTopic-how-it-s-going-body">
           <p>Above it, what everything you own is worth with today&#39;s move, and your gain or loss with what you paid. The chart is what it has been worth, with one point for each day you opened the app, so it needs two days before a line appears.</p>
-          <p>Under the chart, a few plain sentences built from real numbers on this page, never a made-up score. After the market closes, a short note on how your own things did that day: every figure is worked out by this app, and only the wording is written for you, by an AI model on a computer in this household. It never suggests buying or selling.</p>
+          <p>Under the chart, a few plain sentences built from real numbers on this page, never a made-up score. After the market closes, a short note on how your own things did that day: every figure is worked out by this app, and only the wording is written for you, by an AI model on a computer belonging to the person who runs this app. It never suggests buying or selling.</p>
           </div>
         </div>
 

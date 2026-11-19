@@ -15,7 +15,7 @@ import { estimateValue, effectiveAssetValue } from "./depreciation.js";
 import { payoffProjection } from "./payoff.js";
 import { cycleDates, cycleStatus } from "./creditCycle.js";
 import { budgetStatus, budgetSplit, budgetYearStatus, safeToSpend, sinkingFundStatus, sinkingFundMonthlyTotal, WARN_THRESHOLD_PCT } from "./budgets.js";
-import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, recapBreadthDetail, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, portfolioRecapFigures, withDailyCloses, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
+import { investmentHoldings, portfolioTotals, allocationVsTarget, contributionLimitUsage, portfolioHealthSummary, marketIndexSummary, topMarketMovers, latestNewsDigest, latestFinnhubRefresh, marketBreadth, recapBreadthDetail, marketStatus, latestRecap, priceRangeStats, priceSeries, realizedGainSummary, portfolioRecapFigures, withDailyCloses, recapMovers, ALLOCATION_DRIFT_WARN_PCT } from "./investments.js";
 import { ALL_SECURITY_TICKERS, CRYPTO_SYMBOLS, TICKER_NAMES, searchTickers, loadSecTickers, storableName } from "./tickers.js";
 import { CREDIT_CARDS, isKnownCard } from "./creditCards.js";
 import {
@@ -723,13 +723,9 @@ $("signInBtn").onclick = async () => {
   const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
   $("signInBtn").disabled = false;
   $("signInBtn").textContent = "Send magic link instead";
-  // New accounts are by invitation (92): the database refuses one for an email
-  // nobody has added, and the sign-in service reports that only as a database
-  // error, which would read as the app being broken.
-  const notInvited = error && /database error saving new user/i.test(error.message || "");
-  $("authMsg").textContent = notInvited
-    ? "That email has not been invited to this app. Ask the person who set it up to add you."
-    : error ? error.message : "Link sent ✓. Check your email.";
+  // Anyone may make an account (93 reopened sign-up), so a new address gets a
+  // link the same as an existing one.
+  $("authMsg").textContent = error ? error.message : "Link sent ✓. Check your email.";
   if (error) flagField("email");
   toast(error ? "Couldn't send link" : "Magic link sent ✓");
 };
@@ -1431,7 +1427,28 @@ async function loadDailyRecaps() {
     .order("trade_date", { ascending: false })
     .limit(RECAP_HISTORY_DAYS);
   dailyRecaps = data || [];
+  await loadRecapHeadlines(latestRecap(dailyRecaps)?.tradeDate);
   renderDailyRecap();
+}
+
+// The headline the server chose for each of THIS person's stocks on the
+// recap's day, stored on that stock's own daily_prices row (93), which only
+// people who own or track it can read. A failed load is remembered rather
+// than treated as "nothing was published": the card must not state that about
+// a company when it simply could not find out.
+let recapHeadlines = { date: null, bySymbol: new Map(), loaded: false };
+async function loadRecapHeadlines(tradeDate) {
+  if (!tradeDate) { recapHeadlines = { date: null, bySymbol: new Map(), loaded: false }; return; }
+  const { data, error } = await sb.from("daily_prices")
+    .select("symbol,headline")
+    .eq("trade_date", tradeDate)
+    .not("headline", "is", null);
+  const bySymbol = new Map();
+  for (const row of (error ? [] : data || [])) {
+    const symbol = (row.symbol || "").trim().toUpperCase();
+    if (symbol && row.headline && row.headline.title && row.headline.url) bySymbol.set(symbol, row.headline);
+  }
+  recapHeadlines = { date: tradeDate, bySymbol, loaded: !error };
 }
 
 // ---- LIVE PRICE REFRESH ----------------------------------------------------
@@ -1500,8 +1517,8 @@ const indexPriceSymbols = () => [...new Set(
 // public fact with no owner - so it holds the union across every user, and
 // price-agent's loadMoversWatchlist() reads that union on purpose. Reading it
 // back unfiltered therefore put symbols only SOMEONE ELSE tracks into this
-// user's picker. Measured on production 2026-10-14: GDDY, ROKU and VOO were
-// each tracked by exactly one of four users and listed for all four. Because
+// user's picker. Measured on production 2026-10-14: three symbols were each
+// tracked by exactly one of four users and listed for all four. Because
 // syncHoldingsIntoWatchlist() adds anything you own, that disclosed holdings
 // rather than only interests.
 //
@@ -8184,7 +8201,7 @@ function renderPortfolioRecap() {
   // recap's byline draws, and named as the LOCAL model so the privacy
   // position is visible rather than something the user has to take on trust.
   $("portfolioRecapSummary").innerHTML =
-    `<span class="muted" style="font-size:11px;display:block;margin-bottom:4px">Written by an AI model on a computer in this household, from figures this app worked out</span>` +
+    `<span class="muted" style="font-size:11px;display:block;margin-bottom:4px">Written by an AI model on a computer belonging to the person who runs this app, from figures this app worked out</span>` +
     esc(plainDashes(row.summary)).replace(/\n+/g, "<br><br>");
 }
 
@@ -9609,9 +9626,23 @@ function renderDailyRecap() {
   // couple of lines that costs no model call and no quota, which is the only
   // kind of "why" this card can offer every day. It is still coverage, not a
   // stated cause, and the card says so.
-  $("dailyRecapMovers").innerHTML = recap.movers.length
+  //
+  // These are THIS person's own companies, worked out from their own prices
+  // (recapMovers). The stored recap row is built over a public list of 20
+  // large companies, so it never names a company only one person follows;
+  // its own movers are used only as a fallback headline for a public-list
+  // stock on a day the per-stock headlines were not stored yet.
+  const sameDay = recapHeadlines.date === recap.tradeDate;
+  const fromRecapRow = new Map(recap.movers.filter((m) => m.headline).map((m) => [m.symbol, m.headline]));
+  const movers = recapMovers(detail, (symbol) =>
+    (sameDay && recapHeadlines.bySymbol.get(symbol)) || fromRecapRow.get(symbol) || null);
+  // "Nothing was published" is only said when that day's headlines were
+  // actually read and some exist; otherwise the card cannot know, so it is
+  // silent rather than claiming something it never checked.
+  const canSayNone = sameDay && recapHeadlines.loaded && recapHeadlines.bySymbol.size > 0;
+  $("dailyRecapMovers").innerHTML = movers.length
     ? `<div class="muted" style="font-size:12px;font-weight:700;margin:14px 0 8px">The biggest moves, and what was reported</div>` +
-      recap.movers.map((m) => {
+      movers.map((m) => {
         const name = trackedCompanyName(m.symbol);
         const h = m.headline;
         return `
@@ -9621,7 +9652,7 @@ function renderDailyRecap() {
             <span style="font-weight:700;font-size:13px;color:${gainColor(m.change_pct)}">${signedPct(m.change_pct)}</span>
             ${name ? `<span class="muted" style="font-size:12px">${esc(name)}</span>` : ""}
           </div>
-          ${h ? extLink(h.url, esc(h.title), "color:var(--accent);font-size:13px;line-height:1.45") : `<div class="muted" style="font-size:12px">Nothing was published about this one today.</div>`}
+          ${h ? extLink(h.url, esc(h.title), "color:var(--accent);font-size:13px;line-height:1.45") : canSayNone ? `<div class="muted" style="font-size:12px">Nothing was published about this one that day.</div>` : ""}
           ${h && h.summary ? `<p class="recap-why">${esc(plainDashes(h.summary))}</p>` : ""}
           ${h && h.source ? `<div class="muted" style="font-size:12px;margin-top:2px">${esc(h.source)}</div>` : ""}
         </div>`;
@@ -9762,7 +9793,17 @@ function renderMarketOverview() {
     </div>`).join("");
 
   renderAgentFreshness("price-agent", "trackedAgentFreshness", "trackedAgentWarning");
-  const digest = latestNewsDigest(marketNewsFindings);
+  // The stored digest is built over the public list of 20 large companies
+  // (93), so it is narrowed here to the ones this person tracks or owns. Its
+  // sentiment line was written about the whole set, so it is shown only when
+  // nothing was left out.
+  const fullDigest = latestNewsDigest(marketNewsFindings);
+  const mine = new Set([...moverSymbols(), ...ownedPriceSymbols()]);
+  const minesHeadlines = fullDigest ? fullDigest.headlines.filter((h) => mine.has((h.symbol || "").trim().toUpperCase())) : [];
+  const digest = minesHeadlines.length
+    ? { ...fullDigest, headlines: minesHeadlines,
+        ...(minesHeadlines.length === fullDigest.headlines.length ? {} : { sentiment: null, sentimentReason: null }) }
+    : null;
   const newsSection = $("marketNewsSection");
   if (newsSection) newsSection.classList.toggle("hidden", !digest);
   if (digest) {
@@ -10848,7 +10889,7 @@ $("qaAskBtn").onclick = async () => {
     });
     if (relevantHistory.length) context.relevant_history = relevantHistory;
 
-    $("qaStatus").textContent = "Working it out… this usually takes about a minute, and the answer is written by an AI model on a computer in this household.";
+    $("qaStatus").textContent = "Working it out… this usually takes about a minute, and the answer is written by an AI model on a computer belonging to the person who runs this app.";
     // Streams, but buffers: onProgress carries counts only, never the text,
     // so nothing unvalidated can reach the screen (see readStreamedAnswer()).
     let lastProgressAt = 0;
@@ -13944,7 +13985,7 @@ const MIN_PASSWORD_LENGTH = 12;
 $("setPasswordBtn").onclick = async () => {
   const pw = $("pNewPassword").value;
   // Twelve, not the sign-in service's own minimum of six: this password is
-  // all that stands between someone and a household's whole financial record.
+  // all that stands between someone and their whole financial record.
   if (!pw || pw.length < MIN_PASSWORD_LENGTH) { flagField("pNewPassword"); return toast(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`); }
   // Manages its own label, so wireBusyButtons() leaves it alone (dataset.busy
   // is already set by the time the wrapper would swap it).

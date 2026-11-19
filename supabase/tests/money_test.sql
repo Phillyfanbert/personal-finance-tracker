@@ -26,8 +26,9 @@
 --      behind it is caught.
 --   F  opening an account (91): the $0 asset or debt, the account and its
 --      history row land together, or none of them does.
---   G  invitation and ownership (92): a sign-in account only for an invited
---      email, and no row pointing at another person's.
+--   G  anyone may sign up, and sees nobody else's information (92, 93): a new
+--      account reads only the four index funds of the shared market data, no
+--      one else's deals, and cannot point a row at another person's.
 
 do $$
 declare
@@ -39,7 +40,7 @@ declare
   a_chk uuid; a_sav uuid; a_card uuid;
   e1 uuid; e2 uuid; p1 uuid; r1 uuid; act uuid; sub uuid; mc uuid;
   na uuid; nacc uuid; ncash uuid;
-  other uuid; o_acct uuid; o_exp uuid; invited uuid := gen_random_uuid();
+  other uuid; o_acct uuid; o_exp uuid; newcomer uuid := gen_random_uuid();
   r jsonb;
   v numeric;
   n int;
@@ -48,22 +49,14 @@ begin
   if uid is null then
     raise exception 'money tests: no signed-in user exists to run as';
   end if;
-  -- G1, G2. Run before switching to the signed-in role, because they act as
-  -- the sign-in service does. Only an invited email gets an account.
-  begin
-    insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
-      values (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'zz-stranger@example.invalid', now(), now());
-    failed := failed || 'G1 an uninvited email got an account'::text;
-  exception when others then
-    if sqlerrm = 'signup_not_invited' then passed := passed + 1; else failed := failed || format('G1 wrong error %s', sqlerrm); end if;
-  end;
-  insert into public.allowed_signups (email) values ('zz-invited@example.invalid');
+  -- G1. Run before switching to the signed-in role, because it acts as the
+  -- sign-in service does. Anyone may make an account, and gets a profile.
   insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
-    values (invited, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ZZ-Invited@Example.invalid', now(), now());
-  select count(*) into n from public.profiles where id = invited;
-  if n = 1 then passed := passed + 1; else failed := failed || 'G2 an invited email did not get an account and profile'::text; end if;
+    values (newcomer, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'zz-newcomer@example.invalid', now(), now());
+  select count(*) into n from public.profiles where id = newcomer;
+  if n = 1 then passed := passed + 1; else failed := failed || 'G1 a new sign-in account did not get a profile'::text; end if;
   -- Another person's account and purchase, for G3 and G4 below.
-  other := invited;
+  other := newcomer;
   insert into public.accounts (user_id, name, type, bank_name) values (other, 'Theirs', 'debit', 'ZZ test') returning id into o_acct;
   insert into public.expenses (user_id, amount, category, payment_type, description) values (other, 50, 'Food', 'cash', 'ZZ test theirs') returning id into o_exp;
 
@@ -502,6 +495,18 @@ begin
   exception when others then
     if sqlerrm = 'money_not_yours' then passed := passed + 1; else failed := failed || format('G4 wrong error %s', sqlerrm); end if;
   end;
+
+  -- G2. The newcomer, signed in, sees none of anyone else's choices: of the
+  -- per-symbol market data only the four index funds, and no deals at all.
+  -- Checked last, because it changes who the test is signed in as.
+  perform set_config('request.jwt.claims', json_build_object('sub', newcomer, 'role', 'authenticated')::text, true);
+  select count(*) into n from (
+    select symbol from daily_prices union all select symbol from asset_price_findings
+    union all select symbol from market_index_findings union all select symbol from symbol_fundamentals) x
+   where upper(btrim(symbol)) not in ('SPY', 'DIA', 'QQQ', 'IWM');
+  select count(*) into v from deal_findings;
+  if n = 0 and v = 0 then passed := passed + 1;
+  else failed := failed || format('G2 a new account saw %s rows of other people''s symbols and %s of their deals', n, v); end if;
 
   raise exception 'money tests: % passed, % failed%', passed, coalesce(array_length(failed, 1), 0),
     case when array_length(failed, 1) > 0 then ': ' || array_to_string(failed, ' | ') else '' end;

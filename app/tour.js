@@ -259,7 +259,7 @@ export const TOUR_STEPS = {
       target: "investHealthCard",
       subtab: "investTabPortfolio",
       title: "The short version",
-      body: "What everything you own is worth, and what it has been worth over time. Under the chart, a few plain sentences built from real numbers, never a made-up rating. After the market closes, a short note on how your own things did that day. The figures are worked out by this app, and the wording comes from an AI model on a computer in this household, not from an AI company.",
+      body: "What everything you own is worth, and what it has been worth over time. Under the chart, a few plain sentences built from real numbers, never a made-up rating. After the market closes, a short note on how your own things did that day. The figures are worked out by this app, and the wording comes from an AI model on a computer belonging to the person who runs this app, not from an AI company.",
       placement: "bottom",
     },
     {

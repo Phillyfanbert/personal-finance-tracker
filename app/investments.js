@@ -520,6 +520,33 @@ export function recapBreadthDetail(dailyPrices, symbols, tradeDate) {
   return { up, down, flat, total };
 }
 
+// The day's biggest moves among THIS person's own companies, for the recap
+// card. The shared recap row is built over a public list of 20 large
+// companies so that it never names a company only one person follows (93),
+// so each person's own movers are worked out here instead, from their own
+// prices (recapBreadthDetail(), the same comparison the recap counts with).
+//
+// `headlineFor(symbol)` returns the headline the server chose for that stock
+// on that day, which it stores on the stock's own daily_prices row with the
+// same names-the-company check it always used. A story already shown against
+// a bigger mover is not repeated: one article mentioning two companies would
+// otherwise appear twice. A flat stock is left out, as it always was; a stock
+// with no headline still appears, because it is one of the day's biggest
+// moves either way.
+export function recapMovers(detail, headlineFor = () => null, n = 5) {
+  if (!detail) return [];
+  const used = new Set();
+  return [...detail.up, ...detail.down]
+    .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct) || (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0))
+    .slice(0, n)
+    .map((m) => {
+      const h = headlineFor(m.symbol);
+      const headline = h && h.title && h.url && !used.has(h.url) ? h : null;
+      if (headline) used.add(headline.url);
+      return { symbol: m.symbol, change_pct: m.changePct, close: m.close, headline };
+    });
+}
+
 /**
  * Freshest found_at among Finnhub-sourced findings (real ticker prices,
  * refreshed on a much tighter cadence - see tools/price-agent.js's

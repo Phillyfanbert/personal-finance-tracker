@@ -1,16 +1,22 @@
 # Personal Finance Tracker
 
-A private, self-hosted app for tracking where your money goes, what you own
-and owe, and what your investments are doing. Built for one household of about
-five people, and deliberately kept small enough that one person can understand
-all of it.
+A private app for tracking where your money goes, what you own and owe, and
+what your investments are doing, deliberately kept small enough that one person
+can understand all of it.
+
+It has a small number of users for now, and the reason is cost rather than
+who is allowed in: everything runs on free tiers, which have real limits (see
+[What it costs to run](#what-it-costs-to-run)). Anyone can make an account.
+What nobody can do is see anyone else's information, and that is enforced by
+the database itself rather than by the app (see [Privacy](#privacy)).
 
 It runs for **$0 a month with no credit card on file anywhere**, which is a
 design constraint rather than a boast: it shapes what the app is allowed to
 depend on, and a good deal of what follows exists because of it.
 
-This is not a product or a service. There is nothing to sign up for. It is one
-household's tool, published so the code can be read.
+This is not a commercial product: there is no company behind it and nothing
+to pay for. The code is published so anyone can check how it works, and so
+anyone who would rather run their own copy can.
 
 ---
 
@@ -154,15 +160,24 @@ shape changed stays readable.
 Each person sees only their own data. That is enforced by row-level security in
 Postgres on every table, so it holds even if the application code has a bug,
 and it is checked on every single request rather than trusted once at sign-in.
+Because anyone can make an account, this covers more than balances and
+transactions: no account can see which stocks or funds anyone else owns or
+follows, or which subscriptions they pay for. Shared market data such as
+prices, news and company facts is readable only for symbols you own or track
+yourself, plus four index funds everyone sees. The daily market recap is
+written only about 20 well-known companies, never from what anyone tracks,
+and each person's own "biggest moves" are worked out from their own prices. A
+record can only point at its owner's own accounts and purchases, so nobody can
+attach anything to someone else's.
 
 Your transactions, balances and notes are never given to an AI company or
 anyone else to use. Questions about your spending, and the daily note on what
 you own, are written by a model on the home machine, not by a cloud AI service;
 they reach it through a Cloudflare tunnel, and the database itself is hosted by
 Supabase. What does leave is deliberately impersonal: share symbols (never
-amounts) sent to a price service and, pooled with everyone else's, to the AI
-that writes the daily market recap; and the names of subscription services
-looked up against public pricing pages.
+amounts) sent to a price service and, pooled with everyone else's, to an AI
+that writes a short line on why a stock moved; and the names of subscription
+services looked up against public pricing pages.
 
 There is no analytics, no tracking, and nothing sets a cookie. The app itself
 has a plainer version of all this under **Profile → Your data and privacy**,
